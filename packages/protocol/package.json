@@ -1,0 +1,12 @@
+{
+  "name": "@qone/protocol",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  }
+}

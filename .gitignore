@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+*.db
+*.db-wal
+*.db-shm
+.test-data/
+gen/
+apps/desktop/src-tauri/binaries/

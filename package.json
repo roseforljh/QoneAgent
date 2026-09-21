@@ -1,0 +1,31 @@
+{
+  "name": "qone-agent",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "overrides": {
+    "@earendil-works/pi-ai": "0.86.0",
+    "@earendil-works/pi-agent-core": "0.86.0",
+    "@earendil-works/pi-coding-agent": "0.86.0",
+    "@earendil-works/chord": "0.86.0",
+    "@earendil-works/pi-telemetry": "0.86.0",
+    "@earendil-works/pi-tui": "0.86.0"
+  },
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "dev:runtime": "bun run --cwd apps/agent-runtime dev",
+    "dev:desktop": "bun run --cwd apps/desktop dev",
+    "build": "bun run --cwd apps/desktop build",
+    "typecheck": "bun run --cwd apps/agent-runtime typecheck && bun run --cwd apps/desktop build",
+    "test": "bun test apps/agent-runtime/test",
+    "test:smoke": "bun run apps/agent-runtime/test/smoke.ts"
+  },
+  "devDependencies": {
+    "bun-types": "^1.4.2",
+    "node-win-x64": "24.21.0",
+    "typescript": "^5.9.0"
+  }
+}
