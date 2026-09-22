@@ -30,6 +30,7 @@ export type RuntimeCommand =
   | { type: "plugins.list"; requestId: string }
   | { type: "mcp.list"; requestId: string }
   | { type: "mcp.connect"; requestId: string; config: McpServerInfo }
+  | { type: "mcp.delete"; requestId: string; serverId: string }
   | { type: "mcp.oauth.begin"; requestId: string; serverId: string }
   | { type: "mcp.oauth.complete"; requestId: string; serverId: string; code: string; state: string }
   | { type: "permission.list"; requestId: string }
@@ -183,6 +184,8 @@ export interface PluginInfo {
 export interface McpServerInfo {
   id: string;
   name: string;
+  connected?: boolean;
+  toolCount?: number;
   command?: string;
   url?: string;
   tokenEnv?: string;
@@ -285,6 +288,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "plugins.list": z.object({ type: z.literal("plugins.list"), ...request }),
   "mcp.list": z.object({ type: z.literal("mcp.list"), ...request }),
   "mcp.connect": z.object({ type: z.literal("mcp.connect"), ...request, config: mcpConfig }),
+  "mcp.delete": z.object({ type: z.literal("mcp.delete"), ...request, serverId: id }),
   "mcp.oauth.begin": z.object({ type: z.literal("mcp.oauth.begin"), ...request, serverId: id }),
   "mcp.oauth.complete": z.object({ type: z.literal("mcp.oauth.complete"), ...request, serverId: id, code: id, state: id }),
   "model.list": z.object({ type: z.literal("model.list"), ...request }),

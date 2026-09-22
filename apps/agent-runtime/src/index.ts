@@ -143,6 +143,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   content: message.content,
   createdAt: message.createdAt,
 })));
+await adapter.configureModels(modelConfigRepo.list());
 adapter.setSessionTools(createBrowserTools, closeBrowser);
 
 const appDataPluginsDir = path.join(process.env.APPDATA ?? process.env.HOME ?? process.cwd(), "QoneAgent", "plugins");
@@ -444,7 +445,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
 
     case "mcp.list":
-      send({ type: "mcp.list", servers: mcpServerRepo.list() });
+      send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
       return;
 
     case "mcp.connect": {
@@ -456,7 +457,21 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       const tools = await mcp.connect(cmd.config);
       adapter.setCustomTools([...plugins.flatMap((p) => p.tools), ...mcp.tools()]);
       send({ type: "mcp.connected", serverId: cmd.config.id, toolCount: tools.length });
-      send({ type: "mcp.list", servers: mcpServerRepo.list() });
+      send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
+      return;
+    }
+
+    case "mcp.delete": {
+      const config = mcpServerRepo.list().find((server) => server.id === cmd.serverId);
+      if (!config) {
+        send({ type: "error", requestId: cmd.requestId, message: `unknown MCP server ${cmd.serverId}` });
+        return;
+      }
+      await mcp.disconnect(cmd.serverId);
+      mcpServerRepo.delete(cmd.serverId);
+      await adapter.deleteSecret(config.oauth?.tokenSecretKey ?? `mcp.oauth:${cmd.serverId}`);
+      refreshCustomTools();
+      send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
       return;
     }
 
@@ -504,6 +519,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     }
 
     case "model.list":
+      await adapter.configureModels(modelConfigRepo.list());
       send({ type: "model.list", configs: modelConfigRepo.list() });
       return;
 
@@ -513,12 +529,14 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         return;
       }
       const config = modelConfigRepo.upsert(cmd.config);
+      await adapter.configureModels(modelConfigRepo.list());
       send({ type: "model.updated", config });
       return;
     }
 
     case "model.delete":
       modelConfigRepo.delete(cmd.id);
+      await adapter.configureModels(modelConfigRepo.list());
       send({ type: "pong", requestId: cmd.requestId });
       return;
 

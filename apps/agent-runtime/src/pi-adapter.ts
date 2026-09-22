@@ -14,7 +14,8 @@ import {
   type ResourceLoader,
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentEvent } from "@qone/protocol";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, ModelConfigInfo } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader, type PluginSkillInput } from "./skills.js";
@@ -111,6 +112,7 @@ export class PiAdapter {
   private hooks: PiAdapterHooks;
   private resourceLoaders = new Map<string, ResourceLoader>();
   private modelRuntime?: ModelRuntime;
+  private thinkingLevels = new Map<string, ThinkingLevel>();
   private pluginSkills: PluginSkillInput[] = [];
   private sessionToolProvider?: (sessionId: string) => ToolDefinition[];
   private sessionToolDisposer?: (sessionId: string) => void | Promise<void>;
@@ -143,6 +145,35 @@ export class PiAdapter {
   setPluginSkills(skills: PluginSkillInput[]) {
     this.pluginSkills = skills;
     this.resourceLoaders.clear();
+  }
+
+  async configureModels(configs: ModelConfigInfo[]): Promise<void> {
+    this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+    const grouped = new Map<string, ModelConfigInfo[]>();
+    this.thinkingLevels = new Map(configs.filter((item) => item.enabled).map((item) => [`${item.provider}/${item.model}`, (String(item.config.thinking ?? "none") === "none" ? "off" : String(item.config.thinking)) as ThinkingLevel]));
+    for (const config of configs.filter((item) => item.enabled)) grouped.set(config.provider, [...(grouped.get(config.provider) ?? []), config]);
+    for (const provider of this.modelRuntime.getRegisteredProviderIds()) if (!grouped.has(provider)) this.modelRuntime.unregisterProvider(provider);
+    for (const [provider, models] of grouped) {
+      const first = models[0];
+      const apiType = String(first.config.apiType ?? "openai-compatible");
+      const api = apiType === "claude" ? "anthropic-messages" : apiType === "google" ? "google-generative-ai" : apiType === "codex" ? "openai-responses" : "openai-completions";
+      this.modelRuntime.registerProvider(provider, {
+        name: provider,
+        baseUrl: String(first.config.baseUrl ?? ""),
+        api: api as never,
+        models: models.map((item) => ({
+          id: item.model,
+          name: item.model,
+          api: api as never,
+          baseUrl: String(item.config.baseUrl ?? first.config.baseUrl ?? ""),
+          reasoning: String(item.config.thinking ?? "none") !== "none",
+          input: Array.isArray(item.config.input) && item.config.input.includes("image") ? ["text", "image"] : ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: Number(item.config.maxContext ?? 128_000),
+          maxTokens: Number(item.config.maxOutput ?? 8_192),
+        })),
+      });
+    }
   }
 
   setSessionTools(
@@ -209,6 +240,8 @@ export class PiAdapter {
         const nextModel = this.modelRuntime.getModel(provider, modelId);
         if (!nextModel) throw new Error(`configured model not found: ${modelName}`);
         await existing.setModel(nextModel);
+        const thinking = this.thinkingLevels.get(modelName);
+        if (thinking) existing.setThinkingLevel(thinking);
       }
       return existing;
       }
@@ -264,6 +297,7 @@ export class PiAdapter {
       resourceLoader,
       modelRuntime,
       model,
+      thinkingLevel: modelName ? this.thinkingLevels.get(modelName) : undefined,
     });
 
     session.subscribe((e) => {

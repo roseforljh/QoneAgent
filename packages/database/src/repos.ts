@@ -274,6 +274,10 @@ export class McpServerRepo {
       catch { return []; }
     });
   }
+
+  delete(id: string) {
+    this.db.delete(mcpServers).where(eq(mcpServers.id, id)).run();
+  }
 }
 
 export class ModelConfigRepo {

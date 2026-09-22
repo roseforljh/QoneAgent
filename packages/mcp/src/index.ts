@@ -211,6 +211,14 @@ export class McpManager {
     return [...this.conns.values()].flatMap((c) => c.tools);
   }
 
+  isConnected(id: string): boolean {
+    return this.conns.has(id);
+  }
+
+  toolCount(id: string): number {
+    return this.conns.get(id)?.tools.length ?? 0;
+  }
+
   async disconnect(id: string) {
     const c = this.conns.get(id);
     if (!c) return;
