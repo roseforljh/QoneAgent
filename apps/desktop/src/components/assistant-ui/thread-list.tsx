@@ -78,13 +78,13 @@ export const ThreadListNew = forwardRef<HTMLButtonElement, ComponentPropsWithout
           ref={ref}
           variant="ghost"
           data-slot="aui_thread-list-new"
-          className={cn("hover:bg-muted data-active:bg-muted h-8 justify-start gap-2 rounded-md px-2.5 text-sm font-normal", className)}
+          className={cn("hover:bg-muted text-foreground/95 hover:text-foreground data-active:bg-muted h-10 justify-start gap-2.5 rounded-md px-2.5", className)}
           {...props}
         >
           {children ?? (
             <>
               <PlusIcon data-slot="aui_thread-list-new-icon" className="size-4 shrink-0" />
-              <span data-slot="aui_thread-list-new-label" className={cn("whitespace-nowrap", labelClassName)}>New Thread</span>
+              <span data-slot="aui_thread-list-new-label" className={cn("whitespace-nowrap", labelClassName)}>新建会话</span>
             </>
           )}
         </Button>
@@ -104,7 +104,7 @@ export const ThreadListItem: FC = () => {
     >
       <ThreadListItemPrimitive.Trigger
         data-slot="aui_thread-list-item-trigger"
-        className="focus-visible:ring-ring/50 flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
+        className="focus-visible:ring-ring/50 text-foreground/95 group-hover:text-foreground group-data-active:text-foreground flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start outline-none transition-colors group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
       >
         {isRunning && <Loader2Icon aria-hidden data-slot="aui_thread-list-item-running" className="text-muted-foreground me-1.5 size-3.5 shrink-0 animate-spin" />}
         <span data-slot="aui_thread-list-item-title" className="min-w-0 flex-1 truncate">

@@ -4,6 +4,10 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { RuntimeCommand, RuntimeEvent, SessionInfo, MessageInfo, WorkspaceInfo, WorkspaceFileInfo, ModelConfigInfo, SkillInfo, PluginInfo, McpServerInfo, RunInfo, ArtifactInfo, PermissionRuleInfo } from "@qone/protocol";
 
+export function hasTauriBridge() {
+  return typeof window !== "undefined" && Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
 export interface ChatMessage {
   id: string;
   role: string;
@@ -47,10 +51,16 @@ interface AgentState {
   permissionRules: PermissionRuleInfo[];
   workspaceFiles: WorkspaceFileInfo[];
   gitStatus: string;
+  pinnedWorkspaceIds: string[];
   oauthAuthorization?: { requestId: string; serverId: string; url: string; state: string };
   send: (cmd: RuntimeCommand) => void;
   newSession: () => void;
+  newSessionInWorkspace: (workspaceId: string) => void;
   chooseWorkspace: () => void;
+  renameWorkspace: (id: string, name: string) => void;
+  deleteWorkspace: (id: string) => void;
+  togglePinWorkspace: (id: string) => void;
+  selectWorkspace: (id: string) => void;
   selectSession: (id: string) => void;
   runAgent: (message: string) => void;
   stopAgent: () => void;
@@ -84,8 +94,17 @@ export const useStore = create<AgentState>((set, get) => ({
   permissionRules: [],
   workspaceFiles: [],
   gitStatus: "",
+  pinnedWorkspaceIds: (() => {
+    try {
+      const raw = window.localStorage.getItem("qone-pinned-workspaces");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+    } catch { return []; }
+  })(),
 
   send: (cmd) => {
+    // Browser previews do not expose Tauri's invoke bridge.
+    if (!hasTauriBridge()) return;
     invoke("runtime_send", { cmd: JSON.stringify(cmd) }).catch((error) => {
       console.error("runtime_send failed", error);
       set({ lastError: String(error), ...(cmd.type === "agent.run" ? { running: false } : {}) });
@@ -94,6 +113,36 @@ export const useStore = create<AgentState>((set, get) => ({
 
   newSession: () => {
     get().send({ type: "session.create", requestId: rid(), workspaceId: get().currentWorkspaceId });
+  },
+
+  newSessionInWorkspace: (workspaceId) => {
+    set({ currentWorkspaceId: workspaceId });
+    get().send({ type: "session.create", requestId: rid(), workspaceId });
+  },
+
+  renameWorkspace: (id, name) => {
+    if (!name.trim()) return;
+    get().send({ type: "workspace.rename", requestId: rid(), workspaceId: id, name: name.trim() });
+  },
+
+  deleteWorkspace: (id) => {
+    get().send({ type: "workspace.delete", requestId: rid(), workspaceId: id });
+  },
+
+  togglePinWorkspace: (id) => {
+    set((s) => {
+      const pinnedWorkspaceIds = s.pinnedWorkspaceIds.includes(id)
+        ? s.pinnedWorkspaceIds.filter((pinnedId) => pinnedId !== id)
+        : [...s.pinnedWorkspaceIds, id];
+      window.localStorage.setItem("qone-pinned-workspaces", JSON.stringify(pinnedWorkspaceIds));
+      return { pinnedWorkspaceIds };
+    });
+  },
+
+  selectWorkspace: (id) => {
+    if (!get().workspaces.some((workspace) => workspace.id === id)) return;
+    set({ currentWorkspaceId: id });
+    get().refreshWorkspace(id);
   },
 
   chooseWorkspace: () => {
@@ -191,6 +240,7 @@ let wired = false;
 let lastSequence = -1;
 export function initBridge() {
   if (wired) return;
+  if (!hasTauriBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
 
   const ready = listen<string>("runtime-event", (e) => {
