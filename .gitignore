@@ -7,3 +7,4 @@ target/
 .test-data/
 gen/
 apps/desktop/src-tauri/binaries/
+.playwright-cli/
