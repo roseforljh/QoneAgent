@@ -1,4 +1,20 @@
 import { z } from "zod";
+export { isCodexSubscriptionEndpoint, modelBaseUrl, modelListUrl } from "./model-endpoint";
+export {
+  mergeModelMetadata,
+  modelNameCandidates,
+  modelNamesEqual,
+  normalizeModelName,
+  parseModelMetadata,
+  parseModelMetadataResponse,
+} from "./model-metadata";
+export type {
+  ModelCapability,
+  ModelMetadata,
+  ModelReasoningOption,
+  ParsedProviderModel,
+  ProviderApiType,
+} from "./model-metadata";
 
 // Typed protocol between GUI and Agent Runtime.
 // Commands: GUI -> Runtime. Events: Runtime -> GUI.
@@ -14,7 +30,9 @@ export interface CommandBase {
 export type RuntimeCommand =
   | { type: "ping"; requestId: string }
   | { type: "session.create"; requestId: string; title?: string; workspaceId?: string }
+  | { type: "session.generate-title"; requestId: string; sessionId: string; prompt: string; model?: string }
   | { type: "session.list"; requestId: string }
+  | { type: "session.rename"; requestId: string; sessionId: string; title: string }
   | { type: "session.delete"; requestId: string; sessionId: string }
   | { type: "session.messages"; requestId: string; sessionId: string }
   | { type: "session.runs"; requestId: string; sessionId: string }
@@ -44,6 +62,7 @@ export type RuntimeCommand =
       requestId: string;
       sessionId: string;
       message: string;
+      messageId?: string;
       model?: string;
     }
   | { type: "agent.stop"; requestId: string; runId: string }
@@ -72,6 +91,7 @@ export type RuntimeEvent =
   | { type: "pong"; requestId: string }
   | { type: "session.created"; session: SessionInfo }
   | { type: "session.list"; sessions: SessionInfo[] }
+  | { type: "session.renamed"; session: SessionInfo }
   | { type: "session.messages"; sessionId: string; messages: MessageInfo[] }
   | { type: "session.runs"; sessionId: string; runs: RunInfo[] }
   | { type: "session.toolCalls"; sessionId: string; toolCalls: ToolCallInfo[] }
@@ -272,7 +292,9 @@ const mcpConfig = z.object({
 const commandSchemas: Record<string, z.ZodTypeAny> = {
   ping: z.object({ type: z.literal("ping"), ...request }),
   "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id.optional() }),
+  "session.generate-title": z.object({ type: z.literal("session.generate-title"), ...request, sessionId: id, prompt: z.string().min(1), model: z.string().optional() }),
   "session.list": z.object({ type: z.literal("session.list"), ...request }),
+  "session.rename": z.object({ type: z.literal("session.rename"), ...request, sessionId: id, title: id }),
   "session.delete": z.object({ type: z.literal("session.delete"), ...request, sessionId: id }),
   "session.messages": z.object({ type: z.literal("session.messages"), ...request, sessionId: id }),
   "session.runs": z.object({ type: z.literal("session.runs"), ...request, sessionId: id }),
@@ -295,7 +317,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
-  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string().min(1), model: z.string().optional() }),
+  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string().min(1), messageId: id.optional(), model: z.string().optional() }),
   "agent.stop": z.object({ type: z.literal("agent.stop"), ...request, runId: id }),
   "tool.approve": z.object({ type: z.literal("tool.approve"), ...request, approvalId: id }),
   "tool.reject": z.object({ type: z.literal("tool.reject"), ...request, approvalId: id, reason: z.string().optional() }),

@@ -34,6 +34,15 @@ export class SessionRepo {
       .run();
   }
 
+  rename(id: string, title: string) {
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle) throw new Error("session title cannot be empty");
+    this.db.update(sessions).set({ title: normalizedTitle, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+    const session = this.get(id);
+    if (!session) throw new Error(`session not found: ${id}`);
+    return session;
+  }
+
   delete(id: string) {
     this.db.delete(sessions).where(eq(sessions.id, id)).run();
   }
@@ -42,10 +51,10 @@ export class SessionRepo {
 export class MessageRepo {
   constructor(private db: Db) {}
 
-  add(sessionId: string, role: string, content: string, runId?: string, model?: string) {
+  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string) {
     const now = Date.now();
     const row = {
-      id: crypto.randomUUID(),
+      id: messageId ?? crypto.randomUUID(),
       sessionId,
       runId,
       role,
