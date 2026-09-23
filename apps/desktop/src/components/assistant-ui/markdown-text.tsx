@@ -1,12 +1,13 @@
-import {
-  MarkdownTextPrimitive,
-  unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
-  useIsMarkdownCodeBlock,
-} from "@assistant-ui/react-markdown";
-import remarkGfm from "remark-gfm";
+import { unstable_memoizeMarkdownComponents as memoizeMarkdownComponents, useIsMarkdownCodeBlock } from "@assistant-ui/react-markdown";
 import { memo, useRef, useState, type ComponentProps } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { cn } from "../../lib/utils";
+import { hasTauriBridge } from "../../store";
+import { InlineCitation } from "./elements/inline-citation";
+import { MathBlock } from "./elements/math-block";
+import { MarkdownText as OfficialMarkdownText } from "./elements/markdown-text";
+import "katex/dist/katex.min.css";
 
 function useCopyToClipboard() {
   const [isCopied, setIsCopied] = useState(false);
@@ -55,10 +56,35 @@ function MarkdownTable({ className, children, ...props }: ComponentProps<"table"
   );
 }
 
-const remarkPlugins = [remarkGfm];
+export function citationSource(href: string | undefined, label: unknown, title?: string) {
+  if (typeof label !== "string") return null;
+  const match = /^\[?(\d{1,3})\]?$/.exec(label.trim());
+  if (!match || !href) return null;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return { domain: url.hostname, title: title || undefined, url: url.href, label: match[1] };
+  } catch { return null; }
+}
+
+function CitationLink({ source }: { source: NonNullable<ReturnType<typeof citationSource>> }) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const openSource = (url: string) => {
+    if (hasTauriBridge()) void openUrl(url);
+    else window.open(url, "_blank", "noopener,noreferrer");
+  };
+  return <InlineCitation sources={[source]} openIndex={openIndex} onOpenIndexChange={setOpenIndex} onOpenSource={openSource} />;
+}
+
+export function MathSpan({ className, children, ...props }: ComponentProps<"span">) {
+  if (className?.split(/\s+/).includes("katex-display")) return (
+    <MathBlock steps={[{ expression: <span className={className} {...props}>{children}</span> }]} visibleSteps={1} className="my-3 max-w-none" />
+  );
+  return <span className={className} {...props}>{children}</span>;
+}
 
 const MarkdownTextImpl = () => {
-  return <MarkdownTextPrimitive remarkPlugins={remarkPlugins} className="aui-md" components={defaultComponents} defer />;
+  return <OfficialMarkdownText components={defaultComponents} />;
 };
 
 export const MarkdownText = memo(MarkdownTextImpl);
@@ -71,7 +97,11 @@ const defaultComponents = memoizeMarkdownComponents({
   h5: ({ className, ...props }) => <h5 className={cn("aui-md-h5 mt-3 mb-1 text-sm font-semibold first:mt-0 last:mb-0", className)} {...props} />,
   h6: ({ className, ...props }) => <h6 className={cn("aui-md-h6 mt-3 mb-1 text-sm font-medium first:mt-0 last:mb-0", className)} {...props} />,
   p: ({ className, ...props }) => <p className={cn("aui-md-p my-3 leading-relaxed first:mt-0 last:mb-0", className)} {...props} />,
-  a: ({ className, ...props }) => <a className={cn("aui-md-a text-primary hover:text-primary/80 underline underline-offset-2", className)} {...props} />,
+  a: ({ className, href, title, children, ...props }) => {
+    const source = citationSource(href, children, title);
+    if (source) return <CitationLink source={source} />;
+    return <a href={href} title={title} className={cn("aui-md-a text-primary hover:text-primary/80 underline underline-offset-2", className)} {...props}>{children}</a>;
+  },
   blockquote: ({ className, ...props }) => <blockquote className={cn("aui-md-blockquote border-muted-foreground/30 text-muted-foreground my-3 border-s-2 ps-4", className)} {...props} />,
   ul: ({ className, ...props }) => <ul className={cn("aui-md-ul marker:text-muted-foreground my-3 ms-5 list-disc [&>li]:mt-1", className)} {...props} />,
   ol: ({ className, ...props }) => <ol className={cn("aui-md-ol marker:text-muted-foreground my-3 ms-5 list-decimal [&>li]:mt-1", className)} {...props} />,
@@ -82,6 +112,7 @@ const defaultComponents = memoizeMarkdownComponents({
   tr: ({ className, ...props }) => <tr className={cn("aui-md-tr m-0 p-0", className)} {...props} />,
   li: ({ className, ...props }) => <li className={cn("aui-md-li leading-relaxed", className)} {...props} />,
   strong: ({ className, ...props }) => <strong className={cn("aui-md-strong font-semibold", className)} {...props} />,
+  span: MathSpan,
   sup: ({ className, ...props }) => <sup className={cn("aui-md-sup [&>a]:text-xs [&>a]:no-underline", className)} {...props} />,
   pre: ({ className, ...props }) => <pre className={cn("aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed", className)} {...props} />,
   code: function Code({ className, ...props }) {

@@ -1,12 +1,15 @@
-import { modelListUrl, parseModelMetadataResponse, type ModelMetadata } from "@qone/protocol";
+import { modelListUrl, modelNamesEqual, type ProviderApiType } from "@qone/protocol";
 import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT } from "../../lib/model-picker-data";
+import { fetchProviderModelCatalog } from "../../lib/provider-model-catalog";
+import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings, type Capability, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { check } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { hasTauriBridge } from "../../store";
+import { hasTauriBridge, requestModelMetadata } from "../../store";
+import { MemoryChips, type MemoryChip } from "../assistant-ui/elements/memory-chips";
 import { QoneSelect } from "../ui/Select";
 import {
   Bot,
@@ -104,34 +107,12 @@ function SectionHeader({ eyebrow, title, children }: { eyebrow: string; title: s
   );
 }
 
-type ProviderApiType = "openai-compatible" | "codex" | "claude" | "google";
-type Capability = "text" | "image" | "video" | "audio";
-type ThinkingLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-
-type ModelSettings = {
-  maxOutput: number;
-  maxContext: number;
-  thinking: ThinkingLevel;
-  input: Capability[];
-  output: Capability[];
-  /** Let the runtime fill missing values from Pi and models.dev. */
-  autoMetadata?: boolean;
-  modelMetadata?: ModelMetadata;
-  metadataOverrides?: Partial<Record<"maxOutput" | "maxContext" | "thinking" | "input" | "output", boolean>>;
-};
-
-type ProviderModel = { id: string; label: string; settings?: ModelSettings };
-type ProviderProfile = { id: string; name: string; apiType: ProviderApiType; baseUrl: string; models: ProviderModel[]; updatedAt: number };
-
-
 const providerApiLabelKeys = {
   "openai-compatible": "provider.openaiCompatible",
   codex: "provider.codex",
   claude: "provider.claude",
   google: "provider.google",
 } as const;
-const capabilities: Capability[] = ["text", "image", "video", "audio"];
-
 function loadProviderProfiles(): ProviderProfile[] {
   try {
     const saved = JSON.parse(window.localStorage.getItem(PROVIDERS_STORAGE_KEY) ?? "[]") as ProviderProfile[];
@@ -159,53 +140,24 @@ function modelsEndpoint(apiType: ProviderApiType, baseUrl: string) {
   try { return modelListUrl(apiType, baseUrl); } catch { return ""; }
 }
 
-function parseModelsResponse(data: unknown): ProviderModel[] {
-  return parseModelMetadataResponse(data).map((item) => ({
-    id: item.id,
-    label: item.label,
-    settings: modelSettingsFromMetadata(item.id, item.metadata),
-  }));
-}
-
-function defaultModelSettings(modelId: string): ModelSettings {
-  const isGemini = /gemini/i.test(modelId);
-  return { maxOutput: 8192, maxContext: 128000, thinking: isGemini ? "medium" : "none", input: isGemini ? [...capabilities] : ["text"], output: isGemini ? [...capabilities] : ["text"], autoMetadata: true };
-}
-
-function modelSettingsFromMetadata(modelId: string, metadata?: ModelMetadata): ModelSettings {
-  const defaults = defaultModelSettings(modelId);
-  if (!metadata) return defaults;
-  const input = metadata.input?.filter((value): value is Capability => capabilities.includes(value as Capability));
-  const output = metadata.output?.filter((value): value is Capability => capabilities.includes(value as Capability));
-  return {
-    ...defaults,
-    ...(metadata.maxTokens ? { maxOutput: metadata.maxTokens } : {}),
-    ...(metadata.contextWindow ? { maxContext: metadata.contextWindow } : {}),
-    ...(input?.length ? { input } : {}),
-    ...(output?.length ? { output } : {}),
-    ...(metadata.reasoning !== undefined ? { thinking: metadata.reasoning ? "medium" as const : "none" as const } : {}),
-    modelMetadata: metadata,
-  };
-}
-
-function mergeFetchedModel(existing: ProviderModel, fetched: ProviderModel): ProviderModel {
-  const current = existing.settings ?? defaultModelSettings(existing.id);
-  const incoming = fetched.settings ?? defaultModelSettings(fetched.id);
-  const overrides = current.metadataOverrides ?? {};
-  return {
-    ...existing,
-    label: fetched.label || existing.label,
-    settings: {
-      ...current,
-      ...(!overrides.maxOutput ? { maxOutput: incoming.maxOutput } : {}),
-      ...(!overrides.maxContext ? { maxContext: incoming.maxContext } : {}),
-      ...(!overrides.thinking ? { thinking: incoming.thinking } : {}),
-      ...(!overrides.input ? { input: incoming.input } : {}),
-      ...(!overrides.output ? { output: incoming.output } : {}),
-      ...(incoming.modelMetadata ? { modelMetadata: incoming.modelMetadata } : {}),
-      autoMetadata: true,
-    },
-  };
+async function resolveModelSettings(provider: ProviderProfile, models: ProviderModel[]): Promise<ProviderModel[]> {
+  if (!models.length) return models;
+  const resolved = [] as Awaited<ReturnType<typeof requestModelMetadata>>;
+  const byApiType = new Map<ProviderApiType, ProviderModel[]>();
+  for (const model of models) {
+    const apiType = model.settings?.apiType ?? provider.apiType;
+    byApiType.set(apiType, [...(byApiType.get(apiType) ?? []), model]);
+  }
+  for (const [apiType, apiModels] of byApiType) {
+    for (let start = 0; start < apiModels.length; start += 200) {
+      resolved.push(...await requestModelMetadata({ provider: provider.id, apiType, baseUrl: provider.baseUrl, models: apiModels.slice(start, start + 200).map((model) => ({ id: model.id, metadata: model.settings?.modelMetadata })) }));
+    }
+  }
+  const byId = new Map(resolved.map((item) => [item.id, item]));
+  return models.map((model) => {
+    const item = byId.get(model.id);
+    return item ? withResolvedModelSettings(model, item.metadata, item.thinkingLevels, item.sources) : model;
+  });
 }
 
 type SettingsChoice = { value: string; label: string; description?: string };
@@ -283,9 +235,9 @@ type PersonalizationProfile = {
 
 const PERSONALIZATION_STORAGE_KEY = "qone-personalization-profile";
 const DEFAULT_PERSONALIZATION_PROFILE: PersonalizationProfile = {
-  nickname: "叶清",
-  occupation: "工程师",
-  details: "安卓软件开发，网络，前沿ai技术运用。渴望成为大厂的一员，技术菜鸟。只会用ai写代码。",
+  nickname: "",
+  occupation: "",
+  details: "",
   memoryEnabled: true,
 };
 
@@ -310,6 +262,9 @@ function PersonalizationSection() {
       return next;
     });
   };
+  const chips: MemoryChip[] = (["nickname", "occupation", "details"] as const)
+    .filter((key) => profile[key].trim())
+    .map((key) => ({ id: key, text: `${t(`personalization.${key}`)}: ${profile[key]}`, change: "existing" }));
 
   return (
     <>
@@ -319,6 +274,15 @@ function PersonalizationSection() {
         <label>{t("personalization.occupation")}<input value={profile.occupation} onChange={(event) => updateProfile("occupation", event.target.value)} /></label>
         <label>{t("personalization.details")}<textarea rows={3} value={profile.details} onChange={(event) => updateProfile("details", event.target.value)} /></label>
       </div>
+      {chips.length > 0 && <MemoryChips
+        chips={chips}
+        label={t("personalization.savedProfile")}
+        forgetLabel={(text) => t("personalization.clearProfileField", { text })}
+        onForget={(id) => {
+          if (id === "nickname" || id === "occupation" || id === "details") updateProfile(id, "");
+        }}
+        className="mb-4 max-w-none"
+      />}
       <section className="settings-memory-section">
         <div className="settings-memory-heading"><h3>{t("personalization.memory")}</h3><CircleHelp size={18} /></div>
         <div className="settings-memory-row">
@@ -355,12 +319,14 @@ function ModelSyncDialog({ open, fetched, existing, onClose, onAdd }: { open: bo
   }, [open]);
   if (!open) return null;
   const fetchedIds = new Set(fetched.map((model) => model.id));
+  const configuredCount = fetched.filter((model) => Object.values(model.settings?.metadataSources ?? {}).includes("provider")).length;
   const newModels = fetched.filter((model) => !existing.some((current) => current.id === model.id));
   const missingModels = existing.filter((model) => !fetchedIds.has(model.id));
   return createPortal(
     <div className="settings-sync-layer">
       <div ref={dialogRef} tabIndex={-1} className="settings-subdialog settings-sync-dialog" role="dialog" aria-modal="true" aria-label={t("provider.sync")}>
         <div className="settings-subdialog-header"><div><span>{t("provider.sync")}</span><h3>{t("provider.providerModels")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
+        <p className="settings-inline-status" role="status">{t("provider.metadataSummary", { count: configuredCount, total: fetched.length })}</p>
         <div className="settings-tabs"><button type="button" className={cn(tab === "new" && "is-active")} onClick={() => setTab("new")}>{t("provider.newModels")} <em>{newModels.length}</em></button><button type="button" className={cn(tab === "missing" && "is-active")} onClick={() => setTab("missing")}>{t("provider.missingModels")} <em>{missingModels.length}</em></button></div>
         <div className="settings-sync-list">{(tab === "new" ? newModels : missingModels).map((model) => <div className="settings-sync-row" key={model.id}><span>{model.label}</span>{model.label !== model.id && <code>{model.id}</code>}</div>)}{(tab === "new" ? newModels : missingModels).length === 0 && <p className="settings-empty">{t(tab === "new" ? "provider.noNewModels" : "provider.noMissingModels")}</p>}</div>
         <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button>{tab === "new" && <button type="button" className="settings-primary-action" onClick={() => { onAdd(newModels); onClose(); }}><Check size={15} />{t("provider.addNewModels")}</button>}</div>
@@ -380,34 +346,51 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
   const [status, setStatus] = useState<LocalizedMessage | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<ProviderModel[]>([]);
+  const fetchSequence = useRef(0);
   useEffect(() => {
+    fetchSequence.current++;
     if (!open) return;
-    setName(initial?.name ?? ""); setApiType(initial?.apiType ?? "openai-compatible"); setBaseUrl(initial?.baseUrl ?? ""); setApiKey(""); setModels(initial?.models ?? []); setStatus(null); setSyncOpen(false); setFetchedModels([]);
+    setName(initial?.name ?? ""); setApiType(initial?.apiType ?? "openai-compatible"); setBaseUrl(initial?.baseUrl ?? ""); setApiKey(""); setModels(initial?.models ?? []); setStatus(null); setSyncOpen(false); setFetchedModels([]); setFetching(false);
   }, [open, initial?.id]);
   if (!open) return null;
   const preview = modelsEndpoint(apiType, baseUrl);
 
   const fetchModels = async () => {
     if (!preview) { setStatus({ key: "provider.fetchFirst" }); return; }
+    const sequence = ++fetchSequence.current;
     setFetching(true); setStatus(null);
     try {
-      const headers: Record<string, string> = { Accept: "application/json" };
-      if (apiKey && apiType === "claude") {
-        headers["x-api-key"] = apiKey;
-        headers["anthropic-version"] = "2023-06-01";
-      } else if (apiKey && apiType !== "google") {
-        headers.Authorization = `Bearer ${apiKey}`;
-      }
-      const requestUrl = new URL(preview);
-      if (apiType === "google" && apiKey) requestUrl.searchParams.set("key", apiKey);
-      const response = await fetch(requestUrl, { headers });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const result = parseModelsResponse(await response.json());
+      let result = parseModelsResponse(await fetchProviderModelCatalog(apiType, baseUrl, initial?.id ?? providerId(name), apiKey));
+      if (sequence !== fetchSequence.current) return;
       if (!result.length) { setStatus({ key: "provider.noRecognizableModels" }); return; }
-      setFetchedModels(result); setSyncOpen(true);
+      const configuredCount = result.filter((model) => Object.values(model.settings?.metadataSources ?? {}).includes("provider")).length;
+      try {
+        const existingById = new Map(models.map((model) => [model.id, model]));
+        const modelsToResolve = result.map((model) => {
+          const existing = existingById.get(model.id);
+          if (!existing?.settings?.apiType) return model;
+          return { ...model, settings: { ...(model.settings ?? defaultModelSettings()), apiType: existing.settings.apiType, modelMetadata: existing.settings.modelMetadata } };
+        });
+        result = await resolveModelSettings({ id: initial?.id ?? providerId(name), name, apiType, baseUrl, models: [], updatedAt: 0 }, modelsToResolve);
+        if (sequence === fetchSequence.current) setStatus({ key: "provider.metadataSummary", values: { count: configuredCount, total: result.length } });
+      } catch (error) {
+        if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "provider.metadataFailed", values: { error: String(error) } });
+      }
+      if (sequence !== fetchSequence.current) return;
+      const resolvedById = new Map(result.map((model) => [model.id, model]));
+      setFetchedModels(result);
+      setModels((current) => {
+        return current.map((model) => {
+          const resolved = resolvedById.get(model.id);
+          if (!resolved) return model;
+          const merged = mergeFetchedModel(model, resolved);
+          return merged;
+        });
+      });
+      setSyncOpen(true);
     } catch (error) {
-      setStatus({ key: "provider.fetchFailed", values: { error: String(error) } });
-    } finally { setFetching(false); }
+      if (sequence === fetchSequence.current) setStatus({ key: "provider.fetchFailed", values: { error: String(error) } });
+    } finally { if (sequence === fetchSequence.current) setFetching(false); }
   };
 
   const save = async () => {
@@ -439,12 +422,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
       fetched={fetchedModels}
       existing={models}
       onClose={() => setSyncOpen(false)}
-      onAdd={(newModels) => setModels((current) => {
-        const fetchedById = new Map(fetchedModels.map((model) => [model.id, model]));
-        const refreshed = current.map((model) => fetchedById.get(model.id) ? mergeFetchedModel(model, fetchedById.get(model.id)!) : model);
-        const existingIds = new Set(refreshed.map((model) => model.id));
-        return [...refreshed, ...newModels.filter((model) => !existingIds.has(model.id))];
-      })}
+      onAdd={(newModels) => setModels((current) => [...current, ...newModels.filter((model) => !current.some((existing) => existing.id === model.id))])}
     />
   </div></div>;
 }
@@ -461,7 +439,7 @@ function ConfigurationSection() {
     setProfiles(next);
     window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, profile.id);
     saveProviderProfiles(next);
-    for (const model of profile.models) send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${profile.id}/${model.id}`, provider: profile.id, model: model.id, config: { apiType: profile.apiType, baseUrl: profile.baseUrl, ...(model.settings ?? defaultModelSettings(model.id)) }, enabled: true, updatedAt: Date.now() } });
+    for (const model of profile.models) send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${profile.id}/${model.id}`, provider: profile.id, model: model.id, config: { apiType: profile.apiType, baseUrl: profile.baseUrl, ...(model.settings ?? defaultModelSettings()) }, enabled: true, updatedAt: Date.now() } });
   };
   const deleteProfile = (profile: ProviderProfile) => {
     const nextProfiles = profiles.filter((item) => item.id !== profile.id);
@@ -507,15 +485,34 @@ function ConfigurationSection() {
   </>;
 }
 
+function ModelSourceSummary({ settings }: { settings: ModelSettings }) {
+  const { t } = useLocale();
+  const fields: Array<[ModelSettingField, string]> = [
+    ["maxOutput", t("model.maxOutput")], ["maxContext", t("model.maxContext")],
+    ["thinking", t("model.thinking")], ["input", t("model.inputCapabilities")], ["output", t("model.outputCapabilities")],
+  ];
+  const sourceKeys = { provider: "model.source.provider", pi: "model.source.pi", "models.dev": "model.source.modelsDev", config: "model.source.manual", default: "model.source.default", unknown: "model.source.unknown" } as const;
+  return <div className="settings-model-sources" aria-label={t("model.source.title")}>{fields.map(([field, label]) => {
+    const source = settings.metadataOverrides?.[field] ? "config" : settings.metadataSources?.[field] ?? "unknown";
+    return <span key={field}><strong>{label}</strong>{t(sourceKeys[source])}</span>;
+  })}</div>;
+}
+
 function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted }: { open: boolean; provider: ProviderProfile; model?: ProviderModel; onClose: () => void; onSaved: (model: ProviderModel, previousId?: string) => void; onDeleted: (model: ProviderModel) => void }) {
   const { t } = useLocale();
   const [name, setName] = useState(model?.id ?? "");
-  const [settings, setSettings] = useState<ModelSettings>(model?.settings ?? defaultModelSettings(model?.id ?? ""));
+  const [settings, setSettings] = useState<ModelSettings>(model?.settings ?? defaultModelSettings());
+  const [fetching, setFetching] = useState(false);
+  const [status, setStatus] = useState<LocalizedMessage | null>(null);
+  const fetchSequence = useRef(0);
   useEffect(() => {
+    fetchSequence.current++;
     if (!open) return;
-    setName(model?.id ?? ""); setSettings(model?.settings ?? defaultModelSettings(model?.id ?? ""));
+    setName(model?.id ?? ""); setSettings(model?.settings ?? defaultModelSettings()); setStatus(null); setFetching(false);
   }, [open, model?.id]);
   if (!open) return null;
+  const apiType = settings.apiType ?? provider.apiType;
+  const thinkingOptions = thinkingLevelOptionsForApi(apiType, settings.thinkingLevels);
   const update = <K extends keyof ModelSettings>(key: K, value: ModelSettings[K]) => setSettings((current) => ({
     ...current,
     [key]: value,
@@ -523,10 +520,42 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
       ? { ...(current.metadataOverrides ?? {}), [key]: true }
       : current.metadataOverrides,
   }));
+  const updateApiType = (value: ProviderApiType) => setSettings((current) => ({
+    ...current,
+    apiType: value,
+    thinkingLevels: undefined,
+    thinking: normalizeThinkingLevel(current.thinking, value),
+  }));
   const toggleCapability = (kind: "input" | "output", value: Capability) => update(kind, settings[kind].includes(value) ? settings[kind].filter((item) => item !== value) : [...settings[kind], value]);
-  const save = () => { if (!name.trim()) return; onSaved({ id: name.trim(), label: name.trim(), settings }, model?.id); onClose(); };
+  const fetchConfiguration = async () => {
+    const modelId = name.trim();
+    if (!modelId) { setStatus({ key: "model.fetchNameFirst" }); return; }
+    const sequence = ++fetchSequence.current;
+    setFetching(true); setStatus(null);
+    try {
+      const selectedProvider = { ...provider, apiType };
+      const merchantModels = await fetchProviderModelCatalog(apiType, provider.baseUrl, provider.id).then(parseModelsResponse).catch(() => []);
+      if (sequence !== fetchSequence.current) return;
+      const merchant = merchantModels.find((item) => modelNamesEqual(item.id, modelId));
+      let resolved: ProviderModel;
+      try {
+        [resolved] = await resolveModelSettings(selectedProvider, [{ id: modelId, label: modelId, settings: merchant?.settings }]);
+      } catch (error) {
+        if (!merchant?.settings?.modelMetadata) throw error;
+        resolved = merchant;
+      }
+      if (sequence !== fetchSequence.current) return;
+      if (!resolved.settings?.modelMetadata || Object.keys(resolved.settings.modelMetadata).every((key) => key === "id" || key === "label")) {
+        setStatus({ key: "model.noConfiguration" }); return;
+      }
+      setSettings((current) => ({ ...mergeFetchedModel({ id: modelId, label: modelId, settings: current }, resolved).settings!, apiType }));
+      setStatus({ key: "model.configurationFetched" });
+    } catch (error) { if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "model.fetchConfigurationFailed", values: { error: String(error) } }); }
+    finally { if (sequence === fetchSequence.current) setFetching(false); }
+  };
+  const save = () => { if (!name.trim()) return; onSaved({ id: name.trim(), label: name.trim(), settings: { ...settings, apiType } }, model?.id); onClose(); };
   const remove = async () => { if (model && await confirmDestructiveAction(t("model.deleteConfirm", { name: model.label }))) { onDeleted(model); onClose(); } };
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("model.parameters")}><div className="settings-subdialog-header"><div><span>{provider.name}</span><h3>{t("model.parameters")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("model.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("model.namePlaceholder")} /></label><label>{t("model.maxOutput")}<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label><label>{t("model.maxContext")}<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label><label>{t("model.thinking")}<QoneSelect value={settings.thinking} onChange={(value) => update("thinking", value as ThinkingLevel)} options={[{ value: "none", label: t("model.noThinking") }, { value: "minimal", label: t("model.minimal") }, { value: "low", label: t("model.low") }, { value: "medium", label: t("model.medium") }, { value: "high", label: t("model.high") }, { value: "xhigh", label: t("model.xhigh") }, { value: "max", label: t("model.max") }]} ariaLabel={t("model.thinking")} /></label></div><div className="settings-capability-grid"><CapabilityEditor title={t("model.inputCapabilities")} values={settings.input} onToggle={(value) => toggleCapability("input", value)} /><CapabilityEditor title={t("model.outputCapabilities")} values={settings.output} onToggle={(value) => toggleCapability("output", value)} /></div><div className="settings-subdialog-footer">{model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("model.saveParameters")}</button></div></div></div>;
+  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("model.parameters")}><div className="settings-subdialog-header"><div><span>{provider.name}</span><h3>{t("model.parameters")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-model-fetch"><button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchConfiguration}>{fetching ? <LoaderCircle size={15} className="settings-spin" /> : <Globe2 size={15} />}{fetching ? t("provider.fetching") : t("model.fetchConfiguration")}</button>{status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}</div><ModelSourceSummary settings={settings} /><div className="settings-form-grid"><label className="is-wide">{t("model.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("model.namePlaceholder")} /></label><label className="is-wide">{t("model.apiType")}<QoneSelect value={apiType} onChange={(value) => updateApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("model.apiType")} /></label><label>{t("model.maxOutput")}<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label><label>{t("model.maxContext")}<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label><label>{t("model.thinking")}<QoneSelect value={settings.thinking} onChange={(value) => update("thinking", value as ThinkingLevel)} options={thinkingOptions.map((option) => ({ value: option.value, label: t(option.labelKey) }))} ariaLabel={t("model.thinking")} /></label></div><div className="settings-capability-grid"><CapabilityEditor title={t("model.inputCapabilities")} values={settings.input} onToggle={(value) => toggleCapability("input", value)} /><CapabilityEditor title={t("model.outputCapabilities")} values={settings.output} onToggle={(value) => toggleCapability("output", value)} /></div><div className="settings-subdialog-footer">{model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("model.saveParameters")}</button></div></div></div>;
 }
 
 function CapabilityEditor({ title, values, onToggle }: { title: string; values: Capability[]; onToggle: (value: Capability) => void }) {
@@ -571,7 +600,7 @@ function ModelsSection() {
           key={model.id}
           id={modelConfigId}
           label={model.label}
-          description={t(providerApiLabelKeys[provider.apiType])}
+          description={t(providerApiLabelKeys[model.settings?.apiType ?? provider.apiType])}
           selected={selected}
           onEdit={() => { setEditing(model); setEditorOpen(true); }}
           onSelect={() => setSelectedModel(modelConfigId)}

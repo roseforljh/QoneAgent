@@ -3,11 +3,12 @@ import { useStore } from "../../store";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import type { SessionInfo, WorkspaceInfo } from "@qone/protocol";
 import { AnimatePresence, motion } from "motion/react";
-import { FolderIcon, FolderOpenIcon, Loader2Icon, PlusIcon, PinIcon } from "lucide-react";
+import { FolderIcon, FolderOpenIcon, PlusIcon, PinIcon } from "lucide-react";
 import { useEffect, useRef, useState, type FC, type ReactNode } from "react";
 import { SidebarEntityMenu, SidebarMenu } from "./sidebar-menu";
 import { useLocale } from "../../localization";
 import { useSidebarPreferences, sortSidebarSessions } from "../../lib/sidebar-preferences";
+import { MorphingSpinner } from "./morphing-spinner";
 
 const rowButtonClass = "text-foreground/95 group-hover:text-foreground flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-start outline-none transition-colors";
 
@@ -28,8 +29,7 @@ const SessionRow: FC<{ session: SessionInfo }> = ({ session }) => {
   const submitRename = () => { const next = title.trim(); if (next && next !== session.title) renameSession(session.id, next); setRenaming(false); };
   return <motion.div layout className={cn("group relative flex h-8 items-center rounded-md", (active || renaming) && "bg-muted")}>
     {renaming ? <input ref={inputRef} value={title} onChange={(event) => setTitle(event.target.value)} onBlur={submitRename} onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setTitle(session.title); setRenaming(false); } }} className="border-input bg-background focus:border-ring mx-1 h-6 min-w-0 flex-1 rounded-md border px-2 text-xs outline-none" aria-label={t("sidebar.renameSession")} /> : <button type="button" className={rowButtonClass} onClick={() => selectSession(session.id)}>
-      {active && <span className="size-1.5 shrink-0 rounded-full bg-foreground/60" aria-hidden="true" />}
-      {titleGenerating && <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" aria-label={t("chat.generatingTitle")} />}
+      {titleGenerating && <MorphingSpinner className="text-muted-foreground" label={t("chat.generatingTitle")} />}
       <span className="min-w-0 flex-1 truncate">{session.title || t("sidebar.newChat")}</span>{priority && <PinIcon className="text-muted-foreground size-3 shrink-0" />}
     </button>}
     {!renaming && <div className={cn("absolute end-1 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100", active && "opacity-100")}><SidebarEntityMenu pinned={priority} onTogglePinned={() => togglePriority(session.id)} onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session.title || t("sidebar.newChat") }))) deleteSession(session.id); }} ariaLabel={t("sidebar.chatOptions")} /></div>}

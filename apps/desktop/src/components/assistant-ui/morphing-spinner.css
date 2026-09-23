@@ -1,0 +1,17 @@
+.q-morphing-spinner { animation: q-spinner-turn 1.65s linear infinite; }
+.q-morphing-spinner circle { stroke-dasharray: 6 94; animation: q-spinner-arc 1.65s cubic-bezier(.4, 0, .2, 1) infinite; }
+
+@keyframes q-spinner-turn {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes q-spinner-arc {
+  0% { stroke-dasharray: 6 94; stroke-dashoffset: 0; }
+  50% { stroke-dasharray: 72 28; stroke-dashoffset: -22; }
+  100% { stroke-dasharray: 6 94; stroke-dashoffset: -100; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .q-morphing-spinner, .q-morphing-spinner circle { animation: none; }
+  .q-morphing-spinner circle { stroke-dasharray: 28 72; }
+}

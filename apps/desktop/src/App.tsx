@@ -11,13 +11,17 @@ import {
   type ExternalStoreThreadListAdapter,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
+import type { MessageAttachmentInfo } from "@qone/protocol";
+import { serializeMessageAttachments } from "./lib/message-attachments";
+import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { Thread } from "./components/assistant-ui/Thread";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { ProjectSection } from "./components/assistant-ui/project-section";
+import { SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { ApprovalCard } from "./components/tool-ui/ToolCard";
-import { Moon, PanelLeftIcon, PlusIcon, Settings, Sun, X } from "lucide-react";
+import { ArrowLeft, Moon, PanelLeftIcon, PlusIcon, PuzzleIcon, Settings, Sun, X } from "lucide-react";
 import { cn } from "./lib/utils";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { ConfirmationDialogHost } from "./components/ui/ConfirmationDialog";
@@ -25,7 +29,7 @@ import { confirmDestructiveAction } from "./lib/confirm-action";
 import { useLocale } from "./localization";
 import { QoneSelect } from "./components/ui/Select";
 import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-preferences";
-import qoneLogoUrl from "../src-tauri/icons/everytalk-logo.png";
+import qonePenguinUrl from "./assets/qone-penguin.png";
 
 type Theme = "light" | "dark";
 type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -53,22 +57,21 @@ function ThemeButton({ theme, onToggle }: { theme: Theme; onToggle: () => void }
   );
 }
 
-const attachmentAdapter = new CompositeAttachmentAdapter([new SimpleTextAttachmentAdapter(), new SimpleImageAttachmentAdapter()]);
+const attachmentAdapter = new CompositeAttachmentAdapter([
+  new SimpleTextAttachmentAdapter(),
+  new SimpleImageAttachmentAdapter(),
+  new AnyFileAttachmentAdapter(),
+]);
 
 const extractText = (message: AppendMessage): string => {
   const partsText = message.content
     .filter((part): part is { type: "text"; text: string } => part.type === "text")
     .map((part) => part.text)
     .join("");
-  const attachmentText = (message.attachments ?? [])
-    .flatMap((attachment) => attachment.content ?? [])
-    .filter((part): part is { type: "text"; text: string } => part.type === "text")
-    .map((part) => part.text)
-    .join("\n\n");
-  return [partsText, attachmentText].filter(Boolean).join("\n\n").trim();
+  return partsText.trim();
 };
 
-function useQoneRuntime(pendingRun: { current: string | null }) {
+function useQoneRuntime(pendingRun: { current: { text: string; attachments: MessageAttachmentInfo[] } | null }) {
   const { t } = useLocale();
   const messages = useStore((s) => s.messages);
   const streaming = useStore((s) => s.streaming);
@@ -87,7 +90,7 @@ function useQoneRuntime(pendingRun: { current: string | null }) {
   const hasStreamingAssistant = running;
   const runtimeMessages = useMemo(
     () => hasStreamingAssistant
-      ? [...messages, { id: "streaming", role: "assistant", content: streaming, runId: activeRunId }]
+      ? [...messages, { id: "streaming", role: "assistant", content: streaming, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }]
       : messages,
     [messages, streaming, activeRunId, hasStreamingAssistant],
   );
@@ -133,10 +136,17 @@ function useQoneRuntime(pendingRun: { current: string | null }) {
     isRunning: running,
     convertMessage: (message): ThreadMessageLike => {
       const role = message.role === "assistant" ? "assistant" : "user";
+      const createdAt = new Date(message.createdAt ?? Date.now());
       if (role === "user") return {
         id: message.id,
         role,
-        content: [{ type: "text", text: message.content }],
+        createdAt,
+        content: [
+          ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
+          ...(message.attachments ?? []).map((attachment) => attachment.type === "image"
+            ? { type: "image" as const, image: attachment.data, filename: attachment.name }
+            : { type: "file" as const, filename: attachment.name, mimeType: attachment.mimeType, data: attachment.data }),
+        ],
       };
 
       const calls = message.runId ? (toolCallsByRun.get(message.runId) ?? []) : [];
@@ -156,24 +166,33 @@ function useQoneRuntime(pendingRun: { current: string | null }) {
       return {
         id: message.id,
         role,
+        createdAt,
         content,
         status: isStreamingMessage && running ? { type: "running" } : { type: "complete", reason: "stop" },
       };
     },
     onNew: async (message) => {
       const text = extractText(message);
-      if (!text) return;
+      let attachments: MessageAttachmentInfo[];
+      try { attachments = await serializeMessageAttachments(message); }
+      catch (error) { useStore.setState({ lastError: String(error) }); throw error; }
+      if (!text && attachments.length === 0) return;
       const state = useStore.getState();
       if (!state.currentSessionId && state.draftWorkspaceId) {
-        runAgent(text);
+        runAgent(text, undefined, attachments);
         return;
       }
       if (!state.currentSessionId) {
-        pendingRun.current = text;
+        pendingRun.current = { text, attachments };
         newSession();
         return;
       }
-      runAgent(text);
+      runAgent(text, undefined, attachments);
+    },
+    onReload: async (parentId) => {
+      if (!parentId) return;
+      const source = useStore.getState().messages.find((message) => message.id === parentId && message.role === "user");
+      if (source) runAgent(source.content, source.id, source.attachments);
     },
     onCancel: async () => stopAgent(),
     adapters: { threadList, attachments: attachmentAdapter },
@@ -192,10 +211,14 @@ function stringifyToolValue(value: unknown): string {
 
 function Logo() {
   return (
-    <span className="ml-2 flex min-w-0 items-center gap-2 truncate text-[15px] font-semibold">
-      <img src={qoneLogoUrl} alt="logo" className="size-5 shrink-0 rounded dark:hue-rotate-180 dark:invert" />
+    <Link
+      to="/"
+      aria-label="返回主页面"
+      className="ml-2 flex min-w-0 items-center gap-2 truncate text-[15px] font-semibold transition-opacity hover:opacity-80"
+    >
+      <img src={qonePenguinUrl} alt="" aria-hidden="true" className="qone-logo size-5 shrink-0" />
       <span className="text-foreground truncate">Qone</span>
-    </span>
+    </Link>
   );
 }
 
@@ -229,7 +252,7 @@ function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOp
 }
 
 function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme: Theme; onToggleTheme: () => void; initialSettingsOpen?: boolean }) {
-  const pendingRun = useRef<string | null>(null);
+  const pendingRun = useRef<{ text: string; attachments: MessageAttachmentInfo[] } | null>(null);
   const runtime = useQoneRuntime(pendingRun);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
@@ -243,12 +266,14 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
   const currentSessionId = useStore((s) => s.currentSessionId);
   const runAgent = useStore((s) => s.runAgent);
   const sidebarLayout = useSidebarPreferences((s) => s.layout);
+  const sessionsLoaded = useStore((s) => s.sessionsLoaded);
+  const workspacesLoaded = useStore((s) => s.workspacesLoaded);
 
   useEffect(() => {
     if (currentSessionId && pendingRun.current) {
-      const text = pendingRun.current;
+      const { text, attachments } = pendingRun.current;
       pendingRun.current = null;
-      runAgent(text);
+      runAgent(text, undefined, attachments);
     }
   }, [currentSessionId, runAgent]);
 
@@ -277,7 +302,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
           <ThreadListRoot
             className={cn(
               "relative flex-1 overflow-x-hidden transition-[padding,width] duration-200",
-              sidebarCollapsed ? "w-12 overflow-hidden px-2 pt-1" : "w-65 overflow-y-auto p-3",
+              sidebarCollapsed ? "w-12 overflow-hidden px-2 pt-1" : "w-65 overflow-y-auto [scrollbar-gutter:stable] p-3",
             )}
           >
             <ThreadListNew
@@ -287,14 +312,27 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               )}
               labelClassName={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}
             />
-            {sidebarLayout === "project" && <div
+            <Link
+              to="/plugins"
+              aria-label="插件"
+              className={cn(
+                "hover:bg-muted text-foreground/95 hover:text-foreground flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
+                sidebarCollapsed ? "w-8 justify-center gap-0 px-2" : "w-full",
+              )}
+            >
+              <PuzzleIcon className="size-4 shrink-0" />
+              <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}>插件</span>
+            </Link>
+            {sidebarLayout === "project" && (!workspacesLoaded || !sessionsLoaded) && !sidebarCollapsed && <SidebarLoadingSkeleton layout="project" />}
+            {sidebarLayout === "project" && workspacesLoaded && sessionsLoaded && <div
               aria-hidden={sidebarCollapsed}
               inert={sidebarCollapsed}
               className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
             >
               <ProjectSection />
             </div>}
-            {sidebarLayout === "list" && <ThreadListItems
+            {sidebarLayout === "list" && !sessionsLoaded && !sidebarCollapsed && <SidebarLoadingSkeleton layout="list" />}
+            {sidebarLayout === "list" && sessionsLoaded && <ThreadListItems
                 aria-hidden={sidebarCollapsed}
                 inert={sidebarCollapsed}
                 className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
@@ -303,7 +341,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
           <SidebarFooter collapsed={sidebarCollapsed} onOpenSettings={() => setSettingsOpen(true)} />
         </aside>
 
-        <div className="relative min-w-0 flex-1 overflow-hidden bg-white dark:bg-black">
+        <div className="relative min-w-0 flex-1 overflow-hidden bg-background">
           {lastError && (
             <div className="error-banner absolute inset-x-4 top-3 z-20" role="alert">
               <span>{lastError}</span>
@@ -323,8 +361,15 @@ function PageLayout({ title, theme, onToggleTheme, children }: { title: string; 
   return (
     <div className="page-shell">
       <header className="page-topbar">
-        <Link className="brand-link" to="/"><img className="brand-mark" src={qoneLogoUrl} alt="" aria-hidden="true" /><span>Qone</span></Link>
-        <div className="page-topbar-actions"><span className="page-title">{title}</span><ThemeButton theme={theme} onToggle={onToggleTheme} /></div>
+        <Link className="brand-link" to="/"><img className="qone-logo brand-mark" src={qonePenguinUrl} alt="" aria-hidden="true" /><span>Qone</span></Link>
+        <div className="page-topbar-actions">
+          <Link to="/" className="page-back-link">
+            <ArrowLeft size={16} aria-hidden="true" />
+            <span>返回主页面</span>
+          </Link>
+          <span className="page-title">{title}</span>
+          <ThemeButton theme={theme} onToggle={onToggleTheme} />
+        </div>
       </header>
       <main className="page-content">{children}</main>
     </div>
@@ -361,21 +406,22 @@ function ManagementPanel({ kind }: { kind: "mcp" | "skills" | "plugins" | "permi
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
+  const { pathname } = useLocation();
   const sessions = useStore((s) => s.sessions);
   const workspaces = useStore((s) => s.workspaces);
   const currentWorkspaceId = useStore((s) => s.currentWorkspaceId);
   const currentSessionId = useStore((s) => s.currentSessionId);
   const running = useStore((s) => s.running);
+  const selectWorkspace = useStore((s) => s.selectWorkspace);
   const selectSession = useStore((s) => s.selectSession);
-  const refreshWorkspace = useStore((s) => s.refreshWorkspace);
 
   useEffect(() => { initBridge(); }, []);
   useEffect(() => {
-    const sessionMatch = window.location.pathname.match(/^\/chat\/([^/]+)/); const workspaceMatch = window.location.pathname.match(/^\/workspaces\/([^/]+)/);
+    const sessionMatch = pathname.match(/^\/chat\/([^/]+)/); const workspaceMatch = pathname.match(/^\/workspaces\/([^/]+)/);
     if (sessionMatch) { const routeSessionId = decodeURIComponent(sessionMatch[1]); if (sessions.some((session) => session.id === routeSessionId) && currentSessionId !== routeSessionId) selectSession(routeSessionId); }
-    if (workspaceMatch && !running) { const routeWorkspaceId = decodeURIComponent(workspaceMatch[1]); if (workspaces.some((workspace) => workspace.id === routeWorkspaceId) && currentWorkspaceId !== routeWorkspaceId) { useStore.setState({ currentWorkspaceId: routeWorkspaceId }); refreshWorkspace(routeWorkspaceId); } }
-  }, [sessions, workspaces, currentSessionId, currentWorkspaceId, running, selectSession, refreshWorkspace]);
+    if (workspaceMatch && !running) { const routeWorkspaceId = decodeURIComponent(workspaceMatch[1]); if (workspaces.some((workspace) => workspace.id === routeWorkspaceId) && currentWorkspaceId !== routeWorkspaceId) selectWorkspace(routeWorkspaceId); }
+  }, [pathname, sessions, workspaces, currentSessionId, currentWorkspaceId, running, selectSession, selectWorkspace]);
 
-  if (["/mcp", "/skills", "/plugins", "/permissions"].includes(window.location.pathname)) return <ManagementPanel kind={window.location.pathname.slice(1) as "mcp" | "skills" | "plugins" | "permissions"} />;
-  return <ChatPage theme={theme} onToggleTheme={toggleTheme} initialSettingsOpen={window.location.pathname === "/settings"} />;
+  if (["/mcp", "/skills", "/plugins", "/permissions"].includes(pathname)) return <ManagementPanel kind={pathname.slice(1) as "mcp" | "skills" | "plugins" | "permissions"} />;
+  return <ChatPage theme={theme} onToggleTheme={toggleTheme} initialSettingsOpen={pathname === "/settings"} />;
 }

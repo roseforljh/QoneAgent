@@ -1,0 +1,11 @@
+.q-chat-footer { isolation: isolate; }
+
+.q-chat-footer::before {
+  content: "";
+  position: absolute;
+  inset: -3rem 0 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--q-chat-bg) 75%);
+  mask-image: linear-gradient(to right, transparent, #000 18%);
+}

@@ -7,13 +7,14 @@ import {
   ThreadListPrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { Loader2Icon, MoreHorizontalIcon, PencilIcon, PinIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { MoreHorizontalIcon, PencilIcon, PinIcon, PlusIcon, TrashIcon } from "lucide-react";
 import { Fragment, forwardRef, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type FC } from "react";
 import { useStore } from "../../store";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { useSidebarPreferences } from "../../lib/sidebar-preferences";
 import { useLocale, type MessageKey } from "../../localization";
 import "./sidebar-menu.css";
+import { MorphingSpinner } from "./morphing-spinner";
 
 export const ThreadListRoot: FC<ComponentPropsWithoutRef<typeof ThreadListPrimitive.Root>> = ({ className, ...props }) => {
   return <ThreadListPrimitive.Root data-slot="aui_thread-list-root" className={cn("flex flex-col gap-0.5", className)} {...props} />;
@@ -147,7 +148,7 @@ export const ThreadListItem: FC = () => {
         data-slot="aui_thread-list-item-trigger"
         className="focus-visible:ring-ring/50 text-foreground/95 group-hover:text-foreground group-data-active:text-foreground flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start outline-none transition-colors group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
       >
-        {isRunning && <Loader2Icon aria-hidden data-slot="aui_thread-list-item-running" className="text-muted-foreground me-1.5 size-3.5 shrink-0 animate-spin" />}
+        {isRunning && <MorphingSpinner data-slot="aui_thread-list-item-running" className="text-muted-foreground me-1.5" />}
         <span data-slot="aui_thread-list-item-title" className="min-w-0 flex-1 truncate">
           <ThreadListItemPrimitive.Title fallback="New Chat" />
         </span>

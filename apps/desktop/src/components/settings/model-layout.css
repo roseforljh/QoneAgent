@@ -64,6 +64,11 @@
 .settings-model-select input:hover { border-color: var(--foreground); }
 .settings-model-edit:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
 .settings-model-select input:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.settings-model-fetch { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.settings-model-fetch .settings-inline-status { margin: 0; }
+.settings-model-sources { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 18px; }
+.settings-model-sources span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted-foreground); font-size: 11px; }
+.settings-model-sources strong { color: var(--foreground); font-weight: var(--q-weight-medium); }
 
 /* Outside the provider dialog: only the list scrolls, never the surrounding form. */
 .settings-sync-layer {

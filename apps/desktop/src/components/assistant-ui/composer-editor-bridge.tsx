@@ -8,8 +8,15 @@ import {
 import { $deleteComposerToolBackward, $insertComposerTool, type ComposerToolId } from "../../lib/composer-tool-editor";
 
 export type InsertComposerTool = (tool: { id: ComposerToolId; label: string }) => void;
+export type ToggleComposerMention = () => void;
 
-export function ComposerEditorBridge({ onReady }: { onReady?: (insert: InsertComposerTool | null) => void }) {
+export function ComposerEditorBridge({
+  onReady,
+  onMentionToggleReady,
+}: {
+  onReady?: (insert: InsertComposerTool | null) => void;
+  onMentionToggleReady?: (toggle: ToggleComposerMention | null) => void;
+}) {
   const [editor] = useLexicalComposerContext();
   const savedSelection = useRef<RangeSelection | null>(null);
   useEffect(() => editor.registerUpdateListener(({ editorState }) => {
@@ -31,6 +38,19 @@ export function ComposerEditorBridge({ onReady }: { onReady?: (insert: InsertCom
     editor.focus();
   }, [editor]);
 
+  const toggleMention = useCallback<ToggleComposerMention>(() => {
+    if (!editor.isEditable()) return;
+    editor.update(() => {
+      const saved = savedSelection.current;
+      if (saved && $getNodeByKey(saved.anchor.key)?.isAttached() && $getNodeByKey(saved.focus.key)?.isAttached()) {
+        $setSelection(saved.clone());
+      }
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) selection.insertText("@");
+    }, { tag: HISTORY_PUSH_TAG });
+    editor.focus();
+  }, [editor]);
+
   useEffect(() => {
     const unregisterKey = editor.registerCommand(KEY_BACKSPACE_COMMAND, (event) => {
       if (editor.isComposing() || event?.isComposing || event?.ctrlKey || event?.altKey || event?.metaKey) return false;
@@ -41,7 +61,13 @@ export function ComposerEditorBridge({ onReady }: { onReady?: (insert: InsertCom
     const unregisterDelete = editor.registerCommand(DELETE_CHARACTER_COMMAND, (backward) =>
       !editor.isComposing() && backward && $deleteComposerToolBackward(), COMMAND_PRIORITY_HIGH);
     onReady?.(insertTool);
-    return () => { unregisterKey(); unregisterDelete(); onReady?.(null); };
-  }, [editor, insertTool, onReady]);
+    onMentionToggleReady?.(toggleMention);
+    return () => {
+      unregisterKey();
+      unregisterDelete();
+      onReady?.(null);
+      onMentionToggleReady?.(null);
+    };
+  }, [editor, insertTool, onMentionToggleReady, onReady, toggleMention]);
   return null;
 }
