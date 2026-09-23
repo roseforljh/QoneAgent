@@ -12,6 +12,8 @@ export interface ChatMessage {
   id: string;
   role: string;
   content: string;
+  runId?: string;
+  createdAt?: number;
 }
 
 export interface PendingApproval {
@@ -22,10 +24,15 @@ export interface PendingApproval {
 
 export interface ToolCall {
   toolCallId: string;
+  runId: string;
   toolName: string;
   status: "running" | "success" | "failed" | "waiting";
   args?: unknown;
+  argsText?: string;
+  result?: unknown;
   summary?: string;
+  startedAt?: number;
+  completedAt?: number;
 }
 
 interface AgentState {
@@ -42,6 +49,10 @@ interface AgentState {
   artifacts: ArtifactInfo[];
   currentWorkspaceId?: string;
   currentSessionId?: string;
+  draftWorkspaceId?: string;
+  creatingSession: boolean;
+  pendingMessage?: string;
+  titleGeneratingSessionIds: string[];
   messages: ChatMessage[];
   streaming: string;
   running: boolean;
@@ -56,6 +67,9 @@ interface AgentState {
   send: (cmd: RuntimeCommand) => void;
   newSession: () => void;
   newSessionInWorkspace: (workspaceId: string) => void;
+  createSessionForWorkspace: (workspaceId: string) => void;
+  renameSession: (id: string, title: string) => void;
+  deleteSession: (id: string) => void;
   chooseWorkspace: () => void;
   renameWorkspace: (id: string, name: string) => void;
   deleteWorkspace: (id: string) => void;
@@ -72,6 +86,7 @@ interface AgentState {
 }
 
 const rid = () => crypto.randomUUID();
+const handshakeRequests = new Set<string>();
 
 export const useStore = create<AgentState>((set, get) => ({
   connected: false,
@@ -88,6 +103,10 @@ export const useStore = create<AgentState>((set, get) => ({
   messages: [],
   streaming: "",
   running: false,
+  draftWorkspaceId: undefined,
+  creatingSession: false,
+  pendingMessage: undefined,
+  titleGeneratingSessionIds: [],
   activeRunId: undefined,
   approvals: [],
   toolCalls: [],
@@ -105,6 +124,7 @@ export const useStore = create<AgentState>((set, get) => ({
   send: (cmd) => {
     // Browser previews do not expose Tauri's invoke bridge.
     if (!hasTauriBridge()) return;
+    if (cmd.type === "ping") handshakeRequests.add(cmd.requestId);
     invoke("runtime_send", { cmd: JSON.stringify(cmd) }).catch((error) => {
       console.error("runtime_send failed", error);
       set({ lastError: String(error), ...(cmd.type === "agent.run" ? { running: false } : {}) });
@@ -116,8 +136,26 @@ export const useStore = create<AgentState>((set, get) => ({
   },
 
   newSessionInWorkspace: (workspaceId) => {
-    set({ currentWorkspaceId: workspaceId });
-    get().send({ type: "session.create", requestId: rid(), workspaceId });
+    if (get().running || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
+    set({ currentWorkspaceId: workspaceId, currentSessionId: undefined, draftWorkspaceId: workspaceId, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [], lastError: undefined });
+    get().refreshWorkspace(workspaceId);
+  },
+
+  createSessionForWorkspace: (workspaceId) => {
+    if (get().running || get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
+    set({ creatingSession: true, currentWorkspaceId: workspaceId, draftWorkspaceId: workspaceId, lastError: undefined });
+    get().send({ type: "session.create", requestId: rid(), title: "New session", workspaceId });
+  },
+
+  renameSession: (id, title) => {
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle) return;
+    get().send({ type: "session.rename", requestId: rid(), sessionId: id, title: normalizedTitle });
+  },
+
+  deleteSession: (id) => {
+    get().send({ type: "session.delete", requestId: rid(), sessionId: id });
+    get().send({ type: "session.list", requestId: rid() });
   },
 
   renameWorkspace: (id, name) => {
@@ -146,6 +184,10 @@ export const useStore = create<AgentState>((set, get) => ({
   },
 
   chooseWorkspace: () => {
+    if (!hasTauriBridge()) {
+      set({ lastError: "当前是 Vite 网页预览，未连接 Tauri 原生运行时。请使用 bun run --cwd apps/desktop tauri dev 测试项目导入和 AI 对话。" });
+      return;
+    }
     invoke<string | null>("pick_workspace")
       .then((path) => {
         if (!path) return;
@@ -156,13 +198,16 @@ export const useStore = create<AgentState>((set, get) => ({
           path,
         });
       })
-      .catch((error) => console.error("workspace picker failed", error));
+      .catch((error) => {
+        console.error("workspace picker failed", error);
+        set({ lastError: `项目选择器打开失败：${String(error)}` });
+      });
   },
 
   selectSession: (id) => {
     if (get().running && get().currentSessionId !== id) return;
     const workspaceId = get().sessions.find((session) => session.id === id)?.workspaceId;
-    set({ currentSessionId: id, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [] });
+    set({ currentSessionId: id, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [] });
     get().send({ type: "session.messages", requestId: rid(), sessionId: id });
     get().send({ type: "session.toolCalls", requestId: rid(), sessionId: id });
     get().send({ type: "session.runs", requestId: rid(), sessionId: id });
@@ -172,15 +217,34 @@ export const useStore = create<AgentState>((set, get) => ({
 
   runAgent: (message) => {
     const sid = get().currentSessionId;
-    if (!sid) return;
+    if (!sid) {
+      const workspaceId = get().draftWorkspaceId;
+      if (!workspaceId || get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
+      set({ pendingMessage: message, currentWorkspaceId: workspaceId, lastError: undefined });
+      get().createSessionForWorkspace(workspaceId);
+      return;
+    }
+    const session = get().sessions.find((item) => item.id === sid);
+    if (!session?.workspaceId || !get().workspaces.some((workspace) => workspace.id === session.workspaceId)) return;
+    if (get().running) return;
+    if (!hasTauriBridge()) { set({ lastError: "当前未连接桌面运行时，无法发送消息。" }); return; }
+    const messageId = rid();
     set((s) => ({
-      messages: [...s.messages, { id: rid(), role: "user", content: message }],
+      messages: [...s.messages, { id: messageId, role: "user", content: message }],
       streaming: "",
       running: true,
+      creatingSession: false,
+      pendingMessage: undefined,
       lastError: undefined,
       toolCalls: [],
+      titleGeneratingSessionIds: s.messages.length === 0 && !s.titleGeneratingSessionIds.includes(sid)
+        ? [...s.titleGeneratingSessionIds, sid]
+        : s.titleGeneratingSessionIds,
     }));
-    get().send({ type: "agent.run", requestId: rid(), sessionId: sid, message, model: get().selectedModelId });
+    get().send({ type: "agent.run", requestId: rid(), sessionId: sid, message, messageId, model: get().selectedModelId });
+    if (get().messages.length === 1) {
+      get().send({ type: "session.generate-title", requestId: rid(), sessionId: sid, prompt: message, model: get().selectedModelId });
+    }
   },
 
   stopAgent: () => {
@@ -260,6 +324,7 @@ export function initBridge() {
     const s = useStore.getState();
     switch (msg.type) {
       case "pong":
+        if (!handshakeRequests.delete(msg.requestId)) break;
         useStore.setState({ connected: true });
         s.send({ type: "session.list", requestId: rid() });
         s.send({ type: "workspace.list", requestId: rid() });
@@ -272,12 +337,19 @@ export function initBridge() {
           sessions: [msg.session, ...st.sessions],
           currentSessionId: msg.session.id,
           currentWorkspaceId: msg.session.workspaceId ?? st.currentWorkspaceId,
+          draftWorkspaceId: undefined,
           messages: [],
           streaming: "",
           toolCalls: [],
           runs: [],
           artifacts: [],
         }));
+        if (useStore.getState().creatingSession && useStore.getState().pendingMessage) {
+          queueMicrotask(() => {
+            const state = useStore.getState();
+            if (state.currentSessionId === msg.session.id && state.pendingMessage) state.runAgent(state.pendingMessage);
+          });
+        }
         break;
       case "session.list": {
         const cur = useStore.getState().currentSessionId;
@@ -296,18 +368,34 @@ export function initBridge() {
         }
         break;
       }
+      case "session.renamed":
+        useStore.setState((st) => ({
+          sessions: st.sessions.map((session) => session.id === msg.session.id ? msg.session : session),
+          titleGeneratingSessionIds: st.titleGeneratingSessionIds.filter((id) => id !== msg.session.id),
+        }));
+        break;
       case "session.messages":
         if (msg.sessionId === useStore.getState().currentSessionId) {
-          useStore.setState({ messages: msg.messages.map((m: MessageInfo) => ({ id: m.id, role: m.role, content: m.content })) });
+          useStore.setState({ messages: msg.messages.map((m: MessageInfo) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            runId: m.runId,
+            createdAt: m.createdAt,
+          })) });
         }
         break;
       case "session.toolCalls":
         if (msg.sessionId === useStore.getState().currentSessionId) {
           useStore.setState({ toolCalls: msg.toolCalls.map((t) => ({
-            toolCallId: t.id, toolName: t.toolName,
+            toolCallId: t.id, runId: t.runId, toolName: t.toolName,
             status: t.status === "failed" || t.status === "cancelled" ? "failed" : t.status === "running" ? "running" : t.status === "waiting_approval" ? "waiting" : "success",
             args: (() => { try { return t.arguments ? JSON.parse(t.arguments) : undefined; } catch { return undefined; } })(),
+            argsText: t.arguments ?? undefined,
+            result: (() => { try { return t.resultSummary ? JSON.parse(t.resultSummary) : undefined; } catch { return t.resultSummary; } })(),
             summary: t.resultSummary,
+            startedAt: t.startedAt,
+            completedAt: t.completedAt,
           })) });
         }
         break;
@@ -333,7 +421,7 @@ export function initBridge() {
           currentWorkspaceId: msg.workspace.id,
         }));
         useStore.getState().refreshWorkspace(msg.workspace.id);
-        s.send({ type: "session.create", requestId: rid(), title: "New session", workspaceId: msg.workspace.id });
+        useStore.setState({ draftWorkspaceId: msg.workspace.id, currentSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [] });
         break;
       case "workspace.renamed":
         useStore.setState((st) => ({ workspaces: st.workspaces.map((workspace) => workspace.id === msg.workspace.id ? msg.workspace : workspace) }));
@@ -346,7 +434,7 @@ export function initBridge() {
           return {
             workspaces,
             currentWorkspaceId: nextWorkspaceId,
-            ...(wasCurrent ? { currentSessionId: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [] } : {}),
+            ...(wasCurrent ? { currentSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [] } : {}),
           };
         });
         if (useStore.getState().currentWorkspaceId) useStore.getState().refreshWorkspace();
@@ -412,6 +500,7 @@ export function initBridge() {
       case "error":
         useStore.setState((st) => ({
           lastError: msg.message,
+          ...(st.creatingSession ? { creatingSession: false, pendingMessage: undefined } : {}),
           ...(st.running && !st.activeRunId ? { running: false } : {}),
         }));
         break;
@@ -450,9 +539,15 @@ export function initBridge() {
         else if (ev.type === "tool.started") {
           const tc: ToolCall = {
             toolCallId: String(p?.toolCallId ?? rid()),
+            runId: ev.runId ?? "",
             toolName: String(p?.toolName ?? "tool"),
             status: "running",
             args: p?.input ?? p?.args,
+            argsText: (() => {
+              const value = p?.input ?? p?.args;
+              if (typeof value === "string") return value;
+              try { return JSON.stringify(value ?? {}); } catch { return "{}"; }
+            })(),
           };
           useStore.setState((st) => ({ toolCalls: [...st.toolCalls, tc] }));
         } else if (ev.type === "tool.completed" || ev.type === "tool.failed") {
@@ -464,7 +559,9 @@ export function initBridge() {
                 ? {
                     ...t,
                     status: isErr ? "failed" : "success",
+                    result: p?.content ?? p?.result,
                     summary: JSON.stringify(p?.content ?? p?.result ?? "").slice(0, 20_000),
+                    completedAt: ev.timestamp,
                   }
                 : t
             ),
@@ -492,10 +589,33 @@ export function initBridge() {
         else if (
           ev.type === "agent.completed" ||
           ev.type === "agent.cancelled" ||
-          ev.type === "agent.failed" ||
-          ev.type === "agent_settled"
+          ev.type === "agent.failed"
         ) {
           flushNow();
+          const completedMessage = p?.message;
+          if (
+            ev.type === "agent.completed" &&
+            completedMessage &&
+            typeof completedMessage === "object" &&
+            typeof (completedMessage as { id?: unknown }).id === "string" &&
+            typeof (completedMessage as { content?: unknown }).content === "string"
+          ) {
+            const message = completedMessage as { id: string; role?: string; content: string; runId?: string; createdAt?: number };
+            useStore.setState((st) => ({
+              messages: st.messages.some((item) => item.id === message.id)
+                ? st.messages
+                : [...st.messages, {
+                    id: message.id,
+                    role: message.role ?? "assistant",
+                    content: message.content,
+                    runId: message.runId,
+                    createdAt: message.createdAt,
+                  }],
+            }));
+          }
+          if (ev.type === "agent.failed" && typeof p?.message === "string") {
+            useStore.setState({ lastError: p.message });
+          }
           if (ev.runId) {
             const status = ev.type === "agent.completed" ? "completed" : ev.type === "agent.cancelled" ? "cancelled" : "failed";
             useStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status, completedAt: Date.now() } : run) }));

@@ -1,3 +1,5 @@
+import { modelListUrl, parseModelMetadataResponse, type ModelMetadata } from "@qone/protocol";
+import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT } from "../../lib/model-picker-data";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
@@ -30,13 +32,18 @@ import {
 } from "lucide-react";
 import { useStore } from "../../store";
 import { cn } from "../../lib/utils";
+import { confirmDestructiveAction, getConfirmationRequest } from "../../lib/confirm-action";
+import { GENERAL_SETTINGS_KEY, readGeneralSettings, saveLanguageSetting, useLocale, type LanguageSetting, type LocalizedMessage } from "../../localization";
+import { ModelCard } from "./ModelCard";
+import { ProviderLogo } from "./ProviderLogo";
+import "./model-layout.css";
 
 type Theme = "light" | "dark";
 type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents";
 
 type SettingsSection = {
   id: SettingsSectionId;
-  label: string;
+  labelKey: `nav.${SettingsSectionId}`;
   icon: typeof Settings2;
 };
 
@@ -44,20 +51,19 @@ const ORDER_STORAGE_KEY = "qone-settings-section-order";
 const LONG_PRESS_MS = 280;
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
-  { id: "general", label: "通用", icon: Settings2 },
-  { id: "personalization", label: "个性化", icon: CircleUserRound },
-  { id: "configuration", label: "配置", icon: MonitorCog },
-  { id: "models", label: "模型", icon: Bot },
-  { id: "mcp", label: "MCP", icon: Command },
-  { id: "skills", label: "技能", icon: BrainCircuit },
-  { id: "subagents", label: "子代理", icon: BotMessageSquare },
+  { id: "general", labelKey: "nav.general", icon: Settings2 },
+  { id: "personalization", labelKey: "nav.personalization", icon: CircleUserRound },
+  { id: "configuration", labelKey: "nav.configuration", icon: MonitorCog },
+  { id: "models", labelKey: "nav.models", icon: Bot },
+  { id: "mcp", labelKey: "nav.mcp", icon: Command },
+  { id: "skills", labelKey: "nav.skills", icon: BrainCircuit },
+  { id: "subagents", labelKey: "nav.subagents", icon: BotMessageSquare },
 ];
 
 const DEFAULT_ORDER = SETTINGS_SECTIONS.map((section) => section.id);
-const GENERAL_SETTINGS_KEY = "qone-general-settings";
 
-type GeneralSettings = { contrast: "enhanced" | "default" | "reduced"; accent: "purple" | "blue" | "green"; language: "auto" | "zh-CN" | "en" };
-const DEFAULT_GENERAL_SETTINGS: GeneralSettings = { contrast: "default", accent: "purple", language: "auto" };
+type GeneralSettings = { contrast: "enhanced" | "default" | "reduced"; accent: "purple" | "blue" | "green" };
+const DEFAULT_GENERAL_SETTINGS: GeneralSettings = { contrast: "default", accent: "purple" };
 
 function loadGeneralSettings(): GeneralSettings {
   try {
@@ -67,10 +73,9 @@ function loadGeneralSettings(): GeneralSettings {
 }
 
 function saveGeneralSettings(settings: GeneralSettings) {
-  window.localStorage.setItem(GENERAL_SETTINGS_KEY, JSON.stringify(settings));
+  window.localStorage.setItem(GENERAL_SETTINGS_KEY, JSON.stringify({ ...readGeneralSettings(), contrast: settings.contrast, accent: settings.accent }));
   document.documentElement.dataset.contrast = settings.contrast;
   document.documentElement.dataset.accent = settings.accent;
-  document.documentElement.lang = settings.language === "auto" ? navigator.language : settings.language;
 }
 
 function loadSectionOrder(): SettingsSectionId[] {
@@ -101,7 +106,7 @@ function SectionHeader({ eyebrow, title, children }: { eyebrow: string; title: s
 
 type ProviderApiType = "openai-compatible" | "codex" | "claude" | "google";
 type Capability = "text" | "image" | "video" | "audio";
-type ThinkingLevel = "none" | "low" | "medium" | "high";
+type ThinkingLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 type ModelSettings = {
   maxOutput: number;
@@ -109,21 +114,23 @@ type ModelSettings = {
   thinking: ThinkingLevel;
   input: Capability[];
   output: Capability[];
+  /** Let the runtime fill missing values from Pi and models.dev. */
+  autoMetadata?: boolean;
+  modelMetadata?: ModelMetadata;
+  metadataOverrides?: Partial<Record<"maxOutput" | "maxContext" | "thinking" | "input" | "output", boolean>>;
 };
 
 type ProviderModel = { id: string; label: string; settings?: ModelSettings };
 type ProviderProfile = { id: string; name: string; apiType: ProviderApiType; baseUrl: string; models: ProviderModel[]; updatedAt: number };
 
-const PROVIDERS_STORAGE_KEY = "qone-model-providers";
-const ACTIVE_PROVIDER_STORAGE_KEY = "qone-active-provider";
-const providerApiLabels: Record<ProviderApiType, string> = {
-  "openai-compatible": "OpenAI 兼容",
-  codex: "Codex",
-  claude: "Claude",
-  google: "Google",
-};
+
+const providerApiLabelKeys = {
+  "openai-compatible": "provider.openaiCompatible",
+  codex: "provider.codex",
+  claude: "provider.claude",
+  google: "provider.google",
+} as const;
 const capabilities: Capability[] = ["text", "image", "video", "audio"];
-const capabilityLabels: Record<Capability, string> = { text: "文本", image: "图像", video: "视频", audio: "音频" };
 
 function loadProviderProfiles(): ProviderProfile[] {
   try {
@@ -136,6 +143,7 @@ function loadProviderProfiles(): ProviderProfile[] {
 
 function saveProviderProfiles(profiles: ProviderProfile[]) {
   window.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify(profiles));
+  window.dispatchEvent(new Event(MODEL_CONFIG_CHANGE_EVENT));
 }
 
 function providerId(name: string) {
@@ -147,56 +155,88 @@ function normalizeBaseUrl(value: string) {
 }
 
 function modelsEndpoint(apiType: ProviderApiType, baseUrl: string) {
-  const base = normalizeBaseUrl(baseUrl);
-  if (!base) return "";
-  if (/\/models$/i.test(base)) return base;
-  if (apiType === "google") return `${base}/v1beta/models`;
-  return `${base}/v1/models`;
+  if (!baseUrl.trim()) return "";
+  try { return modelListUrl(apiType, baseUrl); } catch { return ""; }
 }
 
 function parseModelsResponse(data: unknown): ProviderModel[] {
-  const candidates = Array.isArray(data) ? data : (data as { data?: unknown[]; models?: unknown[] } | null)?.data ?? (data as { models?: unknown[] } | null)?.models ?? [];
-  return candidates.flatMap((item) => {
-    if (typeof item === "string") return [{ id: item, label: item }];
-    if (!item || typeof item !== "object") return [];
-    const record = item as Record<string, unknown>;
-    const id = String(record.id ?? record.name ?? "").replace(/^models\//, "");
-    return id ? [{ id, label: String(record.displayName ?? id) }] : [];
-  });
+  return parseModelMetadataResponse(data).map((item) => ({
+    id: item.id,
+    label: item.label,
+    settings: modelSettingsFromMetadata(item.id, item.metadata),
+  }));
 }
 
 function defaultModelSettings(modelId: string): ModelSettings {
   const isGemini = /gemini/i.test(modelId);
-  return { maxOutput: 8192, maxContext: 128000, thinking: isGemini ? "medium" : "none", input: isGemini ? [...capabilities] : ["text"], output: isGemini ? [...capabilities] : ["text"] };
+  return { maxOutput: 8192, maxContext: 128000, thinking: isGemini ? "medium" : "none", input: isGemini ? [...capabilities] : ["text"], output: isGemini ? [...capabilities] : ["text"], autoMetadata: true };
+}
+
+function modelSettingsFromMetadata(modelId: string, metadata?: ModelMetadata): ModelSettings {
+  const defaults = defaultModelSettings(modelId);
+  if (!metadata) return defaults;
+  const input = metadata.input?.filter((value): value is Capability => capabilities.includes(value as Capability));
+  const output = metadata.output?.filter((value): value is Capability => capabilities.includes(value as Capability));
+  return {
+    ...defaults,
+    ...(metadata.maxTokens ? { maxOutput: metadata.maxTokens } : {}),
+    ...(metadata.contextWindow ? { maxContext: metadata.contextWindow } : {}),
+    ...(input?.length ? { input } : {}),
+    ...(output?.length ? { output } : {}),
+    ...(metadata.reasoning !== undefined ? { thinking: metadata.reasoning ? "medium" as const : "none" as const } : {}),
+    modelMetadata: metadata,
+  };
+}
+
+function mergeFetchedModel(existing: ProviderModel, fetched: ProviderModel): ProviderModel {
+  const current = existing.settings ?? defaultModelSettings(existing.id);
+  const incoming = fetched.settings ?? defaultModelSettings(fetched.id);
+  const overrides = current.metadataOverrides ?? {};
+  return {
+    ...existing,
+    label: fetched.label || existing.label,
+    settings: {
+      ...current,
+      ...(!overrides.maxOutput ? { maxOutput: incoming.maxOutput } : {}),
+      ...(!overrides.maxContext ? { maxContext: incoming.maxContext } : {}),
+      ...(!overrides.thinking ? { thinking: incoming.thinking } : {}),
+      ...(!overrides.input ? { input: incoming.input } : {}),
+      ...(!overrides.output ? { output: incoming.output } : {}),
+      ...(incoming.modelMetadata ? { modelMetadata: incoming.modelMetadata } : {}),
+      autoMetadata: true,
+    },
+  };
 }
 
 type SettingsChoice = { value: string; label: string; description?: string };
 
 function SettingsSelect({ value, options, onChange, prefix }: { value: string; options: SettingsChoice[]; onChange: (value: string) => void; prefix?: ReactNode }) {
-  return <QoneSelect value={value} options={options} onChange={onChange} prefix={prefix} className="settings-select-wrap" triggerClassName="settings-value-button" menuClassName="settings-dropdown" align="end" ariaLabel="设置选项" />;
+  const { t } = useLocale();
+  return <QoneSelect value={value} options={options} onChange={onChange} prefix={prefix} className="settings-select-wrap" triggerClassName="settings-value-button" menuClassName="settings-dropdown" align="end" ariaLabel={t("accessibility.option")} />;
 }
 
 function GeneralSection({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: () => void }) {
-  const [updateStatus, setUpdateStatus] = useState("");
+  const { t, languageSetting } = useLocale();
+  const [updateStatus, setUpdateStatus] = useState<LocalizedMessage | null>(null);
   const [checking, setChecking] = useState(false);
   const [settings, setSettings] = useState<GeneralSettings>(loadGeneralSettings);
-  const { contrast, accent, language } = settings;
+  const { contrast, accent } = settings;
   useEffect(() => { saveGeneralSettings(settings); }, [settings]);
 
   const checkForUpdates = async () => {
     setChecking(true);
-    setUpdateStatus("正在检查更新…");
+    setUpdateStatus({ key: "general.checking" });
     try {
       const update = await check({ timeout: 10_000 });
       if (!update) {
-        setUpdateStatus("当前已是最新版本");
+        setUpdateStatus({ key: "general.latest" });
         return;
       }
-      setUpdateStatus(`发现 ${update.version}，正在下载并安装…`);
+      setUpdateStatus({ key: "general.foundUpdate", values: { version: update.version } });
       await update.downloadAndInstall();
-      setUpdateStatus("更新已安装，重启 Qone 后生效");
+      setUpdateStatus({ key: "general.installed" });
     } catch (error) {
-      setUpdateStatus(`暂时无法检查更新：${String(error)}`);
+      setUpdateStatus({ key: "general.updateFailed", values: { error: String(error) } });
     } finally {
       setChecking(false);
     }
@@ -204,32 +244,32 @@ function GeneralSection({ theme, onToggleTheme }: { theme: Theme; onToggleTheme:
 
   return (
     <>
-      <SectionHeader eyebrow="General" title="通用">管理 Qone 的基础行为与桌面版本。</SectionHeader>
+      <SectionHeader eyebrow={t("general.eyebrow")} title={t("general.title")}>{t("general.description")}</SectionHeader>
       <div className="settings-general-options">
         <div className="settings-option-row">
-          <strong>外观</strong>
-          <SettingsSelect value={theme} onChange={(value) => { if (value !== theme) onToggleTheme(); }} options={[{ value: "light", label: "亮色" }, { value: "dark", label: "暗色" }]} />
+          <strong>{t("general.appearance")}</strong>
+          <SettingsSelect value={theme} onChange={(value) => { if (value !== theme) onToggleTheme(); }} options={[{ value: "light", label: t("general.light") }, { value: "dark", label: t("general.dark") }]} />
         </div>
         <div className="settings-option-row">
-          <strong>对比度</strong>
-          <SettingsSelect value={contrast} onChange={(value) => setSettings((current) => ({ ...current, contrast: value as GeneralSettings["contrast"] }))} options={[{ value: "enhanced", label: "增强", description: "更友好、更亲近" }, { value: "default", label: "默认" }, { value: "reduced", label: "减弱", description: "更专业，事实性更强" }]} />
+          <strong>{t("general.contrast")}</strong>
+          <SettingsSelect value={contrast} onChange={(value) => setSettings((current) => ({ ...current, contrast: value as GeneralSettings["contrast"] }))} options={[{ value: "enhanced", label: t("general.enhanced"), description: t("general.enhancedDescription") }, { value: "default", label: t("general.default") }, { value: "reduced", label: t("general.reduced"), description: t("general.reducedDescription") }]} />
         </div>
         <div className="settings-option-row">
-          <strong>强调色</strong>
-          <SettingsSelect value={accent} onChange={(value) => setSettings((current) => ({ ...current, accent: value as GeneralSettings["accent"] }))} prefix={<i className={cn("settings-accent-dot", `is-${accent}`)} />} options={[{ value: "purple", label: "紫色" }, { value: "blue", label: "蓝色" }, { value: "green", label: "绿色" }]} />
+          <strong>{t("general.accent")}</strong>
+          <SettingsSelect value={accent} onChange={(value) => setSettings((current) => ({ ...current, accent: value as GeneralSettings["accent"] }))} prefix={<i className={cn("settings-accent-dot", `is-${accent}`)} />} options={[{ value: "purple", label: t("general.purple") }, { value: "blue", label: t("general.blue") }, { value: "green", label: t("general.green") }]} />
         </div>
         <div className="settings-option-row">
-          <strong>语言</strong>
-          <SettingsSelect value={language} onChange={(value) => setSettings((current) => ({ ...current, language: value as GeneralSettings["language"] }))} options={[{ value: "auto", label: "自动检测" }, { value: "zh-CN", label: "简体中文" }, { value: "en", label: "English" }]} />
+          <strong>{t("general.language")}</strong>
+          <SettingsSelect value={languageSetting} onChange={(value) => saveLanguageSetting(value as LanguageSetting)} options={[{ value: "auto", label: t("general.auto") }, { value: "zh-CN", label: t("general.chinese") }, { value: "en", label: "English" }]} />
         </div>
       </div>
       <div className="settings-preference-row">
-        <div><strong>应用更新</strong><span>检查并安装可用的桌面版本</span></div>
+        <div><strong>{t("general.updates")}</strong><span>{t("general.updateDescription")}</span></div>
         <button className="settings-secondary-action" type="button" disabled={checking} onClick={checkForUpdates}>
-          {checking ? "检查中…" : "检查更新"}
+          {checking ? t("general.checking") : t("general.checkForUpdates")}
         </button>
       </div>
-      {updateStatus && <p className="settings-inline-status" role="status">{updateStatus}</p>}
+      {updateStatus && <p className="settings-inline-status" role="status">{t(updateStatus.key, updateStatus.values)}</p>}
     </>
   );
 }
@@ -259,6 +299,7 @@ function loadPersonalizationProfile(): PersonalizationProfile {
 }
 
 function PersonalizationSection() {
+  const { t } = useLocale();
   const [profile, setProfile] = useState<PersonalizationProfile>(loadPersonalizationProfile);
   const [showMemoryInfo, setShowMemoryInfo] = useState(false);
 
@@ -272,17 +313,17 @@ function PersonalizationSection() {
 
   return (
     <>
-      <SectionHeader eyebrow="Personalization" title="关于你">这些信息会帮助 Qone 更好地理解你的偏好。</SectionHeader>
+      <SectionHeader eyebrow={t("personalization.eyebrow")} title={t("personalization.title")}>{t("personalization.description")}</SectionHeader>
       <div className="settings-profile-form">
-        <label>昵称<input value={profile.nickname} onChange={(event) => updateProfile("nickname", event.target.value)} /></label>
-        <label>职业<input value={profile.occupation} onChange={(event) => updateProfile("occupation", event.target.value)} /></label>
-        <label>你的详情<textarea rows={3} value={profile.details} onChange={(event) => updateProfile("details", event.target.value)} /></label>
+        <label>{t("personalization.nickname")}<input value={profile.nickname} onChange={(event) => updateProfile("nickname", event.target.value)} /></label>
+        <label>{t("personalization.occupation")}<input value={profile.occupation} onChange={(event) => updateProfile("occupation", event.target.value)} /></label>
+        <label>{t("personalization.details")}<textarea rows={3} value={profile.details} onChange={(event) => updateProfile("details", event.target.value)} /></label>
       </div>
       <section className="settings-memory-section">
-        <div className="settings-memory-heading"><h3>记忆</h3><CircleHelp size={18} /></div>
+        <div className="settings-memory-heading"><h3>{t("personalization.memory")}</h3><CircleHelp size={18} /></div>
         <div className="settings-memory-row">
-          <div><strong>启用记忆</strong><p>让 Qone 依据聊天记录、文件及已关联应用，为你定制专属使用体验。<button type="button" className="settings-learn-more" onClick={() => setShowMemoryInfo((current) => !current)}>了解更多</button></p>{showMemoryInfo && <p className="settings-memory-info">记忆开关只影响个性化上下文的使用，不会删除已有聊天记录。关闭后仍可在这里重新启用。</p>}</div>
-          <button type="button" role="switch" aria-checked={profile.memoryEnabled} className={cn("settings-switch", profile.memoryEnabled && "is-on")} onClick={() => updateProfile("memoryEnabled", !profile.memoryEnabled)}><span /></button>
+          <div><strong>{t("personalization.enableMemory")}</strong><p>{t("personalization.memoryDescription")}<button type="button" className="settings-learn-more" onClick={() => setShowMemoryInfo((current) => !current)}>{t("personalization.learnMore")}</button></p>{showMemoryInfo && <p className="settings-memory-info">{t("personalization.memoryInfo")}</p>}</div>
+          <button type="button" role="switch" aria-label={t("personalization.enableMemory")} aria-checked={profile.memoryEnabled} className={cn("settings-switch", profile.memoryEnabled && "is-on")} onClick={() => updateProfile("memoryEnabled", !profile.memoryEnabled)}><span /></button>
         </div>
       </section>
     </>
@@ -290,59 +331,87 @@ function PersonalizationSection() {
 }
 
 function ModelSyncDialog({ open, fetched, existing, onClose, onAdd }: { open: boolean; fetched: ProviderModel[]; existing: ProviderModel[]; onClose: () => void; onAdd: (models: ProviderModel[]) => void }) {
+  const { t } = useLocale();
   const [tab, setTab] = useState<"new" | "missing">("new");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    setTab("new");
+    const previous = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (getConfirmationRequest()) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); onClose(); }
+      if (event.key === "Tab") {
+        const buttons = dialogRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+        if (!buttons?.length) return;
+        const first = buttons[0], last = buttons[buttons.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    };
+    window.addEventListener("keydown", handleKey, true);
+    return () => { window.removeEventListener("keydown", handleKey, true); previous?.focus(); };
+  }, [open]);
   if (!open) return null;
   const fetchedIds = new Set(fetched.map((model) => model.id));
   const newModels = fetched.filter((model) => !existing.some((current) => current.id === model.id));
   const missingModels = existing.filter((model) => !fetchedIds.has(model.id));
-  return (
-    <div className="settings-subdialog-layer">
-      <div className="settings-subdialog" role="dialog" aria-modal="true" aria-label="同步模型">
-        <div className="settings-subdialog-header"><div><span>模型同步</span><h3>商家模型列表</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label="关闭"><X size={17} /></button></div>
-        <div className="settings-tabs"><button type="button" className={cn(tab === "new" && "is-active")} onClick={() => setTab("new")}>新增模型 <em>{newModels.length}</em></button><button type="button" className={cn(tab === "missing" && "is-active")} onClick={() => setTab("missing")}>消失的模型 <em>{missingModels.length}</em></button></div>
-        <div className="settings-sync-list">{(tab === "new" ? newModels : missingModels).map((model) => <div className="settings-sync-row" key={model.id}><span>{model.label}</span><code>{model.id}</code></div>)}{(tab === "new" ? newModels : missingModels).length === 0 && <p className="settings-empty">{tab === "new" ? "没有发现新模型。" : "没有消失的模型。"}</p>}</div>
-        <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>取消</button>{tab === "new" && <button type="button" className="settings-primary-action" onClick={() => { onAdd(newModels); onClose(); }}><Check size={15} />添加新增模型</button>}</div>
+  return createPortal(
+    <div className="settings-sync-layer">
+      <div ref={dialogRef} tabIndex={-1} className="settings-subdialog settings-sync-dialog" role="dialog" aria-modal="true" aria-label={t("provider.sync")}>
+        <div className="settings-subdialog-header"><div><span>{t("provider.sync")}</span><h3>{t("provider.providerModels")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
+        <div className="settings-tabs"><button type="button" className={cn(tab === "new" && "is-active")} onClick={() => setTab("new")}>{t("provider.newModels")} <em>{newModels.length}</em></button><button type="button" className={cn(tab === "missing" && "is-active")} onClick={() => setTab("missing")}>{t("provider.missingModels")} <em>{missingModels.length}</em></button></div>
+        <div className="settings-sync-list">{(tab === "new" ? newModels : missingModels).map((model) => <div className="settings-sync-row" key={model.id}><span>{model.label}</span>{model.label !== model.id && <code>{model.id}</code>}</div>)}{(tab === "new" ? newModels : missingModels).length === 0 && <p className="settings-empty">{t(tab === "new" ? "provider.noNewModels" : "provider.noMissingModels")}</p>}</div>
+        <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button>{tab === "new" && <button type="button" className="settings-primary-action" onClick={() => { onAdd(newModels); onClose(); }}><Check size={15} />{t("provider.addNewModels")}</button>}</div>
       </div>
-    </div>
+    </div>, document.body
   );
 }
 
 function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { open: boolean; initial?: ProviderProfile; onClose: () => void; onSaved: (profile: ProviderProfile) => void; onDeleted: (profile: ProviderProfile) => void }) {
+  const { t } = useLocale();
   const [name, setName] = useState(initial?.name ?? "");
   const [apiType, setApiType] = useState<ProviderApiType>(initial?.apiType ?? "openai-compatible");
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");
   const [models, setModels] = useState<ProviderModel[]>(initial?.models ?? []);
   const [fetching, setFetching] = useState(false);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<LocalizedMessage | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<ProviderModel[]>([]);
   useEffect(() => {
     if (!open) return;
-    setName(initial?.name ?? ""); setApiType(initial?.apiType ?? "openai-compatible"); setBaseUrl(initial?.baseUrl ?? ""); setApiKey(""); setModels(initial?.models ?? []); setStatus(""); setSyncOpen(false); setFetchedModels([]);
+    setName(initial?.name ?? ""); setApiType(initial?.apiType ?? "openai-compatible"); setBaseUrl(initial?.baseUrl ?? ""); setApiKey(""); setModels(initial?.models ?? []); setStatus(null); setSyncOpen(false); setFetchedModels([]);
   }, [open, initial?.id]);
   if (!open) return null;
   const preview = modelsEndpoint(apiType, baseUrl);
 
   const fetchModels = async () => {
-    if (!preview) { setStatus("请先输入 API 接口地址"); return; }
-    setFetching(true); setStatus("");
+    if (!preview) { setStatus({ key: "provider.fetchFirst" }); return; }
+    setFetching(true); setStatus(null);
     try {
       const headers: Record<string, string> = { Accept: "application/json" };
-      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-      const url = apiType === "google" && apiKey ? `${preview}?key=${encodeURIComponent(apiKey)}` : preview;
-      const response = await fetch(url, { headers });
+      if (apiKey && apiType === "claude") {
+        headers["x-api-key"] = apiKey;
+        headers["anthropic-version"] = "2023-06-01";
+      } else if (apiKey && apiType !== "google") {
+        headers.Authorization = `Bearer ${apiKey}`;
+      }
+      const requestUrl = new URL(preview);
+      if (apiType === "google" && apiKey) requestUrl.searchParams.set("key", apiKey);
+      const response = await fetch(requestUrl, { headers });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const result = parseModelsResponse(await response.json());
-      if (!result.length) throw new Error("接口没有返回可识别的模型");
+      if (!result.length) { setStatus({ key: "provider.noRecognizableModels" }); return; }
       setFetchedModels(result); setSyncOpen(true);
     } catch (error) {
-      setStatus(`获取模型失败：${String(error)}。也可以在模型页面手动添加。`);
+      setStatus({ key: "provider.fetchFailed", values: { error: String(error) } });
     } finally { setFetching(false); }
   };
 
   const save = async () => {
-    if (!name.trim() || !baseUrl.trim()) { setStatus("请填写商家名称和 API 接口地址"); return; }
+    if (!name.trim() || !baseUrl.trim()) { setStatus({ key: "provider.requiredFields" }); return; }
     const profile: ProviderProfile = { id: initial?.id ?? providerId(name), name: name.trim(), apiType, baseUrl: normalizeBaseUrl(baseUrl), models, updatedAt: Date.now() };
     if (apiKey) {
       if (hasTauriBridge()) await invoke("secret_set", { key: `model.apiKey:${profile.id}`, value: apiKey });
@@ -353,50 +422,93 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
 
   const remove = async () => {
     if (!initial) return;
-    if (!window.confirm(`删除商家“${initial.name}”及其模型配置？`)) return;
+    if (!await confirmDestructiveAction(t("provider.deleteConfirm", { name: initial.name }))) return;
     if (hasTauriBridge()) await invoke("secret_delete", { key: `model.apiKey:${initial.id}` }).catch(() => undefined);
     useStore.getState().send({ type: "secret.delete", requestId: crypto.randomUUID(), key: `model.apiKey:${initial.id}` });
     onDeleted(initial); onClose();
   };
 
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog provider-dialog" role="dialog" aria-modal="true" aria-label="新增商家配置">
-    <div className="settings-subdialog-header"><div><span>模型商家</span><h3>{initial ? "编辑商家配置" : "新建商家配置"}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label="关闭"><X size={17} /></button></div>
-    <div className="settings-form-grid"><label>商家名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：我的 OpenAI" /></label><label>API 接口类型<QoneSelect value={apiType} onChange={(value) => setApiType(value as ProviderApiType)} options={Object.entries(providerApiLabels).map(([value, label]) => ({ value, label }))} ariaLabel="API 接口类型" /></label><label className="is-wide">API 接口地址<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="大多数时候输入域名即可" /><small className="settings-url-preview">完整地址预览：{preview || "等待输入"}</small></label><label className="is-wide">API Key（可选）<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="只保存到系统安全存储" /></label></div>
-    <div className="settings-provider-actions"><button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchModels}>{fetching ? <><LoaderCircle size={15} className="settings-spin" />获取中…</> : <><Globe2 size={15} />自动获取模型列表</>}</button><span>{models.length ? `已配置 ${models.length} 个模型` : "还没有模型"}</span></div>
-    {status && <p className="settings-inline-status" role="status">{status}</p>}
-    <div className="settings-subdialog-footer">{initial && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />删除商家</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>取消</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />保存商家配置</button></div>
-    <ModelSyncDialog open={syncOpen} fetched={fetchedModels} existing={models} onClose={() => setSyncOpen(false)} onAdd={(newModels) => setModels((current) => [...current, ...newModels])} />
+  return <div className="settings-subdialog-layer"><div className="settings-subdialog provider-dialog" role="dialog" aria-modal="true" aria-label={t("provider.newConfiguration")}>
+    <div className="settings-subdialog-header"><div><span>{t("provider.configuration")}</span><h3>{initial ? t("provider.editConfiguration") : t("provider.newConfiguration")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
+    <div className="settings-form-grid"><label>{t("provider.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("provider.namePlaceholder")} /></label><label>{t("provider.apiType")}<QoneSelect value={apiType} onChange={(value) => setApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("provider.apiType")} /></label><label className="is-wide">{t("provider.baseUrl")}<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t("provider.baseUrlPlaceholder")} /><small className="settings-url-preview">{t("provider.urlPreview", { url: preview || t("provider.waitingForInput") })}</small></label><label className="is-wide">{t("provider.apiKey")}<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t("provider.apiKeyPlaceholder")} /></label></div>
+    <div className="settings-provider-actions"><button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchModels}>{fetching ? <><LoaderCircle size={15} className="settings-spin" />{t("provider.fetching")}</> : <><Globe2 size={15} />{t("provider.fetchModels")}</>}</button><span>{models.length ? t("provider.configuredModels", { count: models.length }) : t("provider.noModels")}</span></div>
+    {status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}
+    <div className="settings-subdialog-footer">{initial && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("provider.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("provider.saveConfiguration")}</button></div>
+    <ModelSyncDialog
+      open={syncOpen}
+      fetched={fetchedModels}
+      existing={models}
+      onClose={() => setSyncOpen(false)}
+      onAdd={(newModels) => setModels((current) => {
+        const fetchedById = new Map(fetchedModels.map((model) => [model.id, model]));
+        const refreshed = current.map((model) => fetchedById.get(model.id) ? mergeFetchedModel(model, fetchedById.get(model.id)!) : model);
+        const existingIds = new Set(refreshed.map((model) => model.id));
+        return [...refreshed, ...newModels.filter((model) => !existingIds.has(model.id))];
+      })}
+    />
   </div></div>;
 }
 
 function ConfigurationSection() {
+  const { t } = useLocale();
   const send = useStore((state) => state.send);
   const [profiles, setProfiles] = useState<ProviderProfile[]>(loadProviderProfiles);
   const [editing, setEditing] = useState<ProviderProfile | undefined>();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState(() => window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY) ?? loadProviderProfiles()[0]?.id ?? "");
   const saveProfile = (profile: ProviderProfile) => {
-    setProfiles((current) => {
-      const next = [...current.filter((item) => item.id !== profile.id), profile];
-      saveProviderProfiles(next); window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, profile.id);
-      for (const model of profile.models) send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${profile.id}/${model.id}`, provider: profile.id, model: model.id, config: { apiType: profile.apiType, baseUrl: profile.baseUrl, ...(model.settings ?? defaultModelSettings(model.id)) }, enabled: true, updatedAt: Date.now() } });
-      return next;
-    });
+    const next = [...profiles.filter((item) => item.id !== profile.id), profile];
+    setProfiles(next);
+    window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, profile.id);
+    saveProviderProfiles(next);
+    for (const model of profile.models) send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${profile.id}/${model.id}`, provider: profile.id, model: model.id, config: { apiType: profile.apiType, baseUrl: profile.baseUrl, ...(model.settings ?? defaultModelSettings(model.id)) }, enabled: true, updatedAt: Date.now() } });
   };
   const deleteProfile = (profile: ProviderProfile) => {
-    setProfiles((current) => current.filter((item) => item.id !== profile.id));
-    saveProviderProfiles(profiles.filter((item) => item.id !== profile.id));
-    if (window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY) === profile.id) window.localStorage.removeItem(ACTIVE_PROVIDER_STORAGE_KEY);
+    const nextProfiles = profiles.filter((item) => item.id !== profile.id);
+    setProfiles(nextProfiles);
+    if (selectedProviderId === profile.id) {
+      const nextSelected = nextProfiles[0]?.id ?? "";
+      setSelectedProviderId(nextSelected);
+      if (nextSelected) window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, nextSelected);
+      else window.localStorage.removeItem(ACTIVE_PROVIDER_STORAGE_KEY);
+    }
+    saveProviderProfiles(nextProfiles);
     for (const model of profile.models) send({ type: "model.delete", requestId: crypto.randomUUID(), id: `${profile.id}/${model.id}` });
   };
+  const selectProvider = (id: string) => {
+    setSelectedProviderId(id);
+    window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, id);
+    window.dispatchEvent(new Event(MODEL_CONFIG_CHANGE_EVENT));
+  };
+  const openProvider = (profile: ProviderProfile) => { setEditing(profile); setDialogOpen(true); };
   return <>
-    <SectionHeader eyebrow="Configuration" title="配置" />
-    <div className="settings-section-toolbar"><div><strong>模型商家</strong><span>{profiles.length ? `${profiles.length} 个已配置` : "尚未配置"}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />新建商家</button></div>
-    <div className="settings-provider-grid">{profiles.map((profile) => <button type="button" className="settings-provider-card" key={profile.id} onClick={() => { setEditing(profile); setDialogOpen(true); }}><span className="settings-provider-icon"><SlidersHorizontal size={17} /></span><span><strong>{profile.name}</strong><small>{providerApiLabels[profile.apiType]} · {profile.models.length} 个模型</small></span><ChevronRight size={16} /></button>)}{profiles.length === 0 && <p className="settings-empty">暂无商家配置</p>}</div>
+    <SectionHeader eyebrow={t("nav.configuration")} title={t("nav.configuration")} />
+    <div className="settings-section-toolbar"><div><strong>{t("provider.configuration")}</strong><span>{profiles.length ? t("provider.configuredProviders", { count: profiles.length }) : t("provider.noProviders")}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("provider.newProvider")}</button></div>
+    <div className="settings-provider-grid" role="radiogroup" aria-label={t("provider.configuration")}>{profiles.map((profile) => {
+      const selected = profile.id === selectedProviderId;
+      return <div
+        className={cn("settings-provider-card", selected && "is-selected")}
+        key={profile.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => openProvider(profile)}
+        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openProvider(profile); } }}
+      >
+        <div className="settings-provider-edit">
+          <ProviderLogo name={profile.name} baseUrl={profile.baseUrl} />
+          <span className="settings-provider-copy"><strong>{profile.name}</strong><small>{t(providerApiLabelKeys[profile.apiType])} · {profile.models.length} {t("provider.models")}</small></span>
+        </div>
+        <button type="button" className="settings-provider-select" onClick={(event) => { event.stopPropagation(); selectProvider(profile.id); }} aria-label={`${t("model.selectProvider")}: ${profile.name}`} aria-pressed={selected}>
+          <span className="settings-provider-radio" aria-hidden="true" />
+        </button>
+      </div>;
+    })}{profiles.length === 0 && <p className="settings-empty">{t("provider.noProviders")}</p>}</div>
     <ProviderConfigDialog open={dialogOpen} initial={editing} onClose={() => setDialogOpen(false)} onSaved={saveProfile} onDeleted={deleteProfile} />
   </>;
 }
 
 function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted }: { open: boolean; provider: ProviderProfile; model?: ProviderModel; onClose: () => void; onSaved: (model: ProviderModel, previousId?: string) => void; onDeleted: (model: ProviderModel) => void }) {
+  const { t } = useLocale();
   const [name, setName] = useState(model?.id ?? "");
   const [settings, setSettings] = useState<ModelSettings>(model?.settings ?? defaultModelSettings(model?.id ?? ""));
   useEffect(() => {
@@ -404,20 +516,30 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
     setName(model?.id ?? ""); setSettings(model?.settings ?? defaultModelSettings(model?.id ?? ""));
   }, [open, model?.id]);
   if (!open) return null;
-  const update = <K extends keyof ModelSettings>(key: K, value: ModelSettings[K]) => setSettings((current) => ({ ...current, [key]: value }));
+  const update = <K extends keyof ModelSettings>(key: K, value: ModelSettings[K]) => setSettings((current) => ({
+    ...current,
+    [key]: value,
+    metadataOverrides: ["maxOutput", "maxContext", "thinking", "input", "output"].includes(String(key))
+      ? { ...(current.metadataOverrides ?? {}), [key]: true }
+      : current.metadataOverrides,
+  }));
   const toggleCapability = (kind: "input" | "output", value: Capability) => update(kind, settings[kind].includes(value) ? settings[kind].filter((item) => item !== value) : [...settings[kind], value]);
   const save = () => { if (!name.trim()) return; onSaved({ id: name.trim(), label: name.trim(), settings }, model?.id); onClose(); };
-  const remove = () => { if (model && window.confirm(`删除模型“${model.label}”？`)) { onDeleted(model); onClose(); } };
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label="模型参数"><div className="settings-subdialog-header"><div><span>{provider.name}</span><h3>模型参数</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label="关闭"><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">模型名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 gpt-4o" /></label><label>单次最大输出<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label><label>最大上下文<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label><label>思考程度<QoneSelect value={settings.thinking} onChange={(value) => update("thinking", value as ThinkingLevel)} options={[{ value: "none", label: "不思考" }, { value: "low", label: "低" }, { value: "medium", label: "中" }, { value: "high", label: "高" }]} ariaLabel="思考程度" /></label></div><div className="settings-capability-grid"><CapabilityEditor title="输入能力" values={settings.input} onToggle={(value) => toggleCapability("input", value)} /><CapabilityEditor title="输出能力" values={settings.output} onToggle={(value) => toggleCapability("output", value)} /></div><div className="settings-subdialog-footer">{model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />删除模型</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>取消</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />保存参数</button></div></div></div>;
+  const remove = async () => { if (model && await confirmDestructiveAction(t("model.deleteConfirm", { name: model.label }))) { onDeleted(model); onClose(); } };
+  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("model.parameters")}><div className="settings-subdialog-header"><div><span>{provider.name}</span><h3>{t("model.parameters")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("model.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("model.namePlaceholder")} /></label><label>{t("model.maxOutput")}<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label><label>{t("model.maxContext")}<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label><label>{t("model.thinking")}<QoneSelect value={settings.thinking} onChange={(value) => update("thinking", value as ThinkingLevel)} options={[{ value: "none", label: t("model.noThinking") }, { value: "minimal", label: t("model.minimal") }, { value: "low", label: t("model.low") }, { value: "medium", label: t("model.medium") }, { value: "high", label: t("model.high") }, { value: "xhigh", label: t("model.xhigh") }, { value: "max", label: t("model.max") }]} ariaLabel={t("model.thinking")} /></label></div><div className="settings-capability-grid"><CapabilityEditor title={t("model.inputCapabilities")} values={settings.input} onToggle={(value) => toggleCapability("input", value)} /><CapabilityEditor title={t("model.outputCapabilities")} values={settings.output} onToggle={(value) => toggleCapability("output", value)} /></div><div className="settings-subdialog-footer">{model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("model.saveParameters")}</button></div></div></div>;
 }
 
 function CapabilityEditor({ title, values, onToggle }: { title: string; values: Capability[]; onToggle: (value: Capability) => void }) {
-  return <div className="settings-capability-group"><strong>{title}</strong><div>{capabilities.map((capability) => <button type="button" key={capability} className={cn("settings-capability-chip", values.includes(capability) && "is-selected")} onClick={() => onToggle(capability)}>{values.includes(capability) && <Check size={13} />}{capabilityLabels[capability]}</button>)}</div></div>;
+  const { t } = useLocale();
+  return <div className="settings-capability-group"><strong>{title}</strong><div>{capabilities.map((capability) => <button type="button" key={capability} className={cn("settings-capability-chip", values.includes(capability) && "is-selected")} onClick={() => onToggle(capability)}>{values.includes(capability) && <Check size={13} />}{t(`capability.${capability}`)}</button>)}</div></div>;
 }
 
 function ModelsSection() {
+  const { t } = useLocale();
   const send = useStore((state) => state.send);
   const modelConfigs = useStore((state) => state.modelConfigs);
+  const selectedModelId = useStore((state) => state.selectedModelId);
+  const setSelectedModel = useStore((state) => state.setSelectedModel);
   const [profiles, setProfiles] = useState<ProviderProfile[]>(loadProviderProfiles);
   const [selectedProviderId, setSelectedProviderId] = useState(() => window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY) ?? "");
   const [editing, setEditing] = useState<ProviderModel | undefined>();
@@ -425,11 +547,11 @@ function ModelsSection() {
   useEffect(() => send({ type: "model.list", requestId: crypto.randomUUID() }), [send]);
   const provider = profiles.find((item) => item.id === selectedProviderId) ?? profiles[0];
   const models = provider?.models ?? modelConfigs.filter((config) => config.provider === provider?.id).map((config) => ({ id: config.model, label: config.model, settings: config.config as unknown as ModelSettings }));
-  const saveModel = (model: ProviderModel, previousId?: string) => {
+  const saveModel = async (model: ProviderModel, previousId?: string) => {
     if (!provider) return;
     const nextProfiles = profiles.map((item) => item.id === provider.id ? { ...item, models: [...item.models.filter((current) => current.id !== model.id), model], updatedAt: Date.now() } : item);
     setProfiles(nextProfiles); saveProviderProfiles(nextProfiles);
-    if (previousId && previousId !== model.id) send({ type: "model.delete", requestId: crypto.randomUUID(), id: `${provider.id}/${previousId}` });
+    if (previousId && previousId !== model.id && await confirmDestructiveAction(t("model.renameCleanupConfirm", { name: previousId }))) send({ type: "model.delete", requestId: crypto.randomUUID(), id: `${provider.id}/${previousId}` });
     send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${provider.id}/${model.id}`, provider: provider.id, model: model.id, config: { apiType: provider.apiType, baseUrl: provider.baseUrl, ...model.settings }, enabled: true, updatedAt: Date.now() } });
   };
   const deleteModel = (model: ProviderModel) => {
@@ -437,11 +559,26 @@ function ModelsSection() {
     setProfiles(nextProfiles); saveProviderProfiles(nextProfiles);
     send({ type: "model.delete", requestId: crypto.randomUUID(), id: `${provider?.id}/${model.id}` });
   };
-  const selectProvider = (id: string) => { setSelectedProviderId(id); window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, id); };
+  const selectProvider = (id: string) => { setSelectedProviderId(id); window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, id); window.dispatchEvent(new Event(MODEL_CONFIG_CHANGE_EVENT)); };
   return <>
-    <SectionHeader eyebrow="Models" title="模型" />
-    <div className="settings-model-toolbar"><label>当前商家<QoneSelect value={provider?.id ?? ""} onChange={selectProvider} placeholder="请选择商家" options={profiles.map((item) => ({ value: item.id, label: item.name }))} ariaLabel="当前商家" /></label><button type="button" className="settings-secondary-action" disabled={!provider} onClick={() => { setEditing(undefined); setEditorOpen(true); }}><Plus size={15} />手动添加模型</button></div>
-    {provider ? <><div className="settings-section-toolbar settings-model-summary"><div><strong>{provider.name}</strong><span>{providerApiLabels[provider.apiType]} · {models.length} 个模型</span></div></div><div className="settings-model-grid">{models.map((model) => <button type="button" className="settings-model-card" key={model.id} onClick={() => { setEditing(model); setEditorOpen(true); }}><span><strong>{model.label}</strong><small>{providerApiLabels[provider.apiType]}</small></span><SlidersHorizontal size={16} /></button>)}{models.length === 0 && <p className="settings-empty">暂无模型</p>}</div></> : <p className="settings-empty">请先在“配置”中添加商家</p>}
+    <SectionHeader eyebrow="Models" title={t("model.title")} />
+    <div className="settings-model-toolbar"><label>{t("model.currentProvider")}<QoneSelect value={provider?.id ?? ""} onChange={selectProvider} placeholder={t("model.selectProvider")} options={profiles.map((item) => ({ value: item.id, label: item.name }))} ariaLabel={t("model.currentProvider")} /></label><button type="button" className="settings-secondary-action" disabled={!provider} onClick={() => { setEditing(undefined); setEditorOpen(true); }}><Plus size={15} />{t("model.manualAdd")}</button></div>
+    {provider ? <><div className="settings-section-toolbar settings-model-summary"><div><strong>{provider.name}</strong><span>{t(providerApiLabelKeys[provider.apiType])} · {models.length} {t("provider.models")}</span></div></div><div className="settings-model-grid" role="group" aria-label={`${provider.name} ${t("model.title")}`}>
+      {models.map((model) => {
+        const modelConfigId = `${provider.id}/${model.id}`;
+        const selected = selectedModelId === modelConfigId;
+        return <ModelCard
+          key={model.id}
+          id={modelConfigId}
+          label={model.label}
+          description={t(providerApiLabelKeys[provider.apiType])}
+          selected={selected}
+          onEdit={() => { setEditing(model); setEditorOpen(true); }}
+          onSelect={() => setSelectedModel(modelConfigId)}
+        />;
+      })}
+      {models.length === 0 && <p className="settings-empty">{t("model.noModels")}</p>}
+    </div></> : <p className="settings-empty">{t("model.addProviderFirst")}</p>}
     {provider && <ModelEditorDialog open={editorOpen} provider={provider} model={editing} onClose={() => setEditorOpen(false)} onSaved={saveModel} onDeleted={deleteModel} />}
   </>;
 }
@@ -459,6 +596,7 @@ function loadSubagents(): SubagentProfile[] {
 }
 
 function SubagentEditorDialog({ open, initial, modelOptions, onClose, onSaved }: { open: boolean; initial?: SubagentProfile; modelOptions: { id: string; label: string }[]; onClose: () => void; onSaved: (profile: SubagentProfile) => void }) {
+  const { t } = useLocale();
   const [name, setName] = useState(initial?.name ?? "");
   const [instructions, setInstructions] = useState(initial?.instructions ?? "");
   const [modelId, setModelId] = useState(initial?.modelId ?? modelOptions[0]?.id ?? "");
@@ -472,10 +610,11 @@ function SubagentEditorDialog({ open, initial, modelOptions, onClose, onSaved }:
     onClose();
   };
   if (!open) return null;
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label="创建子代理"><div className="settings-subdialog-header"><div><span>Sub-agent</span><h3>{initial ? "编辑子代理" : "创建子代理"}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label="关闭"><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：代码审查员" /></label><label className="is-wide">驱动模型<QoneSelect value={modelId} onChange={setModelId} placeholder="请选择模型" options={modelOptions.map((model) => ({ value: model.id, label: model.label }))} ariaLabel="驱动模型" /></label><label className="is-wide">系统提示词<textarea className="settings-subagent-prompt" rows={7} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="描述这个子代理的职责、工作方式和输出要求" /></label></div><div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>取消</button><button type="button" className="settings-primary-action" disabled={!name.trim() || !instructions.trim() || !modelId} onClick={save}><Save size={15} />保存子代理</button></div></div></div>;
+  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("subagent.create")}><div className="settings-subdialog-header"><div><span>Sub-agent</span><h3>{initial ? t("subagent.edit") : t("subagent.create")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("subagent.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("subagent.namePlaceholder")} /></label><label className="is-wide">{t("subagent.driverModel")}<QoneSelect value={modelId} onChange={setModelId} placeholder={t("subagent.selectModel")} options={modelOptions.map((model) => ({ value: model.id, label: model.label }))} ariaLabel={t("subagent.driverModel")} /></label><label className="is-wide">{t("subagent.systemPrompt")}<textarea className="settings-subagent-prompt" rows={7} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder={t("subagent.promptPlaceholder")} /></label></div><div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!name.trim() || !instructions.trim() || !modelId} onClick={save}><Save size={15} />{t("subagent.save")}</button></div></div></div>;
 }
 
 function SubagentsSection() {
+  const { t } = useLocale();
   const modelConfigs = useStore((state) => state.modelConfigs);
   const [profiles, setProfiles] = useState<ProviderProfile[]>(loadProviderProfiles);
   const [agents, setAgents] = useState<SubagentProfile[]>(loadSubagents);
@@ -487,16 +626,17 @@ function SubagentsSection() {
   ]).values());
   const saveAgents = (next: SubagentProfile[]) => { setAgents(next); window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(next)); };
   const saveAgent = (agent: SubagentProfile) => saveAgents([...agents.filter((item) => item.id !== agent.id), agent]);
-  const deleteAgent = (id: string) => saveAgents(agents.filter((agent) => agent.id !== id));
+  const deleteAgent = async (agent: SubagentProfile) => { if (await confirmDestructiveAction(t("subagent.deleteConfirm", { name: agent.name }))) saveAgents(agents.filter((item) => item.id !== agent.id)); };
   return <>
-    <SectionHeader eyebrow="Sub-agents" title="子代理" />
-    <div className="settings-section-toolbar"><div><strong>我的子代理</strong><span>{agents.length} 个</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />新建</button></div>
-    <div className="settings-subagent-list">{agents.map((agent) => <div className="settings-subagent-card" key={agent.id}><div className="settings-subagent-card-main"><span className="settings-provider-icon"><BotMessageSquare size={17} /></span><div><strong>{agent.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? agent.modelId}</small><p>{agent.instructions}</p></div></div><div className="settings-subagent-actions"><button type="button" onClick={() => { setEditing(agent); setDialogOpen(true); }}>编辑</button><button type="button" aria-label={`删除${agent.name}`} onClick={() => deleteAgent(agent.id)}><Trash2 size={14} /></button></div></div>)}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>暂无子代理</p></div>}</div>
+    <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.title")} />
+    <div className="settings-section-toolbar"><div><strong>{t("subagent.mine")}</strong><span>{agents.length} {t("subagent.count")}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("subagent.new")}</button></div>
+    <div className="settings-subagent-list">{agents.map((agent) => <div className="settings-subagent-card" key={agent.id}><div className="settings-subagent-card-main"><span className="settings-provider-icon"><BotMessageSquare size={17} /></span><div><strong>{agent.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? agent.modelId}</small><p>{agent.instructions}</p></div></div><div className="settings-subagent-actions"><button type="button" onClick={() => { setEditing(agent); setDialogOpen(true); }}>{t("common.edit")}</button><button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={() => deleteAgent(agent)}><Trash2 size={14} /></button></div></div>)}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
     <SubagentEditorDialog open={dialogOpen} initial={editing} modelOptions={modelOptions} onClose={() => setDialogOpen(false)} onSaved={saveAgent} />
   </>;
 }
 
 function McpSection() {
+  const { t } = useLocale();
   const send = useStore((state) => state.send);
   const servers = useStore((state) => state.mcpServers);
   const [name, setName] = useState("");
@@ -534,15 +674,16 @@ function McpSection() {
 
   return (
     <>
-      <SectionHeader eyebrow="MCP" title="MCP" />
-      <div className="settings-connect-panel"><div className="settings-section-toolbar"><div><strong>添加服务</strong><span>stdio 或 HTTP，点击连接后会保存并加载工具</span></div><button className="settings-primary-action" type="button" disabled={!name.trim() || (!command.trim() && !url.trim()) || Boolean(command.trim() && url.trim())} onClick={connect}><Plus size={15} />连接</button></div><div className="settings-form-grid settings-mcp-form"><label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="我的工具" /></label><label>命令<input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="npx" /></label><label>参数<input value={args} onChange={(event) => setArgs(event.target.value)} placeholder="参数（空格分隔）" /></label><label>HTTP URL<input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://…" /></label><label>Token 环境变量<input value={tokenEnv} onChange={(event) => setTokenEnv(event.target.value)} placeholder="可选" /></label></div><div className="settings-form-grid settings-mcp-form"><label>OAuth Authorization URL<input value={oauthAuthorizationUrl} onChange={(event) => setOauthAuthorizationUrl(event.target.value)} placeholder="可选" /></label><label>OAuth Token URL<input value={oauthTokenUrl} onChange={(event) => setOauthTokenUrl(event.target.value)} placeholder="可选" /></label><label>OAuth Client ID<input value={oauthClientId} onChange={(event) => setOauthClientId(event.target.value)} placeholder="可选" /></label></div></div>
-      <div className="settings-section-toolbar settings-list-heading"><div><strong>已连接</strong><span>{servers.length} 个</span></div></div>
-      <div className="settings-mcp-list">{servers.length === 0 ? <p className="settings-empty">暂无连接</p> : servers.map((server) => <div className="settings-mcp-card" key={server.id}><span className="settings-provider-icon"><Command size={16} /></span><div><strong>{server.name}</strong><small>{server.command ?? server.url}{server.connected ? ` · ${server.toolCount ?? 0} 个工具` : " · 未连接"}</small></div>{server.oauth && <button type="button" className="settings-secondary-action" onClick={() => send({ type: "mcp.oauth.begin", requestId: crypto.randomUUID(), serverId: server.id })}>授权</button>}<em className={server.connected ? "is-connected" : "is-disconnected"}>{server.connected ? "已连接" : "未连接"}</em><button type="button" className="settings-danger-icon" aria-label={`删除${server.name}`} onClick={async () => { if (!window.confirm(`断开并删除 MCP 服务“${server.name}”？`)) return; const key = server.oauth?.tokenSecretKey ?? `mcp.oauth:${server.id}`; if (hasTauriBridge()) await invoke("secret_delete", { key }).catch(() => undefined); send({ type: "mcp.delete", requestId: crypto.randomUUID(), serverId: server.id }); }}><Trash2 size={14} /></button></div>)}</div>
+      <SectionHeader eyebrow={t("mcp.eyebrow")} title={t("mcp.title")} />
+      <div className="settings-connect-panel"><div className="settings-section-toolbar"><div><strong>{t("mcp.addService")}</strong><span>{t("mcp.addDescription")}</span></div><button className="settings-primary-action" type="button" disabled={!name.trim() || (!command.trim() && !url.trim()) || Boolean(command.trim() && url.trim())} onClick={connect}><Plus size={15} />{t("mcp.connect")}</button></div><div className="settings-form-grid settings-mcp-form"><label>{t("mcp.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("mcp.namePlaceholder")} /></label><label>{t("mcp.command")}<input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="npx" /></label><label>{t("mcp.arguments")}<input value={args} onChange={(event) => setArgs(event.target.value)} placeholder={t("mcp.argumentsPlaceholder")} /></label><label>{t("mcp.httpUrl")}<input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://…" /></label><label>{t("mcp.tokenEnv")}<input value={tokenEnv} onChange={(event) => setTokenEnv(event.target.value)} placeholder={t("mcp.optional")} /></label></div><div className="settings-form-grid settings-mcp-form"><label>{t("mcp.oauthAuthorization")}<input value={oauthAuthorizationUrl} onChange={(event) => setOauthAuthorizationUrl(event.target.value)} placeholder={t("mcp.optional")} /></label><label>{t("mcp.oauthToken")}<input value={oauthTokenUrl} onChange={(event) => setOauthTokenUrl(event.target.value)} placeholder={t("mcp.optional")} /></label><label>{t("mcp.oauthClient")}<input value={oauthClientId} onChange={(event) => setOauthClientId(event.target.value)} placeholder={t("mcp.optional")} /></label></div></div>
+      <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("mcp.connected")}</strong><span>{servers.length} {t("mcp.count")}</span></div></div>
+      <div className="settings-mcp-list">{servers.length === 0 ? <p className="settings-empty">{t("mcp.noConnections")}</p> : servers.map((server) => <div className="settings-mcp-card" key={server.id}><span className="settings-provider-icon"><Command size={16} /></span><div><strong>{server.name}</strong><small>{server.command ?? server.url}{server.connected ? ` · ${server.toolCount ?? 0} ${t("mcp.tools")}` : ` · ${t("mcp.disconnectedStatus")}`}</small></div>{server.oauth && <button type="button" className="settings-secondary-action" onClick={() => send({ type: "mcp.oauth.begin", requestId: crypto.randomUUID(), serverId: server.id })}>{t("mcp.authorize")}</button>}<em className={server.connected ? "is-connected" : "is-disconnected"}>{server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}</em><button type="button" className="settings-danger-icon" aria-label={t("mcp.delete", { name: server.name })} onClick={async () => { if (!await confirmDestructiveAction(t("mcp.deleteConfirm", { name: server.name }))) return; const key = server.oauth?.tokenSecretKey ?? `mcp.oauth:${server.id}`; if (hasTauriBridge()) await invoke("secret_delete", { key }).catch(() => undefined); send({ type: "mcp.delete", requestId: crypto.randomUUID(), serverId: server.id }); }}><Trash2 size={14} /></button></div>)}</div>
     </>
   );
 }
 
 function SkillsSection() {
+  const { t } = useLocale();
   const send = useStore((state) => state.send);
   const skills = useStore((state) => state.skills);
   const workspaces = useStore((state) => state.workspaces);
@@ -554,9 +695,9 @@ function SkillsSection() {
 
   return (
     <>
-      <SectionHeader eyebrow="Skills" title="技能" />
-      <div className="settings-section-toolbar settings-list-heading"><div><strong>已安装技能</strong><span>{skills.length} 个</span></div></div>
-      <div className="settings-skill-list">{skills.length === 0 ? <p className="settings-empty">暂无技能</p> : skills.map((skill) => <button type="button" className="settings-skill-card" key={skill.id} onClick={() => openPath(skill.path).catch((error) => console.error("open skill failed", error))}><span className="settings-provider-icon"><WandSparkles size={16} /></span><div><strong>{skill.name}</strong><small>{skill.path}</small></div><ChevronRight size={15} /></button>)}</div>
+      <SectionHeader eyebrow={t("skills.eyebrow")} title={t("skills.title")} />
+      <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("skills.installed")}</strong><span>{skills.length} {t("skills.count")}</span></div></div>
+      <div className="settings-skill-list">{skills.length === 0 ? <p className="settings-empty">{t("skills.none")}</p> : skills.map((skill) => <button type="button" className="settings-skill-card" key={skill.id} onClick={() => openPath(skill.path).catch((error) => console.error("open skill failed", error))}><span className="settings-provider-icon"><WandSparkles size={16} /></span><div><strong>{skill.name}</strong><small>{skill.path}</small></div><ChevronRight size={15} /></button>)}</div>
     </>
   );
 }
@@ -574,6 +715,7 @@ function SectionContent({ activeSection, theme, onToggleTheme }: { activeSection
 }
 
 export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: boolean; onClose: () => void; theme: Theme; onToggleTheme: () => void }) {
+  const { t } = useLocale();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general");
   const [sectionOrder, setSectionOrder] = useState<SettingsSectionId[]>(loadSectionOrder);
   const [draggingId, setDraggingId] = useState<SettingsSectionId | null>(null);
@@ -597,7 +739,7 @@ export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: 
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !getConfirmationRequest() && !(event.target instanceof Element && event.target.closest('[role="alertdialog"]'))) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
@@ -739,11 +881,11 @@ export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: 
     <AnimatePresence>
       {open && (
         <motion.div className="settings-dialog-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }}>
-          <button className="settings-dialog-backdrop" type="button" aria-label="关闭设置" onClick={onClose} />
-          <motion.div className={cn("settings-dialog", draggingId && "is-dragging")} role="dialog" aria-modal="true" aria-label="设置" initial={{ opacity: 0, scale: 0.975, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 8 }} transition={{ type: "spring", stiffness: 430, damping: 35 }}>
-            <button ref={closeButtonRef} className="settings-dialog-close" type="button" onClick={onClose} aria-label="关闭设置"><X size={18} /></button>
+          <button className="settings-dialog-backdrop" type="button" aria-label={t("common.closeSettings")} onClick={onClose} />
+          <motion.div className={cn("settings-dialog", (activeSection === "models" || activeSection === "configuration") && "is-model-page", draggingId && "is-dragging")} role="dialog" aria-modal="true" aria-label={t("common.settings")} initial={{ opacity: 0, scale: 0.975, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 8 }} transition={{ type: "spring", stiffness: 430, damping: 35 }}>
+            <button ref={closeButtonRef} className="settings-dialog-close" type="button" onClick={onClose} aria-label={t("common.closeSettings")}><X size={18} /></button>
             <aside className="settings-dialog-sidebar">
-              <nav className={cn("settings-dialog-nav", draggingId && "is-dragging-nav")} aria-label="设置分类">
+              <nav className={cn("settings-dialog-nav", draggingId && "is-dragging-nav")} aria-label={t("accessibility.settings")}>
                 {sectionOrder.map((id) => {
                   const section = SETTINGS_SECTIONS.find((candidate) => candidate.id === id)!;
                   const Icon = section.icon;
@@ -754,7 +896,7 @@ export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: 
                         data-settings-nav-id={id}
                         className={cn("settings-dialog-nav-item", activeSection === id && "is-active", draggingId === id && "is-dragging")}
                         aria-current={activeSection === id ? "page" : undefined}
-                        aria-label={`${section.label}。长按拖动；按 Alt 加上下方向键也可排序`}
+                        aria-label={`${t(section.labelKey)}. ${t("nav.dragHint")}`}
                         onClick={() => {
                           if (!suppressClickRef.current) setActiveSection(id);
                         }}
@@ -769,13 +911,13 @@ export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: 
                         }}
                       >
                         <Icon size={17} />
-                        <span><strong>{section.label}</strong></span>
+                        <span><strong>{t(section.labelKey)}</strong></span>
                       </button>
                     </motion.div>
                   );
                 })}
               </nav>
-              <button className="settings-reset-order" type="button" onClick={() => setSectionOrder(DEFAULT_ORDER)}><RotateCcw size={13} />恢复默认顺序</button>
+              <button className="settings-reset-order" type="button" onClick={() => setSectionOrder(DEFAULT_ORDER)}><RotateCcw size={13} />{t("nav.resetOrder")}</button>
             </aside>
             <main className="settings-dialog-content" aria-live="polite">
               <AnimatePresence mode="wait" initial={false}>
@@ -788,7 +930,7 @@ export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: 
           {draggingId && (() => {
             const section = SETTINGS_SECTIONS.find((candidate) => candidate.id === draggingId)!;
             const Icon = section.icon;
-            return <motion.div className="settings-drag-preview" style={{ left: dragPoint.x + 12, top: dragPoint.y }} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}><Icon size={17} /><strong>{section.label}</strong></motion.div>;
+            return <motion.div className="settings-drag-preview" style={{ left: dragPoint.x + 12, top: dragPoint.y }} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}><Icon size={17} /><strong>{t(section.labelKey)}</strong></motion.div>;
           })()}
         </motion.div>
       )}

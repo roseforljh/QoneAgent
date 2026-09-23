@@ -1,0 +1,27 @@
+/* Radix positions the wrapper and measures this content; keep it in normal flow. */
+.q-model-picker-card { z-index: 60; display: block; width: min(286px, calc(100vw - 24px)); height: auto; max-height: min(360px, var(--radix-popover-content-available-height, calc(100dvh - 24px))); overflow: hidden; border: 1px solid color-mix(in srgb, var(--border) 88%, transparent); border-radius: 14px; background: var(--q-surface); box-shadow: 0 8px 18px rgb(0 0 0 / 18%); transform-origin: var(--radix-popover-content-transform-origin); animation: q-model-picker-in .14s ease-out; }
+.q-model-picker-heading { display: block; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.q-model-picker-search { display: flex; height: 28px; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--border) 92%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--background) 55%, transparent); color: var(--muted-foreground); }
+.q-model-picker-search:focus-within { border-color: var(--ring); color: var(--foreground); }
+.q-model-picker-search-icon { width: 13px; height: 13px; flex: none; }
+.q-model-picker-search-input { min-width: 0; flex: 1; appearance: none !important; border: 0 !important; outline: 0 !important; outline-offset: 0 !important; box-shadow: none !important; background: transparent; color: var(--foreground); font: inherit; font-size: 11px; }
+.q-model-picker-search-input:focus, .q-model-picker-search-input:focus-visible { border: 0 !important; outline: 0 !important; outline-offset: 0 !important; box-shadow: none !important; }
+.q-model-picker-search-input::placeholder { color: var(--muted-foreground); }
+.q-model-picker-search-input::-webkit-search-cancel-button { display: none; }
+.q-model-picker-search-clear { display: inline-flex; width: 17px; height: 17px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.q-model-picker-search-clear:hover { background: var(--q-hover); color: var(--foreground); }
+.q-model-picker-search-clear svg { width: 12px; height: 12px; }
+.q-model-picker-list { max-height: min(294px, calc(100dvh - 150px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 4px; }
+.q-model-picker-option { display: flex; width: 100%; min-height: 36px; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; transition: background .14s ease, transform .14s ease; }
+.q-model-picker-option:hover { background: var(--q-hover); box-shadow: 0 4px 8px rgb(0 0 0 / 16%); }
+.q-model-picker-option:active { transform: scale(.985); box-shadow: none; }
+.q-model-picker-option > svg { color: var(--foreground); }
+.q-model-picker-option-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.q-model-picker-option-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.q-model-picker-empty { margin: 7px 8px; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
+.q-model-picker-settings { flex: none; min-height: 35px; margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--foreground); font-size: 11px; cursor: pointer; transition: background .14s ease; }
+.q-model-picker-trigger:focus-visible, .q-model-picker-option:focus-visible, .q-model-picker-settings:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.q-model-picker-settings:hover { background: var(--q-hover); }
+@keyframes q-model-picker-in { from { opacity: 0; transform: translateY(4px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+@media (prefers-reduced-motion: reduce) { .q-model-picker-card { animation: none; } .q-model-picker-option { transition: none; } }

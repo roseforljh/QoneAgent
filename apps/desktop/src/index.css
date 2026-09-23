@@ -162,6 +162,17 @@ body { background: var(--background); color: var(--foreground); font-size: 14px;
   box-shadow: none;
   transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, color .16s ease;
 }
+.q-sidebar [data-slot="aui_thread-list-new"] {
+  height: 32px;
+  gap: 8px;
+  padding-inline: 8px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.q-sidebar [data-slot="aui_thread-list-new"] svg {
+  width: 15px;
+  height: 15px;
+}
 .q-sidebar [data-slot="aui_thread-list-new"]:hover,
 .q-sidebar .q-sidebar-settings:hover {
   border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
@@ -180,6 +191,12 @@ body { background: var(--background); color: var(--foreground); font-size: 14px;
   font-size: 14px;
   letter-spacing: 0;
 }
+.q-project-required { display: flex; align-items: center; flex-direction: column; gap: 8px; text-align: center; }
+.q-project-required-title { margin: 0; color: var(--foreground); font-size: 22px; line-height: 1.25; }
+.q-project-required-description { margin: 0 0 8px; color: var(--muted-foreground); font-size: 13px; }
+.q-project-import-button { display: inline-flex; min-height: 36px; align-items: center; gap: 7px; padding: 0 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--foreground); font-size: 13px; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+.q-project-import-button:hover { border-color: color-mix(in srgb, var(--foreground) 28%, var(--border)); background: var(--q-hover); }
+.q-project-required-compact { align-items: flex-start; padding: 4px 8px; text-align: left; }
 .q-model-picker:hover,
 .q-model-picker-action:hover {
   color: var(--foreground);
@@ -427,7 +444,7 @@ a { color: inherit; text-decoration: none; }
 .settings-section-toolbar > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .settings-section-toolbar strong { color: var(--foreground); font-size: 13px; }
 .settings-section-toolbar span { overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.settings-provider-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.settings-provider-grid { display: flex; flex-direction: column; gap: 8px; }
 .settings-provider-list { display: flex; flex-direction: column; gap: 7px; }
 .settings-provider-card, .settings-model-card { display: flex; width: 100%; min-height: 61px; align-items: center; gap: 11px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
 .settings-provider-card:hover, .settings-model-card:hover { border-color: color-mix(in srgb, var(--foreground) 34%, transparent); background: var(--q-hover); box-shadow: 0 5px 16px rgb(0 0 0 / 10%); transform: translateY(-1px); }
@@ -436,6 +453,17 @@ a { color: inherit; text-decoration: none; }
 .settings-provider-card small, .settings-model-card small { overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .settings-provider-card > svg:last-child, .settings-model-card > svg { color: var(--q-subtle); }
 .settings-provider-icon { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: var(--q-hover); color: var(--muted-foreground); }
+.settings-provider-card { min-height: 68px; gap: 0; padding: 0; cursor: pointer; }
+.settings-provider-card.is-selected { border-color: color-mix(in srgb, var(--foreground) 44%, var(--border)); background: var(--card); box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 8%, transparent); }
+.settings-provider-edit { display: flex; min-width: 0; flex: 1; align-items: center; gap: 11px; height: 100%; padding: 10px 12px; border: 0; background: transparent; color: inherit; text-align: left; }
+.settings-provider-logo { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border-radius: 9px; background: var(--q-hover); color: var(--foreground); object-fit: contain; }
+.settings-provider-logo-fallback { font-size: 16px; font-weight: var(--q-weight-semibold); }
+.settings-provider-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
+.settings-provider-select { display: grid; width: 52px; height: 100%; flex: 0 0 52px; place-items: center; border: 0; border-radius: 9px; background: transparent; cursor: pointer; }
+.settings-provider-radio { width: 19px; height: 19px; border: 1.5px solid var(--muted-foreground); border-radius: 50%; background: transparent; transition: border-color .15s ease, background .15s ease; }
+.settings-provider-card.is-selected .settings-provider-radio { border-color: var(--foreground); background: radial-gradient(circle, var(--foreground) 0 4px, transparent 4.5px); }
+.settings-provider-select:hover .settings-provider-radio { border-color: var(--foreground); }
+.settings-provider-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .settings-subdialog-layer { position: absolute; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; border-radius: inherit; background: rgb(0 0 0 / 48%); }
 .settings-subdialog { position: relative; width: min(500px, 100%); max-height: 100%; overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--q-surface); box-shadow: 0 18px 44px rgb(0 0 0 / 35%); }
 .provider-dialog, .model-editor-dialog { width: min(610px, 100%); }
@@ -570,6 +598,18 @@ a { color: inherit; text-decoration: none; }
 :root[data-theme="dark"] .aui-composer-send:not(:disabled) .aui-composer-send-icon {
   color: #000 !important;
   stroke: #000 !important;
+}
+
+/* The cancel control uses a light circular button in dark mode. Keep its
+   square stop glyph dark enough to remain visible against that background. */
+:root[data-theme="dark"] .aui-composer-cancel {
+  background-color: #f5f5f5 !important;
+  color: #000 !important;
+}
+:root[data-theme="dark"] .aui-composer-cancel-icon {
+  color: #000 !important;
+  stroke: #000 !important;
+  fill: #000 !important;
 }
 
 @media (max-width: 680px) {

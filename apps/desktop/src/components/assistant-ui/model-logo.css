@@ -1,0 +1,2 @@
+.q-model-logo { display: block; flex: none; object-fit: contain; color: var(--foreground); }
+.q-model-logo-mono { background-color: currentColor; mask-size: contain; mask-position: center; mask-repeat: no-repeat; }

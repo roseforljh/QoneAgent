@@ -1,0 +1,113 @@
+.settings-dialog.is-model-page {
+  width: min(960px, 100%);
+  height: min(680px, calc(100dvh - 48px));
+}
+
+.settings-dialog .settings-model-grid { gap: 14px; }
+.settings-dialog .settings-model-card {
+  min-width: 0;
+  min-height: 80px;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  cursor: default;
+}
+.settings-model-card.is-selected {
+  border-color: color-mix(in srgb, var(--foreground) 48%, var(--border));
+  background: var(--card);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+.settings-model-card .settings-model-edit {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0 16px 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-model-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; justify-content: center; gap: 6px; }
+.settings-model-edit strong, .settings-model-edit small { max-width: 100%; }
+.settings-model-card .settings-model-select {
+  display: grid;
+  width: 56px;
+  flex: 0 0 56px;
+  place-items: center;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.settings-model-select {
+  background: transparent;
+  outline: none;
+}
+.settings-model-select:hover { background: transparent; }
+.settings-model-select input {
+  appearance: none;
+  width: 19px;
+  height: 19px;
+  margin: 0;
+  border: 1.5px solid var(--muted-foreground);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.settings-model-select input:checked {
+  border-color: var(--foreground);
+  background: radial-gradient(circle, var(--foreground) 0 4px, transparent 4.5px);
+}
+.settings-model-select input:hover { border-color: var(--foreground); }
+.settings-model-edit:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
+.settings-model-select input:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+/* Outside the provider dialog: only the list scrolls, never the surrounding form. */
+.settings-sync-layer {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 56%);
+}
+.settings-sync-layer .settings-sync-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  height: min(620px, calc(100dvh - 48px));
+  min-height: 0;
+  overflow: hidden;
+  padding: 24px;
+}
+.settings-sync-dialog .settings-subdialog-header,
+.settings-sync-dialog .settings-tabs,
+.settings-sync-dialog .settings-subdialog-footer { flex-shrink: 0; }
+.settings-sync-dialog .settings-tabs { gap: 24px; margin-bottom: 0; }
+.settings-sync-dialog .settings-sync-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border-top: 0;
+}
+.settings-sync-dialog .settings-sync-row { min-height: 54px; padding: 12px 8px; gap: 20px; }
+.settings-sync-row > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-sync-row code { max-width: 48%; }
+.settings-sync-dialog .settings-subdialog-footer { gap: 10px; margin-top: 0; padding-top: 18px; }
+
+@media (max-width: 720px) {
+  .settings-dialog.is-model-page { grid-template-rows: auto minmax(0, 1fr); height: calc(100dvh - 24px); }
+}
+@media (max-width: 480px) {
+  .settings-sync-layer { padding: 12px; }
+  .settings-sync-layer .settings-sync-dialog { padding: 16px; height: calc(100dvh - 24px); }
+  .settings-sync-dialog .settings-sync-row { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .settings-sync-row code { max-width: 100%; }
+}

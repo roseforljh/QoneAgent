@@ -1,0 +1,61 @@
+.q-sidebar-menu {
+  z-index: 80;
+  min-width: 184px;
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  outline: none;
+  overflow-y: auto;
+  box-shadow: 0 5px 16px rgb(0 0 0 / 12%);
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+  animation: q-sidebar-menu-in 120ms ease-out;
+}
+.q-sidebar-submenu { min-width: 148px; }
+.q-sidebar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  outline: none;
+  cursor: default;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.q-sidebar button { cursor: default; }
+.q-sidebar-menu-item > svg { flex-shrink: 0; }
+.q-sidebar-menu-subtrigger > svg:last-child { margin-left: auto; }
+.q-sidebar-menu-item:hover,
+.q-sidebar-menu-item[data-highlighted],
+.q-sidebar-menu-item[data-state="open"],
+.q-sidebar-menu-trigger[data-state="open"] { background: var(--accent); }
+.q-sidebar-section-label > span:last-child { transform-origin: center; }
+.q-sidebar-menu-item-danger { color: var(--destructive); }
+.q-sidebar-menu-item-danger:hover,
+.q-sidebar-menu-item-danger[data-highlighted] { background: color-mix(in srgb, var(--destructive) 10%, transparent); }
+.q-sidebar-menu-radio {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  border: 2px solid var(--muted-foreground);
+  border-radius: 50%;
+}
+[data-state="checked"] > .q-sidebar-menu-radio { border-color: #8db9f2; }
+.q-sidebar-menu-radio > span { width: 9px; height: 9px; border-radius: 50%; background: #8db9f2; }
+.q-sidebar-section-actions:has([data-state="open"]) { opacity: 1; }
+.q-sidebar-thread-row[data-drop-edge="before"] { box-shadow: 0 -2px #8db9f2; }
+.q-sidebar-thread-row[data-drop-edge="after"] { box-shadow: 0 2px #8db9f2; }
+.q-sidebar-drag-handle { cursor: grab; }
+.q-sidebar-drag-handle:active { cursor: grabbing; }
+@keyframes q-sidebar-menu-in {
+  from { opacity: 0; transform: translateY(-3px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .q-sidebar-menu { animation: none; } }

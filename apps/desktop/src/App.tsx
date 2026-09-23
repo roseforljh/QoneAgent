@@ -15,16 +15,21 @@ import { Thread } from "./components/assistant-ui/Thread";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { ProjectSection } from "./components/assistant-ui/project-section";
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { Link } from "@tanstack/react-router";
-import { ApprovalCard, ToolCard } from "./components/tool-ui/ToolCard";
+import { ApprovalCard } from "./components/tool-ui/ToolCard";
 import { Moon, PanelLeftIcon, PlusIcon, Settings, Sun, X } from "lucide-react";
 import { cn } from "./lib/utils";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
+import { ConfirmationDialogHost } from "./components/ui/ConfirmationDialog";
+import { confirmDestructiveAction } from "./lib/confirm-action";
+import { useLocale } from "./localization";
 import { QoneSelect } from "./components/ui/Select";
+import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-preferences";
 import qoneLogoUrl from "../src-tauri/icons/everytalk-logo.png";
 
 type Theme = "light" | "dark";
+type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+type JsonObject = { readonly [key: string]: JsonValue };
 
 function useTheme() {
   const [theme, setTheme] = useState<Theme>(() => {
@@ -64,9 +69,12 @@ const extractText = (message: AppendMessage): string => {
 };
 
 function useQoneRuntime(pendingRun: { current: string | null }) {
+  const { t } = useLocale();
   const messages = useStore((s) => s.messages);
   const streaming = useStore((s) => s.streaming);
   const running = useStore((s) => s.running);
+  const activeRunId = useStore((s) => s.activeRunId);
+  const toolCalls = useStore((s) => s.toolCalls);
   const sessions = useStore((s) => s.sessions);
   const currentSessionId = useStore((s) => s.currentSessionId);
   const runAgent = useStore((s) => s.runAgent);
@@ -74,18 +82,37 @@ function useQoneRuntime(pendingRun: { current: string | null }) {
   const newSession = useStore((s) => s.newSession);
   const selectSession = useStore((s) => s.selectSession);
   const send = useStore((s) => s.send);
+  const sidebarPreferences = useSidebarPreferences();
 
-  const runtimeMessages = streaming ? [...messages, { id: "streaming", role: "assistant", content: streaming }] : messages;
+  const hasStreamingAssistant = running;
+  const runtimeMessages = useMemo(
+    () => hasStreamingAssistant
+      ? [...messages, { id: "streaming", role: "assistant", content: streaming, runId: activeRunId }]
+      : messages,
+    [messages, streaming, activeRunId, hasStreamingAssistant],
+  );
+  const toolCallsByRun = useMemo(() => {
+    const grouped = new Map<string, ToolCall[]>();
+    for (const call of toolCalls) {
+      const current = grouped.get(call.runId) ?? [];
+      current.push(call);
+      grouped.set(call.runId, current);
+    }
+    return grouped;
+  }, [toolCalls]);
 
   const threads = useMemo<ExternalStoreThreadData<"regular">[]>(
-    () => sessions.map((session) => ({
+    () => sortSidebarSessions(sessions, {
+      ...sidebarPreferences,
+      priorityIds: sidebarPreferences.priorityIds.length ? sidebarPreferences.priorityIds : currentSessionId ? [currentSessionId] : [],
+    }).map((session) => ({
       id: session.id,
       title: session.title,
       status: "regular",
       // passed through to threadItems via the adapter's spread
       lastMessageAt: new Date(session.updatedAt),
     } as ExternalStoreThreadData<"regular">)),
-    [sessions],
+    [sessions, sidebarPreferences, currentSessionId],
   );
 
   const threadList = useMemo<ExternalStoreThreadListAdapter>(() => ({
@@ -93,24 +120,55 @@ function useQoneRuntime(pendingRun: { current: string | null }) {
     threads,
     onSwitchToNewThread: () => newSession(),
     onSwitchToThread: (threadId) => selectSession(threadId),
-    onDelete: (threadId) => {
+    onDelete: async (threadId) => {
+      const title = sessions.find((session) => session.id === threadId)?.title ?? t("sidebar.newChat");
+      if (!await confirmDestructiveAction(t("session.deleteConfirm", { title }))) return;
       send({ type: "session.delete", requestId: crypto.randomUUID(), sessionId: threadId });
       send({ type: "session.list", requestId: crypto.randomUUID() });
     },
-  }), [threads, currentSessionId, newSession, selectSession, send]);
+  }), [threads, currentSessionId, newSession, selectSession, send, sessions, t]);
 
   return useExternalStoreRuntime({
     messages: runtimeMessages,
     isRunning: running,
-    convertMessage: (message): ThreadMessageLike => ({
-      id: message.id,
-      role: message.role === "assistant" ? "assistant" : "user",
-      content: [{ type: "text", text: message.content }],
-    }),
+    convertMessage: (message): ThreadMessageLike => {
+      const role = message.role === "assistant" ? "assistant" : "user";
+      if (role === "user") return {
+        id: message.id,
+        role,
+        content: [{ type: "text", text: message.content }],
+      };
+
+      const calls = message.runId ? (toolCallsByRun.get(message.runId) ?? []) : [];
+      const content: ThreadMessageLike["content"] = [
+        ...calls.map((call) => ({
+          type: "tool-call" as const,
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          args: asJsonObject(call.args),
+          argsText: call.argsText ?? stringifyToolValue(call.args),
+          ...(call.status === "success" || call.status === "failed" ? { result: call.result ?? call.summary ?? "" } : {}),
+          ...(call.status === "failed" ? { isError: true } : {}),
+        })),
+        ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
+      ];
+      const isStreamingMessage = message.id === "streaming";
+      return {
+        id: message.id,
+        role,
+        content,
+        status: isStreamingMessage && running ? { type: "running" } : { type: "complete", reason: "stop" },
+      };
+    },
     onNew: async (message) => {
       const text = extractText(message);
       if (!text) return;
-      if (!useStore.getState().currentSessionId) {
+      const state = useStore.getState();
+      if (!state.currentSessionId && state.draftWorkspaceId) {
+        runAgent(text);
+        return;
+      }
+      if (!state.currentSessionId) {
         pendingRun.current = text;
         newSession();
         return;
@@ -122,6 +180,16 @@ function useQoneRuntime(pendingRun: { current: string | null }) {
   });
 }
 
+function asJsonObject(value: unknown): JsonObject {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as JsonObject;
+  return {};
+}
+
+function stringifyToolValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try { return JSON.stringify(value ?? {}) ?? "{}"; } catch { return "{}"; }
+}
+
 function Logo() {
   return (
     <span className="ml-2 flex min-w-0 items-center gap-2 truncate text-[15px] font-semibold">
@@ -131,24 +199,12 @@ function Logo() {
   );
 }
 
-function ToolCallList({ calls }: { calls: ToolCall[] }) {
-  const parentRef = useRef<HTMLDivElement>(null);
-  const virtualizer = useVirtualizer({ count: calls.length, getScrollElement: () => parentRef.current, estimateSize: () => 54, overscan: 5 });
-  return <div ref={parentRef} className="tool-call-list"><div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>{virtualizer.getVirtualItems().map((item) => <div key={item.key} ref={virtualizer.measureElement} data-index={item.index} style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${item.start}px)` }}><ToolCard call={calls[item.index]} /></div>)}</div></div>;
-}
-
-function ChatExtras() {
-  const toolCalls = useStore((s) => s.toolCalls);
-  const runs = useStore((s) => s.runs);
-  const artifacts = useStore((s) => s.artifacts);
+function PendingApprovals() {
   const approvals = useStore((s) => s.approvals);
   const approve = useStore((s) => s.approve);
   const reject = useStore((s) => s.reject);
   return (
     <>
-      {toolCalls.length > 0 && <ToolCallList calls={toolCalls} />}
-      {runs.length > 0 && <details className="activity-section"><summary>运行记录 <span>{runs.length}</span></summary>{runs.map((run) => <div className="activity-row" key={run.id}><span>{run.status}</span>{run.error && <small> — {run.error}</small>}</div>)}</details>}
-      {artifacts.length > 0 && <details className="activity-section"><summary>产物 <span>{artifacts.length}</span></summary>{artifacts.map((artifact) => <div className="activity-row" key={artifact.id}><span>{artifact.name}</span><small>{artifact.type}</small></div>)}</details>}
       {approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} onApprove={() => approve(approval.id)} onReject={() => reject(approval.id)} />)}
     </>
   );
@@ -178,9 +234,15 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  useEffect(() => {
+    const openSettings = () => setSettingsOpen(true);
+    window.addEventListener("qone-open-settings", openSettings);
+    return () => window.removeEventListener("qone-open-settings", openSettings);
+  }, []);
   const lastError = useStore((s) => s.lastError);
   const currentSessionId = useStore((s) => s.currentSessionId);
   const runAgent = useStore((s) => s.runAgent);
+  const sidebarLayout = useSidebarPreferences((s) => s.layout);
 
   useEffect(() => {
     if (currentSessionId && pendingRun.current) {
@@ -225,18 +287,18 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               )}
               labelClassName={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}
             />
-            <div
+            {sidebarLayout === "project" && <div
               aria-hidden={sidebarCollapsed}
               inert={sidebarCollapsed}
               className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
             >
               <ProjectSection />
-            </div>
-            <ThreadListItems
-              aria-hidden={sidebarCollapsed}
-              inert={sidebarCollapsed}
-              className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
-            />
+            </div>}
+            {sidebarLayout === "list" && <ThreadListItems
+                aria-hidden={sidebarCollapsed}
+                inert={sidebarCollapsed}
+                className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
+              />}
           </ThreadListRoot>
           <SidebarFooter collapsed={sidebarCollapsed} onOpenSettings={() => setSettingsOpen(true)} />
         </aside>
@@ -248,14 +310,10 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               <button className="icon-button" onClick={() => useStore.setState({ lastError: undefined })} aria-label="关闭错误"><X size={15} /></button>
             </div>
           )}
-          <Thread />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-center px-4 pb-3">
-            <div className="pointer-events-auto w-full max-w-3xl">
-              <ChatExtras />
-            </div>
-          </div>
+          <Thread><PendingApprovals /></Thread>
         </div>
         <SettingsDialog open={settingsOpen} onClose={closeSettings} theme={theme} onToggleTheme={onToggleTheme} />
+        <ConfirmationDialogHost />
       </div>
     </AssistantRuntimeProvider>
   );

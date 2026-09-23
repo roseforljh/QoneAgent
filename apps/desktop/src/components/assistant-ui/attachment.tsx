@@ -1,5 +1,5 @@
 import { useEffect, useMemo, type FC } from "react";
-import { XIcon, PlusIcon, FileText, Loader2Icon, AlertCircleIcon } from "lucide-react";
+import { XIcon, FileText, Loader2Icon, AlertCircleIcon } from "lucide-react";
 import { AttachmentPrimitive, ComposerPrimitive, MessagePrimitive, useAui, useAuiState } from "@assistant-ui/react";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { cn } from "../../lib/utils";
@@ -80,24 +80,5 @@ export const ComposerAttachments: FC = () => {
     <div className="aui-composer-attachments flex w-full flex-row items-center gap-2 overflow-x-auto empty:hidden">
       <ComposerPrimitive.Attachments>{() => <AttachmentUI />}</ComposerPrimitive.Attachments>
     </div>
-  );
-};
-
-export const ComposerAddAttachment: FC = () => {
-  return (
-    <ComposerPrimitive.AddAttachment
-      render={
-        <TooltipIconButton
-          tooltip="Add Attachment"
-          side="bottom"
-          variant="ghost"
-          size="icon"
-          className="aui-composer-add-attachment text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 size-7 rounded-full active:scale-[0.96] motion-reduce:transition-none"
-          aria-label="Add Attachment"
-        />
-      }
-    >
-      <PlusIcon className="aui-attachment-add-icon size-4" />
-    </ComposerPrimitive.AddAttachment>
   );
 };

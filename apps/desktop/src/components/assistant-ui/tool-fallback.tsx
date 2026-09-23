@@ -77,8 +77,9 @@ function ToolFallbackTrigger({ toolName, status, className, ...props }: React.Co
   const statusType = status?.type ?? "complete";
   const isRunning = statusType === "running";
   const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
+  const isFailed = status?.type === "incomplete" && status.reason === "error";
   const Icon = statusIconMap[statusType];
-  const label = isCancelled ? "Cancelled tool" : "Used tool";
+  const label = isCancelled ? "Cancelled tool" : isFailed ? "Tool failed" : "Used tool";
 
   return (
     <CollapsibleTrigger
@@ -157,15 +158,18 @@ function ToolFallbackError({ status, className, ...props }: React.ComponentProps
   );
 }
 
-const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, argsText, result, status }) => {
-  const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
+const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, argsText, result, status, isError }) => {
+  const displayStatus: ToolCallMessagePartStatus | undefined = isError && status?.type === "complete"
+    ? { type: "incomplete", reason: "error", error: result }
+    : status;
+  const isCancelled = displayStatus?.type === "incomplete" && displayStatus.reason === "cancelled";
   const [open, setOpen] = useState(false);
 
   return (
     <ToolFallbackRoot open={open} onOpenChange={setOpen}>
-      <ToolFallbackTrigger toolName={toolName} status={status} />
+      <ToolFallbackTrigger toolName={toolName} status={displayStatus} />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
+        <ToolFallbackError status={displayStatus} />
         <ToolFallbackArgs argsText={argsText} className={cn(isCancelled && "opacity-60")} />
         <ToolFallbackResult result={result} />
       </ToolFallbackContent>

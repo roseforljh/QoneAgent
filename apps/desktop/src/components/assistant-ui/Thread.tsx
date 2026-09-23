@@ -1,10 +1,14 @@
-import { ComposerAddAttachment, ComposerAttachments, UserMessageAttachments } from "./attachment";
+import { ComposerAttachments, UserMessageAttachments } from "./attachment";
+import { ComposerToolChip, ComposerToolsPopover, type ComposerTool } from "./composer-tools";
+import { ComposerEditorBridge, type InsertComposerTool } from "./composer-editor-bridge";
 import { MarkdownText } from "./markdown-text";
 import { ToolFallback } from "./tool-fallback";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { Button } from "../ui/Button";
-import { QoneSelect } from "../ui/Select";
 import { cn } from "../../lib/utils";
+import { ModelPicker } from "./model-picker";
+import { useStore } from "../../store";
+import { useLocale } from "../../localization";
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,
@@ -30,30 +34,25 @@ import {
   SquareIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
+  FolderPlusIcon,
+  Loader2Icon,
 } from "lucide-react";
-import type { FC } from "react";
-import { useStore } from "../../store";
+import { useCallback, useRef, type ReactNode, type FC } from "react";
 
-const ModelPicker: FC = () => {
-  const modelConfigs = useStore((s) => s.modelConfigs);
-  const selectedModelId = useStore((s) => s.selectedModelId);
-  const setSelectedModel = useStore((s) => s.setSelectedModel);
-  if (modelConfigs.length === 0) {
-    return (
-      <button
-        type="button"
-        onClick={() => { window.location.href = "/settings"; }}
-        className="q-model-picker-action text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 flex h-7 cursor-pointer items-center gap-1 rounded-full px-2 transition-colors"
-      >
-        配置模型
-        <ChevronDownIcon className="size-3" />
-      </button>
+export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
+  const { t } = useLocale();
+  const sessions = useStore((state) => state.sessions);
+  const workspaces = useStore((state) => state.workspaces);
+  const currentSessionId = useStore((state) => state.currentSessionId);
+  const draftWorkspaceId = useStore((state) => state.draftWorkspaceId);
+  const creatingSession = useStore((state) => state.creatingSession);
+  const canChat = (() => {
+    const session = sessions.find((item) => item.id === currentSessionId);
+    return Boolean(
+      (session?.workspaceId && workspaces.some((workspace) => workspace.id === session.workspaceId)) ||
+      (draftWorkspaceId && workspaces.some((workspace) => workspace.id === draftWorkspaceId)),
     );
-  }
-  return <QoneSelect value={selectedModelId ?? ""} onChange={setSelectedModel} options={modelConfigs.map((config) => ({ value: config.id, label: `${config.provider}/${config.model}` }))} ariaLabel="选择模型" className="q-model-picker aui-model-picker" triggerClassName="q-model-picker-trigger" />;
-};
-
-export const Thread: FC = () => {
+  })();
   return (
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root flex h-full flex-col items-stretch bg-white px-4 text-[#0d0d0d] dark:bg-black dark:text-[#ececec]"
@@ -64,11 +63,11 @@ export const Thread: FC = () => {
       }}
     >
       <AuiIf condition={(s) => s.thread.isEmpty}>
-        <EmptyState />
+        <EmptyState canChat={canChat} creatingSession={creatingSession} />
       </AuiIf>
 
       <AuiIf condition={(s) => !s.thread.isEmpty}>
-        <ThreadPrimitive.Viewport className="aui-viewport flex grow flex-col gap-8 overflow-y-scroll pt-16">
+        <ThreadPrimitive.Viewport className="aui-viewport flex min-h-0 grow flex-col gap-8 overflow-y-auto pt-16">
           <ThreadPrimitive.Messages>
             {({ message }) => {
               if (message.composer.isEditing) return <EditComposer />;
@@ -76,13 +75,11 @@ export const Thread: FC = () => {
               return <AssistantMessage />;
             }}
           </ThreadPrimitive.Messages>
+          <div className="mx-auto w-full max-w-3xl empty:hidden">{children}</div>
 
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mx-auto mt-auto flex w-full max-w-3xl flex-col gap-2 overflow-visible rounded-t-3xl bg-white pb-2 dark:bg-black">
             <ThreadScrollToBottom />
-            <Composer placeholder="Send a message... (@ to mention, / for commands)" />
-            <p className="text-center text-xs text-[#5d5d5d] dark:text-[#afafaf]">
-              Qone can make mistakes. Check important info.
-            </p>
+            {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
       </AuiIf>
@@ -90,23 +87,48 @@ export const Thread: FC = () => {
   );
 };
 
-const EmptyState: FC = () => {
+const ProjectImportPrompt: FC<{ compact?: boolean }> = ({ compact = false }) => {
+  const { t } = useLocale();
+  const chooseWorkspace = useStore((state) => state.chooseWorkspace);
+  return <div className={cn("q-project-required", compact && "q-project-required-compact")}>
+    {!compact && <><p className="q-project-required-title">{t("chat.projectRequired")}</p><p className="q-project-required-description">{t("chat.projectRequiredDescription")}</p></>}
+    <button type="button" className="q-project-import-button" onClick={chooseWorkspace}><FolderPlusIcon className="size-4" />{t("chat.importProject")}</button>
+  </div>;
+};
+
+const SessionCreatingState: FC = () => {
+  const { t } = useLocale();
+  return <div className="flex grow flex-col items-center justify-center px-4 pb-[16vh]">
+    <div className="flex flex-col items-center gap-3 text-muted-foreground">
+      <Loader2Icon className="size-6 animate-spin" aria-hidden="true" />
+      <p className="text-sm">{t("chat.creatingSession")}</p>
+    </div>
+  </div>;
+};
+
+const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canChat, creatingSession }) => {
+  const { t } = useLocale();
+  if (creatingSession) return <SessionCreatingState />;
   return (
     <div className="flex grow flex-col items-center justify-center px-4 pb-[16vh]">
       <div className="mx-auto flex w-full max-w-3xl flex-col items-stretch gap-6">
-        <p className="text-center text-2xl leading-7 font-normal text-[#0d0d0d] dark:text-[#ececec]">
-          Where should we begin?
-        </p>
-        <Composer placeholder="Send a message... (@ to mention, / for commands)" />
+        {canChat ? <>
+          <p className="text-center text-2xl leading-7 font-normal text-[#0d0d0d] dark:text-[#ececec]">{t("chat.welcome")}</p>
+          <Composer placeholder={t("chat.placeholder")} />
+        </> : <ProjectImportPrompt />}
       </div>
     </div>
   );
 };
 
 const composerInputClass =
-  "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none [&_.aui-directive-chip]:inline-flex [&_.aui-directive-chip]:items-baseline [&_.aui-directive-chip]:gap-1 [&_.aui-directive-chip]:rounded-md [&_.aui-directive-chip]:bg-blue-100 [&_.aui-directive-chip]:px-1.5 [&_.aui-directive-chip]:py-0.5 [&_.aui-directive-chip]:text-[13px] [&_.aui-directive-chip]:leading-none [&_.aui-directive-chip]:font-medium [&_.aui-directive-chip]:text-blue-700 dark:[&_.aui-directive-chip]:bg-blue-900/50 dark:[&_.aui-directive-chip]:text-blue-300 [&_.aui-directive-chip-icon]:self-center [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1";
+  "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1";
 
 const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
+  const insertToolRef = useRef<InsertComposerTool | null>(null);
+  const onEditorReady = useCallback((insert: InsertComposerTool | null) => { insertToolRef.current = insert; }, []);
+  const onToolSelect = useCallback((tool: ComposerTool) => { insertToolRef.current?.(tool); }, []);
+
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.AttachmentDropzone asChild>
@@ -115,19 +137,21 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
           className="border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
         >
           <ComposerAttachments />
-          <LexicalComposerInput autoFocus placeholder={placeholder} className={composerInputClass} />
-          <ComposerAction />
+          <LexicalComposerInput autoFocus placeholder={placeholder} className={composerInputClass} directiveChip={ComposerToolChip}>
+            <ComposerEditorBridge onReady={onEditorReady} />
+          </LexicalComposerInput>
+          <ComposerAction onToolSelect={onToolSelect} />
         </div>
       </ComposerPrimitive.AttachmentDropzone>
     </ComposerPrimitive.Root>
   );
 };
 
-const ComposerAction: FC = () => {
+const ComposerAction: FC<{ onToolSelect: (tool: ComposerTool) => void }> = ({ onToolSelect }) => {
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <div className="flex items-center gap-1">
-        <ComposerAddAttachment />
+        <ComposerToolsPopover onSelect={onToolSelect} />
         <ModelPicker />
       </div>
       <div className="flex items-center gap-1.5">
@@ -232,7 +256,9 @@ const EditComposer: FC = () => {
   return (
     <MessagePrimitive.Root className="mx-auto flex w-full max-w-3xl flex-col">
       <ComposerPrimitive.Root className="aui-edit-composer-root border-foreground/10 focus-within:border-foreground/25 ml-auto flex w-full max-w-[85%] cursor-text flex-col rounded-(--composer-radius) border bg-(--composer-bg) transition-[border-color]">
-        <LexicalComposerInput autoFocus className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none" />
+        <LexicalComposerInput autoFocus directiveChip={ComposerToolChip} className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none">
+          <ComposerEditorBridge />
+        </LexicalComposerInput>
         <div className="aui-edit-composer-footer mx-2.5 mb-2.5 flex items-center gap-1.5 self-end">
           <ComposerPrimitive.Cancel asChild>
             <Button variant="ghost" size="sm" className="h-8 px-3">Cancel</Button>
@@ -247,8 +273,10 @@ const EditComposer: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  const { t } = useLocale();
   return (
     <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl flex-col">
+      <AuiIf condition={(s) => s.message.status?.type === "running" && s.message.content.length === 0}><p role="status" className="text-muted-foreground py-2 text-sm animate-pulse">{t("chat.waiting")}</p></AuiIf>
       <div className="text-[#0d0d0d] dark:text-[#ececec]">
         <MessagePrimitive.Parts>
           {({ part }) => {
