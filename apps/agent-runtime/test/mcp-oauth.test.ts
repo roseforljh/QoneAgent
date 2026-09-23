@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { McpManager } from "@qone/mcp";
+import { McpManager, safeToolName } from "@qone/mcp";
 
 describe("MCP OAuth", () => {
+  test("normalizes model-facing tool names and avoids collisions", () => {
+    const used = new Set<string>();
+    const first = safeToolName("mcp:server:search", used);
+    used.add(first);
+    const second = safeToolName("mcp_server_search", used);
+    expect(first).toMatch(/^[a-zA-Z0-9_-]+$/);
+    expect(second).toMatch(/^[a-zA-Z0-9_-]+$/);
+    expect(second).not.toBe(first);
+  });
+
   test("rejects remote cleartext OAuth endpoints", async () => {
     const manager = new McpManager();
     await expect(manager.beginOAuth({

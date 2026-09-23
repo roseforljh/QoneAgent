@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   DefaultResourceLoader,
@@ -14,38 +13,18 @@ export interface SkillInfo {
   path: string;
 }
 
-export interface PluginSkillInput {
-  pluginId: string;
-  name: string;
-  description?: string;
-  content: string;
-}
-
 /**
  * Keep skill discovery on Pi's ResourceLoader. The wrapper only exposes a
  * product-facing catalog for the GUI and persistence; it does not create a
  * second skill format.
  */
-export async function createResourceLoader(cwd: string, pluginSkills: PluginSkillInput[] = []): Promise<{
+export async function createResourceLoader(cwd: string): Promise<{
   loader: ResourceLoader;
   skills: SkillInfo[];
 }> {
   const agentDir = process.env.PI_AGENT_DIR ??
     path.join(process.env.APPDATA ?? process.env.HOME ?? process.cwd(), "QoneAgent", "pi");
-  const pluginSkillRoot = path.join(agentDir, "plugin-skills");
-  const pluginSkillPaths: string[] = [];
-  for (const skill of pluginSkills) {
-    const segment = (value: string) => {
-      const safe = value.replace(/[^a-zA-Z0-9._-]/g, "_");
-      return safe === "." || safe === ".." || !safe ? "_" : safe;
-    };
-    const dir = path.join(pluginSkillRoot, segment(skill.pluginId), segment(skill.name));
-    await mkdir(dir, { recursive: true });
-    const frontmatter = `---\nname: ${JSON.stringify(skill.name)}\ndescription: ${JSON.stringify(skill.description ?? "")}\n---\n`;
-    await writeFile(path.join(dir, "SKILL.md"), frontmatter + skill.content, "utf8");
-    pluginSkillPaths.push(dir);
-  }
-  const skillPaths = [path.join(cwd, "skills"), path.join(process.cwd(), "skills"), ...pluginSkillPaths]
+  const skillPaths = [path.join(cwd, "skills"), path.join(process.cwd(), "skills")]
     .filter((p, i, all) => existsSync(p) && all.indexOf(p) === i);
   const loader = new DefaultResourceLoader({
     cwd,

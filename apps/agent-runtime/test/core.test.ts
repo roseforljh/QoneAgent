@@ -109,6 +109,38 @@ describe("runtime persistence and permissions", () => {
     expect(executed).toBe(true);
   });
 
+  test("run modes change approvals while preserving explicit and protected denials", async () => {
+    let mode: "ask" | "auto" | "full" = "ask";
+    let prompts = 0;
+    let executions = 0;
+    const queue = new ApprovalQueue();
+    const makeTool = (name: string) => withPermission(defineTool({
+      name, label: name, description: name,
+      parameters: Type.Object({ path: Type.String() }),
+      execute: async () => { executions++; return { content: [{ type: "text" as const, text: "ok" }] }; },
+    }), {
+      queue, workspacePath: "C:/work/app", mode: () => mode,
+      rules: { get: (_subject, permission) => permission === "shell.execute" ? "deny" : "ask" },
+      emitApproval: (id) => { prompts++; queue.approve(id); },
+    });
+    const write = makeTool("write");
+    await write.execute("one", { path: "C:/work/app/file.ts" }, undefined, undefined, undefined);
+    expect(prompts).toBe(1);
+    mode = "auto";
+    await write.execute("two", { path: "C:/work/app/file.ts" }, undefined, undefined, undefined);
+    expect(prompts).toBe(1);
+    await write.execute("three", { path: "C:/other/file.ts" }, undefined, undefined, undefined);
+    expect(prompts).toBe(2);
+    mode = "full";
+    await write.execute("four", { path: "C:/other/file.ts" }, undefined, undefined, undefined);
+    expect(prompts).toBe(2);
+    const protectedResult = await write.execute("five", { path: "C:/Windows/System32/hosts" }, undefined, undefined, undefined) as { isError?: boolean };
+    expect(protectedResult.isError).toBe(true);
+    const deniedResult = await makeTool("powershell").execute("six", { path: "C:/work/app" }, undefined, undefined, undefined) as { isError?: boolean };
+    expect(deniedResult.isError).toBe(true);
+    expect(executions).toBe(4);
+  });
+
   test("applies network denial to semantic browser tools", async () => {
     let executed = false;
     const tool = withPermission(defineTool({
@@ -216,6 +248,13 @@ describe("runtime persistence and permissions", () => {
     expect(containsSecretConfig({ headers: { custom: "Bearer value" } })).toBe(true);
     expect(containsSecretConfig({ baseUrl: "https://example.test" })).toBe(false);
     expect(decodeCommand(JSON.stringify({ type: "secret.set", requestId: "r", key: "model.apiKey:openai", value: "value" }))?.type).toBe("secret.set");
+  });
+
+  test("accepts only supported run settings in the command protocol", () => {
+    const command = { type: "agent.run", requestId: "r", sessionId: "s", message: "hello", permissionMode: "auto", thinking: "xhigh" };
+    expect(decodeCommand(JSON.stringify(command))).toMatchObject(command);
+    expect(decodeCommand(JSON.stringify({ ...command, permissionMode: "unrestricted" }))).toBeNull();
+    expect(decodeCommand(JSON.stringify({ ...command, thinking: "extreme" }))).toBeNull();
   });
 
   test("rejects MCP configs without exactly one secure transport", () => {

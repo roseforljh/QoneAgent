@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { modelBaseUrl, modelListUrl, parseModelMetadataResponse } from "@qone/protocol";
+import { decodeCommand, modelBaseUrl, modelListUrl, parseModelMetadataResponse } from "@qone/protocol";
 import { ModelMetadataResolver } from "../src/model-resolver.js";
 
 const baseConfig = (apiType: string, extra: Record<string, unknown> = {}) => ({
@@ -13,6 +13,58 @@ const baseConfig = (apiType: string, extra: Record<string, unknown> = {}) => ({
 });
 
 describe("model metadata resolver", () => {
+  test("Pi catalog fills provider omissions before models.dev", async () => {
+    const resolver = new ModelMetadataResolver({
+      fetchImpl: async () => new Response(JSON.stringify({ openai: { models: { "gpt-4o": { limit: { context: 999_999, output: 99_999 } } } } })),
+      providerModelsFetcher: async () => ({ data: [{ id: "gpt-4o" }] }),
+    });
+    const result = await resolver.resolve({ provider: "merchant", model: "gpt-4o", config: baseConfig("openai-compatible") });
+    expect(result.sources.contextWindow).toBe("pi");
+    expect(result.sources.maxTokens).toBe("pi");
+  });
+
+  test("saved fallback fields are not promoted to merchant priority", async () => {
+    const resolver = new ModelMetadataResolver({ disableModelsDev: true });
+    const result = await resolver.resolve({ provider: "merchant", model: "unknown-custom-model", config: baseConfig("openai-compatible", {
+      modelMetadata: { id: "unknown-custom-model", contextWindow: 48_000, maxTokens: 12_000 },
+      metadataSources: { maxContext: "provider", maxOutput: "models.dev" },
+    }) });
+    expect(result.sources.contextWindow).toBe("provider");
+    expect(result.sources.maxTokens).toBe("default");
+    expect(result.metadata.maxTokens).toBeUndefined();
+  });
+
+  test("complete merchant metadata needs no models.dev request", async () => {
+    let modelsDevCalls = 0;
+    const resolver = new ModelMetadataResolver({
+      fetchImpl: async () => { modelsDevCalls++; return new Response("{}"); },
+      providerModelsFetcher: async () => ({ data: [{ id: "complete-custom-model", context_length: 48_000, max_output_tokens: 4_000, reasoning: false, modalities: { input: ["text", "image"], output: ["text"] } }] }),
+    });
+    const result = await resolver.resolve({ provider: "merchant", model: "complete-custom-model", config: baseConfig("openai-compatible") });
+    expect(modelsDevCalls).toBe(0);
+    expect(result.sources).toEqual({ contextWindow: "provider", maxTokens: "provider", reasoning: "provider", input: "provider", output: "provider" });
+  });
+
+  test("falls back promptly when models.dev ignores abort, then retries later", async () => {
+    let calls = 0;
+    const resolver = new ModelMetadataResolver({
+      timeoutMs: 30,
+      fetchImpl: async () => {
+        calls++;
+        if (calls === 1) return new Promise<Response>(() => {});
+        return new Response(JSON.stringify({ catalog: { models: { "timeout-model": { limit: { output: 6_000 } } } } }));
+      },
+    });
+    const input = { provider: "merchant", model: "timeout-model", config: baseConfig("openai-compatible", { modelMetadata: { contextWindow: 48_000 } }) };
+    const first = await resolver.resolve(input);
+    expect(first.sources.contextWindow).toBe("provider");
+    expect(first.sources.maxTokens).toBe("default");
+    const second = await resolver.resolve(input);
+    expect(calls).toBe(2);
+    expect(second.sources.maxTokens).toBe("models.dev");
+    expect(second.maxTokens).toBe(6_000);
+  });
+
   test("parses provider model limits, reasoning options and modalities", () => {
     const [model] = parseModelMetadataResponse({
       data: [{
@@ -69,7 +121,36 @@ describe("model metadata resolver", () => {
     expect(result.contextWindow).toBe(111_111);
     expect(result.maxTokens).toBe(7_777);
     expect(result.reasoning).toBe(true);
-    expect(result.sources).toEqual({ contextWindow: "provider", maxTokens: "models.dev", reasoning: "provider" });
+    expect(result.sources).toMatchObject({ contextWindow: "provider", maxTokens: "models.dev", reasoning: "provider" });
+    expect(result.metadata.contextWindow).toBe(111_111);
+    expect(result.metadata.maxTokens).toBe(7_777);
+    expect(result.metadata.reasoning).toBe(true);
+  });
+
+  test("resolves supplied merchant metadata for settings without credentials or another merchant request", async () => {
+    let devCalls = 0;
+    const resolver = new ModelMetadataResolver({
+      fetchImpl: async () => {
+        devCalls++;
+        return new Response(JSON.stringify({ catalog: { models: { "custom-model": { limit: { context: 96_000, output: 12_000 }, modalities: { output: ["text", "audio"] } } } } }));
+      },
+    });
+    const result = await resolver.resolve({
+      provider: "merchant",
+      model: "custom-model",
+      config: baseConfig("claude", { modelMetadata: { id: "custom-model", contextWindow: 48_000, reasoning: true, reasoningOptions: [{ type: "effort", values: ["low", "high"] }] } }),
+    });
+    expect(devCalls).toBe(1);
+    expect(result.metadata.contextWindow).toBe(48_000);
+    expect(result.metadata.maxTokens).toBe(12_000);
+    expect(result.metadata.output).toEqual(["text", "audio"]);
+    expect(result.thinkingLevelMap?.low).toBe("low");
+    expect(result.sources).toMatchObject({ contextWindow: "provider", maxTokens: "models.dev", reasoning: "provider", output: "models.dev" });
+  });
+
+  test("validates batched settings metadata requests", () => {
+    expect(decodeCommand(JSON.stringify({ type: "model.resolve-metadata", requestId: "r1", provider: "merchant", apiType: "google", baseUrl: "https://example.test", models: [{ id: "gemini-demo", metadata: { contextWindow: 123_456 } }] }))).toMatchObject({ type: "model.resolve-metadata", models: [{ id: "gemini-demo", metadata: { contextWindow: 123_456 } }] });
+    expect(decodeCommand(JSON.stringify({ type: "model.resolve-metadata", requestId: "r2", provider: "merchant", apiType: "google", baseUrl: "https://example.test", models: [] }))).toBeNull();
   });
 
   test("manual limit overrides remain explicit over automatic sources", async () => {

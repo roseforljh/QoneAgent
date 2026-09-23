@@ -1,16 +1,15 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent, AgentEvent, SessionInfo, WorkspaceInfo, PermissionDecision, WorkspaceFileInfo } from "@qone/protocol";
 import { encode, decodeCommand } from "@qone/protocol";
-import { openDb, SessionRepo, MessageRepo, RunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, PluginRepo, SkillRepo } from "@qone/database";
+import { openDb, SessionRepo, MessageRepo, RunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
 import { PiAdapter } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
-import { discoverPlugins, loadPlugins } from "./plugin-runtime.js";
-import { closeAllBrowsers, closeBrowser, createBrowserTools } from "./browser-tools.js";
 import path from "node:path";
 import { existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
 import { createResourceLoader } from "./skills.js";
 import { containsSecretConfig } from "./secrets.js";
+import { ModelMetadataResolver } from "./model-resolver.js";
 
 const log = createLogger("runtime");
 
@@ -43,11 +42,11 @@ const toolCallRepo = new ToolCallRepo(db);
 const mcpServerRepo = new McpServerRepo(db);
 const modelConfigRepo = new ModelConfigRepo(db);
 const runtimeSecrets = new Map<string, string>();
+const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
 const eventRepo = new EventRepo(db);
 const artifactRepo = new ArtifactRepo(db);
 const permissionRepo = new PermissionRepo(db);
-const pluginRepo = new PluginRepo(db);
 const skillRepo = new SkillRepo(db);
 const eventJournal = new SequencedEventJournal<AgentEvent>(settingsRepo.get<number>("event.sequence") ?? 0);
 eventJournal.restore(eventRepo.list());
@@ -94,6 +93,7 @@ eventBus.subscribe((busEvent) => {
 const assistantBuffers = new Map<string, string>();
 const toolCallIds = new Map<string, string>();
 const cancelledRuns = new Set<string>();
+const startingRunSessions = new Set<string>();
 const approvalRuns = new Map<string, string>();
 const approvalToolCalls = new Map<string, string>();
 const commandApprovals = new ApprovalQueue();
@@ -120,58 +120,26 @@ const adapter = new PiAdapter((event) => eventBus.emit({
         toolCallRepo.finish(id, result && (result as { isError?: boolean }).isError ? "failed" : "success", result);
         toolCallIds.delete(`${runId}:${toolCallId}`);
       }
-      if (phase === "end" && (name === "browser.screenshot" || name === "browser.download")) {
-        const input = args as { path?: string } | undefined;
-        const content = (result as { content?: Array<{ text?: string }> } | undefined)?.content;
-        const text = content?.map((part) => part.text ?? "").join(" ") ?? "";
-        const outputPath = input?.path ?? text.match(/(?:saved to|to)\s+(.+)$/i)?.[1]?.trim();
-        if (outputPath && existsSync(outputPath)) {
-          const size = statSync(outputPath).size;
-          const artifactType = name.endsWith("screenshot") ? "screenshot" : "download";
-          const extension = path.extname(outputPath).toLowerCase();
-          const mimeType = artifactType === "screenshot"
-            ? (extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : "image/png")
-            : undefined;
-          const artifact = artifactRepo.add({ sessionId, type: artifactType, name: path.basename(outputPath), path: path.resolve(outputPath), mimeType, size });
-          emit("artifact.created", artifact, sessionId, runId);
-        }
-      }
     }
   },
 }, permissionRepo, (sessionId, currentRunId) => messageRepo.listBySession(sessionId).filter((message) => message.runId !== currentRunId).map((message) => ({
   role: message.role,
   content: message.content,
+  attachments: message.attachments ? JSON.parse(message.attachments) : undefined,
   createdAt: message.createdAt,
 })));
 await adapter.configureModels(modelConfigRepo.list());
-adapter.setSessionTools(createBrowserTools, closeBrowser);
-
-const appDataPluginsDir = path.join(process.env.APPDATA ?? process.env.HOME ?? process.cwd(), "QoneAgent", "plugins");
-const pluginsDir = process.env.QONE_PLUGINS_DIR
-  ? path.resolve(process.env.QONE_PLUGINS_DIR)
-  : [path.resolve(process.cwd(), "plugins"), path.resolve(process.cwd(), "../../plugins"), appDataPluginsDir]
-      .find((candidate) => existsSync(candidate)) ?? appDataPluginsDir;
 for (const [permission, decision] of [
   ["filesystem.write", "ask"],
   ["shell.execute", "ask"],
   ["network", "ask"],
   ["clipboard.read", "ask"],
   ["clipboard.write", "ask"],
-  ["browser.control", "ask"],
   ["windows.control", "ask"],
   ["secret.read", "ask"],
   ["mcp.connect", "ask"],
   ["tool.execute", "ask"],
 ] as const) permissionRepo.ensure("builtin", permission, decision);
-const discoveredPlugins = await discoverPlugins(pluginsDir);
-for (const plugin of discoveredPlugins) {
-  pluginRepo.upsert(plugin.manifest);
-  permissionRepo.ensure(`plugin:${plugin.manifest.id}`, "plugin.load", "ask");
-  permissionRepo.ensure(`plugin:${plugin.manifest.id}`, "tool.execute", "ask");
-  for (const permission of plugin.manifest.permissions) permissionRepo.ensure(`plugin:${plugin.manifest.id}`, permission, "ask");
-}
-let plugins = await loadPlugins(pluginsDir, { permissionRules: permissionRepo, discovered: discoveredPlugins });
-adapter.setPluginSkills(plugins.flatMap((plugin) => plugin.skills));
 const mcp = new McpManager(async (serverId, token) => {
   const config = mcpServerRepo.list().find((server) => server.id === serverId);
   const key = config?.oauth?.tokenSecretKey ?? `mcp.oauth:${serverId}`;
@@ -202,40 +170,7 @@ for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()]) {
 refreshCustomTools();
 
 function refreshCustomTools() {
-  adapter.setCustomTools([...plugins.flatMap((plugin) => plugin.tools), ...mcp.tools()]);
-}
-
-async function reloadPlugins() {
-  for (const plugin of plugins) {
-    for (const handler of plugin.shutdown) await Promise.resolve(handler()).catch((error: unknown) => log.warn("plugin shutdown handler failed", { plugin: plugin.manifest.id, err: String(error) }));
-  }
-  plugins = await loadPlugins(pluginsDir, { permissionRules: permissionRepo, discovered: discoveredPlugins });
-  adapter.setPluginSkills(plugins.flatMap((plugin) => plugin.skills));
-  refreshCustomTools();
-}
-
-function pluginInfos() {
-  return discoveredPlugins.map(({ manifest }) => {
-    const loaded = plugins.find((plugin) => plugin.manifest.id === manifest.id);
-    return {
-      id: manifest.id,
-      name: manifest.name,
-      version: manifest.version,
-      description: manifest.description,
-      toolCount: loaded?.tools.length ?? 0,
-      skillCount: loaded?.skills.length ?? 0,
-      loaded: Boolean(loaded),
-    };
-  });
-}
-
-async function runPluginHooks(event: "beforeRun" | "afterRun" | "shutdown", payload: unknown) {
-  for (const plugin of plugins) {
-    for (const hook of plugin.hooks.filter((item) => item.event === event)) {
-      try { await hook.handler(payload); }
-      catch (error) { log.warn("plugin hook failed", { plugin: plugin.manifest.id, event, err: String(error) }); }
-    }
-  }
+  adapter.setCustomTools(mcp.tools());
 }
 
 function loadMcpConfigs() {
@@ -313,7 +248,7 @@ async function authorizeCommand(subjectId: string, permission: string, toolName:
 async function handle(cmd: RuntimeCommand): Promise<void> {
   switch (cmd.type) {
     case "ping":
-      send({ type: "pong", requestId: cmd.requestId });
+      send({ type: "pong", requestId: cmd.requestId, capabilities: ["model.resolve-metadata", "model.metadata-sources"] });
       return;
 
     case "session.create": {
@@ -366,6 +301,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           runId: m.runId ?? undefined,
           role: m.role,
           content: m.content,
+          attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
           model: m.model ?? undefined,
           createdAt: m.createdAt,
         })),
@@ -454,14 +390,14 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         send({ type: "error", requestId: cmd.requestId, message: "skills path is outside registered workspaces" });
         return;
       }
-      const { skills } = await createResourceLoader(requestedCwd, plugins.flatMap((plugin) => plugin.skills));
+      const { skills } = await createResourceLoader(requestedCwd);
       for (const skill of skills) skillRepo.upsert(skill);
       send({ type: "skills.list", skills });
       return;
     }
 
     case "plugins.list":
-      send({ type: "plugins.list", plugins: pluginInfos() });
+      send({ type: "plugins.list", plugins: [] });
       return;
 
     case "mcp.list":
@@ -475,7 +411,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       mcpServerRepo.upsert(cmd.config);
       await mcp.disconnect(cmd.config.id);
       const tools = await mcp.connect(cmd.config);
-      adapter.setCustomTools([...plugins.flatMap((p) => p.tools), ...mcp.tools()]);
+      adapter.setCustomTools(mcp.tools());
       send({ type: "mcp.connected", serverId: cmd.config.id, toolCount: tools.length });
       send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
       return;
@@ -530,11 +466,6 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         decision: rule.decision,
         updatedAt: rule.updatedAt,
       } });
-      if (cmd.subjectId.startsWith("plugin:") && cmd.permission === "plugin.load") {
-        for (const runId of adapter.stopAll()) cancelledRuns.add(runId);
-        await reloadPlugins();
-        send({ type: "plugins.list", plugins: pluginInfos() });
-      }
       return;
     }
 
@@ -542,6 +473,16 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       await adapter.configureModels(modelConfigRepo.list());
       send({ type: "model.list", configs: modelConfigRepo.list() });
       return;
+
+    case "model.resolve-metadata": {
+      const models = await Promise.all(cmd.models.map(async ({ id, metadata }) => {
+        const resolved = await settingsMetadataResolver.resolve({ provider: cmd.provider, model: id, config: { apiType: cmd.apiType, baseUrl: cmd.baseUrl, autoMetadata: true, modelMetadata: metadata } });
+        const thinkingLevels = Object.entries(resolved.thinkingLevelMap ?? {}).filter(([level, value]) => level !== "off" && value !== null && value !== undefined).map(([level]) => level);
+        return { id, metadata: resolved.metadata, thinkingLevels, sources: resolved.sources };
+      }));
+      send({ type: "model.metadata-resolved", requestId: cmd.requestId, models });
+      return;
+    }
 
     case "model.upsert": {
       if (containsSecretConfig(cmd.config.config)) {
@@ -579,7 +520,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           try {
             await mcp.disconnect(mcpSecret.id);
             await mcp.connect(mcpSecret);
-            adapter.setCustomTools([...plugins.flatMap((p) => p.tools), ...mcp.tools()]);
+            adapter.setCustomTools(mcp.tools());
           } catch (error) {
             log.warn("MCP OAuth credential restore failed", { serverId: mcpSecret.id, err: String(error) });
           }
@@ -606,9 +547,29 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         send({ type: "error", requestId: cmd.requestId, message: "select a workspace before running the agent" });
         return;
       }
+      if (startingRunSessions.has(cmd.sessionId) || adapter.isRunning(cmd.sessionId) ||
+          runRepo.listBySession(cmd.sessionId).some((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
+        send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
+        return;
+      }
+      if (cmd.replaceFromMessageId) {
+        startingRunSessions.add(cmd.sessionId);
+        try {
+          // Pi keeps an in-memory conversation; it must be rebuilt from the trimmed DB history.
+          await adapter.disposeSession(cmd.sessionId);
+          flushEvents();
+          messageRepo.truncateFrom(cmd.sessionId, cmd.replaceFromMessageId);
+          eventJournal.restore(eventRepo.list());
+        } catch (error) {
+          send({ type: "error", requestId: cmd.requestId, message: String(error) });
+          return;
+        } finally {
+          startingRunSessions.delete(cmd.sessionId);
+        }
+      }
       const run = runRepo.create(cmd.sessionId);
       const turn = turnRepo.create(run.id);
-      messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId);
+      messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments);
       emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
       const workspaceCwd = s.workspaceId ? workspaceRepo.get(s.workspaceId)?.path : undefined;
       if (s.workspaceId && !workspaceCwd) {
@@ -620,8 +581,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       }
 
       Promise.resolve()
-        .then(() => runPluginHooks("beforeRun", { sessionId: cmd.sessionId, runId: run.id, message: cmd.message }))
-        .then(() => adapter.run(cmd.sessionId, cmd.message, { model: cmd.model, cwd: workspaceCwd, runId: run.id }, (type, payload) =>
+        .then(() => adapter.run(cmd.sessionId, cmd.message, { model: cmd.model, cwd: workspaceCwd, runId: run.id, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments }, (type, payload) =>
           emit(type, payload, cmd.sessionId, run.id)
         ))
         .then(() => {
@@ -637,7 +597,6 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status);
           sessionRepo.touch(cmd.sessionId);
-          void runPluginHooks("afterRun", { sessionId: cmd.sessionId, runId: run.id, status });
           emit(cancelled ? "agent.cancelled" : "agent.completed", assistantMessage ? {
             message: {
               id: assistantMessage.id,
@@ -655,7 +614,6 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           const status = cancelled ? "cancelled" : "failed";
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status, cancelled ? undefined : String(err));
-          void runPluginHooks("afterRun", { sessionId: cmd.sessionId, runId: run.id, status, error: String(err) });
           emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled ? {} : { message: String(err) }, cmd.sessionId, run.id);
         });
 
@@ -726,7 +684,15 @@ while (true) {
     const line = buf.slice(0, idx);
     buf = buf.slice(idx + 1);
     const cmd = decodeCommand(line);
-    if (!cmd) continue;
+    if (!cmd) {
+      // A newer GUI may send a command this runtime does not know. Reply to
+      // correlated requests instead of leaving the GUI waiting for a timeout.
+      try {
+        const raw = JSON.parse(line) as { requestId?: unknown; type?: unknown };
+        if (typeof raw.requestId === "string") send({ type: "error", requestId: raw.requestId, message: `invalid or unsupported command: ${String(raw.type ?? "unknown")}` });
+      } catch { /* Ignore malformed input without a request ID. */ }
+      continue;
+    }
     handle(cmd).catch((err) => {
       log.error("command failed", { err: String(err) });
       send({ type: "error", requestId: cmd.requestId, message: String(err) });
@@ -734,15 +700,7 @@ while (true) {
   }
 }
 
-for (const plugin of plugins) {
-  for (const handler of plugin.shutdown) {
-    try { await handler(); }
-    catch (error) { log.warn("plugin shutdown handler failed", { plugin: plugin.manifest.id, err: String(error) }); }
-  }
-}
-await runPluginHooks("shutdown", {});
 await mcp.disconnectAll();
-await closeAllBrowsers();
 for (const session of adapter.getSessions()) {
   try { await session.dispose(); } catch (error) { log.warn("Pi session dispose failed", { err: String(error) }); }
 }

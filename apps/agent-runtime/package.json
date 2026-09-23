@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@assistant-ui/react-generative-ui": "^0.0.19",
     "@qone/protocol": "*",
     "@qone/shared": "*",
     "@qone/database": "*",

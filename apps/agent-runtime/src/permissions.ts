@@ -6,6 +6,7 @@ import { createLogger } from "@qone/shared";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { realpathSync } from "node:fs";
 import path from "node:path";
+import type { RunPermissionMode } from "@qone/protocol";
 
 const log = createLogger("permission");
 
@@ -21,11 +22,18 @@ export interface ToolContext {
   workspacePath?: string;
 }
 
+export type QoneToolDefinition = ToolDefinition & { qoneToolName?: string };
+
+function logicalToolName(tool: ToolDefinition): string {
+  return (tool as QoneToolDefinition).qoneToolName ?? tool.name;
+}
+
 const TOOL_PERMISSIONS: Record<string, PermissionDecision> = {
   read: "allow",
   grep: "allow",
   find: "allow",
   ls: "allow",
+  present: "allow",
 
   write: "ask",
   edit: "ask",
@@ -67,6 +75,20 @@ function canonicalPath(target: string): string {
   }
 }
 
+function insideWorkspace(target: string, workspacePath: string): boolean {
+  const ws = canonicalPath(path.resolve(workspacePath)).toLowerCase();
+  const resolved = canonicalPath(path.resolve(workspacePath, target)).toLowerCase();
+  return resolved === ws || resolved.startsWith(`${ws}${path.sep}`);
+}
+
+function autoApproves(ctx: ToolContext): boolean {
+  if (["browser.open", "browser.navigate", "browser.snapshot", "browser.extract", "browser.close"].includes(ctx.toolName)) return true;
+  if (ctx.toolName !== "write" && ctx.toolName !== "edit") return false;
+  const args = ctx.args as Record<string, unknown> | undefined;
+  const target = args?.path ?? args?.file;
+  return typeof target === "string" && !!ctx.workspacePath && insideWorkspace(target, ctx.workspacePath);
+}
+
 export function decide(ctx: ToolContext): PermissionDecision {
   const args = ctx.args as Record<string, unknown> | undefined;
   const pathArg =
@@ -85,10 +107,7 @@ export function decide(ctx: ToolContext): PermissionDecision {
 
   // Workspace boundary: file-mutating tools pointing outside the workspace ask.
   if (base !== "deny" && pathArg && ctx.workspacePath) {
-    const ws = canonicalPath(path.resolve(ctx.workspacePath)).toLowerCase();
-    const p = canonicalPath(path.resolve(ctx.workspacePath, pathArg)).toLowerCase();
-    const inside = p === ws || p.startsWith(`${ws}${path.sep}`);
-    if (!inside && ["read", "write", "edit", "grep", "find", "ls"].includes(ctx.toolName)) {
+    if (!insideWorkspace(pathArg, ctx.workspacePath) && ["read", "write", "edit", "grep", "find", "ls"].includes(ctx.toolName)) {
       return "ask";
     }
   }
@@ -189,6 +208,7 @@ export function withPermission<T extends ToolDefinition>(
     emitApproval: (approvalId: string, toolName: string, args: unknown, toolCallId: string) => void;
     workspacePath?: string;
     rules?: PermissionRuleStore;
+    mode?: () => RunPermissionMode;
   }
 ): T {
   const inner = tool.execute;
@@ -196,7 +216,7 @@ export function withPermission<T extends ToolDefinition>(
     ...tool,
     execute: async (id, params, signal, onUpdate, ctx) => {
       const context = {
-        toolName: tool.name,
+        toolName: logicalToolName(tool),
         args: params,
         workspacePath: opts.workspacePath,
       };
@@ -204,25 +224,29 @@ export function withPermission<T extends ToolDefinition>(
       // Hard-deny locations are safety boundaries, not user preferences.
       if (policyDecision === "deny") {
         return {
-          content: [{ type: "text" as const, text: `Tool ${tool.name} denied by policy.` }],
+          content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} denied by policy.` }],
           details: { denied: true },
           isError: true,
         } as never;
       }
       const requiredPermissions = [
-        ...permissionNames(tool.name),
+        ...permissionNames(logicalToolName(tool)),
         ...((tool as ToolDefinition & { qonePermissions?: string[] }).qonePermissions ?? []),
       ].filter((permission, index, all) => all.indexOf(permission) === index);
       const decisions = requiredPermissions
-        .map((permission) => opts.rules?.get(permissionSubject(tool.name), permission) ?? policyDecision);
-      const decision = decisions.includes("deny")
+        .map((permission) => opts.rules?.get(permissionSubject(logicalToolName(tool)), permission) ?? policyDecision);
+      let decision = decisions.includes("deny")
         ? "deny"
         : decisions.includes("ask")
           ? "ask"
           : "allow";
+      if (decision === "ask") {
+        const mode = opts.mode?.() ?? "ask";
+        if (mode === "full" || (mode === "auto" && autoApproves(context))) decision = "allow";
+      }
       if (decision === "deny") {
         return {
-          content: [{ type: "text" as const, text: `Tool ${tool.name} denied by permission rule.` }],
+          content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} denied by permission rule.` }],
           details: { denied: true },
           isError: true,
         } as never;
@@ -231,19 +255,20 @@ export function withPermission<T extends ToolDefinition>(
       if (decision === "ask") {
         if (signal?.aborted) {
           return {
-            content: [{ type: "text" as const, text: `Tool ${tool.name} cancelled.` }],
+            content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} cancelled.` }],
             details: { cancelled: true },
             isError: true,
           } as never;
         }
         const approvalId = crypto.randomUUID();
-        const approval = opts.queue.request(approvalId, tool.name, params, signal);
-        opts.emitApproval(approvalId, tool.name, params, id);
-        log.info("tool waiting approval", { tool: tool.name, approvalId });
+        const name = logicalToolName(tool);
+        const approval = opts.queue.request(approvalId, name, params, signal);
+        opts.emitApproval(approvalId, name, params, id);
+        log.info("tool waiting approval", { tool: name, approvalId });
         const approved = await approval;
         if (!approved) {
           return {
-            content: [{ type: "text" as const, text: `Tool ${tool.name} rejected by user.` }],
+            content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} rejected by user.` }],
             details: { rejected: true },
             isError: true,
           } as never;

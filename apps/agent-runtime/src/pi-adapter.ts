@@ -15,10 +15,11 @@ import {
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { modelListUrl, type AgentEvent, type ModelConfigInfo } from "@qone/protocol";
+import type { ImageContent } from "@earendil-works/pi-ai";
+import { modelListUrl, type AgentEvent, type MessageAttachmentInfo, type ModelConfigInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
-import { createResourceLoader, type PluginSkillInput } from "./skills.js";
+import { createResourceLoader } from "./skills.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
 
 const log = createLogger("pi-adapter");
@@ -29,7 +30,28 @@ type RunEmitFn = (type: string, payload: unknown) => void;
 export interface PersistedPiMessage {
   role: string;
   content: string;
+  attachments?: MessageAttachmentInfo[];
   createdAt: number;
+}
+
+export function imageContent(attachments: readonly MessageAttachmentInfo[] = []): ImageContent[] {
+  return attachments.flatMap((attachment) => {
+    if (attachment.type !== "image") return [];
+    const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
+    return match ? [{ type: "image" as const, data: match[2]!, mimeType: match[1]!.toLowerCase() }] : [];
+  });
+}
+
+export function promptWithAttachments(message: string, attachments: readonly MessageAttachmentInfo[] = []): string {
+  const escapeName = (name: string) => name.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+  const files = attachments.flatMap((attachment) => {
+    if (attachment.type !== "file") return [];
+    const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
+    if (!match) return [];
+    const body = Buffer.from(match[1]!, "base64").toString("utf8");
+    return [`<attachment name="${escapeName(attachment.name)}">\n${body}\n</attachment>`];
+  });
+  return [message.trim(), ...files].filter(Boolean).join("\n\n") || "请分析附件图片。";
 }
 
 /**
@@ -59,8 +81,13 @@ export function createPiSessionEntries(
     if (message.role === "assistant" && !model) continue;
     const id = crypto.randomUUID();
     const base = { type: "message" as const, id, parentId, timestamp: new Date(message.createdAt).toISOString() };
+    const images = imageContent(message.attachments);
+    const prompt = promptWithAttachments(message.content, message.attachments);
     const value = message.role === "user"
-      ? { ...base, message: { role: "user" as const, content: message.content, timestamp: message.createdAt } }
+      ? { ...base, message: { role: "user" as const, content: images.length ? [
+          { type: "text" as const, text: prompt },
+          ...images,
+        ] : prompt, timestamp: message.createdAt } }
       : {
           ...base,
           message: {
@@ -115,12 +142,14 @@ interface PiAdapterHooks {
 // internal AgentEvent protocol so the GUI never imports Pi types.
 // Coding tools (read/grep/find/ls/edit/write/powershell) come built in
 // via createAgentSession — no custom search service needed for V1.
-// Extra tools (MCP, plugin, browser) get injected via customTools.
+// MCP tools are injected through customTools. Skills are loaded through Pi's
+// ResourceLoader rather than exposed as model-callable tools.
 export class PiAdapter {
   private emit: EmitFn;
   private sessions = new Map<string, AgentSession>();
   private runs = new Map<string, AgentSession>();
   private activeRunIds = new Map<string, string>();
+  private runModes = new Map<string, RunPermissionMode>();
   private stoppedRuns = new Set<string>();
   private seq = 0;
   private customTools: ToolDefinition[] = [];
@@ -161,9 +190,6 @@ export class PiAdapter {
       }
     },
   });
-  private pluginSkills: PluginSkillInput[] = [];
-  private sessionToolProvider?: (sessionId: string) => ToolDefinition[];
-  private sessionToolDisposer?: (sessionId: string) => void | Promise<void>;
 
   constructor(
     emit: EmitFn,
@@ -175,24 +201,18 @@ export class PiAdapter {
     this.hooks = hooks;
   }
 
-  // Called once at boot after MCP/plugin managers finish loading.
+  // Called once at boot after MCP manager finishes loading.
   setCustomTools(tools: ToolDefinition[]) {
     this.customTools = tools;
     for (const [sessionId, session] of this.sessions) {
       if (session.isIdle) {
         session.dispose();
         this.sessions.delete(sessionId);
-        void this.sessionToolDisposer?.(sessionId);
       } else {
         // Do not interrupt an active run. It will be recreated after settling.
         this.staleSessions.add(sessionId);
       }
     }
-  }
-
-  setPluginSkills(skills: PluginSkillInput[]) {
-    this.pluginSkills = skills;
-    this.resourceLoaders.clear();
   }
 
   async configureModels(configs: ModelConfigInfo[]): Promise<void> {
@@ -260,14 +280,6 @@ export class PiAdapter {
     return this.thinkingLevels.get(`${provider}/${model}`) ?? this.thinkingLevels.get(`${provider}:${model}`);
   }
 
-  setSessionTools(
-    provider: (sessionId: string) => ToolDefinition[],
-    disposer: (sessionId: string) => void | Promise<void>,
-  ) {
-    this.sessionToolProvider = provider;
-    this.sessionToolDisposer = disposer;
-  }
-
   async disposeSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -275,7 +287,6 @@ export class PiAdapter {
       this.sessions.delete(sessionId);
     }
     this.staleSessions.delete(sessionId);
-    await this.sessionToolDisposer?.(sessionId);
   }
 
   getSessions(): AgentSession[] {
@@ -296,6 +307,10 @@ export class PiAdapter {
         log.warn("model metadata refresh failed", { provider, err: String(error) });
       });
     }
+  }
+
+  isRunning(sessionId: string): boolean {
+    return this.activeRunIds.has(sessionId);
   }
 
   async deleteSecret(key: string): Promise<void> {
@@ -341,14 +356,14 @@ export class PiAdapter {
     });
   }
 
-  private async getSession(sessionId: string, cwd?: string, modelName?: string): Promise<AgentSession> {
+  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel): Promise<AgentSession> {
+    const thinking = thinkingOverride ? (thinkingOverride === "none" ? "off" : thinkingOverride) : modelName ? this.thinkingLevelForModel(modelName) : undefined;
     const existing = this.sessions.get(sessionId);
     if (existing) {
       if (this.staleSessions.has(sessionId) && existing.isIdle) {
         existing.dispose();
         this.sessions.delete(sessionId);
         this.staleSessions.delete(sessionId);
-        await this.sessionToolDisposer?.(sessionId);
       } else {
       if (modelName) {
         this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
@@ -356,8 +371,7 @@ export class PiAdapter {
         const nextModel = this.modelRuntime.getModel(provider, modelId);
         if (!nextModel) throw new Error(`configured model not found: ${modelName}`);
         await existing.setModel(nextModel);
-        const thinking = this.thinkingLevelForModel(modelName);
-        if (thinking) existing.setThinkingLevel(thinking);
+         if (thinking) existing.setThinkingLevel(thinking);
       }
       return existing;
       }
@@ -365,7 +379,7 @@ export class PiAdapter {
 
     const workspacePath = cwd ?? process.cwd();
     if (!this.resourceLoaders.has(workspacePath)) {
-      const { loader } = await createResourceLoader(workspacePath, this.pluginSkills);
+      const { loader } = await createResourceLoader(workspacePath);
       this.resourceLoaders.set(workspacePath, loader);
     }
     const builtinTools = [
@@ -377,16 +391,21 @@ export class PiAdapter {
       createFindTool(workspacePath),
       createLsTool(workspacePath),
     ];
-    const sessionTools = this.sessionToolProvider?.(sessionId) ?? [];
-    const wrapped = [...builtinTools, ...this.customTools, ...sessionTools].map((t) =>
+    const wrapped = [...builtinTools, ...this.customTools].map((t) =>
       withPermission(t, {
         queue: this.approvals,
         workspacePath,
         rules: this.permissionRules,
+        mode: () => this.runModes.get(sessionId) ?? "ask",
         emitApproval: (approvalId, toolName, args, toolCallId) =>
           this.push("approval.requested", { approvalId, toolName, args, toolCallId }, sessionId, this.activeRunIds.get(sessionId)),
       })
     );
+
+    const toolNameByModelName = new Map(wrapped.map((tool) => [
+      tool.name,
+      (tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? tool.name,
+    ]));
 
     const resourceLoader = this.resourceLoaders.get(workspacePath);
     let modelRuntime: ModelRuntime | undefined;
@@ -413,7 +432,7 @@ export class PiAdapter {
       resourceLoader,
       modelRuntime,
       model,
-      thinkingLevel: modelName ? this.thinkingLevelForModel(modelName) : undefined,
+      thinkingLevel: thinking,
     });
 
     session.subscribe((e) => {
@@ -433,14 +452,14 @@ export class PiAdapter {
       } else if (e.type === "message_end") protocolType = "message.completed";
       else if (e.type === "tool_execution_start") {
         protocolType = "tool.started";
-        protocolPayload = { toolCallId: raw.toolCallId, toolName: raw.toolName, args: raw.args ?? raw.input };
+        protocolPayload = { toolCallId: raw.toolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, args: raw.args ?? raw.input };
       } else if (e.type === "tool_execution_update") {
         protocolType = "tool.updated";
-        protocolPayload = { toolCallId: raw.toolCallId, toolName: raw.toolName, update: raw.partialResult ?? raw.update };
+        protocolPayload = { toolCallId: raw.toolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, update: raw.partialResult ?? raw.update };
       } else if (e.type === "tool_execution_end") {
         const result = raw.result as { isError?: boolean } | undefined;
         protocolType = result?.isError ? "tool.failed" : "tool.completed";
-        protocolPayload = { toolCallId: raw.toolCallId, toolName: raw.toolName, result: raw.result, isError: result?.isError ?? false };
+        protocolPayload = { toolCallId: raw.toolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: raw.result, isError: result?.isError ?? false };
       } else if (e.type === "agent_start") protocolType = "turn.started";
       else if (e.type === "agent_end") protocolType = "turn.completed";
       this.push(protocolType, protocolPayload, sessionId, runId);
@@ -453,8 +472,14 @@ export class PiAdapter {
         const finalText = extractTextContent(raw.message);
         if (finalText) this.hooks.onAssistantFinal?.(sessionId, runId, finalText);
       }
-      if (e.type === "tool_execution_start") this.hooks.onTool?.(sessionId, runId, "start", String(p.toolName ?? "tool"), p.args, undefined, p.toolCallId);
-      if (e.type === "tool_execution_end") this.hooks.onTool?.(sessionId, runId, "end", String(p.toolName ?? "tool"), p.args, p.result, p.toolCallId);
+      if (e.type === "tool_execution_start") {
+        const name = toolNameByModelName.get(String(p.toolName ?? "")) ?? String(p.toolName ?? "tool");
+        this.hooks.onTool?.(sessionId, runId, "start", name, p.args, undefined, p.toolCallId);
+      }
+      if (e.type === "tool_execution_end") {
+        const name = toolNameByModelName.get(String(p.toolName ?? "")) ?? String(p.toolName ?? "tool");
+        this.hooks.onTool?.(sessionId, runId, "end", name, p.args, p.result, p.toolCallId);
+      }
     });
 
     this.sessions.set(sessionId, session);
@@ -472,19 +497,20 @@ export class PiAdapter {
   async run(
     sessionId: string,
     message: string,
-    opts: { model?: string; cwd?: string; runId?: string },
+    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[] },
     runEmit: RunEmitFn
   ): Promise<void> {
     if (this.activeRunIds.has(sessionId)) throw new Error(`session ${sessionId} already has an active run`);
     const runId = opts.runId ?? crypto.randomUUID();
     this.activeRunIds.set(sessionId, runId);
+    this.runModes.set(sessionId, opts.permissionMode ?? "ask");
     let session: AgentSession | undefined;
     try {
-      session = await this.getSession(sessionId, opts.cwd, opts.model);
+      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking);
       if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
       this.runs.set(runId, session);
       const previousLength = session.messages.length;
-      await session.prompt(message);
+      await session.prompt(promptWithAttachments(message, opts.attachments), { images: imageContent(opts.attachments) });
       const assistantMessages = session.messages.slice(previousLength).filter((item) => item.role === "assistant");
       const final = assistantMessages.at(-1);
       if (!final) throw new Error("Model returned no assistant response");
@@ -496,13 +522,13 @@ export class PiAdapter {
       runEmit("agent.prompt_done", { runId });
     } finally {
       this.runs.delete(runId);
+      this.runModes.delete(sessionId);
       this.stoppedRuns.delete(runId);
       if (this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
       if (session && this.staleSessions.has(sessionId) && session.isIdle) {
         session.dispose();
         this.sessions.delete(sessionId);
         this.staleSessions.delete(sessionId);
-        await this.sessionToolDisposer?.(sessionId);
       }
     }
   }

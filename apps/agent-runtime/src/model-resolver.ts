@@ -9,6 +9,7 @@ import {
   parseModelMetadata,
   parseModelMetadataResponse,
   type ModelMetadata,
+  type ModelMetadataSources,
   type ProviderApiType,
 } from "@qone/protocol";
 
@@ -35,14 +36,11 @@ export interface ResolvedModelDefinition {
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
   contextWindow: number;
   maxTokens: number;
+  metadata: ModelMetadata;
   thinkingLevelMap?: ThinkingLevelMap;
   compat?: Record<string, unknown>;
   samplingParams?: Record<string, unknown>;
-  sources: {
-    contextWindow: "provider" | "pi" | "models.dev" | "config" | "default";
-    maxTokens: "provider" | "pi" | "models.dev" | "config" | "default";
-    reasoning: "provider" | "pi" | "models.dev" | "config" | "default";
-  };
+  sources: ModelMetadataSources;
 }
 
 interface ResolverOptions {
@@ -517,7 +515,18 @@ function explicitThinking(config: ConfigRecord): boolean | undefined {
 }
 
 function providerMetadata(config: ConfigRecord): ModelMetadata | undefined {
-  return parseModelMetadata(config.modelMetadata, typeof config.model === "string" ? config.model : undefined);
+  const metadata = parseModelMetadata(config.modelMetadata, typeof config.model === "string" ? config.model : undefined);
+  const sources = asRecord(config.metadataSources);
+  if (!metadata || !sources) return metadata;
+  // Only merchant-origin fields are eligible for the first priority tier.
+  // Older profiles may contain a merged cache, so do not promote Pi or
+  // models.dev fields to merchant metadata when provenance is available.
+  if (sources.maxContext !== "provider") delete metadata.contextWindow;
+  if (sources.maxOutput !== "provider") delete metadata.maxTokens;
+  if (sources.thinking !== "provider") { delete metadata.reasoning; delete metadata.reasoningOptions; }
+  if (sources.input !== "provider") delete metadata.input;
+  if (sources.output !== "provider") delete metadata.output;
+  return metadata;
 }
 
 function mergeWithSource(
@@ -525,7 +534,7 @@ function mergeWithSource(
   pi: ModelMetadata | undefined,
   modelsDev: ModelMetadata | undefined,
   config: ConfigRecord,
-): { metadata: ModelMetadata; contextSource: ResolvedModelDefinition["sources"]["contextWindow"]; outputSource: ResolvedModelDefinition["sources"]["maxTokens"]; reasoningSource: ResolvedModelDefinition["sources"]["reasoning"] } {
+): { metadata: ModelMetadata; sources: ResolvedModelDefinition["sources"] } {
   const context = explicitOverride(config, "maxContext", DEFAULT_CONTEXT_WINDOW);
   const output = explicitOverride(config, "maxOutput", DEFAULT_MAX_TOKENS);
   const thinking = explicitThinking(config);
@@ -533,21 +542,30 @@ function mergeWithSource(
   if (context !== undefined) merged.contextWindow = context;
   if (output !== undefined) merged.maxTokens = output;
   if (thinking !== undefined) merged.reasoning = thinking;
-  const contextSource = context !== undefined ? "config" : provider?.contextWindow !== undefined ? "provider" : pi?.contextWindow !== undefined ? "pi" : modelsDev?.contextWindow !== undefined ? "models.dev" : "default";
-  const outputSource = output !== undefined ? "config" : provider?.maxTokens !== undefined ? "provider" : pi?.maxTokens !== undefined ? "pi" : modelsDev?.maxTokens !== undefined ? "models.dev" : "default";
-  const reasoningSource = thinking !== undefined ? "config" : provider?.reasoning !== undefined ? "provider" : pi?.reasoning !== undefined ? "pi" : modelsDev?.reasoning !== undefined ? "models.dev" : "default";
-  return { metadata: merged, contextSource, outputSource, reasoningSource };
+  return { metadata: merged, sources: {
+    contextWindow: context !== undefined ? "config" : provider?.contextWindow !== undefined ? "provider" : pi?.contextWindow !== undefined ? "pi" : modelsDev?.contextWindow !== undefined ? "models.dev" : "default",
+    maxTokens: output !== undefined ? "config" : provider?.maxTokens !== undefined ? "provider" : pi?.maxTokens !== undefined ? "pi" : modelsDev?.maxTokens !== undefined ? "models.dev" : "default",
+    reasoning: thinking !== undefined ? "config" : provider?.reasoning !== undefined ? "provider" : pi?.reasoning !== undefined ? "pi" : modelsDev?.reasoning !== undefined ? "models.dev" : "default",
+    input: provider?.input?.length ? "provider" : pi?.input?.length ? "pi" : modelsDev?.input?.length ? "models.dev" : "default",
+    output: provider?.output?.length ? "provider" : pi?.output?.length ? "pi" : modelsDev?.output?.length ? "models.dev" : "default",
+  } };
 }
 
 async function fetchJsonWithTimeout(fetchImpl: typeof fetch, url: string, timeoutMs: number): Promise<unknown> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const response = await fetchImpl(url, { headers: { Accept: "application/json" }, signal: controller.signal });
-    if (!response.ok) throw new Error(`models.dev HTTP ${response.status}`);
-    return await response.json();
+    return await Promise.race([
+      fetchImpl(url, { headers: { Accept: "application/json" }, signal: controller.signal }).then(async (response) => {
+        if (!response.ok) throw new Error(`models.dev HTTP ${response.status}`);
+        return response.json();
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(new Error("models.dev lookup timed out")); }, timeoutMs);
+      }),
+    ]);
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -627,13 +645,13 @@ export class ModelMetadataResolver {
     const transportMatchesBuiltin = Boolean(builtin && canInheritBuiltinCompat(provider, baseUrl, api, builtin));
     const builtinCompat = builtinCompatForModel(api, builtin?.model, transportMatchesBuiltin);
     const providerCatalog = await this.getProviderCatalog({ provider, apiType, piApi: api, baseUrl, catalogBaseUrl, apiKey: input.apiKey });
-    // A live merchant directory is fresher than the metadata cached in the
-    // saved model config. Keep the cache as a field-level fallback, then use
-    // Pi's catalog and models.dev for anything still missing.
-    const providerInfo = mergeModelMetadata(lookupIndexedMetadata(providerCatalog, modelId), providerMetadata(config));
+    const liveProviderInfo = lookupIndexedMetadata(providerCatalog, modelId);
+    const savedProviderInfo = providerMetadata(config);
+    const providerInfo = mergeModelMetadata(liveProviderInfo, savedProviderInfo);
     const piInfo = builtin ? modelMetadataFromPi(builtin.model) : undefined;
     const partial = mergeModelMetadata(providerInfo, piInfo);
-    const needsModelsDev = !partial?.contextWindow || !partial.maxTokens || partial.reasoning === undefined || (!providerInfo?.reasoningOptions && !builtin?.model.thinkingLevelMap);
+    const needsReasoningLevels = partial?.reasoning === true && !providerInfo?.reasoningOptions && !builtin?.model.thinkingLevelMap;
+    const needsModelsDev = !partial?.contextWindow || !partial.maxTokens || partial.reasoning === undefined || !partial.input?.length || !partial.output?.length || needsReasoningLevels;
     const devInfo = needsModelsDev ? lookupIndexedMetadata(await this.getModelsDev(), modelId) : undefined;
     const merged = mergeWithSource(providerInfo, piInfo, devInfo, config);
     const metadata = merged.metadata;
@@ -662,14 +680,11 @@ export class ModelMetadataResolver {
       },
       contextWindow: explicitOverride(config, "maxContext", DEFAULT_CONTEXT_WINDOW) ?? metadata.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       maxTokens: explicitOverride(config, "maxOutput", DEFAULT_MAX_TOKENS) ?? metadata.maxTokens ?? DEFAULT_MAX_TOKENS,
+      metadata,
       ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
       ...(compat ? { compat } : {}),
       ...(asRecord(config.samplingParams) ? { samplingParams: config.samplingParams as Record<string, unknown> } : {}),
-      sources: {
-        contextWindow: merged.contextSource,
-        maxTokens: merged.outputSource,
-        reasoning: merged.reasoningSource,
-      },
+      sources: merged.sources,
     };
   }
 }
