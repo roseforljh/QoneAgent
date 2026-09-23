@@ -1,16 +1,19 @@
 // Smoke test: speaks NDJSON to the runtime process directly.
 // Usage: bun test/smoke.ts
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { Database } from "bun:sqlite";
 import path from "node:path";
 
 const testDir = path.join(import.meta.dir, "..", ".test-data");
 mkdirSync(testDir, { recursive: true });
+const sandbox = mkdtempSync(path.join(testDir, "smoke-"));
+const testDb = path.join(sandbox, "agent.db");
 const proc = Bun.spawn(["bun", "run", "src/index.ts"], {
   cwd: import.meta.dir + "/..",
   stdin: "pipe",
   stdout: "pipe",
   stderr: "inherit",
-  env: { ...process.env, QONE_DB: path.join(testDir, `smoke-${crypto.randomUUID()}.db`), QONE_LOG_DIR: path.join(testDir, "logs") },
+  env: { ...process.env, QONE_DB: testDb, QONE_LOG_DIR: path.join(sandbox, "logs"), QONE_PLUGINS_DIR: path.join(sandbox, "plugins") },
 });
 
 const send = (o: object) => proc.stdin.write(JSON.stringify(o) + "\n");
@@ -22,8 +25,8 @@ send({ type: "ping", requestId: "1" });
 send({ type: "session.create", requestId: "2", title: "smoke" });
 send({ type: "session.list", requestId: "3" });
 send({ type: "workspace.list", requestId: "4" });
-send({ type: "workspace.upsert", requestId: "5", name: "smoke", path: process.cwd() });
-send({ type: "skills.list", requestId: "6", cwd: process.cwd() });
+send({ type: "workspace.upsert", requestId: "5", name: "smoke", path: sandbox });
+send({ type: "skills.list", requestId: "6", cwd: sandbox });
 send({ type: "model.upsert", requestId: "7", config: { provider: "demo", model: "demo", config: { apiKey: "plaintext" } } });
 await proc.stdin.flush();
 
@@ -59,8 +62,19 @@ while (Date.now() < deadline && (pongs < 1 || sessions < 2 || catalogs < 2 || se
 }
 
 proc.kill();
+await proc.exited;
 if (pongs < 1) throw new Error("no pong");
 if (sessions < 2) throw new Error("session commands failed");
 if (catalogs < 2) throw new Error("catalog commands failed");
 if (secretRejections < 1) throw new Error("plaintext model secret was accepted");
+// Verify the child actually used the isolated database, not the desktop profile.
+const db = new Database(testDb, { readonly: true });
+try {
+  const sessions = db.query("SELECT title FROM sessions").all() as { title: string }[];
+  const workspaces = db.query("SELECT path FROM workspaces").all() as { path: string }[];
+  if (sessions.length !== 1 || sessions[0]?.title !== "smoke") throw new Error("smoke sessions were not isolated");
+  if (workspaces.length !== 1 || workspaces[0]?.path !== sandbox) throw new Error("smoke workspace was not isolated");
+} finally {
+  db.close();
+}
 console.log(`smoke ok: pongs=${pongs} sessionEvents=${sessions} catalogs=${catalogs} secretRejections=${secretRejections}`);

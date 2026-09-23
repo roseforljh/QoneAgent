@@ -107,8 +107,8 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   sessionId: event.sessionId,
   runId: event.runId,
 }), {
-  onMessage: (sessionId, runId, role, content) => {
-    if (role === "assistant") assistantBuffers.set(runId, (assistantBuffers.get(runId) ?? "") + content);
+  onAssistantFinal: (_sessionId, runId, content) => {
+    if (content.trim()) assistantBuffers.set(runId, content);
   },
   onTool: (sessionId, runId, phase, name, args, result, toolCallId) => {
     if (phase === "start") {
@@ -138,7 +138,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       }
     }
   },
-}, permissionRepo, (sessionId) => messageRepo.listBySession(sessionId).map((message) => ({
+}, permissionRepo, (sessionId, currentRunId) => messageRepo.listBySession(sessionId).filter((message) => message.runId !== currentRunId).map((message) => ({
   role: message.role,
   content: message.content,
   createdAt: message.createdAt,
@@ -326,9 +326,29 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
     }
 
+    case "session.generate-title": {
+      const fallback = cmd.prompt.replace(/\s+/g, " ").trim().slice(0, 40) || "New session";
+      try {
+        const title = await adapter.generateTitle(cmd.prompt, cmd.model).catch(() => fallback);
+        send({ type: "session.renamed", session: toInfo(sessionRepo.rename(cmd.sessionId, title)) });
+      } catch (error) {
+        send({ type: "error", requestId: cmd.requestId, message: String(error) });
+      }
+      return;
+    }
+
     case "session.list":
       send({ type: "session.list", sessions: sessionRepo.list().map(toInfo) });
       return;
+
+    case "session.rename": {
+      try {
+        send({ type: "session.renamed", session: toInfo(sessionRepo.rename(cmd.sessionId, cmd.title)) });
+      } catch (error) {
+        send({ type: "error", requestId: cmd.requestId, message: String(error) });
+      }
+      return;
+    }
 
     case "session.delete":
       await adapter.disposeSession(cmd.sessionId);
@@ -588,7 +608,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       }
       const run = runRepo.create(cmd.sessionId);
       const turn = turnRepo.create(run.id);
-      messageRepo.add(cmd.sessionId, "user", cmd.message, run.id);
+      messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId);
       emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
       const workspaceCwd = s.workspaceId ? workspaceRepo.get(s.workspaceId)?.path : undefined;
       if (s.workspaceId && !workspaceCwd) {
@@ -606,7 +626,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         ))
         .then(() => {
           const assistant = assistantBuffers.get(run.id);
-          if (assistant?.trim()) messageRepo.addAssistant(cmd.sessionId, assistant, run.id, cmd.model);
+          if (!assistant?.trim() && !cancelledRuns.has(run.id)) throw new Error("AI returned an empty response");
+          const assistantMessage = assistant?.trim()
+            ? messageRepo.addAssistant(cmd.sessionId, assistant, run.id, cmd.model)
+            : undefined;
           assistantBuffers.delete(run.id);
           for (const key of toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) toolCallIds.delete(key);
           const cancelled = cancelledRuns.delete(run.id);
@@ -615,7 +638,15 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           runRepo.finish(run.id, status);
           sessionRepo.touch(cmd.sessionId);
           void runPluginHooks("afterRun", { sessionId: cmd.sessionId, runId: run.id, status });
-          emit(cancelled ? "agent.cancelled" : "agent.completed", {}, cmd.sessionId, run.id);
+          emit(cancelled ? "agent.cancelled" : "agent.completed", assistantMessage ? {
+            message: {
+              id: assistantMessage.id,
+              role: assistantMessage.role,
+              content: assistantMessage.content,
+              runId: assistantMessage.runId,
+              createdAt: assistantMessage.createdAt,
+            },
+          } : {}, cmd.sessionId, run.id);
         })
         .catch((err) => {
           assistantBuffers.delete(run.id);

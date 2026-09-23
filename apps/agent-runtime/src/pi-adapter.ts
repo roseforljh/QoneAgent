@@ -15,10 +15,11 @@ import {
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AgentEvent, ModelConfigInfo } from "@qone/protocol";
+import { modelListUrl, type AgentEvent, type ModelConfigInfo } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader, type PluginSkillInput } from "./skills.js";
+import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
 
 const log = createLogger("pi-adapter");
 
@@ -89,8 +90,24 @@ function splitModelName(name: string): [string, string] {
   return cut < 0 ? [name, ""] : [name.slice(0, cut), name.slice(cut + 1)];
 }
 
+function extractTextContent(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "";
+  const record = value as { content?: unknown; message?: unknown; text?: unknown };
+  if (typeof record.text === "string") return record.text;
+  if (record.message && record.message !== value) return extractTextContent(record.message);
+  if (!Array.isArray(record.content)) return "";
+  return record.content.map((part) => {
+    if (typeof part === "string") return part;
+    if (!part || typeof part !== "object") return "";
+    const text = (part as { text?: unknown }).text;
+    return typeof text === "string" ? text : "";
+  }).join("");
+}
+
 interface PiAdapterHooks {
   onMessage?: (sessionId: string, runId: string, role: "assistant" | "tool", content: string) => void;
+  onAssistantFinal?: (sessionId: string, runId: string, content: string) => void;
   onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string) => void;
 }
 
@@ -113,6 +130,37 @@ export class PiAdapter {
   private resourceLoaders = new Map<string, ResourceLoader>();
   private modelRuntime?: ModelRuntime;
   private thinkingLevels = new Map<string, ThinkingLevel>();
+  private modelApiKeys = new Map<string, string>();
+  private configuredModelConfigs: ModelConfigInfo[] = [];
+  private modelConfigurationQueue: Promise<void> = Promise.resolve();
+  private modelMetadataResolver = new ModelMetadataResolver({
+    providerModelsFetcher: async ({ provider, apiType, piApi, baseUrl, catalogBaseUrl, apiKey }) => {
+      // Use the catalog URL for `/models`; the runtime URL is intentionally
+      // query-free for the private Codex adapter.
+      const endpointBase = catalogBaseUrl || providerBaseUrl(apiType, piApi, baseUrl);
+      if (!endpointBase) return [];
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (apiType === "claude") {
+        if (apiKey) headers["x-api-key"] = apiKey;
+        headers["anthropic-version"] = "2023-06-01";
+      } else if (apiType !== "google" && apiKey) {
+        headers.Authorization = `Bearer ${apiKey}`;
+      }
+      const url = modelListUrl(apiType, endpointBase);
+      if (!url) return [];
+      const requestUrl = new URL(url);
+      if (apiType === "google" && apiKey) requestUrl.searchParams.set("key", apiKey);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2_500);
+      try {
+        const response = await fetch(requestUrl, { headers, signal: controller.signal });
+        if (!response.ok) throw new Error(`provider models HTTP ${response.status}`);
+        return await response.json();
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  });
   private pluginSkills: PluginSkillInput[] = [];
   private sessionToolProvider?: (sessionId: string) => ToolDefinition[];
   private sessionToolDisposer?: (sessionId: string) => void | Promise<void>;
@@ -121,7 +169,7 @@ export class PiAdapter {
     emit: EmitFn,
     hooks: PiAdapterHooks = {},
     private permissionRules?: PermissionRuleStore,
-    private restoreMessages?: (sessionId: string) => PersistedPiMessage[],
+    private restoreMessages?: (sessionId: string, currentRunId?: string) => PersistedPiMessage[],
   ) {
     this.emit = emit;
     this.hooks = hooks;
@@ -148,32 +196,68 @@ export class PiAdapter {
   }
 
   async configureModels(configs: ModelConfigInfo[]): Promise<void> {
+    // Commands and credential restoration arrive concurrently over NDJSON.
+    // Serialize registry replacement so an older, slower /models request
+    // cannot overwrite a newer model configuration.
+    const snapshot = configs.map((item) => ({ ...item, config: { ...item.config } }));
+    const operation = this.modelConfigurationQueue.then(() => this.applyModelConfiguration(snapshot));
+    this.modelConfigurationQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async applyModelConfiguration(configs: ModelConfigInfo[]): Promise<void> {
     this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+    this.configuredModelConfigs = configs;
     const grouped = new Map<string, ModelConfigInfo[]>();
-    this.thinkingLevels = new Map(configs.filter((item) => item.enabled).map((item) => [`${item.provider}/${item.model}`, (String(item.config.thinking ?? "none") === "none" ? "off" : String(item.config.thinking)) as ThinkingLevel]));
+    this.thinkingLevels = new Map(configs.filter((item) => item.enabled).map((item) => {
+      const configured = String(item.config.thinking ?? "none").trim().toLowerCase().replace(/[\s_]+/g, "-");
+      const level = ["none", "off", "disabled", "disable", "false", "0", "no"].includes(configured)
+        ? "off"
+        : ["minimal", "low", "medium", "high", "xhigh", "max"].includes(configured)
+          ? configured
+          : "off";
+      return [`${item.provider}/${item.model}`, level as ThinkingLevel];
+    }));
     for (const config of configs.filter((item) => item.enabled)) grouped.set(config.provider, [...(grouped.get(config.provider) ?? []), config]);
     for (const provider of this.modelRuntime.getRegisteredProviderIds()) if (!grouped.has(provider)) this.modelRuntime.unregisterProvider(provider);
     for (const [provider, models] of grouped) {
-      const first = models[0];
-      const apiType = String(first.config.apiType ?? "openai-compatible");
-      const api = apiType === "claude" ? "anthropic-messages" : apiType === "google" ? "google-generative-ai" : apiType === "codex" ? "openai-responses" : "openai-completions";
+      const resolved = await Promise.all(models.map((item) => this.modelMetadataResolver.resolve({
+        provider,
+        model: item.model,
+        config: { ...item.config, apiType: String(item.config.apiType ?? "openai-compatible") },
+        apiKey: this.modelApiKeys.get(provider),
+      })));
+      const firstResolved = resolved[0];
       this.modelRuntime.registerProvider(provider, {
         name: provider,
-        baseUrl: String(first.config.baseUrl ?? ""),
-        api: api as never,
-        models: models.map((item) => ({
-          id: item.model,
-          name: item.model,
-          api: api as never,
-          baseUrl: String(item.config.baseUrl ?? first.config.baseUrl ?? ""),
-          reasoning: String(item.config.thinking ?? "none") !== "none",
-          input: Array.isArray(item.config.input) && item.config.input.includes("image") ? ["text", "image"] : ["text"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: Number(item.config.maxContext ?? 128_000),
-          maxTokens: Number(item.config.maxOutput ?? 8_192),
-        })),
+        baseUrl: firstResolved.baseUrl,
+        api: firstResolved.api as never,
+        models: models.map((item, index) => {
+          const model = resolved[index];
+          return {
+            id: item.model,
+            name: model.name,
+            api: model.api as never,
+            baseUrl: model.baseUrl,
+            reasoning: model.reasoning,
+            input: model.input,
+            cost: model.cost,
+            contextWindow: model.contextWindow,
+            maxTokens: model.maxTokens,
+            ...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
+            ...(model.compat ? { compat: model.compat } : {}),
+            ...(model.samplingParams ? { samplingParams: model.samplingParams } : {}),
+          };
+        }),
       });
     }
+  }
+
+  private thinkingLevelForModel(modelName: string): ThinkingLevel | undefined {
+    const direct = this.thinkingLevels.get(modelName);
+    if (direct) return direct;
+    const [provider, model] = splitModelName(modelName);
+    return this.thinkingLevels.get(`${provider}/${model}`) ?? this.thinkingLevels.get(`${provider}:${model}`);
   }
 
   setSessionTools(
@@ -203,14 +287,46 @@ export class PiAdapter {
    * Manager; it is never written to SQLite. */
   async setSecret(key: string, value: string): Promise<void> {
     const provider = key.startsWith("model.apiKey:") ? key.slice("model.apiKey:".length) : key;
+    if (key.startsWith("model.apiKey:")) this.modelApiKeys.set(provider, value);
     this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
     await this.modelRuntime.setRuntimeApiKey(provider, value);
+    if (key.startsWith("model.apiKey:") && this.configuredModelConfigs.length > 0) {
+      this.modelMetadataResolver.invalidateProviderCatalog(provider);
+      await this.configureModels(this.configuredModelConfigs).catch((error) => {
+        log.warn("model metadata refresh failed", { provider, err: String(error) });
+      });
+    }
   }
 
   async deleteSecret(key: string): Promise<void> {
     const provider = key.startsWith("model.apiKey:") ? key.slice("model.apiKey:".length) : key;
-    if (!this.modelRuntime) return;
-    await this.modelRuntime.removeRuntimeApiKey(provider);
+    if (key.startsWith("model.apiKey:")) this.modelApiKeys.delete(provider);
+    this.modelMetadataResolver.invalidateProviderCatalog(provider);
+    if (this.modelRuntime) await this.modelRuntime.removeRuntimeApiKey(provider);
+    if (key.startsWith("model.apiKey:") && this.configuredModelConfigs.length > 0) {
+      await this.configureModels(this.configuredModelConfigs).catch((error) => {
+        log.warn("model metadata refresh after credential removal failed", { provider, err: String(error) });
+      });
+    }
+  }
+
+  async generateTitle(prompt: string, modelName?: string): Promise<string> {
+    this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+    const model = modelName
+      ? this.modelRuntime.getModel(...splitModelName(modelName))
+      : this.modelRuntime.getModels()[0];
+    if (!model) throw new Error("no configured model available for title generation");
+    const response = await this.modelRuntime.completeSimple(model, {
+      systemPrompt: "Generate a concise conversation title from the user's first message. Output only the title, with no quotes, punctuation, explanation, or markdown. Keep it under 8 words when writing in English and under 20 Chinese characters when writing in Chinese.",
+      messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+    }, { maxTokens: 32, temperature: 0.2 });
+    const title = extractTextContent(response)
+      .replace(/[\r\n]+/g, " ")
+      .replace(/^['"“”‘’`]+|['"“”‘’`]+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!title) throw new Error("model returned an empty title");
+    return title.slice(0, 80);
   }
 
   private push(type: string, payload: unknown, sessionId: string, runId?: string) {
@@ -240,7 +356,7 @@ export class PiAdapter {
         const nextModel = this.modelRuntime.getModel(provider, modelId);
         if (!nextModel) throw new Error(`configured model not found: ${modelName}`);
         await existing.setModel(nextModel);
-        const thinking = this.thinkingLevels.get(modelName);
+        const thinking = this.thinkingLevelForModel(modelName);
         if (thinking) existing.setThinkingLevel(thinking);
       }
       return existing;
@@ -285,7 +401,7 @@ export class PiAdapter {
     const sessionManager = SessionManager.inMemory(
       workspacePath,
       undefined,
-      createPiSessionEntries(workspacePath, this.restoreMessages?.(sessionId) ?? [], model),
+      createPiSessionEntries(workspacePath, this.restoreMessages?.(sessionId, this.activeRunIds.get(sessionId)) ?? [], model),
     );
     const { session } = await createAgentSession({
       cwd: workspacePath,
@@ -297,13 +413,13 @@ export class PiAdapter {
       resourceLoader,
       modelRuntime,
       model,
-      thinkingLevel: modelName ? this.thinkingLevels.get(modelName) : undefined,
+      thinkingLevel: modelName ? this.thinkingLevelForModel(modelName) : undefined,
     });
 
     session.subscribe((e) => {
       const runId = [...this.runs.entries()].find(([, s]) => s === session)?.[0];
       const raw = e as unknown as Record<string, unknown>;
-      const messageEvent = raw.assistantMessageEvent as { delta?: string } | undefined;
+      const messageEvent = raw.assistantMessageEvent as { type?: string; delta?: string } | undefined;
       const normalized = messageEvent?.delta
         ? { ...raw, delta: messageEvent.delta }
         : raw;
@@ -312,7 +428,8 @@ export class PiAdapter {
       if (e.type === "message_start") protocolType = "message.started";
       else if (e.type === "message_update") {
         protocolType = "message.delta";
-        protocolPayload = { delta: messageEvent?.delta ?? raw.delta ?? "", raw: normalized };
+        if (messageEvent?.type !== "text_delta") return;
+        protocolPayload = { delta: messageEvent.delta ?? "" };
       } else if (e.type === "message_end") protocolType = "message.completed";
       else if (e.type === "tool_execution_start") {
         protocolType = "tool.started";
@@ -332,6 +449,10 @@ export class PiAdapter {
       const p = payload as { type?: string; assistantMessageEvent?: { type?: string; delta?: string }; message?: unknown; toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
       const delta = p.assistantMessageEvent?.delta;
       if (typeof delta === "string" && delta) this.hooks.onMessage?.(sessionId, runId, "assistant", delta);
+      if (e.type === "message_end" && e.message.role === "assistant" && e.message.stopReason !== "error" && e.message.stopReason !== "aborted") {
+        const finalText = extractTextContent(raw.message);
+        if (finalText) this.hooks.onAssistantFinal?.(sessionId, runId, finalText);
+      }
       if (e.type === "tool_execution_start") this.hooks.onTool?.(sessionId, runId, "start", String(p.toolName ?? "tool"), p.args, undefined, p.toolCallId);
       if (e.type === "tool_execution_end") this.hooks.onTool?.(sessionId, runId, "end", String(p.toolName ?? "tool"), p.args, p.result, p.toolCallId);
     });
@@ -362,7 +483,16 @@ export class PiAdapter {
       session = await this.getSession(sessionId, opts.cwd, opts.model);
       if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
       this.runs.set(runId, session);
+      const previousLength = session.messages.length;
       await session.prompt(message);
+      const assistantMessages = session.messages.slice(previousLength).filter((item) => item.role === "assistant");
+      const final = assistantMessages.at(-1);
+      if (!final) throw new Error("Model returned no assistant response");
+      if (final.stopReason === "error") throw new Error(final.errorMessage || "Model request failed");
+      if (final.stopReason === "aborted" && !this.stoppedRuns.has(runId)) throw new Error(final.errorMessage || "Model request aborted");
+      if (!assistantMessages.some((item) => extractTextContent(item).trim())) {
+        throw new Error("AI returned an empty response");
+      }
       runEmit("agent.prompt_done", { runId });
     } finally {
       this.runs.delete(runId);
