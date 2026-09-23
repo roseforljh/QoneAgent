@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
@@ -9,6 +11,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -219,6 +222,34 @@ fn pick_workspace() -> Option<String> {
         .set_title("Select Workspace")
         .pick_folder()
         .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[derive(serde::Serialize)]
+struct DroppedFilePayload {
+    name: String,
+    data: String,
+}
+
+#[tauri::command]
+fn read_dropped_file(path: String) -> Result<DroppedFilePayload, String> {
+    const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+    let file_path = std::path::PathBuf::from(&path);
+    let metadata = std::fs::metadata(&file_path).map_err(|error| format!("无法读取附件：{error}"))?;
+    if !metadata.is_file() {
+        return Err("拖入的项目不是文件".into());
+    }
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err("附件过大，单个文件不能超过 8 MB".into());
+    }
+    let name = file_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("attachment")
+        .to_owned();
+    let data = std::fs::read(&file_path)
+        .map_err(|error| format!("无法读取附件：{error}"))?;
+    Ok(DroppedFilePayload { name, data: BASE64.encode(data) })
 }
 
 // --- Windows Credential Manager ---
@@ -475,6 +506,7 @@ fn main() {
             runtime_send,
             runtime_restart,
             pick_workspace,
+            read_dropped_file,
             secret_set,
             secret_get,
             secret_delete,

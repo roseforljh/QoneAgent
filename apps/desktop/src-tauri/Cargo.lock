@@ -2913,6 +2913,7 @@ dependencies = [
 name = "qone-agent"
 version = "0.0.1"
 dependencies = [
+ "base64 0.22.1",
  "rfd",
  "serde",
  "serde_json",
