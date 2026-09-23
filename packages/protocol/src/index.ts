@@ -1,4 +1,11 @@
 import { z } from "zod";
+import type { ModelMetadata, ProviderApiType } from "./model-metadata";
+
+export const GENERATIVE_UI_COMPONENTS = [
+  "Header", "Text", "Caption", "Image", "Divider", "Fact", "Card",
+  "Col", "Row", "Spacer", "Badge", "Box", "ListView",
+  "ListViewItem", "Table", "Markdown", "Chart", "Alert", "Icon",
+] as const;
 export { isCodexSubscriptionEndpoint, modelBaseUrl, modelListUrl } from "./model-endpoint";
 export {
   mergeModelMetadata,
@@ -15,6 +22,8 @@ export type {
   ParsedProviderModel,
   ProviderApiType,
 } from "./model-metadata";
+export type ModelMetadataSource = "provider" | "pi" | "models.dev" | "config" | "default";
+export type ModelMetadataSources = Record<"contextWindow" | "maxTokens" | "reasoning" | "input" | "output", ModelMetadataSource>;
 
 // Typed protocol between GUI and Agent Runtime.
 // Commands: GUI -> Runtime. Events: Runtime -> GUI.
@@ -54,6 +63,7 @@ export type RuntimeCommand =
   | { type: "permission.list"; requestId: string }
   | { type: "permission.set"; requestId: string; subjectId: string; permission: string; decision: PermissionDecision }
   | { type: "model.list"; requestId: string }
+  | { type: "model.resolve-metadata"; requestId: string; provider: string; apiType: ProviderApiType; baseUrl: string; models: { id: string; metadata?: ModelMetadata }[] }
   | { type: "model.upsert"; requestId: string; config: ModelConfigInfo }
   | { type: "model.delete"; requestId: string; id: string }
   | { type: "events.replay"; requestId: string; sessionId?: string; afterSequence?: number }
@@ -62,8 +72,12 @@ export type RuntimeCommand =
       requestId: string;
       sessionId: string;
       message: string;
+      attachments?: MessageAttachmentInfo[];
       messageId?: string;
+      replaceFromMessageId?: string;
       model?: string;
+      permissionMode?: RunPermissionMode;
+      thinking?: RunThinkingLevel;
     }
   | { type: "agent.stop"; requestId: string; runId: string }
   | { type: "tool.approve"; requestId: string; approvalId: string }
@@ -88,7 +102,7 @@ export interface EventBase {
 }
 
 export type RuntimeEvent =
-  | { type: "pong"; requestId: string }
+  | { type: "pong"; requestId: string; capabilities?: string[] }
   | { type: "session.created"; session: SessionInfo }
   | { type: "session.list"; sessions: SessionInfo[] }
   | { type: "session.renamed"; session: SessionInfo }
@@ -112,6 +126,7 @@ export type RuntimeEvent =
   | { type: "permission.list"; rules: PermissionRuleInfo[] }
   | { type: "permission.updated"; rule: PermissionRuleInfo }
   | { type: "model.list"; configs: ModelConfigInfo[] }
+  | { type: "model.metadata-resolved"; requestId: string; models: { id: string; metadata: ModelMetadata; thinkingLevels: string[]; sources: ModelMetadataSources }[] }
   | { type: "model.updated"; config: ModelConfigInfo }
   | { type: "events.replay"; events: AgentEvent[] }
   | { type: "secret.saved"; requestId: string }
@@ -136,8 +151,16 @@ export interface MessageInfo {
   runId?: string;
   role: string;
   content: string;
+  attachments?: MessageAttachmentInfo[];
   model?: string;
   createdAt: number;
+}
+
+export interface MessageAttachmentInfo {
+  type: "image" | "file";
+  name: string;
+  mimeType: string;
+  data: string;
 }
 
 export interface RunInfo {
@@ -224,6 +247,8 @@ export interface McpOAuthInfo {
 }
 
 export type PermissionDecision = "allow" | "ask" | "deny";
+export type RunPermissionMode = "ask" | "auto" | "full";
+export type RunThinkingLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export interface PermissionRuleInfo {
   subjectId: string;
   permission: string;
@@ -289,6 +314,13 @@ const mcpConfig = z.object({
     scopes: z.array(z.string()).optional(), redirectUri: secureUrl.optional(), tokenSecretKey: z.string().optional(),
   }).optional(),
 }).refine((config) => Boolean(config.command) !== Boolean(config.url));
+const messageAttachment = z.object({
+  type: z.enum(["image", "file"]),
+  name: z.string().min(1).max(255),
+  mimeType: z.string().min(1).max(128),
+  data: z.string().max(8_000_000).regex(/^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i),
+}).refine((attachment) => attachment.data.toLowerCase().startsWith(`data:${attachment.mimeType.toLowerCase()}`) &&
+  (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType)));
 const commandSchemas: Record<string, z.ZodTypeAny> = {
   ping: z.object({ type: z.literal("ping"), ...request }),
   "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id.optional() }),
@@ -314,10 +346,11 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "mcp.oauth.begin": z.object({ type: z.literal("mcp.oauth.begin"), ...request, serverId: id }),
   "mcp.oauth.complete": z.object({ type: z.literal("mcp.oauth.complete"), ...request, serverId: id, code: id, state: id }),
   "model.list": z.object({ type: z.literal("model.list"), ...request }),
+  "model.resolve-metadata": z.object({ type: z.literal("model.resolve-metadata"), ...request, provider: id, apiType: z.enum(["openai-compatible", "codex", "claude", "google"]), baseUrl: z.string().max(2048), models: z.array(z.object({ id, metadata: z.record(z.string(), z.unknown()).optional() })).min(1).max(500) }),
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
-  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string().min(1), messageId: id.optional(), model: z.string().optional() }),
+  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && (run.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 16_000_000, "Message or valid attachments required"),
   "agent.stop": z.object({ type: z.literal("agent.stop"), ...request, runId: id }),
   "tool.approve": z.object({ type: z.literal("tool.approve"), ...request, approvalId: id }),
   "tool.reject": z.object({ type: z.literal("tool.reject"), ...request, approvalId: id, reason: z.string().optional() }),

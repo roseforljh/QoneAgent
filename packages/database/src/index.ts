@@ -52,9 +52,8 @@ export function closeDb(db: Db) {
   db.$client.close();
 }
 
-// Bootstrap migration mirrors drizzle/0000_initial.sql. Keeping this small
-// fallback makes first launch self-contained; the SQL file remains the source
-// of truth for CI/release migration tooling.
+// Bootstrap migration mirrors drizzle/0000_initial.sql plus later schema changes.
+// Keeping this small fallback makes first launch self-contained.
 function migrate(sqlite: Database) {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -72,6 +71,7 @@ function migrate(sqlite: Database) {
       run_id TEXT,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      attachments TEXT,
       model TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -199,4 +199,7 @@ function migrate(sqlite: Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_events_session_sequence ON events(session_id, sequence);
   `);
+  if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "attachments")) {
+    sqlite.exec("ALTER TABLE messages ADD COLUMN attachments TEXT");
+  }
 }

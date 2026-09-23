@@ -1,6 +1,7 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { sessions, messages, runs, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills } from "./schema.js";
 import type { Db } from "./index.js";
+import type { MessageAttachmentInfo } from "@qone/protocol";
 
 export class SessionRepo {
   constructor(private db: Db) {}
@@ -51,7 +52,7 @@ export class SessionRepo {
 export class MessageRepo {
   constructor(private db: Db) {}
 
-  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string) {
+  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[]) {
     const now = Date.now();
     const row = {
       id: messageId ?? crypto.randomUUID(),
@@ -59,6 +60,7 @@ export class MessageRepo {
       runId,
       role,
       content,
+      attachments: attachments?.length ? JSON.stringify(attachments) : null,
       model,
       createdAt: now,
       updatedAt: now,
@@ -72,8 +74,26 @@ export class MessageRepo {
       .select()
       .from(messages)
       .where(eq(messages.sessionId, sessionId))
-      .orderBy(messages.createdAt)
+      .orderBy(messages.createdAt, sql`rowid`)
       .all();
+  }
+
+  /** Replace a user turn and everything after it as one database operation. */
+  truncateFrom(sessionId: string, messageId: string) {
+    return this.db.transaction((tx) => {
+      const history = tx.select().from(messages).where(eq(messages.sessionId, sessionId))
+        .orderBy(messages.createdAt, sql`rowid`).all();
+      const index = history.findIndex((message) => message.id === messageId && message.role === "user");
+      if (index < 0) throw new Error("user message not found in session");
+      const removed = history.slice(index);
+      const runIds = [...new Set(removed.flatMap((message) => message.runId ? [message.runId] : []))];
+      tx.delete(messages).where(inArray(messages.id, removed.map((message) => message.id))).run();
+      if (runIds.length) {
+        tx.delete(events).where(inArray(events.runId, runIds)).run();
+        tx.delete(runs).where(inArray(runs.id, runIds)).run();
+      }
+      return runIds;
+    });
   }
 
   addAssistant(sessionId: string, content: string, runId?: string, model?: string) {

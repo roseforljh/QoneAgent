@@ -40,12 +40,35 @@ interface BunHttpServer {
   stop(): void;
 }
 
+export interface QoneMcpToolDefinition extends ToolDefinition {
+  /** Internal name used for permissions, logs and the MCP call itself. */
+  qoneToolName?: string;
+}
+
+/** Convert an arbitrary MCP name to the identifier format accepted by model APIs. */
+export function safeToolName(name: string, usedNames: ReadonlySet<string> = new Set()): string {
+  const base = name.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/^_+|_+$/g, "").slice(0, 48) || "mcp_tool";
+  if (!usedNames.has(base)) return base;
+  const suffix = shortHash(name);
+  let candidate = `${base}_${suffix}`;
+  let index = 2;
+  while (usedNames.has(candidate)) candidate = `${base}_${suffix}_${index++}`;
+  return candidate;
+}
+
+function shortHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return (hash >>> 0).toString(36);
+}
+
 // McpManager: connects to MCP servers over stdio, discovers their tools,
 // and adapts each to a pi ToolDefinition so they can be passed via
 // createAgentSession({ customTools }). Permission layer sits in front —
 // tools surface here but only get registered on the session when allowed.
 export class McpManager {
   private conns = new Map<string, Conn>();
+  private exposedToolNames = new Map<string, string>();
   private accessTokens = new Map<string, string>();
   private pendingOAuth = new Map<string, PendingOAuth>();
   private oauthCallbackServers = new Map<string, BunHttpServer>();
@@ -179,8 +202,12 @@ export class McpManager {
     t: { name: string; description?: string; inputSchema?: unknown }
   ): ToolDefinition {
     const fullName = `mcp:${serverId}:${t.name}`;
+    const usedNames = new Set(this.exposedToolNames.values());
+    const exposedName = this.exposedToolNames.get(fullName) ?? safeToolName(fullName, usedNames);
+    this.exposedToolNames.set(fullName, exposedName);
     return {
-      name: fullName,
+      name: exposedName,
+      qoneToolName: fullName,
       label: `${serverId} · ${t.name}`,
       description: t.description ?? `MCP tool ${t.name} from ${serverId}`,
       // MCP servers validate their own input; preserve the advertised schema so
@@ -204,7 +231,7 @@ export class McpManager {
           isError: Boolean(res.isError),
         } as never;
       },
-    };
+    } as QoneMcpToolDefinition;
   }
 
   tools(): ToolDefinition[] {

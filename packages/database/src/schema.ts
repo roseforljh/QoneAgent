@@ -22,6 +22,7 @@ export const messages = sqliteTable(
     runId: text("run_id"),
     role: text("role").notNull(), // user | assistant | system | tool
     content: text("content").notNull(),
+    attachments: text("attachments"),
     model: text("model"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
