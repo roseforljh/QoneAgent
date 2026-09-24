@@ -2922,6 +2922,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
+ "webview2-com",
  "windows 0.62.2",
 ]
 

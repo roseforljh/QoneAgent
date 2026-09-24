@@ -1,4 +1,4 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -16,8 +16,25 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+#[cfg(all(windows, debug_assertions))]
+use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+
+#[cfg(all(windows, debug_assertions))]
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+    TH32CS_SNAPPROCESS,
+};
+
+#[cfg(all(windows, debug_assertions))]
+use windows::Win32::System::Threading::{
+    GetCurrentProcessId, OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+};
+
 #[cfg(windows)]
 mod conpty;
+
+#[cfg(all(windows, debug_assertions))]
+mod dev_network;
 
 struct SidecarState {
     stdin: Option<ChildStdin>,
@@ -36,6 +53,51 @@ impl Drop for SidecarState {
 pub struct Sidecar {
     state: Mutex<SidecarState>,
     generation: Arc<AtomicU64>,
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn dev_parent_process_id() -> Option<u32> {
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()? };
+    let current_id = unsafe { GetCurrentProcessId() };
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    let mut parent_id = None;
+    let first = unsafe { Process32FirstW(snapshot, &mut entry) };
+    if first.is_ok() {
+        loop {
+            if entry.th32ProcessID == current_id {
+                parent_id = Some(entry.th32ParentProcessID);
+                break;
+            }
+            if unsafe { Process32NextW(snapshot, &mut entry) }.is_err() {
+                break;
+            }
+        }
+    }
+    unsafe { CloseHandle(snapshot).ok(); }
+    parent_id
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn watch_dev_parent(app: AppHandle) {
+    let Some(parent_id) = dev_parent_process_id() else { return; };
+    if parent_id == 0 || parent_id == unsafe { GetCurrentProcessId() } { return; }
+    std::thread::spawn(move || {
+        // Keep the original process handle: opening a PID repeatedly can find
+        // an exited process (or a different process after PID reuse).
+        unsafe {
+            if let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, parent_id) {
+                if WaitForSingleObject(handle, u32::MAX) == WAIT_OBJECT_0 {
+                    app.exit(0);
+                }
+                CloseHandle(handle).ok();
+            } else {
+                app.exit(0);
+            }
+        }
+    });
 }
 
 impl Sidecar {
@@ -451,18 +513,37 @@ fn terminal_kill(terminal_id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn frontend_diagnostic(message: String) {
+    #[cfg(all(windows, debug_assertions))]
+    dev_network::log(&format!("frontend: {message}"));
+    #[cfg(all(not(windows), debug_assertions))]
+    eprintln!("[qone:frontend] {message}");
+    #[cfg(not(debug_assertions))]
+    let _ = message;
+}
+
 fn main() {
     tauri::Builder::default()
+        .on_page_load(|_webview, payload| {
+            #[cfg(debug_assertions)]
+            eprintln!("[qone:page] {:?} {}", payload.event(), payload.url());
+        })
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(all(windows, debug_assertions))]
+            dev_network::install(app.handle());
             let generation = Arc::new(AtomicU64::new(0));
             let state = spawn_sidecar(app.handle(), generation.clone(), 0)?;
             app.manage(Sidecar {
                 state: Mutex::new(state),
                 generation,
             });
+
+            #[cfg(all(windows, debug_assertions))]
+            watch_dev_parent(app.handle().clone());
 
             let show = MenuItem::with_id(app, "show", "Show Qone", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -498,11 +579,21 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                #[cfg(debug_assertions)]
+                {
+                    // Let `tauri dev` exit normally so the debug executable is
+                    // released before the next Cargo rebuild.
+                    let _ = (window, api);
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
+            frontend_diagnostic,
             runtime_send,
             runtime_restart,
             pick_workspace,

@@ -5,7 +5,7 @@
   "identifier": "com.qone.agent",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeDevCommand": "bun run build:browser && bun run dev",
     "beforeBuildCommand": "bun run build:release"
   },
@@ -25,7 +25,7 @@
         "style-src": "'self' 'unsafe-inline'",
         "font-src": "'self' data:"
       },
-      "devCsp": null
+      "devCsp": "default-src 'self' tauri: asset:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; script-src 'self' 'unsafe-inline' http://127.0.0.1:1420; style-src 'self' 'unsafe-inline' http://127.0.0.1:1420; img-src 'self' tauri: asset: http://asset.localhost http://127.0.0.1:1420 blob: data:; font-src 'self' http://127.0.0.1:1420 data:"
     }
   },
   "plugins": {
