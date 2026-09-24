@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { ModelConfigInfo } from "@qone/protocol";
-import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, filterPickerModels, getPickerModels, readCurrentProvider } from "../src/lib/model-picker-data";
+import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, filterPickerModels, getPickerModels, providerProfilesFromModelConfigs, readCurrentProvider } from "../src/lib/model-picker-data";
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 afterEach(() => {
@@ -66,4 +66,21 @@ test("filters model labels and raw names without changing the source list", () =
   expect(filterPickerModels(models, "001").map((model) => model.label)).toEqual(["Reasoning model"]);
   expect(filterPickerModels(models, "   ")).toHaveLength(3);
   expect(models).toHaveLength(3);
+});
+
+test("recovers a provider profile from durable runtime model configs", () => {
+  expect(providerProfilesFromModelConfigs([
+    { id: "acme/alpha", provider: "acme", model: "alpha", config: { apiType: "claude", baseUrl: "https://api.example.com", maxOutput: 4096 }, enabled: true, updatedAt: 20 },
+    { id: "acme/beta", provider: "acme", model: "beta", config: { apiType: "claude", baseUrl: "https://api.example.com" }, enabled: true, updatedAt: 30 },
+    { id: "disabled/model", provider: "disabled", model: "model", config: {}, enabled: false, updatedAt: 40 },
+  ])).toMatchObject([{
+    id: "acme",
+    name: "acme",
+    apiType: "claude",
+    baseUrl: "https://api.example.com",
+    models: [
+      { id: "alpha", settings: { maxOutput: 4096, apiType: "claude" } },
+      { id: "beta", settings: { apiType: "claude" } },
+    ],
+  }]);
 });

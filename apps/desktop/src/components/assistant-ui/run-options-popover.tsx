@@ -5,6 +5,7 @@ import type { ProviderApiType, RunPermissionMode } from "@qone/protocol";
 import { normalizeThinkingLevel, thinkingLevelOptionsForApi, type ThinkingLevel } from "../../lib/model-settings";
 import { useLocale } from "../../localization";
 import { useStore } from "../../store";
+import { PermissionGrant, type GrantScope } from "./elements/permission-grant";
 import "./run-options-popover.css";
 
 const permissionModes = [
@@ -21,14 +22,38 @@ export const RunOptionsPopover: FC<{ anchorRef: RefObject<HTMLDivElement | null>
   const model = useStore((state) => state.modelConfigs.find((item) => item.id === state.selectedModelId));
   const options = useStore((state) => sessionId ? state.runOptionsBySession[sessionId] : state.draftRunOptions);
   const setPermission = useStore((state) => state.setRunPermissionMode);
+  const defaultPermissionMode = useStore((state) => state.defaultPermissionMode);
+  const setDefaultPermissionMode = useStore((state) => state.setDefaultPermissionMode);
   const setThinking = useStore((state) => state.setRunThinking);
-  const permissionMode = options?.permissionMode ?? "ask";
+  const [grantScope, setGrantScope] = useState<GrantScope | "pending" | null>(null);
+  const [modeBeforeGrant, setModeBeforeGrant] = useState<RunPermissionMode>("ask");
+  const permissionMode = options?.permissionMode ?? defaultPermissionMode;
   const configuredThinking = model?.config.thinking;
   const apiType = (model?.config.apiType as ProviderApiType | undefined) ?? "openai-compatible";
   const thinkingOptions = thinkingLevelOptionsForApi(apiType, Array.isArray(model?.config.thinkingLevels) ? model?.config.thinkingLevels as string[] : undefined);
   const thinking = (selectedModelId && options?.thinkingByModel?.[selectedModelId])
     ?? normalizeThinkingLevel(configuredThinking, apiType, thinkingOptions.map((item) => item.value));
   const modeLabel = t(permissionModes.find((mode) => mode.value === permissionMode)?.labelKey ?? "composer.permissionAsk");
+
+  const choosePermissionMode = (mode: RunPermissionMode) => {
+    if (mode !== "full") {
+      setGrantScope(null);
+      setPermission(mode);
+      return;
+    }
+    setModeBeforeGrant(permissionMode);
+    setGrantScope("pending");
+  };
+
+  const resolvePermissionGrant = (scope: GrantScope) => {
+    setGrantScope(scope);
+    if (scope === "denied") {
+      setPermission(modeBeforeGrant);
+      return;
+    }
+    setPermission("full");
+    if (scope === "always") setDefaultPermissionMode("full");
+  };
 
   return <AssistantModalPrimitive.Root unstable_openOnRunStart={false} open={open} onOpenChange={setOpen}>
     <AssistantModalPrimitive.Anchor virtualRef={anchorRef} />
@@ -47,13 +72,37 @@ export const RunOptionsPopover: FC<{ anchorRef: RefObject<HTMLDivElement | null>
         <div className="q-run-options-modes">
           {permissionModes.map((mode) => {
             const Icon = mode.icon;
-            return <button key={mode.value} type="button" className="q-run-options-mode" aria-pressed={permissionMode === mode.value} onClick={() => setPermission(mode.value as RunPermissionMode)}>
+            return <button key={mode.value} type="button" className="q-run-options-mode" aria-pressed={permissionMode === mode.value && grantScope !== "pending"} onClick={() => choosePermissionMode(mode.value as RunPermissionMode)}>
               <Icon size={17} aria-hidden="true" />
               <span><strong>{t(mode.labelKey)}</strong><small>{t(mode.descriptionKey)}</small></span>
-              {permissionMode === mode.value && <CheckIcon size={16} className="q-run-options-check" aria-hidden="true" />}
+              {permissionMode === mode.value && grantScope !== "pending" && <CheckIcon size={16} className="q-run-options-check" aria-hidden="true" />}
             </button>;
           })}
         </div>
+        {grantScope && (
+          <PermissionGrant
+            capability={t("composer.permissionGrantCapability")}
+            requester="Qone"
+            reach={[
+              t("composer.permissionGrantWorkspace"),
+              t("composer.permissionGrantTools"),
+              t("composer.permissionGrantBoundary"),
+            ]}
+            scope={grantScope}
+            onGrant={resolvePermissionGrant}
+            labels={{
+              requestedBy: t("composer.permissionGrantRequestedBy"),
+              thisGrants: t("composer.permissionGrantThisGrants"),
+              deny: t("composer.permissionGrantDeny"),
+              session: t("composer.permissionGrantSession"),
+              always: t("composer.permissionGrantAlways"),
+              pending: t("composer.permissionGrantPending"),
+              denied: t("composer.permissionGrantDenied"),
+              granted: t("composer.permissionGrantGranted"),
+            }}
+            className="q-permission-grant"
+          />
+        )}
       </section>
       <section className="q-run-options-section q-run-options-thinking" aria-label={t("model.thinking")}>
         <h3><SparklesIcon size={15} aria-hidden="true" />{t("model.thinking")}</h3>

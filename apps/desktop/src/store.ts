@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { RuntimeCommand, RuntimeEvent, SessionInfo, MessageInfo, MessageAttachmentInfo, WorkspaceInfo, WorkspaceFileInfo, ModelConfigInfo, SkillInfo, PluginInfo, McpServerInfo, RunInfo, ArtifactInfo, PermissionRuleInfo, RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
-import { loadRunOptions, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
+import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 
 export function hasTauriBridge() {
   return typeof window !== "undefined" && Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
@@ -54,6 +54,7 @@ interface AgentState {
   modelConfigs: ModelConfigInfo[];
   selectedModelId?: string;
   runOptionsBySession: Record<string, SessionRunOptions>;
+  defaultPermissionMode: RunPermissionMode;
   draftRunOptions: SessionRunOptions;
   skills: SkillInfo[];
   plugins: PluginInfo[];
@@ -100,6 +101,7 @@ interface AgentState {
   refreshWorkspace: (id?: string) => void;
   setSelectedModel: (id: string) => void;
   setRunPermissionMode: (mode: RunPermissionMode) => void;
+  setDefaultPermissionMode: (mode: RunPermissionMode) => void;
   setRunThinking: (modelId: string, level: RunThinkingLevel) => void;
 }
 
@@ -136,6 +138,7 @@ export const useStore = create<AgentState>((set, get) => ({
   modelConfigs: [],
   selectedModelId: undefined,
   runOptionsBySession: loadRunOptions(),
+  defaultPermissionMode: loadDefaultPermissionMode(),
   draftRunOptions: {},
   skills: [],
   plugins: [],
@@ -319,7 +322,7 @@ export const useStore = create<AgentState>((set, get) => ({
     const model = options?.modelId ?? get().selectedModelId;
     const requestId = rid();
     pendingAgentRun = { requestId, sessionId: sid, userMessageId: messageId };
-    get().send({ type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId, model, permissionMode: options?.permissionMode ?? "ask", thinking: model ? options?.thinkingByModel?.[model] : undefined });
+    get().send({ type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking: model ? options?.thinkingByModel?.[model] : undefined });
     if (history.length === 0) {
       get().send({ type: "session.generate-title", requestId: rid(), sessionId: sid, prompt: message || attachments?.map((attachment) => attachment.name).join(", ") || "图片", model });
     }
@@ -369,6 +372,10 @@ export const useStore = create<AgentState>((set, get) => ({
     saveRunOptions(runOptionsBySession);
     return { runOptionsBySession };
   }),
+  setDefaultPermissionMode: (mode) => {
+    saveDefaultPermissionMode(mode);
+    set({ defaultPermissionMode: mode });
+  },
   setRunThinking: (modelId, level) => set((state) => {
     const sid = state.currentSessionId;
     if (!sid) return { draftRunOptions: { ...state.draftRunOptions, thinkingByModel: { ...state.draftRunOptions.thinkingByModel, [modelId]: level } } };

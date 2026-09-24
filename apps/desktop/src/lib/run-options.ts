@@ -7,6 +7,7 @@ export type SessionRunOptions = {
 };
 
 const STORAGE_KEY = "qone-session-run-options";
+const DEFAULT_PERMISSION_STORAGE_KEY = "qone-default-permission-mode";
 const modes = new Set<RunPermissionMode>(["ask", "auto", "full"]);
 const levels = new Set<RunThinkingLevel>(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -26,4 +27,15 @@ export function loadRunOptions(): Record<string, SessionRunOptions> {
 
 export function saveRunOptions(options: Record<string, SessionRunOptions>): void {
   try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(options)); } catch { /* unavailable storage */ }
+}
+
+export function loadDefaultPermissionMode(): RunPermissionMode {
+  try {
+    const value = window.localStorage.getItem(DEFAULT_PERMISSION_STORAGE_KEY);
+    return modes.has(value as RunPermissionMode) ? value as RunPermissionMode : "ask";
+  } catch { return "ask"; }
+}
+
+export function saveDefaultPermissionMode(mode: RunPermissionMode): void {
+  try { window.localStorage.setItem(DEFAULT_PERMISSION_STORAGE_KEY, mode); } catch { /* unavailable storage */ }
 }

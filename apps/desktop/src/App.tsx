@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore, initBridge, type ToolCall } from "./store";
+import { reportStartup } from "./lib/startup-diagnostic";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -415,7 +416,10 @@ export default function App() {
   const selectWorkspace = useStore((s) => s.selectWorkspace);
   const selectSession = useStore((s) => s.selectSession);
 
-  useEffect(() => { initBridge(); }, []);
+  useEffect(() => {
+    reportStartup("Application route mounted");
+    initBridge();
+  }, []);
   useEffect(() => {
     const sessionMatch = pathname.match(/^\/chat\/([^/]+)/); const workspaceMatch = pathname.match(/^\/workspaces\/([^/]+)/);
     if (sessionMatch) { const routeSessionId = decodeURIComponent(sessionMatch[1]); if (sessions.some((session) => session.id === routeSessionId) && currentSessionId !== routeSessionId) selectSession(routeSessionId); }

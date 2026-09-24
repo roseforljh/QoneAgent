@@ -52,12 +52,6 @@ export function StreamingText({
       >
         {text}
       </span>
-      {streaming && shown.length > 0 && (
-        <span
-          aria-hidden
-          className="-mb-0.5 ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-full bg-foreground/35 motion-reduce:animate-none"
-        />
-      )}
     </p>
   );
 }

@@ -1,5 +1,5 @@
 import { modelListUrl, modelNamesEqual, type ProviderApiType } from "@qone/protocol";
-import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT } from "../../lib/model-picker-data";
+import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
 import { fetchProviderModelCatalog } from "../../lib/provider-model-catalog";
 import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings, type Capability, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
@@ -430,10 +430,22 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
 function ConfigurationSection() {
   const { t } = useLocale();
   const send = useStore((state) => state.send);
+  const modelConfigs = useStore((state) => state.modelConfigs);
   const [profiles, setProfiles] = useState<ProviderProfile[]>(loadProviderProfiles);
   const [editing, setEditing] = useState<ProviderProfile | undefined>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState(() => window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY) ?? loadProviderProfiles()[0]?.id ?? "");
+  useEffect(() => {
+    if (profiles.length > 0 || modelConfigs.length === 0) return;
+    const recovered = providerProfilesFromModelConfigs(modelConfigs);
+    if (recovered.length === 0) return;
+    const active = window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY);
+    const nextSelected = recovered.some((profile) => profile.id === active) ? active! : recovered[0].id;
+    setProfiles(recovered);
+    setSelectedProviderId(nextSelected);
+    window.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify(recovered));
+    window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, nextSelected);
+  }, [modelConfigs, profiles.length]);
   const saveProfile = (profile: ProviderProfile) => {
     const next = [...profiles.filter((item) => item.id !== profile.id), profile];
     setProfiles(next);
@@ -560,7 +572,13 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
 
 function CapabilityEditor({ title, values, onToggle }: { title: string; values: Capability[]; onToggle: (value: Capability) => void }) {
   const { t } = useLocale();
-  return <div className="settings-capability-group"><strong>{title}</strong><div>{capabilities.map((capability) => <button type="button" key={capability} className={cn("settings-capability-chip", values.includes(capability) && "is-selected")} onClick={() => onToggle(capability)}>{values.includes(capability) && <Check size={13} />}{t(`capability.${capability}`)}</button>)}</div></div>;
+  return <div className="settings-capability-group"><strong>{title}</strong><div>{capabilities.map((capability) => {
+    const selected = values.includes(capability);
+    return <button type="button" key={capability} className={cn("settings-capability-chip", selected && "is-selected")} onClick={() => onToggle(capability)} aria-pressed={selected}>
+      <span className="settings-capability-check" aria-hidden="true"><Check size={13} /></span>
+      {t(`capability.${capability}`)}
+    </button>;
+  })}</div></div>;
 }
 
 function ModelsSection() {
@@ -574,6 +592,17 @@ function ModelsSection() {
   const [editing, setEditing] = useState<ProviderModel | undefined>();
   const [editorOpen, setEditorOpen] = useState(false);
   useEffect(() => send({ type: "model.list", requestId: crypto.randomUUID() }), [send]);
+  useEffect(() => {
+    if (profiles.length > 0 || modelConfigs.length === 0) return;
+    const recovered = providerProfilesFromModelConfigs(modelConfigs);
+    if (recovered.length === 0) return;
+    const active = window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY);
+    const nextSelected = recovered.some((profile) => profile.id === active) ? active! : recovered[0].id;
+    setProfiles(recovered);
+    setSelectedProviderId(nextSelected);
+    window.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify(recovered));
+    window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, nextSelected);
+  }, [modelConfigs, profiles.length]);
   const provider = profiles.find((item) => item.id === selectedProviderId) ?? profiles[0];
   const models = provider?.models ?? modelConfigs.filter((config) => config.provider === provider?.id).map((config) => ({ id: config.model, label: config.model, settings: config.config as unknown as ModelSettings }));
   const saveModel = async (model: ProviderModel, previousId?: string) => {

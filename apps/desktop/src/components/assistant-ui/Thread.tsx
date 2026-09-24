@@ -78,7 +78,9 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       (draftWorkspaceId && workspaces.some((workspace) => workspace.id === draftWorkspaceId)),
     );
   })();
-  const conversationLoading = !sessionsLoaded || !workspacesLoaded || workspaceLoadingId === currentWorkspaceId || Boolean(
+  const conversationLoading = !sessionsLoaded || !workspacesLoaded || Boolean(
+    currentWorkspaceId && workspaceLoadingId === currentWorkspaceId,
+  ) || Boolean(
     currentSessionId && messagesLoadingSessionId === currentSessionId,
   );
   return (

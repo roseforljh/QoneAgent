@@ -535,6 +535,8 @@ a { color: inherit; text-decoration: none; }
 .settings-capability-group > strong { display: block; margin-bottom: 10px; font-size: 12px; font-weight: var(--q-weight-semibold); }
 .settings-capability-group > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .settings-capability-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--muted-foreground); font-size: 11px; cursor: pointer; }
+.settings-capability-check { display: inline-flex; width: 13px; height: 13px; flex: 0 0 13px; align-items: center; justify-content: center; visibility: hidden; }
+.settings-capability-chip.is-selected .settings-capability-check { visibility: visible; }
 .settings-capability-chip.is-selected { border-color: color-mix(in srgb, var(--foreground) 28%, transparent); background: var(--q-hover); color: var(--foreground); }
 .settings-subagent-list { display: flex; flex-direction: column; gap: 8px; }
 .settings-subagent-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }

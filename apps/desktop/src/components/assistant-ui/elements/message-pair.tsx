@@ -92,12 +92,6 @@ export function MessagePair({
                 </span>
               );
             })}
-            {streaming && shown.length > 0 && (
-              <span
-                aria-hidden
-                className="-mb-0.5 ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-full bg-blue-500 motion-reduce:animate-none dark:bg-blue-400"
-              />
-            )}
           </p>
         )}
         <div className="pointer-events-none flex items-center gap-1 pt-1 opacity-0 transition-opacity group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 group-hover/message:pointer-events-auto group-hover/message:opacity-100 motion-reduce:transition-none">

@@ -8,6 +8,7 @@
 .q-run-options-section + .q-run-options-section { margin-top: 5px; padding-top: 14px; border-top: 1px solid var(--border); }
 .q-run-options-section h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 7px 8px; color: var(--foreground); font-size: 12px; font-weight: 600; }
 .q-run-options-modes { display: grid; gap: 2px; }
+.q-permission-grant { max-width: none; margin: 8px 4px 2px; }
 .q-run-options-mode { display: flex; width: 100%; min-height: 55px; align-items: center; gap: 10px; padding: 7px 9px; border: 0; border-radius: 10px; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; transition: background .14s ease, transform .14s ease; }
 .q-run-options-mode:hover, .q-run-options-mode[aria-pressed="true"] { background: var(--q-hover); }
 .q-run-options-mode:active { transform: scale(.985); }
