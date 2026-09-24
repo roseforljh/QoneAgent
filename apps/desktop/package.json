@@ -10,7 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "build:release": "bun run build:browser && bun run build:sidecar && bun run build",
     "tauri:build": "bun scripts/tauri-build.ts",
-    "tauri": "tauri"
+    "tauri": "bun scripts/tauri-cli.ts"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.21",
