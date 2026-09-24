@@ -13,6 +13,7 @@ import { take } from "../utils/range";
 
 export interface TimelineStep {
   verb: string;
+  target: string;
   chip: string;
   icon: LucideIcon;
 }
@@ -27,6 +28,7 @@ export interface ToolTimelineProps {
   steps: readonly TimelineStep[];
   visibleSteps: number;
   streaming: boolean;
+  activeStepIndex?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   restingLabel: string;
@@ -40,6 +42,7 @@ export function ToolTimeline({
   steps,
   visibleSteps,
   streaming,
+  activeStepIndex,
   open,
   onOpenChange,
   restingLabel,
@@ -74,7 +77,7 @@ export function ToolTimeline({
         <div className="flex flex-col gap-2.5 ps-4 pt-2.5">
           {take(steps, visibleSteps).map((step, index, shown) => {
             const Icon = step.icon;
-            const active = streaming && index === shown.length - 1;
+            const active = streaming && activeStepIndex !== undefined && index === activeStepIndex;
 
             return (
               <div

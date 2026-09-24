@@ -188,6 +188,7 @@ function ImageRoot({
 
 type ImagePreviewProps = Omit<React.ComponentProps<"img">, "children"> & {
   containerClassName?: string;
+  onNaturalSize?: (width: number, height: number) => void;
 };
 
 function ImagePreview({
@@ -195,6 +196,7 @@ function ImagePreview({
   containerClassName,
   onLoad,
   onError,
+  onNaturalSize,
   alt = "Image content",
   src,
   ...props
@@ -209,9 +211,12 @@ function ImagePreview({
   useEffect(() => {
     const image = imgRef.current;
     if (typeof src !== "string" || !image?.complete) return;
-    if (image.naturalWidth > 0) setLoadedSrc(src);
+    if (image.naturalWidth > 0) {
+      setLoadedSrc(src);
+      onNaturalSize?.(image.naturalWidth, image.naturalHeight);
+    }
     else setErrorSrc(src);
-  }, [src]);
+  }, [src, onNaturalSize]);
 
   return (
     <div
@@ -244,7 +249,10 @@ function ImagePreview({
             className,
           )}
           onLoad={(e) => {
-            if (typeof src === "string") setLoadedSrc(src);
+            if (typeof src === "string") {
+              setLoadedSrc(src);
+              onNaturalSize?.(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
+            }
             onLoad?.(e);
           }}
           onError={(e) => {

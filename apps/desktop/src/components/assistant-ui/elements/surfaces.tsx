@@ -40,6 +40,14 @@ export const labelSwapOut =
 export const collapsePanel =
   "overflow-hidden";
 
+// Shared detail viewports let long results scroll without reserving empty
+// space for short responses.
+export const detailViewport =
+  "max-h-[min(28rem,55dvh)] overflow-auto";
+
+export const terminalViewport =
+  "max-h-[min(32rem,60dvh)] overflow-auto";
+
 export const live = "text-blue-500 dark:text-blue-400";
 
 export const mono = "font-mono text-[11px] tracking-tight";

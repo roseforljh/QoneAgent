@@ -78,13 +78,6 @@ function CommandCard({ call }: { call: ToolCall }) {
   </ToolShell>;
 }
 
-function BrowserCard({ call }: { call: ToolCall }) {
-  return <ToolShell call={call} title="Browser">
-    <pre className="bg-muted text-foreground max-h-36 overflow-auto whitespace-pre-wrap rounded p-2">{stringify(call.args ?? {})}</pre>
-    <Result value={call.summary} />
-  </ToolShell>;
-}
-
 function ExternalCard({ call }: { call: ToolCall }) {
   const title = call.toolName.startsWith("mcp:") ? "MCP tool" : call.toolName.startsWith("plugin:") ? "Plugin tool" : "Tool";
   return <ToolShell call={call} title={title}>
@@ -98,7 +91,6 @@ export function ToolCard({ call }: { call: ToolCall }) {
   if (call.toolName === "edit") return <EditCard call={call} />;
   if (["grep", "find", "ls"].includes(call.toolName)) return <SearchCard call={call} />;
   if (call.toolName === "powershell") return <CommandCard call={call} />;
-  if (call.toolName.startsWith("browser.")) return <BrowserCard call={call} />;
   return <ExternalCard call={call} />;
 }
 

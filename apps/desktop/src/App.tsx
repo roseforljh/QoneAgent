@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore, initBridge, type ToolCall } from "./store";
 import { reportStartup } from "./lib/startup-diagnostic";
 import {
@@ -13,18 +13,17 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import type { MessageAttachmentInfo } from "@qone/protocol";
+import { assistantMessageContent } from "./lib/assistant-message-parts";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
-import { Thread } from "./components/assistant-ui/Thread";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { ProjectSection } from "./components/assistant-ui/project-section";
-import { SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
+import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
 import { Link, useLocation } from "@tanstack/react-router";
 import { ApprovalCard } from "./components/tool-ui/ToolCard";
 import { ArrowLeft, Moon, PanelLeftIcon, PlusIcon, PuzzleIcon, Settings, Sun, X } from "lucide-react";
 import { cn } from "./lib/utils";
-import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { ConfirmationDialogHost } from "./components/ui/ConfirmationDialog";
 import { confirmDestructiveAction } from "./lib/confirm-action";
 import { useLocale } from "./localization";
@@ -33,8 +32,9 @@ import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-prefer
 import qonePenguinUrl from "./assets/qone-penguin.png";
 
 type Theme = "light" | "dark";
-type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
-type JsonObject = { readonly [key: string]: JsonValue };
+
+const Thread = lazy(async () => ({ default: (await import("./components/assistant-ui/Thread")).Thread }));
+const SettingsDialog = lazy(async () => ({ default: (await import("./components/settings/SettingsDialog")).SettingsDialog }));
 
 function useTheme() {
   const [theme, setTheme] = useState<Theme>(() => {
@@ -76,6 +76,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const { t } = useLocale();
   const messages = useStore((s) => s.messages);
   const streaming = useStore((s) => s.streaming);
+  const streamingParts = useStore((s) => s.streamingParts);
   const running = useStore((s) => s.running);
   const activeRunId = useStore((s) => s.activeRunId);
   const toolCalls = useStore((s) => s.toolCalls);
@@ -91,9 +92,9 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const hasStreamingAssistant = running;
   const runtimeMessages = useMemo(
     () => hasStreamingAssistant
-      ? [...messages, { id: "streaming", role: "assistant", content: streaming, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }]
+      ? [...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }]
       : messages,
-    [messages, streaming, activeRunId, hasStreamingAssistant],
+    [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant],
   );
   const toolCallsByRun = useMemo(() => {
     const grouped = new Map<string, ToolCall[]>();
@@ -150,20 +151,9 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
         ],
       };
 
-      const calls = message.runId ? (toolCallsByRun.get(message.runId) ?? []) : [];
-      const content: ThreadMessageLike["content"] = [
-        ...calls.map((call) => ({
-          type: "tool-call" as const,
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          args: asJsonObject(call.args),
-          argsText: call.argsText ?? stringifyToolValue(call.args),
-          ...(call.status === "success" || call.status === "failed" ? { result: call.result ?? call.summary ?? "" } : {}),
-          ...(call.status === "failed" ? { isError: true } : {}),
-        })),
-        ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
-      ];
       const isStreamingMessage = message.id === "streaming";
+      const calls = !message.parts && message.runId ? (toolCallsByRun.get(message.runId) ?? []) : [];
+      const content = assistantMessageContent(message, calls, isStreamingMessage);
       return {
         id: message.id,
         role,
@@ -200,16 +190,6 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   });
 }
 
-function asJsonObject(value: unknown): JsonObject {
-  if (value && typeof value === "object" && !Array.isArray(value)) return value as JsonObject;
-  return {};
-}
-
-function stringifyToolValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  try { return JSON.stringify(value ?? {}) ?? "{}"; } catch { return "{}"; }
-}
-
 function Logo() {
   return (
     <Link
@@ -220,6 +200,17 @@ function Logo() {
       <img src={qonePenguinUrl} alt="" aria-hidden="true" className="qone-logo size-5 shrink-0" />
       <span className="text-foreground truncate">Qone</span>
     </Link>
+  );
+}
+
+function ThreadLoadingFallback() {
+  return (
+    <div className="flex h-full flex-col bg-background" aria-busy="true" aria-label="正在加载聊天界面">
+      <ConversationLoadingSkeleton />
+      <div className="mx-auto w-full max-w-2xl px-4 pb-2">
+        <ComposerLoadingSkeleton />
+      </div>
+    </div>
   );
 }
 
@@ -349,9 +340,13 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               <button className="icon-button" onClick={() => useStore.setState({ lastError: undefined })} aria-label="关闭错误"><X size={15} /></button>
             </div>
           )}
-          <Thread><PendingApprovals /></Thread>
+          <Suspense fallback={<ThreadLoadingFallback />}>
+            <Thread><PendingApprovals /></Thread>
+          </Suspense>
         </div>
-        <SettingsDialog open={settingsOpen} onClose={closeSettings} theme={theme} onToggleTheme={onToggleTheme} />
+        {settingsOpen && <Suspense fallback={null}>
+          <SettingsDialog open={settingsOpen} onClose={closeSettings} theme={theme} onToggleTheme={onToggleTheme} />
+        </Suspense>}
         <ConfirmationDialogHost />
       </div>
     </AssistantRuntimeProvider>

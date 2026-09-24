@@ -3,7 +3,7 @@
 import type { ComponentProps } from "react";
 import { Loader2Icon, PlayIcon } from "lucide-react";
 import { cn } from "../../../lib/utils";
-import { codeScroll, codeSurface, ghostButton, mono, paper } from "./surfaces";
+import { codeScroll, codeSurface, ghostButton, mono, paper, terminalViewport } from "./surfaces";
 
 export type RunState = "idle" | "running" | "ok" | "error";
 
@@ -67,14 +67,14 @@ export function CodeRunner({
         </button>}
       </div>
 
-      <pre className="border-foreground/[0.07] max-h-[min(18rem,36dvh)] overflow-auto border-t px-3.5 py-2.5 font-mono text-xs leading-relaxed">
+      <pre className={cn(terminalViewport, "border-foreground/[0.07] border-t px-3.5 py-2.5 font-mono text-xs leading-relaxed")}>
         <code className="text-foreground/75">{code}</code>
       </pre>
 
       {state !== "idle" && (
         <div className="border-foreground/[0.07] fade-in animate-in flex flex-col border-t px-3.5 py-2.5 duration-300">
           <span className={cn(mono, "text-foreground/30 pb-1")}>output</span>
-          <div className={cn(codeScroll, "max-h-[min(18rem,36dvh)] overflow-y-auto")}>
+          <div className={cn(terminalViewport, codeScroll)}>
             <div className={cn(codeSurface, "flex flex-col")}>
               {output.map((line, i) => (
                 <span

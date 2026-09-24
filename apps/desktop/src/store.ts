@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { RuntimeCommand, RuntimeEvent, SessionInfo, MessageInfo, MessageAttachmentInfo, WorkspaceInfo, WorkspaceFileInfo, ModelConfigInfo, SkillInfo, PluginInfo, McpServerInfo, RunInfo, ArtifactInfo, PermissionRuleInfo, RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 
 export function hasTauriBridge() {
@@ -13,6 +13,7 @@ export interface ChatMessage {
   id: string;
   role: string;
   content: string;
+  parts?: AssistantMessagePart[];
   attachments?: MessageAttachmentInfo[];
   runId?: string;
   createdAt?: number;
@@ -72,6 +73,10 @@ interface AgentState {
   titleGeneratingSessionIds: string[];
   messages: ChatMessage[];
   streaming: string;
+  streamingParts: AssistantMessagePart[];
+  activeMessageSequence?: number;
+  /** Tool calls whose Pi arguments are complete but execution has not started yet. */
+  preparedToolCallIds: string[];
   running: boolean;
   activeRunId?: string;
   approvals: PendingApproval[];
@@ -148,6 +153,9 @@ export const useStore = create<AgentState>((set, get) => ({
   messages: [],
   messagesLoadingSessionId: undefined,
   streaming: "",
+  streamingParts: [],
+  activeMessageSequence: undefined,
+  preparedToolCallIds: [],
   running: false,
   draftWorkspaceId: undefined,
   creatingSession: false,
@@ -176,10 +184,14 @@ export const useStore = create<AgentState>((set, get) => ({
       if (cmd.type === "agent.run") {
         if (!cmd.messageId || get().currentSessionId !== cmd.sessionId || pendingAgentRun?.requestId !== cmd.requestId) return;
         pendingAgentRun = undefined;
+        clearDelta();
         set({
           chatRunError: { sessionId: cmd.sessionId, userMessageId: cmd.messageId, detail: String(error) },
           running: false,
           streaming: "",
+          streamingParts: [],
+          activeMessageSequence: undefined,
+          preparedToolCallIds: [],
           activeRunId: undefined,
         });
       } else {
@@ -195,7 +207,8 @@ export const useStore = create<AgentState>((set, get) => ({
 
   newSessionInWorkspace: (workspaceId) => {
     if (get().running || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [], lastError: undefined, chatRunError: undefined });
+    clearDelta();
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [], lastError: undefined, chatRunError: undefined });
     get().refreshWorkspace(workspaceId);
   },
 
@@ -270,10 +283,11 @@ export const useStore = create<AgentState>((set, get) => ({
 
   selectSession: (id) => {
     if (get().running && get().currentSessionId !== id) return;
+    clearDelta();
     pendingMessageReplacements.delete(id);
     const workspaceId = get().sessions.find((session) => session.id === id)?.workspaceId;
     const workspaceChanged = workspaceId !== undefined && workspaceId !== get().currentWorkspaceId;
-    set({ currentSessionId: id, messagesLoadingSessionId: id, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [], chatRunError: undefined });
+    set({ currentSessionId: id, messagesLoadingSessionId: id, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [], chatRunError: undefined });
     get().send({ type: "session.messages", requestId: rid(), sessionId: id });
     get().send({ type: "session.toolCalls", requestId: rid(), sessionId: id });
     get().send({ type: "session.runs", requestId: rid(), sessionId: id });
@@ -303,9 +317,13 @@ export const useStore = create<AgentState>((set, get) => ({
     const keptMessages = replaceIndex >= 0 ? history.slice(0, replaceIndex) : history;
     const keptRunIds = new Set(keptMessages.flatMap((item) => item.runId ? [item.runId] : []));
     const messageId = rid();
+    clearDelta();
     set((s) => ({
       messages: [...keptMessages, { id: messageId, role: "user", content: message, attachments, createdAt: Date.now() }],
       streaming: "",
+      streamingParts: [],
+      activeMessageSequence: undefined,
+      preparedToolCallIds: [],
       running: true,
       creatingSession: false,
       pendingMessage: undefined,
@@ -412,6 +430,35 @@ function flushNow() {
   }
 }
 
+function clearDelta() {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
+  deltaBuf = "";
+}
+
+function ensureStreamingToolPart(
+  parts: readonly AssistantMessagePart[],
+  payload: Record<string, unknown>,
+  messageSequence: number,
+): AssistantMessagePart[] {
+  const toolCallId = typeof payload.toolCallId === "string" && payload.toolCallId
+    ? payload.toolCallId
+    : undefined;
+  if (!toolCallId) return [...parts];
+  const hasPart = parts.some((part) => part.type === "tool-call" && part.toolCallId === toolCallId);
+  const next = hasPart ? [...parts] : [
+    ...parts,
+    {
+      type: "tool-call" as const,
+      toolCallId,
+      toolName: typeof payload.toolName === "string" && payload.toolName ? payload.toolName : "tool",
+      args: payload.args ?? payload.input ?? {},
+      messageSequence,
+    },
+  ];
+  return applyAssistantToolEvent(next, "tool.started", payload);
+}
+
 let wired = false;
 let lastSequence = -1;
 // A reload removes the selected user turn in the runtime database. Ignore an
@@ -425,6 +472,7 @@ export function initBridge() {
 
   const ready = listen<string>("runtime-event", (e) => {
     if (e.payload.includes('"type":"runtime.exited"')) {
+      clearDelta();
       metadataLookupSupported = false;
       pendingAgentRun = undefined;
       for (const request of metadataRequests.values()) request.reject(new Error("Runtime exited"));
@@ -436,6 +484,9 @@ export function initBridge() {
           activeRunId: undefined,
           approvals: [],
           streaming: "",
+          streamingParts: [],
+          activeMessageSequence: undefined,
+          preparedToolCallIds: [],
           ...(st.running && st.currentSessionId && userMessage ? {
             chatRunError: { sessionId: st.currentSessionId, userMessageId: userMessage.id, detail: "Runtime exited" },
           } : {}),
@@ -479,6 +530,7 @@ export function initBridge() {
         s.send({ type: "events.replay", requestId: rid(), sessionId: useStore.getState().currentSessionId, afterSequence: lastSequence });
         break;
       case "session.created":
+        clearDelta();
         useStore.setState((st) => ({
           runOptionsBySession: {
             ...st.runOptionsBySession,
@@ -497,6 +549,9 @@ export function initBridge() {
           messagesLoadingSessionId: undefined,
           messages: [],
           streaming: "",
+          streamingParts: [],
+          activeMessageSequence: undefined,
+          preparedToolCallIds: [],
           toolCalls: [],
           runs: [],
           artifacts: [],
@@ -514,6 +569,7 @@ export function initBridge() {
         const cur = state.currentSessionId;
         const selected = msg.sessions.find((session) => session.id === cur) ?? msg.sessions[0];
         const selectionChanged = selected?.id !== cur;
+        if (selectionChanged) clearDelta();
         const storedModelId = selected ? state.runOptionsBySession[selected.id]?.modelId : undefined;
         useStore.setState({
           sessions: msg.sessions,
@@ -526,6 +582,9 @@ export function initBridge() {
             messages: [],
             messagesLoadingSessionId: selected?.id,
             streaming: "",
+            streamingParts: [],
+            activeMessageSequence: undefined,
+            preparedToolCallIds: [],
             toolCalls: [],
             runs: [],
             artifacts: [],
@@ -555,6 +614,7 @@ export function initBridge() {
             id: m.id,
             role: m.role,
             content: m.content,
+            parts: m.parts,
             attachments: m.attachments,
             runId: m.runId,
             createdAt: m.createdAt,
@@ -564,7 +624,8 @@ export function initBridge() {
       case "session.toolCalls":
         if (msg.sessionId === useStore.getState().currentSessionId) {
           useStore.setState({ toolCalls: msg.toolCalls.map((t) => ({
-            toolCallId: t.id, runId: t.runId, toolName: t.toolName,
+            toolCallId: t.id.startsWith(`${t.runId}:`) ? t.id.slice(t.runId.length + 1) : t.id,
+            runId: t.runId, toolName: t.toolName,
             status: t.status === "failed" || t.status === "cancelled" ? "failed" : t.status === "running" ? "running" : t.status === "waiting_approval" ? "waiting" : "success",
             args: (() => { try { return t.arguments ? JSON.parse(t.arguments) : undefined; } catch { return undefined; } })(),
             argsText: t.arguments ?? undefined,
@@ -592,18 +653,20 @@ export function initBridge() {
         break;
       }
       case "workspace.updated":
+        clearDelta();
         useStore.setState((st) => ({
           workspaces: [msg.workspace, ...st.workspaces.filter((w) => w.id !== msg.workspace.id)],
           currentWorkspaceId: msg.workspace.id,
           workspaceLoadingId: msg.workspace.id,
         }));
         useStore.getState().refreshWorkspace(msg.workspace.id);
-        useStore.setState({ draftWorkspaceId: msg.workspace.id, currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [] });
+        useStore.setState({ draftWorkspaceId: msg.workspace.id, currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [] });
         break;
       case "workspace.renamed":
         useStore.setState((st) => ({ workspaces: st.workspaces.map((workspace) => workspace.id === msg.workspace.id ? msg.workspace : workspace) }));
         break;
       case "workspace.deleted":
+        if (useStore.getState().currentWorkspaceId === msg.workspaceId) clearDelta();
         useStore.setState((st) => {
           const workspaces = st.workspaces.filter((workspace) => workspace.id !== msg.workspaceId);
           const wasCurrent = st.currentWorkspaceId === msg.workspaceId;
@@ -611,7 +674,7 @@ export function initBridge() {
           return {
             workspaces,
             currentWorkspaceId: nextWorkspaceId,
-            ...(wasCurrent ? { currentSessionId: undefined, workspaceLoadingId: nextWorkspaceId, messagesLoadingSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", toolCalls: [], runs: [], artifacts: [], approvals: [] } : {}),
+            ...(wasCurrent ? { currentSessionId: undefined, workspaceLoadingId: nextWorkspaceId, messagesLoadingSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [] } : {}),
           };
         });
         if (useStore.getState().currentWorkspaceId) useStore.getState().refreshWorkspace();
@@ -677,10 +740,14 @@ export function initBridge() {
           const pending = pendingAgentRun;
           pendingAgentRun = undefined;
           if (pending.sessionId === useStore.getState().currentSessionId) {
+            clearDelta();
             useStore.setState({
               chatRunError: { sessionId: pending.sessionId, userMessageId: pending.userMessageId, detail: msg.message },
               running: false,
               streaming: "",
+              streamingParts: [],
+              activeMessageSequence: undefined,
+              preparedToolCallIds: [],
               activeRunId: undefined,
             });
           }
@@ -720,24 +787,124 @@ export function initBridge() {
         }
 
         // Product protocol event; Pi event names never cross into this reducer.
-        if (ev.type === "message.delta" && typeof p?.delta === "string") {
+        if (ev.type === "message.started" && ev.runId === useStore.getState().activeRunId && (p?.message as { role?: unknown } | undefined)?.role === "assistant") {
+          clearDelta();
+          useStore.setState({ activeMessageSequence: ev.sequence, streaming: "" });
+        }
+
+        else if (ev.type === "message.block.started" && ev.runId === useStore.getState().activeRunId) {
+          flushNow();
+          useStore.setState((st) => {
+            const messageSequence = st.activeMessageSequence;
+            if (messageSequence === undefined) return st;
+            const priorText: AssistantMessagePart[] = st.streaming
+              ? [{ type: "text", text: st.streaming, messageSequence }]
+              : [];
+            const newTool: AssistantMessagePart[] = p?.blockType === "tool-call"
+              ? [{
+                  type: "tool-call",
+                  toolCallId: typeof p.toolCallId === "string" && p.toolCallId
+                    ? p.toolCallId
+                    : `pi-${messageSequence}-${p.contentIndex ?? st.streamingParts.length}`,
+                  toolName: String(p.toolName ?? "tool"),
+                  args: p.args ?? {},
+                  messageSequence,
+                }]
+              : [];
+            return { streaming: "", streamingParts: [...st.streamingParts, ...priorText, ...newTool] };
+          });
+        }
+
+        else if (ev.type === "message.block.completed" && ev.runId === useStore.getState().activeRunId && p?.blockType === "tool-call") {
+          useStore.setState((st) => {
+            const fallbackId = st.activeMessageSequence !== undefined && typeof p.contentIndex === "number"
+              ? `pi-${st.activeMessageSequence}-${p.contentIndex}`
+              : undefined;
+            const toolCallId = typeof p.toolCallId === "string" && p.toolCallId ? p.toolCallId : fallbackId;
+            const parts = st.streamingParts.map((part): AssistantMessagePart =>
+              part.type === "tool-call" && part.toolCallId === fallbackId && toolCallId
+                ? { ...part, toolCallId }
+                : part
+            );
+            if (!toolCallId) return { streamingParts: parts };
+            const hasStartedCall = st.toolCalls.some((call) => call.runId === ev.runId && call.toolCallId === toolCallId);
+            return {
+              streamingParts: applyAssistantToolEvent(parts, "tool.started", { ...p, toolCallId }),
+              preparedToolCallIds: hasStartedCall || st.preparedToolCallIds.includes(toolCallId)
+                ? st.preparedToolCallIds
+                : [...st.preparedToolCallIds, toolCallId],
+            };
+          });
+        }
+
+        else if (ev.type === "message.delta" && ev.runId === useStore.getState().activeRunId && typeof p?.delta === "string") {
           queueDelta(p.delta);
         }
 
+        else if (ev.type === "message.completed" && ev.runId === useStore.getState().activeRunId && (p?.message as { role?: unknown } | undefined)?.role === "assistant") {
+          clearDelta();
+          useStore.setState((st) => {
+            const messageSequence = st.activeMessageSequence ?? ev.sequence;
+            const completedParts = assistantPartsFromPiMessage(p, messageSequence);
+            const activeToolCallIds = new Set(
+              st.toolCalls
+                .filter((call) => call.runId === ev.runId)
+                .map((call) => call.toolCallId),
+            );
+            const newlyPrepared = completedParts.flatMap((part) =>
+              part.type === "tool-call" && !activeToolCallIds.has(part.toolCallId)
+                ? [part.toolCallId]
+                : [],
+            );
+            return {
+              streaming: "",
+              activeMessageSequence: undefined,
+              streamingParts: [
+                ...st.streamingParts.filter((part) => part.messageSequence !== messageSequence),
+                ...completedParts,
+              ],
+              preparedToolCallIds: [...new Set([...st.preparedToolCallIds, ...newlyPrepared])],
+            };
+          });
+        }
+
         else if (ev.type === "tool.started") {
+          const toolCallId = typeof p?.toolCallId === "string" && p.toolCallId ? p.toolCallId : rid();
+          const toolPayload: Record<string, unknown> & { toolCallId: string } = { ...(p ?? {}), toolCallId };
+          const activeRun = ev.runId === useStore.getState().activeRunId;
+          if (activeRun) flushNow();
           const tc: ToolCall = {
-            toolCallId: String(p?.toolCallId ?? rid()),
+            toolCallId,
             runId: ev.runId ?? "",
-            toolName: String(p?.toolName ?? "tool"),
+            toolName: String(toolPayload.toolName ?? "tool"),
             status: "running",
-            args: p?.input ?? p?.args,
+            startedAt: ev.timestamp,
+            args: toolPayload.input ?? toolPayload.args,
             argsText: (() => {
-              const value = p?.input ?? p?.args;
+              const value = toolPayload.input ?? toolPayload.args;
               if (typeof value === "string") return value;
               try { return JSON.stringify(value ?? {}); } catch { return "{}"; }
             })(),
           };
-          useStore.setState((st) => ({ toolCalls: [...st.toolCalls, tc] }));
+          useStore.setState((st) => {
+            const lastPart = st.streamingParts.at(-1);
+            const messageSequence = st.activeMessageSequence
+              ?? (lastPart?.type === "tool-call" ? lastPart.messageSequence : ev.sequence);
+            return {
+              toolCalls: [...st.toolCalls, tc],
+              preparedToolCallIds: st.preparedToolCallIds.filter((id) => id !== toolCallId),
+              ...(ev.runId === st.activeRunId ? {
+                streaming: "",
+                streamingParts: ensureStreamingToolPart(
+                  st.streaming
+                    ? [...st.streamingParts, { type: "text", text: st.streaming, messageSequence: st.activeMessageSequence ?? ev.sequence }]
+                    : st.streamingParts,
+                  toolPayload,
+                  messageSequence,
+                ),
+              } : {}),
+            };
+          });
         } else if (ev.type === "tool.completed" || ev.type === "tool.failed") {
           const id = String(p?.toolCallId ?? "");
           const isErr = ev.type === "tool.failed" || Boolean(p?.isError ?? p?.error);
@@ -753,6 +920,10 @@ export function initBridge() {
                   }
                 : t
             ),
+            preparedToolCallIds: st.preparedToolCallIds.filter((preparedId) => preparedId !== id),
+            streamingParts: ev.runId === st.activeRunId
+              ? applyAssistantToolEvent(st.streamingParts, ev.type === "tool.failed" ? "tool.failed" : "tool.completed", p)
+              : st.streamingParts,
           }));
         }
 
@@ -780,7 +951,7 @@ export function initBridge() {
           ev.type === "agent.failed"
         ) {
           if (ev.runId && ev.runId !== useStore.getState().activeRunId) break;
-          flushNow();
+          clearDelta();
           const completedMessage = p?.message;
           if (
             ev.type === "agent.completed" &&
@@ -789,7 +960,7 @@ export function initBridge() {
             typeof (completedMessage as { id?: unknown }).id === "string" &&
             typeof (completedMessage as { content?: unknown }).content === "string"
           ) {
-            const message = completedMessage as { id: string; role?: string; content: string; runId?: string; createdAt?: number };
+            const message = completedMessage as { id: string; role?: string; content: string; parts?: AssistantMessagePart[]; runId?: string; createdAt?: number };
             useStore.setState((st) => ({
               messages: st.messages.some((item) => item.id === message.id)
                 ? st.messages
@@ -797,6 +968,7 @@ export function initBridge() {
                     id: message.id,
                     role: message.role ?? "assistant",
                     content: message.content,
+                    parts: message.parts,
                     runId: message.runId,
                     createdAt: message.createdAt,
                   }],
@@ -818,7 +990,7 @@ export function initBridge() {
             const status = ev.type === "agent.completed" ? "completed" : ev.type === "agent.cancelled" ? "cancelled" : "failed";
             useStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status, completedAt: Date.now() } : run) }));
           }
-          useStore.setState({ streaming: "", running: false, activeRunId: undefined, approvals: [] });
+          useStore.setState({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], running: false, activeRunId: undefined, approvals: [] });
           const sessionId = ev.sessionId ?? useStore.getState().currentSessionId;
           if (sessionId) {
             const state = useStore.getState();

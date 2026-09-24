@@ -1,18 +1,18 @@
 import { ComposerAttachments, ComposerAddAttachment } from "./elements/attachment.aui";
 import { File } from "./elements/file";
-import { Image } from "./elements/image";
+import { UserImageThumbnail } from "./elements/user-image-thumbnail";
 import { ComposerToolChip, ComposerToolsPopover, type ComposerTool } from "./composer-tools";
 import { ComposerTriggers } from "./composer-triggers";
 import { ComposerEditorBridge, type InsertComposerTool, type ToggleComposerMention } from "./composer-editor-bridge";
 import { LongPasteAttachmentPlugin } from "./long-paste-attachment";
 import { MarkdownText } from "./markdown-text";
-import { StreamingText } from "./elements/streaming-text";
 import { MessagePair } from "./elements/message-pair";
 import { DaySeparatorMarker } from "./elements/day-separator";
 import { ErrorState } from "./elements/error-state";
 import { pairMessageIds } from "./message-pairing";
 import { messageDaySeparators } from "./message-day-separators";
-import { GenerativeUIPresentations, SessionTimeline } from "./session-timeline";
+import { GenerativeUIPresentation, SessionTimeline } from "./session-timeline";
+import { assistantPartRanges } from "./assistant-part-ranges";
 import { MessageSourcesView } from "./message-sources-view";
 import { AssistantContext, AssistantMemoryChips } from "./assistant-context";
 import { TooltipIconButton } from "./tooltip-icon-button";
@@ -20,8 +20,7 @@ import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
 import { RunOptionsPopover } from "./run-options-popover";
-import { MorphingSpinner } from "./morphing-spinner";
-import { ThinkingIndicator } from "./elements/thinking-indicator";
+import { ShimmerLabel } from "./elements/surfaces";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
 import "./thread-viewport.css";
 import { useStore } from "../../store";
@@ -48,7 +47,7 @@ import {
   FolderPlusIcon,
   Loader2Icon,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState, type ReactNode, type FC, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FC, type RefObject } from "react";
 
 export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const { locale, t } = useLocale();
@@ -303,14 +302,27 @@ const retryUserMessage = (messageId: string) => {
   if (source) state.runAgent(source.content, source.id, source.attachments);
 };
 
+const UserMessageText: FC<{ paired?: boolean }> = ({ paired = false }) => {
+  const hasText = useAuiState((state) => state.message.parts.some(
+    (part) => part.type === "text" && part.text.length > 0,
+  ));
+  if (!hasText) return null;
+
+  return (
+    <div className={cn("w-fit min-w-0 break-words rounded-[18px] bg-[#0d0d0d] px-3.5 py-2 text-start text-sm leading-[1.5] text-white dark:bg-[#2a2a2a] dark:text-[#f5f5f5]", paired ? "max-w-full" : "max-w-[85%]")}>
+      <MessagePrimitive.Parts>
+        {({ part }) => part.type === "text" ? <span className="whitespace-pre-wrap">{part.text}</span> : null}
+      </MessagePrimitive.Parts>
+    </div>
+  );
+};
+
 const UserMessage: FC<{ messageId: string }> = ({ messageId }) => {
   const { t } = useLocale();
   return (
     <MessagePrimitive.Root className="q-message-root q-message-user relative mx-auto flex w-full max-w-2xl flex-col items-end gap-0.5">
-
-      <div className="w-fit max-w-[75%] break-words rounded-[18px] bg-[#0d0d0d] px-3.5 py-2 text-start leading-[1.5] text-white empty:hidden dark:bg-[#2a2a2a] dark:text-[#f5f5f5]">
-        <MessagePrimitive.Parts components={{ File, Image }} />
-      </div>
+      <PairUserAttachments />
+      <UserMessageText />
 
       <div className="q-message-action-slot flex items-center">
         <ActionBarPrimitive.Root hideWhenRunning autohide="never" className="flex items-center gap-0.5">
@@ -336,13 +348,7 @@ const UserMessage: FC<{ messageId: string }> = ({ messageId }) => {
 const PairUserContent: FC = () => {
   return (
     <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-fit max-w-[85%] flex-col items-end gap-0.5 self-end">
-      <div className="w-fit max-w-full min-w-0 break-words rounded-2xl border border-black/10 bg-[#0d0d0d] px-3.5 py-2 text-start text-sm leading-[1.5] text-white dark:border-white/10 dark:bg-[#2a2a2a] dark:text-[#f5f5f5]">
-        <MessagePrimitive.Parts>
-          {({ part }) => part.type === "text"
-            ? <span className="whitespace-pre-wrap">{part.text}</span>
-            : <span aria-hidden="true" />}
-        </MessagePrimitive.Parts>
-      </div>
+      <UserMessageText paired />
     </MessagePrimitive.Root>
   );
 };
@@ -354,12 +360,12 @@ const PairUserAttachments: FC = () => {
   if (!hasAttachments) return null;
 
   return (
-    <div className="q-message-user-attachments self-start max-w-[85%] pb-1">
+    <div className="q-message-user-attachments flex w-fit max-w-[85%] min-w-0 flex-nowrap items-end gap-2 self-end overflow-x-auto overscroll-x-contain pb-1">
       <MessagePrimitive.Parts>
         {({ part }) => {
-          if (part.type === "file") return <File {...part} />;
-          if (part.type === "image") return <Image {...part} />;
-          return <span aria-hidden="true" />;
+          if (part.type === "file") return <div className="shrink-0"><File {...part} /></div>;
+          if (part.type === "image") return <UserImageThumbnail {...part} />;
+          return null;
         }}
       </MessagePrimitive.Parts>
     </div>
@@ -387,27 +393,6 @@ const PairUserActions: FC = () => {
       </TooltipIconButton>
     </ActionBarPrimitive.Root>
   );
-};
-
-const AssistantText: FC = () => {
-  const messageParts = useAuiState((state) => state.message.parts);
-  const segments = useMemo(
-    () =>
-      messageParts.flatMap((part) =>
-        part.type === "text" ? [{ text: part.text }] : [],
-      ),
-    [messageParts],
-  );
-  const count = useMemo(
-    () =>
-      segments.reduce(
-        (total, segment) => total + (segment.text.length === 0 ? 0 : segment.text.split(" ").length),
-        0,
-      ),
-    [segments],
-  );
-
-  return <StreamingText className="aui-streaming-text" segments={segments} count={count} streaming />;
 };
 
 const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean }> = ({ userMessageId, showLatestExtras }) => {
@@ -441,29 +426,10 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean }
         ) : undefined}
         assistantContent={
           <MessagePrimitive.Root className="q-message-root q-message-assistant relative flex w-full flex-col">
-            <AuiIf condition={(s) => s.message.status?.type === "running" && !s.message.parts.some((part) => part.type === "text" && part.text.length > 0)}>
-              <ThinkingIndicator label={t("chat.waiting")} className="py-1" role="status" aria-live="polite" />
-            </AuiIf>
-            <SessionTimeline />
-            <GenerativeUIPresentations />
-            <div className="text-foreground">
-              <AuiIf condition={(s) => s.message.status?.type === "running"}>
-                <AssistantText />
-              </AuiIf>
-              <AuiIf condition={(s) => s.message.status?.type !== "running"}>
-                <MessagePrimitive.Parts>
-                  {({ part }) => (part.type === "text" ? <MarkdownText /> : null)}
-                </MessagePrimitive.Parts>
-              </AuiIf>
-            </div>
+            <AssistantParts />
             <MessageSourcesView />
             <AssistantMemoryChips visible={showLatestExtras} />
-            <AuiIf condition={(s) => s.message.status?.type === "running" && s.message.parts.some((part) => part.type === "text" && part.text.length > 0)}>
-              <div className="text-muted-foreground animate-in fade-in-0 inline-flex items-center gap-2 pt-2 text-xs duration-300 motion-reduce:animate-none" role="status" aria-live="polite">
-                <span>{t("chat.streaming")}</span>
-                <MorphingSpinner className="size-3.5" />
-              </div>
-            </AuiIf>
+            <AgentPreparation />
           </MessagePrimitive.Root>
         }
         actions={
@@ -492,6 +458,73 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean }
         }
       />
   );
+};
+
+const AgentPreparation: FC = () => {
+  const { t } = useLocale();
+  const messageRunning = useAuiState((state) => state.message.status?.type === "running");
+  const activeMessageSequence = useStore((state) => state.activeMessageSequence);
+  const streaming = useStore((state) => state.streaming);
+  const streamingParts = useStore((state) => state.streamingParts);
+  const toolCalls = useStore((state) => state.toolCalls);
+  const toolCallsById = useMemo(
+    () => new Map(toolCalls.map((call) => [call.toolCallId, call] as const)),
+    [toolCalls],
+  );
+  const latestMessageSequence = streamingParts.at(-1)?.messageSequence;
+  const phaseKey = String(activeMessageSequence ?? latestMessageSequence ?? "run-start");
+  const currentParts = useMemo(
+    () => (activeMessageSequence ?? latestMessageSequence) === undefined
+      ? []
+      : streamingParts.filter((part) => part.messageSequence === (activeMessageSequence ?? latestMessageSequence)),
+    [activeMessageSequence, latestMessageSequence, streamingParts],
+  );
+  const hasCurrentText = Boolean(streaming.trim()) || (activeMessageSequence !== undefined && currentParts.some(
+    (part) => part.type === "text" && part.text.trim().length > 0,
+  ));
+  const hasUnfinishedTool = currentParts.some((part) => {
+    if (part.type !== "tool-call") return false;
+    const call = toolCallsById.get(part.toolCallId);
+    return call?.status === "running" || call?.status === "waiting"
+      || (!call && part.result === undefined && !part.isError);
+  });
+  // The run can be active before Pi emits message.started. Keep this fallback
+  // independent of activeMessageSequence so the first visible state is not a
+  // blank assistant bubble.
+  const candidate = messageRunning && !hasCurrentText && !hasUnfinishedTool;
+  const [visiblePhase, setVisiblePhase] = useState<string>();
+
+  useEffect(() => {
+    if (!candidate) {
+      setVisiblePhase(undefined);
+      return undefined;
+    }
+    const timer = setTimeout(() => setVisiblePhase(phaseKey), 400);
+    return () => clearTimeout(timer);
+  }, [candidate, phaseKey]);
+
+  if (!candidate || visiblePhase !== phaseKey) return null;
+  return (
+    <div className="text-foreground/55 flex items-center py-1 text-sm" role="status" aria-live="polite">
+      <ShimmerLabel active className="relative inline-block leading-none">
+        {t("chat.toolPreparingNext")}
+      </ShimmerLabel>
+    </div>
+  );
+};
+
+const AssistantParts: FC = () => {
+  const parts = useAuiState((state) => state.message.parts);
+  const ranges = useMemo(() => assistantPartRanges(parts), [parts]);
+  return <>{ranges.map((range) => {
+    if (range.type === "text") return (
+      <div className="q-assistant-text text-foreground" key={`text-${range.index}`}>
+        <MessagePrimitive.PartByIndex index={range.index} components={{ Text: MarkdownText }} />
+      </div>
+    );
+    if (range.type === "presentation") return <GenerativeUIPresentation key={`present-${range.index}`} index={range.index} />;
+    return <SessionTimeline key={`tools-${range.startIndex}`} startIndex={range.startIndex} endIndex={range.endIndex} />;
+  })}</>;
 };
 
 const ChatRunErrorView: FC = () => {

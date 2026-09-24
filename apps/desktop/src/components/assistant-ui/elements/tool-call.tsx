@@ -1,6 +1,7 @@
 "use client";
 
 import { CheckIcon, ChevronRightIcon, Clock3Icon, XIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -19,9 +20,11 @@ export interface ToolCallProps {
   label: string;
   activeLabel: string;
   query: string;
-  request: string;
-  result: string;
+  /** Kept for callers that still have the serialized arguments; it is not rendered. */
+  request?: string;
+  result: ReactNode;
   running: boolean;
+  pending?: boolean;
   waiting?: boolean;
   failed?: boolean;
   requestLabel?: string;
@@ -35,13 +38,11 @@ export function ToolCall({
   label,
   activeLabel,
   query,
-  request,
   result,
   running,
+  pending = false,
   waiting = false,
   failed = false,
-  requestLabel = "Request",
-  resultLabel = "Result",
   open,
   onOpenChange,
   className,
@@ -49,7 +50,7 @@ export function ToolCall({
   return (
     <Collapsible
       data-slot="tool-call"
-      data-status={failed ? "failed" : waiting ? "waiting" : running ? "running" : "success"}
+      data-status={failed ? "failed" : waiting ? "waiting" : pending ? "pending" : running ? "running" : "success"}
       open={open}
       onOpenChange={onOpenChange}
       className={cn("w-full max-w-sm", className)}
@@ -76,22 +77,14 @@ export function ToolCall({
         <span className="ms-auto flex w-4 items-center justify-end">
           {waiting && <Clock3Icon className="size-3.5 text-amber-500" />}
           {failed && <XIcon className="size-3.5 text-red-500" />}
-          {!running && !waiting && !failed && (
+          {!running && !waiting && !pending && !failed && (
             <CheckIcon className="fade-in zoom-in-90 animate-in size-3.5 text-emerald-500 duration-200" />
           )}
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
-        <div className={cn(field, "mt-2 overflow-hidden rounded-2xl text-xs")}>
-          <div className="px-3.5 pt-2.5 pb-2">
-            <p className={cn(mono, "text-foreground/35 mb-1")}>{requestLabel}</p>
-            <pre className="text-foreground/55 max-h-[min(18rem,36dvh)] overflow-auto whitespace-pre-wrap break-words font-mono [overflow-wrap:anywhere]">{request}</pre>
-          </div>
-          <div className="bg-foreground/[0.06] mx-3.5 h-px" />
-          <div className="px-3.5 pt-2 pb-2.5">
-            <p className={cn(mono, "text-foreground/35 mb-1")}>{resultLabel}</p>
-            <pre className="text-foreground/90 max-h-[min(18rem,36dvh)] overflow-auto whitespace-pre-wrap break-words font-mono [overflow-wrap:anywhere]">{result}</pre>
-          </div>
+        <div data-slot="tool-result-panel" className={cn(field, "mt-2 overflow-hidden rounded-2xl p-2.5")}>
+          {result}
         </div>
       </CollapsibleContent>
     </Collapsible>

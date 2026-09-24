@@ -3,7 +3,7 @@
 import type { ComponentProps } from "react";
 import { AlertCircleIcon, Loader2Icon, RotateCwIcon } from "lucide-react";
 import { cn } from "../../../lib/utils";
-import { field, mono, paper } from "./surfaces";
+import { detailViewport, field, mono, paper } from "./surfaces";
 
 export function ToolError({
   name,
@@ -68,7 +68,8 @@ export function ToolError({
       <div
         className={cn(
           field,
-          "max-h-[min(18rem,36dvh)] overflow-auto whitespace-pre-wrap break-words rounded-xl px-3 py-2 font-mono text-[11px] leading-relaxed text-red-700 dark:text-red-300 [overflow-wrap:anywhere]",
+          detailViewport,
+          "whitespace-pre-wrap break-words rounded-xl px-3 py-2 font-mono text-[11px] leading-relaxed text-red-700 dark:text-red-300 [overflow-wrap:anywhere]",
         )}
       >
         {message}

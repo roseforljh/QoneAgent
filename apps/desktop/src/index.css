@@ -228,10 +228,8 @@ body { background: var(--background); color: var(--foreground); font-size: 14px;
 ::-webkit-scrollbar-thumb:hover { background: color-mix(in oklab, var(--muted-foreground) 55%, transparent); }
 ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 ::-webkit-scrollbar-corner { background: transparent; }
-button, input, select, textarea { font: inherit; }
-button { color: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-a { color: inherit; text-decoration: none; }
+a { text-decoration: none; }
 
 /* ---- tw-animate-style utilities used by the ported assistant-ui components ---- */
 @keyframes aui-enter {
@@ -739,18 +737,6 @@ body {
   line-height: 1.62;
 }
 
-.aui-thread-root .aui-streaming-text {
-  min-height: 0;
-  max-width: none;
-  margin: 0;
-  font-size: inherit;
-  line-height: inherit;
-}
-
-.aui-thread-root .aui-streaming-copy {
-  color: var(--muted-foreground);
-}
-
 .aui-thread-root .aui-md h1,
 .aui-thread-root .aui-md h2,
 .aui-thread-root .aui-md h3,
@@ -786,7 +772,75 @@ body {
   line-height: 1.6;
 }
 .aui-thread-root .aui-md table { font-size: 13px; line-height: 1.45; }
+
+/* Assistant prose uses a calmer reading rhythm than the surrounding chat UI. */
+.aui-thread-root .q-assistant-text .aui-md {
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.8;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.aui-thread-root .q-assistant-text .aui-md :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: 1.2em 0.5em;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(h1, h2, h3, h4, h5, h6):last-child {
+  margin-bottom: 0;
+}
+.aui-thread-root .q-assistant-text .aui-md p {
+  margin-block: 0 0.875em;
+  line-height: inherit;
+}
+.aui-thread-root .q-assistant-text .aui-md p:last-child {
+  margin-bottom: 0;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(ul, ol) {
+  margin-block: 0.875em;
+  line-height: inherit;
+}
+.aui-thread-root .q-assistant-text .aui-md li {
+  line-height: inherit;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(ul, ol) > li {
+  margin-top: 0;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(ul, ol) > li + li {
+  margin-top: 0.375em;
+}
+.aui-thread-root .q-assistant-text .aui-md strong {
+  font-weight: 600;
+}
+.aui-thread-root .q-assistant-text .aui-md .aui-md-inline-code {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  padding: 0.08em 0.3em;
+  font-size: 0.875em;
+  font-weight: 400;
+}
+
 .aui-thread-root [data-slot="image-preview"] img { max-height: min(28rem, 46dvh); }
+.aui-thread-root .q-message-user-attachments { scrollbar-width: thin; }
+.aui-thread-root .q-message-user-attachments > :only-child { max-width: 100%; }
+.aui-thread-root .q-user-image-thumbnail [data-slot="image-preview"] {
+  min-height: 0;
+  max-height: 12rem;
+  overflow: hidden;
+}
+.aui-thread-root .q-user-image-thumbnail [data-slot="image-preview"] img {
+  width: 100%;
+  height: auto;
+  max-height: 12rem;
+  object-fit: contain;
+}
 .aui-thread-root [data-slot="file-root"] { max-width: min(100%, 22rem); }
 .aui-thread-root [data-slot="generative-ui-block"] { overscroll-behavior: auto; }
 .aui-thread-root .q-tool-timeline > [data-slot="collapsible-content"] {
@@ -796,7 +850,7 @@ body {
   scrollbar-gutter: stable;
 }
 .aui-thread-root .q-tool-timeline {
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.75rem;
 }
 
 .aui-thread-root .aui-composer-input {
