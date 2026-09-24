@@ -1,6 +1,6 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, RuntimeEvent, AgentEvent, SessionInfo, WorkspaceInfo, PermissionDecision, WorkspaceFileInfo } from "@qone/protocol";
-import { encode, decodeCommand } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, WorkspaceFileInfo } from "@qone/protocol";
+import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
 import { PiAdapter } from "./pi-adapter.js";
@@ -87,10 +87,27 @@ eventBus.subscribe((busEvent) => {
     sessionId: busEvent.sessionId, runId: busEvent.runId,
     timestamp: Date.now(), payload: busEvent.payload,
   } satisfies AgentEvent));
+  if (agentEvent.runId) {
+    const parts = assistantPartsByRun.get(agentEvent.runId);
+    if (parts) {
+      const messageRole = (agentEvent.payload as { message?: { role?: unknown } } | undefined)?.message?.role;
+      if (agentEvent.type === "message.started" && messageRole === "assistant") {
+        assistantMessageSequenceByRun.set(agentEvent.runId, agentEvent.sequence);
+      } else if (agentEvent.type === "message.completed" && messageRole === "assistant") {
+        const messageSequence = assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence;
+        parts.push(...assistantPartsFromPiMessage(agentEvent.payload, messageSequence));
+        assistantMessageSequenceByRun.delete(agentEvent.runId);
+      } else if (agentEvent.type === "tool.started" || agentEvent.type === "tool.completed" || agentEvent.type === "tool.failed") {
+        assistantPartsByRun.set(agentEvent.runId, applyAssistantToolEvent(parts, agentEvent.type, agentEvent.payload));
+      }
+    }
+  }
   queueEventPersistence(agentEvent);
   send({ type: "agent.event", event: agentEvent });
 });
 const assistantBuffers = new Map<string, string>();
+const assistantPartsByRun = new Map<string, AssistantMessagePart[]>();
+const assistantMessageSequenceByRun = new Map<string, number>();
 const toolCallIds = new Map<string, string>();
 const cancelledRuns = new Set<string>();
 const startingRunSessions = new Set<string>();
@@ -112,7 +129,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   },
   onTool: (sessionId, runId, phase, name, args, result, toolCallId) => {
     if (phase === "start") {
-      const row = toolCallRepo.start(runId, name, args);
+      const row = toolCallRepo.start(runId, name, args, toolCallId);
       if (toolCallId) toolCallIds.set(`${runId}:${toolCallId}`, row.id);
     } else if (toolCallId) {
       const id = toolCallIds.get(`${runId}:${toolCallId}`);
@@ -301,6 +318,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           runId: m.runId ?? undefined,
           role: m.role,
           content: m.content,
+          parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
           attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
           model: m.model ?? undefined,
           createdAt: m.createdAt,
@@ -568,12 +586,15 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         }
       }
       const run = runRepo.create(cmd.sessionId);
+      assistantPartsByRun.set(run.id, []);
       const turn = turnRepo.create(run.id);
       messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments);
       emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
       const workspaceCwd = s.workspaceId ? workspaceRepo.get(s.workspaceId)?.path : undefined;
       if (s.workspaceId && !workspaceCwd) {
         runRepo.finish(run.id, "failed", "session workspace no longer exists");
+        assistantPartsByRun.delete(run.id);
+        assistantMessageSequenceByRun.delete(run.id);
         turnRepo.finish(turn.id, "failed");
         emit("agent.failed", { message: "session workspace no longer exists" }, cmd.sessionId, run.id);
         send({ type: "error", requestId: cmd.requestId, message: "session workspace no longer exists" });
@@ -587,10 +608,13 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         .then(() => {
           const assistant = assistantBuffers.get(run.id);
           if (!assistant?.trim() && !cancelledRuns.has(run.id)) throw new Error("AI returned an empty response");
+          const parts = assistantPartsByRun.get(run.id) ?? [];
           const assistantMessage = assistant?.trim()
-            ? messageRepo.addAssistant(cmd.sessionId, assistant, run.id, cmd.model)
+            ? messageRepo.addAssistant(cmd.sessionId, assistant, run.id, cmd.model, parts)
             : undefined;
           assistantBuffers.delete(run.id);
+          assistantPartsByRun.delete(run.id);
+          assistantMessageSequenceByRun.delete(run.id);
           for (const key of toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) toolCallIds.delete(key);
           const cancelled = cancelledRuns.delete(run.id);
           const status = cancelled ? "cancelled" : "completed";
@@ -602,6 +626,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
               id: assistantMessage.id,
               role: assistantMessage.role,
               content: assistantMessage.content,
+              parts,
               runId: assistantMessage.runId,
               createdAt: assistantMessage.createdAt,
             },
@@ -609,6 +634,8 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         })
         .catch((err) => {
           assistantBuffers.delete(run.id);
+          assistantPartsByRun.delete(run.id);
+          assistantMessageSequenceByRun.delete(run.id);
           for (const key of toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) toolCallIds.delete(key);
           const cancelled = cancelledRuns.delete(run.id);
           const status = cancelled ? "cancelled" : "failed";

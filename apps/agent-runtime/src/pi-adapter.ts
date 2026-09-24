@@ -21,10 +21,18 @@ import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
-import { closeBrowser, createBrowserTools } from "./browser-tools.js";
-import { presentTool } from "./present-tool.js";
 
 const log = createLogger("pi-adapter");
+const MODEL_TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
+
+function assertModelToolNames(names: Iterable<string>): void {
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!MODEL_TOOL_NAME.test(name) || name.length > 64) throw new Error(`Invalid model tool name: ${name}`);
+    if (seen.has(name)) throw new Error(`Duplicate model tool name: ${name}`);
+    seen.add(name);
+  }
+}
 
 type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
@@ -210,7 +218,6 @@ export class PiAdapter {
       if (session.isIdle) {
         await session.dispose();
         this.sessions.delete(sessionId);
-        await closeBrowser(sessionId);
       } else {
         // Do not interrupt an active run. It will be recreated after settling.
         this.staleSessions.add(sessionId);
@@ -289,7 +296,6 @@ export class PiAdapter {
       await session.dispose();
       this.sessions.delete(sessionId);
     }
-    await closeBrowser(sessionId);
     this.staleSessions.delete(sessionId);
   }
 
@@ -365,10 +371,9 @@ export class PiAdapter {
     const existing = this.sessions.get(sessionId);
     if (existing) {
       if (this.staleSessions.has(sessionId) && existing.isIdle) {
-        existing.dispose();
+        await existing.dispose();
         this.sessions.delete(sessionId);
         this.staleSessions.delete(sessionId);
-        void closeBrowser(sessionId);
       } else {
       if (modelName) {
         this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
@@ -395,8 +400,6 @@ export class PiAdapter {
       createGrepTool(workspacePath),
       createFindTool(workspacePath),
       createLsTool(workspacePath),
-      ...createBrowserTools(sessionId),
-      presentTool,
     ];
     const wrapped = [...builtinTools, ...this.customTools].map((t) =>
       withPermission(t, {
@@ -408,6 +411,7 @@ export class PiAdapter {
           this.push("approval.requested", { approvalId, toolName, args, toolCallId }, sessionId, this.activeRunIds.get(sessionId)),
       })
     );
+    assertModelToolNames(wrapped.map((tool) => tool.name));
 
     const toolNameByModelName = new Map(wrapped.map((tool) => [
       tool.name,
@@ -441,11 +445,17 @@ export class PiAdapter {
       model,
       thinkingLevel: thinking,
     });
+    try {
+      assertModelToolNames(session.getActiveToolNames());
+    } catch (error) {
+      await session.dispose();
+      throw error;
+    }
 
     session.subscribe((e) => {
       const runId = [...this.runs.entries()].find(([, s]) => s === session)?.[0];
       const raw = e as unknown as Record<string, unknown>;
-      const messageEvent = raw.assistantMessageEvent as { type?: string; delta?: string } | undefined;
+      const messageEvent = raw.assistantMessageEvent as { type?: string; delta?: string; contentIndex?: number; toolCall?: unknown } | undefined;
       const normalized = messageEvent?.delta
         ? { ...raw, delta: messageEvent.delta }
         : raw;
@@ -453,9 +463,33 @@ export class PiAdapter {
       let protocolPayload = normalized;
       if (e.type === "message_start") protocolType = "message.started";
       else if (e.type === "message_update") {
-        protocolType = "message.delta";
-        if (messageEvent?.type !== "text_delta") return;
-        protocolPayload = { delta: messageEvent.delta ?? "" };
+        const content = (raw.message as { content?: unknown } | undefined)?.content;
+        const block = Array.isArray(content) && typeof messageEvent?.contentIndex === "number"
+          ? content[messageEvent.contentIndex] as { id?: string; name?: string; arguments?: unknown } | undefined
+          : undefined;
+        if (messageEvent?.type === "text_delta") {
+          protocolType = "message.delta";
+          protocolPayload = { delta: messageEvent.delta ?? "", contentIndex: messageEvent.contentIndex };
+        } else if (messageEvent?.type === "text_start" || messageEvent?.type === "toolcall_start") {
+          protocolType = "message.block.started";
+          protocolPayload = messageEvent.type === "text_start"
+            ? { blockType: "text", contentIndex: messageEvent.contentIndex }
+            : {
+                blockType: "tool-call", contentIndex: messageEvent.contentIndex,
+                toolCallId: block?.id,
+                toolName: toolNameByModelName.get(String(block?.name ?? "")) ?? block?.name,
+                args: block?.arguments,
+              };
+        } else if (messageEvent?.type === "toolcall_end") {
+          const toolCall = messageEvent.toolCall as { id?: string; name?: string; arguments?: unknown } | undefined ?? block;
+          protocolType = "message.block.completed";
+          protocolPayload = {
+            blockType: "tool-call", contentIndex: messageEvent.contentIndex,
+            toolCallId: toolCall?.id,
+            toolName: toolNameByModelName.get(String(toolCall?.name ?? "")) ?? toolCall?.name,
+            args: toolCall?.arguments,
+          };
+        } else return;
       } else if (e.type === "message_end") protocolType = "message.completed";
       else if (e.type === "tool_execution_start") {
         protocolType = "tool.started";
@@ -533,10 +567,9 @@ export class PiAdapter {
       this.stoppedRuns.delete(runId);
       if (this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
       if (session && this.staleSessions.has(sessionId) && session.isIdle) {
-        session.dispose();
+        await session.dispose();
         this.sessions.delete(sessionId);
         this.staleSessions.delete(sessionId);
-        await closeBrowser(sessionId);
       }
     }
   }

@@ -65,19 +65,6 @@ const TOOL_PERMISSIONS: Record<string, PermissionDecision> = {
 
   bash: "ask",
   powershell: "ask",
-
-  "browser.open": "ask",
-  "browser.navigate": "ask",
-  "browser.click": "ask",
-  "browser.type": "ask",
-  // A caller may provide an arbitrary output path; keep screenshot writes
-  // behind approval just like downloads unless the product later adds a
-  // dedicated artifact-path policy.
-  "browser.screenshot": "ask",
-  "browser.snapshot": "allow",
-  "browser.extract": "allow",
-  "browser.close": "allow",
-  "browser.download": "ask",
 };
 
 const DENY_PREFIXES = [
@@ -116,7 +103,6 @@ function insideWorkspace(target: string, workspacePath: string): boolean {
 
 const FILE_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls"]);
 const MUTATING_FILE_TOOLS = new Set(["write", "edit"]);
-const AUTO_BROWSER_TOOLS = new Set(["browser.open", "browser.navigate", "browser.snapshot", "browser.extract", "browser.close"]);
 
 function pathArgument(ctx: ToolContext): string | undefined {
   const args = ctx.args as Record<string, unknown> | undefined;
@@ -133,9 +119,6 @@ function autoApprovesCapability(ctx: ToolContext, capability: string): boolean {
   if (MUTATING_FILE_TOOLS.has(ctx.toolName)) {
     const target = pathArgument(ctx);
     return capability === "filesystem.write" && !!target && !!ctx.workspacePath && insideWorkspace(target, ctx.workspacePath);
-  }
-  if (AUTO_BROWSER_TOOLS.has(ctx.toolName)) {
-    return capability === "browser.control" || capability === "network";
   }
   return false;
 }
@@ -217,12 +200,6 @@ export function permissionNames(toolName: string): string[] {
   if (toolName === "read" || toolName === "grep" || toolName === "find" || toolName === "ls") return ["filesystem.read"];
   if (toolName === "write" || toolName === "edit") return ["filesystem.write"];
   if (toolName === "bash" || toolName === "powershell") return ["shell.execute"];
-  if (toolName.startsWith("browser.")) {
-    const permissions = ["browser.control"];
-    if (toolName !== "browser.close" && toolName !== "browser.screenshot") permissions.push("network");
-    if (toolName === "browser.screenshot" || toolName === "browser.download") permissions.push("filesystem.write");
-    return permissions;
-  }
   if (toolName.startsWith("mcp:")) return ["mcp.connect"];
   return ["tool.execute"];
 }

@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { ModelRuntime, SessionManager, createAgentSession, defineTool } from "@earendil-works/pi-coding-agent";
+import { assistantPartsFromPiMessage } from "@qone/protocol";
 import { Type } from "typebox";
 
 describe("Pi model contract", () => {
   test("streams assistant text and executes a tool with a fake provider", async () => {
     const faux = fauxProvider({ provider: "qone-test", models: [{ id: "test-model" }] });
     faux.setResponses([
-      fauxAssistantMessage([fauxText("before "), fauxToolCall("echo", { value: "ok" })]),
+      fauxAssistantMessage([
+        fauxText("before "), fauxToolCall("echo", { value: "ok" }),
+        fauxText("between "), fauxToolCall("echo", { value: "again" }),
+      ]),
       fauxAssistantMessage(fauxText("after")),
     ]);
     const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
@@ -25,12 +29,29 @@ describe("Pi model contract", () => {
       modelRuntime: runtime, model: faux.getModel(), tools: ["echo"], customTools: [echo],
     });
     const events: string[] = [];
-    const unsubscribe = session.subscribe((event) => events.push(event.type));
+    const assistantEnds: unknown[] = [];
+    const blockEvents: string[] = [];
+    const unsubscribe = session.subscribe((event) => {
+      events.push(event.type);
+      if (event.type === "message_end" && event.message.role === "assistant") assistantEnds.push(event.message);
+      if (event.type === "message_update") blockEvents.push(event.assistantMessageEvent.type);
+    });
     try {
       await session.prompt("run echo");
       expect(called).toBe(true);
       expect(events).toContain("tool_execution_start");
       expect(events).toContain("message_end");
+      expect(blockEvents.filter((type) => type === "text_start" || type === "toolcall_start")).toEqual([
+        "text_start", "toolcall_start", "text_start", "toolcall_start", "text_start",
+      ]);
+      expect(assistantEnds).toHaveLength(2);
+      const firstParts = assistantPartsFromPiMessage({ message: assistantEnds[0] }, 10);
+      expect(firstParts.map((part) => part.type === "text" ? part.text : part.toolName)).toEqual([
+        "before ", "echo", "between ", "echo",
+      ]);
+      expect(assistantPartsFromPiMessage({ message: assistantEnds[1] }, 20)).toMatchObject([
+        { type: "text", text: "after", messageSequence: 20 },
+      ]);
     } finally {
       unsubscribe();
       await session.dispose();

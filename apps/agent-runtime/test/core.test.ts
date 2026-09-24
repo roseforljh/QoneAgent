@@ -43,7 +43,6 @@ describe("runtime persistence and permissions", () => {
     expect(decide({ toolName: "read", args: { path: "C:/work/app/a.ts" }, workspacePath: "C:/work/app" })).toBe("allow");
     expect(decide({ toolName: "read", args: { path: "C:/other/a.ts" }, workspacePath: "C:/work/app" })).toBe("ask");
     expect(decide({ toolName: "powershell", args: { command: "Get-Process" }, workspacePath: "C:/work/app" })).toBe("ask");
-    expect(decide({ toolName: "browser.screenshot", args: { path: "C:/other/capture.png" }, workspacePath: "C:/work/app" })).toBe("ask");
     expect(decide({ toolName: "read", args: { path: "C:/Windows/System32/x" }, workspacePath: "C:/work/app" })).toBe("deny");
     expect(decide({ toolName: "read", args: { path: "D:/Program Files/app/config" }, workspacePath: "C:/work/app" })).toBe("deny");
     expect(decide({ toolName: "powershell", args: { command: "Get-Content C:/Windows/System32/hosts" }, workspacePath: "C:/work/app" })).toBe("deny");
@@ -91,13 +90,14 @@ describe("runtime persistence and permissions", () => {
       const session = sessions.create("history");
       const run = runs.create(session.id);
       const turn = turns.create(run.id);
-      tools.start(run.id, "powershell", { command: "Get-Process" });
+      const tool = tools.start(run.id, "powershell", { command: "Get-Process" }, "pi-tool");
       skills.upsert({ id: "review", name: "review", path: "C:/skills/review/SKILL.md", description: "Review code" });
 
       turns.markInterrupted();
       tools.markInterrupted();
       expect(turns.listByRun(run.id)[0]?.status).toBe("interrupted");
       expect(tools.listByRun(run.id)[0]?.status).toBe("cancelled");
+      expect(tool.id).toBe(`${run.id}:pi-tool`);
       expect(skills.list()[0]?.name).toBe("review");
       expect(turn.id).toBeTruthy();
     } finally {
@@ -157,28 +157,7 @@ describe("runtime persistence and permissions", () => {
     expect(executions).toBe(4);
   });
 
-  test("applies network denial to semantic browser tools", async () => {
-    let executed = false;
-    const tool = withPermission(defineTool({
-      name: "browser.extract",
-      label: "Extract",
-      description: "extract",
-      parameters: Type.Object({}),
-      execute: async () => {
-        executed = true;
-        return { content: [{ type: "text" as const, text: "ok" }] };
-      },
-    }), {
-      queue: new ApprovalQueue(),
-      emitApproval: () => {},
-      rules: { get: (_subjectId, permission) => permission === "network" ? "deny" : "allow" },
-    });
-    const result = await tool.execute("tool-call", {}, undefined, undefined, undefined) as { isError?: boolean };
-    expect(result.isError).toBe(true);
-    expect(executed).toBe(false);
-  });
-
-  test("applies auto and full modes to browser, plugin and MCP capabilities", async () => {
+  test("applies auto and full modes to plugin and MCP capabilities", async () => {
     let executions = 0;
     let prompts = 0;
     const queue = new ApprovalQueue();
@@ -207,16 +186,12 @@ describe("runtime persistence and permissions", () => {
     };
     let mode: "ask" | "auto" | "full" = "auto";
 
-    await makeTool("browser.open").execute("open", {}, undefined, undefined, undefined);
-    expect(prompts).toBe(0);
-    await makeTool("browser.click").execute("click", {}, undefined, undefined, undefined);
-    expect(prompts).toBe(1);
     await makeTool("plugin_demo", "plugin:demo:fetch", ["network"]).execute("plugin", {}, undefined, undefined, undefined);
-    expect(prompts).toBe(2);
+    expect(prompts).toBe(1);
     mode = "full";
     await makeTool("mcp_demo", "mcp:demo:fetch").execute("mcp", {}, undefined, undefined, undefined);
-    expect(prompts).toBe(2);
-    expect(executions).toBe(4);
+    expect(prompts).toBe(1);
+    expect(executions).toBe(2);
   });
 
   test("enforces permissions declared by plugin tools", async () => {

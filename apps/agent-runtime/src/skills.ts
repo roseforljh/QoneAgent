@@ -30,6 +30,7 @@ export async function createResourceLoader(cwd: string): Promise<{
     cwd,
     agentDir,
     additionalSkillPaths: skillPaths,
+    noExtensions: true,
   });
   await loader.reload();
   return { loader, skills: loader.getSkills().skills.map(toInfo) };

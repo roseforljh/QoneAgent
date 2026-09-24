@@ -13,7 +13,7 @@ cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 bun run apps/agent-runtime/test/smoke.ts
 ```
 
-`build:release` 会编译 `qone-runtime` Bun sidecar、Playwright Browser Helper，并复制固定版本的 Node sidecar，再构建前端。生成文件位于 `apps/desktop/src-tauri/binaries/`，已被 Git 忽略。
+`build:release` 会编译 `qone-runtime` Bun sidecar，再构建前端。生成的 sidecar 位于 `apps/desktop/src-tauri/binaries/`，已被 Git 忽略。
 
 ## 运行时数据
 
@@ -38,13 +38,4 @@ bun run --cwd apps/desktop tauri:build
 
 `QONE_UPDATER_PUBKEY` 只能填公钥，不能填签名私钥；`QONE_UPDATER_ENDPOINT` 必须是实际提供更新 JSON 和安装包的 HTTPS 地址。未设置变量时会沿用空配置，应用仍可构建和启动，但不会检查真实更新。
 
-Playwright 语义工具通过按 Session 隔离的 Browser Helper 运行。发布构建会打包固定版本的 Node Runtime 和 Playwright Helper，并优先使用 Windows 自带的 Microsoft Edge，无需用户安装 Node、Playwright 或 Chromium。
-
-真实页面 E2E：
-
-```powershell
-$env:QONE_RUN_BROWSER_E2E="1"
-bun test apps/agent-runtime/test/browser-tools.test.ts
-```
-
-可用 `QONE_BROWSER_EXECUTABLE` 指定其他 Chromium 可执行文件。
+模型会话只注册 Pi 的文件与 PowerShell 工具以及已连接的 MCP 工具；Skill 由 Pi 加载。浏览器能力可通过 CLI 或 MCP 提供。
