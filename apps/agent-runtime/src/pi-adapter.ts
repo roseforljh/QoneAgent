@@ -21,6 +21,8 @@ import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
+import { closeBrowser, createBrowserTools } from "./browser-tools.js";
+import { presentTool } from "./present-tool.js";
 
 const log = createLogger("pi-adapter");
 
@@ -202,12 +204,13 @@ export class PiAdapter {
   }
 
   // Called once at boot after MCP manager finishes loading.
-  setCustomTools(tools: ToolDefinition[]) {
+  async setCustomTools(tools: ToolDefinition[]) {
     this.customTools = tools;
     for (const [sessionId, session] of this.sessions) {
       if (session.isIdle) {
-        session.dispose();
+        await session.dispose();
         this.sessions.delete(sessionId);
+        await closeBrowser(sessionId);
       } else {
         // Do not interrupt an active run. It will be recreated after settling.
         this.staleSessions.add(sessionId);
@@ -286,6 +289,7 @@ export class PiAdapter {
       await session.dispose();
       this.sessions.delete(sessionId);
     }
+    await closeBrowser(sessionId);
     this.staleSessions.delete(sessionId);
   }
 
@@ -364,6 +368,7 @@ export class PiAdapter {
         existing.dispose();
         this.sessions.delete(sessionId);
         this.staleSessions.delete(sessionId);
+        void closeBrowser(sessionId);
       } else {
       if (modelName) {
         this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
@@ -390,6 +395,8 @@ export class PiAdapter {
       createGrepTool(workspacePath),
       createFindTool(workspacePath),
       createLsTool(workspacePath),
+      ...createBrowserTools(sessionId),
+      presentTool,
     ];
     const wrapped = [...builtinTools, ...this.customTools].map((t) =>
       withPermission(t, {
@@ -529,6 +536,7 @@ export class PiAdapter {
         session.dispose();
         this.sessions.delete(sessionId);
         this.staleSessions.delete(sessionId);
+        await closeBrowser(sessionId);
       }
     }
   }

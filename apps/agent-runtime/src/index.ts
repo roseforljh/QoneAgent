@@ -149,7 +149,7 @@ const mcp = new McpManager(async (serverId, token) => {
     await mcp.disconnect(serverId);
     try {
       const tools = await mcp.connect(config);
-      refreshCustomTools();
+      await refreshCustomTools();
       send({ type: "mcp.connected", serverId, toolCount: tools.length });
     } catch (error) {
       log.warn("MCP OAuth reconnect failed", { serverId, err: String(error) });
@@ -167,10 +167,10 @@ for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()]) {
     log.warn("mcp connection failed", { serverId: config.id, err: String(err) });
   }
 }
-refreshCustomTools();
+await refreshCustomTools();
 
-function refreshCustomTools() {
-  adapter.setCustomTools(mcp.tools());
+async function refreshCustomTools() {
+  await adapter.setCustomTools(mcp.tools());
 }
 
 function loadMcpConfigs() {
@@ -411,7 +411,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       mcpServerRepo.upsert(cmd.config);
       await mcp.disconnect(cmd.config.id);
       const tools = await mcp.connect(cmd.config);
-      adapter.setCustomTools(mcp.tools());
+      await adapter.setCustomTools(mcp.tools());
       send({ type: "mcp.connected", serverId: cmd.config.id, toolCount: tools.length });
       send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
       return;
@@ -426,7 +426,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       await mcp.disconnect(cmd.serverId);
       mcpServerRepo.delete(cmd.serverId);
       await adapter.deleteSecret(config.oauth?.tokenSecretKey ?? `mcp.oauth:${cmd.serverId}`);
-      refreshCustomTools();
+      await refreshCustomTools();
       send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
       return;
     }
@@ -520,7 +520,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           try {
             await mcp.disconnect(mcpSecret.id);
             await mcp.connect(mcpSecret);
-            adapter.setCustomTools(mcp.tools());
+            await adapter.setCustomTools(mcp.tools());
           } catch (error) {
             log.warn("MCP OAuth credential restore failed", { serverId: mcpSecret.id, err: String(error) });
           }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { closeDb, openDb, SessionRepo, MessageRepo, RunRepo, SkillRepo, TurnRepo, ToolCallRepo } from "@qone/database";
-import { ApprovalQueue, decide, withPermission } from "../src/permissions.js";
+import { ApprovalQueue, decide, evaluatePermission, permissionProfile, withPermission } from "../src/permissions.js";
 import { createPiSessionEntries } from "../src/pi-adapter.js";
 import { loadPlugins } from "../src/plugin-runtime.js";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -46,6 +46,22 @@ describe("runtime persistence and permissions", () => {
     expect(decide({ toolName: "browser.screenshot", args: { path: "C:/other/capture.png" }, workspacePath: "C:/work/app" })).toBe("ask");
     expect(decide({ toolName: "read", args: { path: "C:/Windows/System32/x" }, workspacePath: "C:/work/app" })).toBe("deny");
     expect(decide({ toolName: "read", args: { path: "D:/Program Files/app/config" }, workspacePath: "C:/work/app" })).toBe("deny");
+    expect(decide({ toolName: "powershell", args: { command: "Get-Content C:/Windows/System32/hosts" }, workspacePath: "C:/work/app" })).toBe("deny");
+    expect(decide({ toolName: "powershell", args: { command: "Get-Content $HOME/.ssh/id_rsa" }, workspacePath: "C:/work/app" })).toBe("deny");
+  });
+
+  test("maps the three run modes to Codex-style approval and permission profiles", () => {
+    expect(permissionProfile("ask")).toEqual({ approval: "on-request", filesystem: "read-only", network: "restricted" });
+    expect(permissionProfile("auto")).toEqual({ approval: "unless-trusted", filesystem: "workspace-write", network: "restricted" });
+    expect(permissionProfile("full")).toEqual({ approval: "never", filesystem: "full", network: "enabled" });
+    expect(evaluatePermission({ toolName: "write", args: { path: "C:/work/app/a.ts" }, workspacePath: "C:/work/app" }, "ask").decision).toBe("ask");
+    expect(evaluatePermission({ toolName: "write", args: { path: "C:/work/app/a.ts" }, workspacePath: "C:/work/app" }, "auto").decision).toBe("allow");
+    expect(evaluatePermission({ toolName: "read", args: { path: "C:/other/a.ts" }, workspacePath: "C:/work/app" }, "auto").reason).toBe("workspace");
+    expect(evaluatePermission({ toolName: "powershell", args: { command: "Get-Process" }, workspacePath: "C:/work/app" }, "full").decision).toBe("allow");
+    expect(evaluatePermission({ toolName: "powershell", args: { command: "Get-Content C:/Windows/System32/hosts" }, workspacePath: "C:/work/app" }, "full").decision).toBe("deny");
+    const allowShell = { get: (_subject: string, permission: string) => permission === "shell.execute" ? "allow" as const : undefined };
+    expect(evaluatePermission({ toolName: "powershell", args: { command: "Get-Process" }, workspacePath: "C:/work/app" }, "ask", allowShell).decision).toBe("allow");
+    expect(evaluatePermission({ toolName: "write", args: { path: "C:/other/a.ts" }, workspacePath: "C:/work/app" }, "ask", { get: () => "allow" }).decision).toBe("ask");
   });
 
   test("rebuilds Pi context from product messages", () => {
@@ -160,6 +176,47 @@ describe("runtime persistence and permissions", () => {
     const result = await tool.execute("tool-call", {}, undefined, undefined, undefined) as { isError?: boolean };
     expect(result.isError).toBe(true);
     expect(executed).toBe(false);
+  });
+
+  test("applies auto and full modes to browser, plugin and MCP capabilities", async () => {
+    let executions = 0;
+    let prompts = 0;
+    const queue = new ApprovalQueue();
+    const makeTool = (name: string, logicalName = name, declaredPermissions: string[] = []) => {
+      const definition = defineTool({
+        name,
+        label: name,
+        description: name,
+        parameters: Type.Object({}),
+        execute: async () => {
+          executions++;
+          return { content: [{ type: "text" as const, text: "ok" }] };
+        },
+      }) as ToolDefinition & { qoneToolName?: string; qonePermissions?: string[] };
+      if (logicalName !== name) definition.qoneToolName = logicalName;
+      definition.qonePermissions = declaredPermissions;
+      return withPermission(definition, {
+        queue,
+        workspacePath: "C:/work/app",
+        mode: () => mode,
+        emitApproval: (id) => {
+          prompts++;
+          queue.approve(id);
+        },
+      });
+    };
+    let mode: "ask" | "auto" | "full" = "auto";
+
+    await makeTool("browser.open").execute("open", {}, undefined, undefined, undefined);
+    expect(prompts).toBe(0);
+    await makeTool("browser.click").execute("click", {}, undefined, undefined, undefined);
+    expect(prompts).toBe(1);
+    await makeTool("plugin_demo", "plugin:demo:fetch", ["network"]).execute("plugin", {}, undefined, undefined, undefined);
+    expect(prompts).toBe(2);
+    mode = "full";
+    await makeTool("mcp_demo", "mcp:demo:fetch").execute("mcp", {}, undefined, undefined, undefined);
+    expect(prompts).toBe(2);
+    expect(executions).toBe(4);
   });
 
   test("enforces permissions declared by plugin tools", async () => {
