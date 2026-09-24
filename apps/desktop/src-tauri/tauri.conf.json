@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeDevCommand": "bun run build:browser && bun run dev",
+    "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build:release"
   },
   "app": {
@@ -43,7 +43,6 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/qone-runtime", "binaries/qone-browser-node"],
-    "resources": ["binaries/qone-browser-helper.mjs"]
+    "externalBin": ["binaries/qone-runtime"]
   }
 }

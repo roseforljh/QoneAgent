@@ -1,6 +1,3 @@
-import { reportStartup } from "./lib/startup-diagnostic";
-
-reportStartup("Loading application modules");
-// Import exactly once. Removing a timed-out module script does not cancel it;
-// retrying with new query strings can mount several React roots.
-void import("./main");
+// Kept as a compatibility entry for older development URLs. The real entry
+// is loaded statically so the browser does not wait on a second dynamic import.
+import "./main";

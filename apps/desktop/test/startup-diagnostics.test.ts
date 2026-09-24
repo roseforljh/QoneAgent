@@ -43,8 +43,8 @@ test("module import failure replaces the existing loading placeholder and reache
 
 test("failure of the bootstrap itself is visible before any module executes", () => {
   const app = boot();
-  app.emit("error", { target: new app.Script("http://127.0.0.1:1420/src/startup.ts") });
-  expect(app.root.children[1].textContent).toContain("/src/startup.ts");
+  app.emit("error", { target: new app.Script("http://127.0.0.1:1420/src/main.tsx") });
+  expect(app.root.children[1].textContent).toContain("/src/main.tsx");
   expect(app.reports).toHaveLength(1);
 });
 

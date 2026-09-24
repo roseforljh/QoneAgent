@@ -4,14 +4,49 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Qone</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --qone-boot-background: #fff;
+        --qone-boot-foreground: #737373;
+        --qone-boot-error-surface: #f7f7f7;
+      }
+
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --qone-boot-background: #000;
+        --qone-boot-foreground: #a3a3a3;
+        --qone-boot-error-surface: #171717;
+      }
+
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--qone-boot-background);
+      }
+
+      #root > main[aria-label="正在加载 Qone"] {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        color: var(--qone-boot-foreground);
+        background: var(--qone-boot-background);
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+    </style>
+    <script src="/boot-theme.js"></script>
   </head>
   <body>
     <div id="root">
-      <main aria-label="正在加载 Qone" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font:14px/1.5 system-ui,sans-serif;color:#737373;background:#fff">
-        正在加载 Qone…
-      </main>
+      <main aria-label="正在加载 Qone">正在加载 Qone…</main>
     </div>
     <script src="/startup-diagnostics.js"></script>
-    <script type="module" src="/src/startup.ts"></script>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -193,34 +193,6 @@ fn spawn_sidecar(
         command.arg("run").arg(&runtime_entry);
         command
     };
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
-    let manifest_binaries = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
-    let browser_node = [
-        resource_dir.join("qone-browser-node.exe"),
-        resource_dir.join("qone-browser-node-x86_64-pc-windows-msvc.exe"),
-        resource_dir.join("binaries/qone-browser-node.exe"),
-        resource_dir.join("binaries/qone-browser-node-x86_64-pc-windows-msvc.exe"),
-        manifest_binaries.join("qone-browser-node-x86_64-pc-windows-msvc.exe"),
-    ]
-    .into_iter()
-    .find(|candidate| candidate.exists());
-    let browser_helper = [
-        resource_dir.join("binaries/qone-browser-helper.mjs"),
-        resource_dir.join("qone-browser-helper.mjs"),
-        manifest_binaries.join("qone-browser-helper.mjs"),
-    ]
-    .into_iter()
-    .find(|candidate| candidate.exists());
-    if let Some(node) = browser_node {
-        command.env("QONE_BROWSER_NODE", node);
-    }
-    if let Some(helper) = browser_helper {
-        command.env("QONE_BROWSER_HELPER", helper);
-    }
-
     // The runtime is a console executable, but it is an internal sidecar of
     // the desktop app. Keep its stdout/stderr piped without opening a second
     // Windows console when Qone is launched by double-clicking the exe.
