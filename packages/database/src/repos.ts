@@ -1,7 +1,7 @@
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { sessions, messages, runs, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills } from "./schema.js";
 import type { Db } from "./index.js";
-import type { MessageAttachmentInfo } from "@qone/protocol";
+import type { AssistantMessagePart, MessageAttachmentInfo } from "@qone/protocol";
 
 export class SessionRepo {
   constructor(private db: Db) {}
@@ -52,7 +52,7 @@ export class SessionRepo {
 export class MessageRepo {
   constructor(private db: Db) {}
 
-  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[]) {
+  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[], parts?: AssistantMessagePart[]) {
     const now = Date.now();
     const row = {
       id: messageId ?? crypto.randomUUID(),
@@ -60,6 +60,7 @@ export class MessageRepo {
       runId,
       role,
       content,
+      parts: parts ? JSON.stringify(parts) : null,
       attachments: attachments?.length ? JSON.stringify(attachments) : null,
       model,
       createdAt: now,
@@ -96,8 +97,8 @@ export class MessageRepo {
     });
   }
 
-  addAssistant(sessionId: string, content: string, runId?: string, model?: string) {
-    return this.add(sessionId, "assistant", content, runId, model);
+  addAssistant(sessionId: string, content: string, runId?: string, model?: string, parts?: AssistantMessagePart[]) {
+    return this.add(sessionId, "assistant", content, runId, model, undefined, undefined, parts);
   }
 }
 
@@ -179,9 +180,9 @@ export class TurnRepo {
 export class ToolCallRepo {
   constructor(private db: Db) {}
 
-  start(runId: string, toolName: string, args?: unknown) {
+  start(runId: string, toolName: string, args?: unknown, toolCallId?: string) {
     const row = {
-      id: crypto.randomUUID(),
+      id: toolCallId ? `${runId}:${toolCallId}` : crypto.randomUUID(),
       runId,
       toolName,
       arguments: args === undefined ? null : JSON.stringify(args),

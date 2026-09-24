@@ -22,6 +22,7 @@ export const messages = sqliteTable(
     runId: text("run_id"),
     role: text("role").notNull(), // user | assistant | system | tool
     content: text("content").notNull(),
+    parts: text("parts"), // ordered visible Pi assistant parts; null for legacy messages
     attachments: text("attachments"),
     model: text("model"),
     createdAt: integer("created_at").notNull(),

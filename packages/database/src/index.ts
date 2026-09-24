@@ -71,6 +71,7 @@ function migrate(sqlite: Database) {
       run_id TEXT,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      parts TEXT,
       attachments TEXT,
       model TEXT,
       created_at INTEGER NOT NULL,
@@ -201,5 +202,8 @@ function migrate(sqlite: Database) {
   `);
   if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "attachments")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN attachments TEXT");
+  }
+  if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "parts")) {
+    sqlite.exec("ALTER TABLE messages ADD COLUMN parts TEXT");
   }
 }

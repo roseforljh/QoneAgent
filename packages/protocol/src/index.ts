@@ -1,5 +1,9 @@
 import { z } from "zod";
 import type { ModelMetadata, ProviderApiType } from "./model-metadata";
+import type { AssistantMessagePart } from "./assistant-parts";
+
+export { assistantPartsFromPiMessage, applyAssistantToolEvent } from "./assistant-parts";
+export type { AssistantMessagePart } from "./assistant-parts";
 
 export const GENERATIVE_UI_COMPONENTS = [
   "Header", "Text", "Caption", "Image", "Divider", "Fact", "Card",
@@ -151,6 +155,7 @@ export interface MessageInfo {
   runId?: string;
   role: string;
   content: string;
+  parts?: AssistantMessagePart[];
   attachments?: MessageAttachmentInfo[];
   model?: string;
   createdAt: number;
