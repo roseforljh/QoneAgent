@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { modelListUrl, type AgentEvent, type MessageAttachmentInfo, type ModelConfigInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type MessageAttachmentInfo, type ModelConfigInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
@@ -169,6 +169,7 @@ export class PiAdapter {
   private resourceLoaders = new Map<string, ResourceLoader>();
   private modelRuntime?: ModelRuntime;
   private thinkingLevels = new Map<string, ThinkingLevel>();
+  private modelApiTypes = new Map<string, ProviderApiType>();
   private modelApiKeys = new Map<string, string>();
   private configuredModelConfigs: ModelConfigInfo[] = [];
   private modelConfigurationQueue: Promise<void> = Promise.resolve();
@@ -239,13 +240,10 @@ export class PiAdapter {
     this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
     this.configuredModelConfigs = configs;
     const grouped = new Map<string, ModelConfigInfo[]>();
+    this.modelApiTypes = new Map(configs.filter((item) => item.enabled).map((item) => [`${item.provider}/${item.model}`, item.config.apiType as ProviderApiType]));
     this.thinkingLevels = new Map(configs.filter((item) => item.enabled).map((item) => {
-      const configured = String(item.config.thinking ?? "none").trim().toLowerCase().replace(/[\s_]+/g, "-");
-      const level = ["none", "off", "disabled", "disable", "false", "0", "no"].includes(configured)
-        ? "off"
-        : ["minimal", "low", "medium", "high", "xhigh", "max"].includes(configured)
-          ? configured
-          : "off";
+      const configured = normalizeThinkingLevelForApi(item.config.thinking, item.config.apiType as ProviderApiType);
+      const level = configured === "none" ? "off" : configured;
       return [`${item.provider}/${item.model}`, level as ThinkingLevel];
     }));
     for (const config of configs.filter((item) => item.enabled)) grouped.set(config.provider, [...(grouped.get(config.provider) ?? []), config]);
@@ -367,7 +365,10 @@ export class PiAdapter {
   }
 
   private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel): Promise<AgentSession> {
-    const thinking = thinkingOverride ? (thinkingOverride === "none" ? "off" : thinkingOverride) : modelName ? this.thinkingLevelForModel(modelName) : undefined;
+    const modelKey = modelName ? splitModelName(modelName).join("/") : undefined;
+    const apiType = modelKey ? this.modelApiTypes.get(modelKey) : undefined;
+    const override = thinkingOverride ? normalizeThinkingLevelForApi(thinkingOverride, apiType) : undefined;
+    const thinking = override ? (override === "none" ? "off" : override) : modelName ? this.thinkingLevelForModel(modelName) : undefined;
     const existing = this.sessions.get(sessionId);
     if (existing) {
       if (this.staleSessions.has(sessionId) && existing.isIdle) {

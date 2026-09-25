@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { closeDb, openDb, SessionRepo, MessageRepo, RunRepo, SkillRepo, TurnRepo, ToolCallRepo } from "@qone/database";
+import { closeDb, openDb, SessionRepo, MessageRepo, RunRepo, SkillRepo, TurnRepo, ToolCallRepo, McpServerRepo } from "@qone/database";
 import { ApprovalQueue, decide, evaluatePermission, permissionProfile, withPermission } from "../src/permissions.js";
 import { createPiSessionEntries } from "../src/pi-adapter.js";
 import { loadPlugins } from "../src/plugin-runtime.js";
@@ -11,6 +11,19 @@ import { containsSecretConfig } from "../src/secrets.js";
 import { Type } from "typebox";
 
 describe("runtime persistence and permissions", () => {
+  test("persists MCP API key references without persisting the API key", () => {
+    const db = openDb(":memory:");
+    try {
+      const repo = new McpServerRepo(db);
+      repo.upsert({ id: "mcp-firecrawl", name: "Firecrawl", command: "npx", env: {
+        FIRECRAWL_API_KEY: "$mcp.env:mcp-firecrawl/FIRECRAWL_API_KEY",
+        UNSAFE_KEY: "private-test-key",
+      } });
+      expect(repo.list()[0]?.env).toEqual({ FIRECRAWL_API_KEY: "$mcp.env:mcp-firecrawl/FIRECRAWL_API_KEY" });
+    } finally {
+      closeDb(db);
+    }
+  });
   test("persists sessions, messages and interrupted runs across reopen", () => {
     const dir = path.join(process.cwd(), ".test-data");
     mkdirSync(dir, { recursive: true });
@@ -192,6 +205,13 @@ describe("runtime persistence and permissions", () => {
     await makeTool("mcp_demo", "mcp:demo:fetch").execute("mcp", {}, undefined, undefined, undefined);
     expect(prompts).toBe(1);
     expect(executions).toBe(2);
+  });
+
+  test("allowing an MCP connection does not allow its account tools", () => {
+    const rules = { get: (subject: string, permission: string) => subject === "mcp:cloudflare" && permission === "mcp.connect" ? "allow" as const : undefined };
+    const result = evaluatePermission({ toolName: "mcp:cloudflare:delete_zone" }, "ask", rules);
+    expect(result.permissions).toEqual(["mcp.execute"]);
+    expect(result.decision).toBe("ask");
   });
 
   test("enforces permissions declared by plugin tools", async () => {

@@ -26,7 +26,7 @@ function makeModel(api: Api, overrides: Partial<Model<Api>> = {}): Model<Api> {
   } as Model<Api>;
 }
 
-async function capturePayload(invoke: (options: SimpleStreamOptions) => unknown): Promise<Record<string, any>> {
+async function capturePayload(invoke: (options: SimpleStreamOptions) => unknown, reasoning: SimpleStreamOptions["reasoning"] = "high"): Promise<Record<string, any>> {
   let resolvePayload!: (payload: Record<string, any>) => void;
   let rejectPayload!: (error: Error) => void;
   const payload = new Promise<Record<string, any>>((resolve, reject) => {
@@ -36,7 +36,7 @@ async function capturePayload(invoke: (options: SimpleStreamOptions) => unknown)
   const stream = invoke({
     apiKey: "test-key",
     maxTokens: 4096,
-    reasoning: "high",
+    reasoning,
     onPayload: (value) => {
       resolvePayload(value as Record<string, any>);
       throw new Error("payload captured");
@@ -107,6 +107,17 @@ describe("Pi provider wire payloads", () => {
     expect(budgetPayload.output_config).toBeUndefined();
   });
 
+  test("Claude adaptive max reaches the native effort field", async () => {
+    const model = makeModel("anthropic-messages", {
+      id: "claude-sonnet-4-6",
+      compat: { forceAdaptiveThinking: true },
+      thinkingLevelMap: { max: "max" },
+    });
+    const payload = await capturePayload((options) => streamAnthropic(model as never, context, options), "max");
+    expect(payload.thinking.type).toBe("adaptive");
+    expect(payload.output_config).toEqual({ effort: "max" });
+  });
+
   test("Gemini uses maxOutputTokens and thinkingConfig", async () => {
     const model = makeModel("google-generative-ai", {
       id: "gemini-2.5-pro",
@@ -117,5 +128,15 @@ describe("Pi provider wire payloads", () => {
     expect(payload.config.maxOutputTokens).toBe(4096);
     expect(payload.config.thinkingConfig.includeThoughts).toBe(true);
     expect(payload.config.thinkingConfig.thinkingBudget).toBeGreaterThan(0);
+  });
+
+  test("Gemini 3 uses native thinkingLevel instead of thinkingBudget", async () => {
+    const model = makeModel("google-generative-ai", {
+      id: "gemini-3.1-pro-preview",
+      thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
+    });
+    const payload = await capturePayload((options) => streamGoogle(model as never, context, options), "low");
+    expect(payload.config.thinkingConfig.thinkingLevel).toBe("LOW");
+    expect(payload.config.thinkingConfig.thinkingBudget).toBeUndefined();
   });
 });

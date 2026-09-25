@@ -200,7 +200,7 @@ export function permissionNames(toolName: string): string[] {
   if (toolName === "read" || toolName === "grep" || toolName === "find" || toolName === "ls") return ["filesystem.read"];
   if (toolName === "write" || toolName === "edit") return ["filesystem.write"];
   if (toolName === "bash" || toolName === "powershell") return ["shell.execute"];
-  if (toolName.startsWith("mcp:")) return ["mcp.connect"];
+  if (toolName.startsWith("mcp:")) return ["mcp.execute"];
   return ["tool.execute"];
 }
 

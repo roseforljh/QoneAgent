@@ -1,6 +1,6 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision } from "@qone/protocol";
-import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent } from "@qone/protocol";
+import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
 import { PiAdapter } from "./pi-adapter.js";
@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, statSync } from "node:fs";
 import { createResourceLoader } from "./skills.js";
 import { containsSecretConfig } from "./secrets.js";
 import { ModelMetadataResolver } from "./model-resolver.js";
+import { BrowserSyncService } from "./browser-sync.js";
 import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } from "./workspace.js";
 
 const log = createLogger("runtime");
@@ -41,6 +42,10 @@ const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
 const toolCallRepo = new ToolCallRepo(db);
 const mcpServerRepo = new McpServerRepo(db);
+// The browser integration used to be exposed as a Playwright MCP server. It
+// is now handled by OpenCLI, so remove the old persisted entry before MCP
+// startup can reconnect it.
+mcpServerRepo.delete("mcp-playwright");
 const modelConfigRepo = new ModelConfigRepo(db);
 const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
@@ -175,24 +180,41 @@ for (const [permission, decision] of [
   ["windows.control", "ask"],
   ["secret.read", "ask"],
   ["mcp.connect", "ask"],
+  ["mcp.execute", "ask"],
   ["tool.execute", "ask"],
 ] as const) permissionRepo.ensure("builtin", permission, decision);
+const pendingMcpAuthRequests = new Map<string, string>();
 const mcp = new McpManager(async (serverId, token) => {
   const config = mcpServerRepo.list().find((server) => server.id === serverId);
-  const key = config?.oauth?.tokenSecretKey ?? `mcp.oauth:${serverId}`;
-  runtimeSecrets.set(key, token);
-  send({ type: "mcp.oauth.token", requestId: "oauth-callback", serverId, key, accessToken: token });
+  if (token) {
+    const key = config?.oauth?.tokenSecretKey ?? `mcp.oauth:${serverId}`;
+    runtimeSecrets.set(key, token);
+    send({ type: "mcp.oauth.token", requestId: "oauth-callback", serverId, key, accessToken: token });
+  }
   if (config) {
     await mcp.disconnect(serverId);
     try {
       const tools = await mcp.connect(config);
       await refreshCustomTools();
       send({ type: "mcp.connected", serverId, toolCount: tools.length });
+      send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
+      pendingMcpAuthRequests.delete(serverId);
     } catch (error) {
       log.warn("MCP OAuth reconnect failed", { serverId, err: String(error) });
+      const requestId = pendingMcpAuthRequests.get(serverId);
+      if (requestId) send({ type: "error", requestId, message: String(error) });
+      pendingMcpAuthRequests.delete(serverId);
     }
   }
-});
+}, (serverId, kind, value) => {
+  send({ type: "mcp.oauth.credential", serverId, key: `mcp.oauth:${serverId}.${kind}`, value });
+}, (serverId, authorization) => {
+  send({ type: "mcp.oauth.authorization", requestId: pendingMcpAuthRequests.get(serverId) ?? crypto.randomUUID(), serverId, ...authorization });
+}, (serverId, error) => {
+  const requestId = pendingMcpAuthRequests.get(serverId);
+  pendingMcpAuthRequests.delete(serverId);
+  if (requestId) send({ type: "error", requestId, message: error.message });
+}, (key) => runtimeSecrets.get(key));
 for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()]) {
   const subjectId = `mcp:${config.id}`;
   permissionRepo.ensure(subjectId, "mcp.connect", "ask");
@@ -204,10 +226,19 @@ for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()]) {
     log.warn("mcp connection failed", { serverId: config.id, err: String(err) });
   }
 }
+let browserSync: BrowserSyncService | undefined;
 await refreshCustomTools();
+browserSync = new BrowserSyncService(db, dbPath,
+  (status) => send({ type: "browser.status", status }), refreshCustomTools);
+void browserSync.initialize();
+
+async function releaseBrowserSession() {
+  try { await browserSync?.release(); }
+  catch (error) { log.warn("browser session release failed", { err: String(error) }); }
+}
 
 async function refreshCustomTools() {
-  await adapter.setCustomTools(mcp.tools());
+  await adapter.setCustomTools([...mcp.tools(), ...(browserSync?.tools() ?? [])]);
 }
 
 function loadMcpConfigs() {
@@ -267,6 +298,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           "workspace.git",
           "workspace.gitDiff",
           "file.read",
+          "browser.connect",
         ],
       });
       return;
@@ -432,6 +464,21 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       send({ type: "plugins.list", plugins: [] });
       return;
 
+    case "browser.status":
+      send({ type: "browser.status", requestId: cmd.requestId, status: browserSync!.status() });
+      return;
+
+    case "browser.connect":
+      try {
+        const status = await browserSync!.connect();
+        send({ type: "browser.status", requestId: cmd.requestId, status });
+      } catch {
+        // Browser failures already update the integration status. Avoid showing
+        // the same error a second time in the page-wide banner.
+        send({ type: "browser.status", requestId: cmd.requestId, status: browserSync!.status() });
+      }
+      return;
+
     case "mcp.list":
       send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
       return;
@@ -441,11 +488,48 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       permissionRepo.ensure(subjectId, "mcp.connect", "ask");
       await authorizeCommand(subjectId, "mcp.connect", "mcp.connect", { id: cmd.config.id, name: cmd.config.name, command: cmd.config.command, url: cmd.config.url });
       mcpServerRepo.upsert(cmd.config);
-      await mcp.disconnect(cmd.config.id);
-      const tools = await mcp.connect(cmd.config);
-      await adapter.setCustomTools(mcp.tools());
-      send({ type: "mcp.connected", serverId: cmd.config.id, toolCount: tools.length });
+      // The saved configuration is enabled immediately; connecting the transport
+      // (especially a first-time npx download) can take much longer.
       send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
+      await mcp.disconnect(cmd.config.id);
+      let connectError: string | undefined;
+      try {
+        if (cmd.config.authMode === "oauth" && !mcp.hasHostedToken(cmd.config)) {
+          pendingMcpAuthRequests.set(cmd.config.id, cmd.requestId);
+          const authorization = await mcp.beginOAuth(cmd.config);
+          if (authorization) {
+            send({ type: "mcp.oauth.authorization", requestId: cmd.requestId, serverId: cmd.config.id, ...authorization });
+            setTimeout(() => {
+              if (pendingMcpAuthRequests.get(cmd.config.id) !== cmd.requestId) return;
+              pendingMcpAuthRequests.delete(cmd.config.id);
+              send({ type: "error", requestId: cmd.requestId, message: "MCP account login timed out" });
+            }, 10 * 60_000);
+            return;
+          }
+          pendingMcpAuthRequests.delete(cmd.config.id);
+        }
+        if (cmd.config.authMode === "github-device" && !mcp.hasAccessToken(cmd.config.id)) {
+          pendingMcpAuthRequests.set(cmd.config.id, cmd.requestId);
+          const device = await mcp.beginGitHubDeviceAuth(cmd.config);
+          send({ type: "mcp.github.device", serverId: cmd.config.id, userCode: device.userCode, verificationUri: device.verificationUri, expiresAt: device.expiresAt });
+          void device.completion.catch((error) => {
+            if (pendingMcpAuthRequests.get(cmd.config.id) !== cmd.requestId) return;
+            pendingMcpAuthRequests.delete(cmd.config.id);
+            send({ type: "error", requestId: cmd.requestId, message: String(error) });
+          });
+          return;
+        }
+        const tools = await mcp.connect(cmd.config);
+        await refreshCustomTools();
+        send({ type: "mcp.connected", serverId: cmd.config.id, toolCount: tools.length });
+      } catch (err) {
+        pendingMcpAuthRequests.delete(cmd.config.id);
+        connectError = String(err instanceof Error ? err.message : err);
+      }
+      // 无论成败都推列表：配置已持久化，前端必须立即看到新条目和连接状态，
+      // 失败时 connectError 通过 error 事件透出，服务以"未连接"留在列表里。
+      send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
+      if (connectError) send({ type: "error", requestId: cmd.requestId, message: connectError });
       return;
     }
 
@@ -456,7 +540,12 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         return;
       }
       await mcp.disconnect(cmd.serverId);
+      mcp.clearCredentials(cmd.serverId);
+      pendingMcpAuthRequests.delete(cmd.serverId);
       mcpServerRepo.delete(cmd.serverId);
+      for (const value of Object.values(config.env ?? {})) {
+        if (value.startsWith("$mcp.env:")) runtimeSecrets.delete(value.slice(1));
+      }
       await adapter.deleteSecret(config.oauth?.tokenSecretKey ?? `mcp.oauth:${cmd.serverId}`);
       await refreshCustomTools();
       send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
@@ -468,14 +557,14 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       if (!config) throw new Error(`unknown MCP server ${cmd.serverId}`);
       await authorizeCommand(`mcp:${config.id}`, "mcp.connect", "mcp.oauth", { id: config.id, name: config.name });
       const auth = await mcp.beginOAuth(config);
-      send({ type: "mcp.oauth.authorization", requestId: cmd.requestId, serverId: cmd.serverId, url: auth.url, state: auth.state });
+      if (auth) send({ type: "mcp.oauth.authorization", requestId: cmd.requestId, serverId: cmd.serverId, url: auth.url, state: auth.state });
       return;
     }
 
     case "mcp.oauth.complete": {
       const config = mcpServerRepo.list().find((server) => server.id === cmd.serverId);
       if (!config) throw new Error(`unknown MCP server ${cmd.serverId}`);
-      await mcp.completeOAuth(config, cmd.code, cmd.state);
+      await mcp.completeOAuth(config, cmd.code, cmd.state, cmd.iss);
       // completeOAuth emits the token event and reconnects through the same
       // callback for browser redirects and manual code entry.
       return;
@@ -509,8 +598,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     case "model.resolve-metadata": {
       const models = await Promise.all(cmd.models.map(async ({ id, metadata }) => {
         const resolved = await settingsMetadataResolver.resolve({ provider: cmd.provider, model: id, config: { apiType: cmd.apiType, baseUrl: cmd.baseUrl, autoMetadata: true, modelMetadata: metadata } });
-        const thinkingLevels = Object.entries(resolved.thinkingLevelMap ?? {}).filter(([level, value]) => level !== "off" && value !== null && value !== undefined).map(([level]) => level);
-        return { id, metadata: resolved.metadata, thinkingLevels, sources: resolved.sources };
+        return { id, metadata: resolved.metadata, thinkingLevels: [...thinkingLevelsForApi(cmd.apiType)], sources: resolved.sources };
       }));
       send({ type: "model.metadata-resolved", requestId: cmd.requestId, models });
       return;
@@ -543,22 +631,51 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     }
 
     case "secret.set": {
-      runtimeSecrets.set(cmd.key, cmd.value);
+      if (cmd.key.startsWith("mcp.env:")) {
+        runtimeSecrets.set(cmd.key, cmd.value);
+        const config = mcpServerRepo.list().find((server) => Object.values(server.env ?? {}).includes(`$${cmd.key}`));
+        if (config && permissionRepo.get(`mcp:${config.id}`, "mcp.connect") === "allow") {
+          try {
+            await mcp.disconnect(config.id);
+            const tools = await mcp.connect(config);
+            await refreshCustomTools();
+            send({ type: "mcp.connected", serverId: config.id, toolCount: tools.length });
+          } catch (error) {
+            await refreshCustomTools();
+            log.warn("MCP API key restore failed", { serverId: config.id, err: String(error) });
+          }
+          send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
+        }
+        send({ type: "secret.saved", requestId: cmd.requestId });
+        return;
+      }
       const mcpSecret = mcpServerRepo.list().find((server) =>
-        server.oauth?.tokenSecretKey === cmd.key || `mcp.oauth:${server.id}` === cmd.key);
+        server.oauth?.tokenSecretKey === cmd.key || `mcp.oauth:${server.id}` === cmd.key ||
+        (server.authMode === "oauth" && [`mcp.oauth:${server.id}.client`, `mcp.oauth:${server.id}.tokens`].includes(cmd.key)));
+      if (!mcpSecret && cmd.key === "mcp.oauth:mcp-github") {
+        mcp.setAccessToken("mcp-github", cmd.value);
+        send({ type: "secret.saved", requestId: cmd.requestId });
+        return;
+      }
       if (mcpSecret) {
-        mcp.setAccessToken(mcpSecret.id, cmd.value);
-        if (permissionRepo.get(`mcp:${mcpSecret.id}`, "mcp.connect") === "allow") {
+        if (mcpSecret.authMode === "oauth" && cmd.key.endsWith(".client")) mcp.restoreHostedCredential(mcpSecret, "client", cmd.value);
+        else if (mcpSecret.authMode === "oauth" && cmd.key.endsWith(".tokens")) mcp.restoreHostedCredential(mcpSecret, "tokens", cmd.value);
+        else mcp.setAccessToken(mcpSecret.id, cmd.value);
+        if (cmd.key !== `mcp.oauth:${mcpSecret.id}.client` && permissionRepo.get(`mcp:${mcpSecret.id}`, "mcp.connect") === "allow") {
           try {
             await mcp.disconnect(mcpSecret.id);
-            await mcp.connect(mcpSecret);
-            await adapter.setCustomTools(mcp.tools());
+            const tools = await mcp.connect(mcpSecret);
+            await refreshCustomTools();
+            send({ type: "mcp.connected", serverId: mcpSecret.id, toolCount: tools.length });
+            send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
           } catch (error) {
             log.warn("MCP OAuth credential restore failed", { serverId: mcpSecret.id, err: String(error) });
           }
         }
+      } else {
+        runtimeSecrets.set(cmd.key, cmd.value);
+        await adapter.setSecret(cmd.key, cmd.value);
       }
-      await adapter.setSecret(cmd.key, cmd.value);
       send({ type: "secret.saved", requestId: cmd.requestId });
       return;
     }
@@ -619,7 +736,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         .then(() => adapter.run(cmd.sessionId, cmd.message, { model: cmd.model, cwd: workspaceCwd, runId: run.id, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments }, (type, payload) =>
           emit(type, payload, cmd.sessionId, run.id)
         ))
-        .then(() => {
+        .then(async () => {
           const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
           const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
@@ -633,6 +750,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status);
           sessionRepo.touch(cmd.sessionId);
+          await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.completed", assistantMessage ? {
             message: {
               id: assistantMessage.id,
@@ -644,7 +762,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
             },
           } : {}, cmd.sessionId, run.id);
         })
-        .catch((err) => {
+        .catch(async (err) => {
           const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
           const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
@@ -656,6 +774,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           const status = cancelled ? "cancelled" : "failed";
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status, cancelled ? undefined : String(err));
+          await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled
             ? (assistantMessage ? { message: { id: assistantMessage.id, role: assistantMessage.role, content: assistantMessage.content, parts, runId: assistantMessage.runId, createdAt: assistantMessage.createdAt } } : {})
             : { message: String(err) }, cmd.sessionId, run.id);

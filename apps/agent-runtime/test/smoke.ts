@@ -84,7 +84,7 @@ while (Date.now() < deadline && (pongs < 1 || sessions < 2 || catalogs < 2 || se
     if (msg.type === "error" && ["missing-workspace", "unknown-workspace"].includes(msg.requestId)) rejectedSessions.add(msg.requestId);
     if (msg.type === "workspace.list" || msg.type === "skills.list") catalogs++;
     if (msg.type === "error" && msg.requestId === "7") secretRejections++;
-    if (msg.type === "model.metadata-resolved" && msg.requestId === "8" && msg.models?.[0]?.metadata?.contextWindow === 64_000 && msg.models?.[0]?.thinkingLevels?.includes("low") && msg.models?.[0]?.sources?.contextWindow === "provider") metadataResolved++;
+    if (msg.type === "model.metadata-resolved" && msg.requestId === "8" && msg.models?.[0]?.metadata?.contextWindow === 64_000 && msg.models?.[0]?.thinkingLevels?.join(",") === "none,minimal,low,medium,high,xhigh,max" && msg.models?.[0]?.sources?.contextWindow === "provider") metadataResolved++;
     if (msg.type === "error" && msg.requestId === "9" && msg.message?.includes("unsupported command")) unsupportedRejected++;
   }
 }

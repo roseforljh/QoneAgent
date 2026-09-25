@@ -402,6 +402,17 @@ describe("model metadata resolver", () => {
     expect(result.thinkingLevelMap?.high).toBeNull();
   });
 
+  test("a manual default of none keeps per-run reasoning available", async () => {
+    const resolver = new ModelMetadataResolver({ disableModelsDev: true });
+    const result = await resolver.resolve({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      config: baseConfig("claude", { baseUrl: "https://api.anthropic.com", thinking: "none", autoMetadata: false, metadataOverrides: { thinking: true } }),
+    });
+    expect(result.reasoning).toBe(true);
+    expect(result.thinkingLevelMap?.max).toBe("max");
+  });
+
   test("maps provider budget parameters and common model namespaces", async () => {
     const resolver = new ModelMetadataResolver({ disableModelsDev: true });
     const qwen = await resolver.resolve({

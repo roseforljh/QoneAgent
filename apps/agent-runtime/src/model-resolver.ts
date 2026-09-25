@@ -511,7 +511,11 @@ function explicitThinking(config: ConfigRecord): boolean | undefined {
   const value = normalizeConfiguredThinking(config.thinking);
   const overrides = asRecord(config.metadataOverrides);
   const isManual = overrides?.thinking === true || overrides?.thinking === "manual" || config.autoMetadata !== true;
-  return isManual && config.thinking !== undefined ? value !== "off" : undefined;
+  if (!isManual || config.thinking === undefined) return undefined;
+  const raw = String(config.thinking).trim().toLowerCase();
+  if (["disabled", "disable", "false", "0", "no"].includes(raw)) return false;
+  // "none" is the default run intensity, not a capability switch.
+  return value === "off" ? undefined : true;
 }
 
 function providerMetadata(config: ConfigRecord): ModelMetadata | undefined {
