@@ -33,6 +33,9 @@ use windows::Win32::System::Threading::{
 #[cfg(windows)]
 mod conpty;
 
+#[cfg(desktop)]
+mod browser;
+
 #[cfg(all(windows, debug_assertions))]
 mod dev_network;
 
@@ -485,6 +488,59 @@ fn terminal_kill(terminal_id: String) -> Result<(), String> {
     Ok(())
 }
 
+// --- embedded browser commands ---
+
+#[tauri::command]
+async fn browser_open(app: AppHandle, url: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+    #[cfg(desktop)]
+    // WebView2 creation must not run in the synchronous IPC/main-thread handler.
+    return tauri::async_runtime::spawn_blocking(move || browser::open(&app, &url, x, y, w, h))
+        .await
+        .map_err(|error| error.to_string())?;
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
+async fn browser_navigate(url: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    return browser::navigate(&url);
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
+async fn browser_bounds(x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+    #[cfg(desktop)]
+    return browser::bounds(x, y, w, h);
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
+async fn browser_visible(visible: bool) -> Result<(), String> {
+    #[cfg(desktop)]
+    return browser::set_visible(visible);
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
+async fn browser_eval(script: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    return browser::eval(&script);
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
+async fn browser_close() -> Result<(), String> {
+    #[cfg(desktop)]
+    return browser::close();
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
 #[tauri::command]
 fn frontend_diagnostic(message: String) {
     #[cfg(all(windows, debug_assertions))]
@@ -576,7 +632,13 @@ fn main() {
             terminal_spawn,
             terminal_write,
             terminal_resize,
-            terminal_kill
+            terminal_kill,
+            browser_open,
+            browser_navigate,
+            browser_bounds,
+            browser_visible,
+            browser_eval,
+            browser_close
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
