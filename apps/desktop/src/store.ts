@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate } from "./localization";
@@ -88,6 +88,7 @@ interface AgentState {
   mcpServers: McpServerInfo[];
   mcpConnectingIds: string[];
   browserStatus?: BrowserSyncStatus;
+  reachChannels: ReachChannelInfo[];
   runs: RunInfo[];
   artifacts: ArtifactInfo[];
   currentWorkspaceId?: string;
@@ -146,10 +147,26 @@ interface AgentState {
 }
 
 const rid = () => crypto.randomUUID();
+const BROWSER_AUTO_RECONNECT_KEY = "qone-browser-auto-reconnect";
+
+function browserAutoReconnectEnabled(): boolean {
+  try { return window.localStorage.getItem(BROWSER_AUTO_RECONNECT_KEY) === "1"; }
+  catch { return false; }
+}
+
+function rememberBrowserConnection(): void {
+  try { window.localStorage.setItem(BROWSER_AUTO_RECONNECT_KEY, "1"); }
+  catch { /* Local storage may be unavailable in a restricted preview. */ }
+}
+
 let pendingAgentRun: { requestId: string; sessionId: string; userMessageId: string } | undefined;
 const handshakeRequests = new Set<string>();
 let metadataLookupSupported = false;
 const metadataRequests = new Map<string, { resolve: (value: Extract<RuntimeEvent, { type: "model.metadata-resolved" }>["models"]) => void; reject: (error: Error) => void }>();
+type CloudResponse = Extract<RuntimeEvent, { type: "skills.cloud.list" | "skills.cloud.installed" }>;
+type CloudCommand = Extract<RuntimeCommand, { type: "skills.cloud.list" | "skills.cloud.install" }>;
+type CloudInput = CloudCommand extends infer Command ? Command extends CloudCommand ? Omit<Command, "requestId"> : never : never;
+const cloudRequests = new Map<string, { resolve: (response: CloudResponse) => void; reject: (error: Error) => void }>();
 const workspaceRequests = new Map<string, RuntimeCommand["type"]>();
 const mcpConnectRequests = new Map<string, string>();
 const restoredMcpSecrets = new Set<string>();
@@ -175,6 +192,21 @@ export function requestModelMetadata(input: Omit<Extract<RuntimeCommand, { type:
   });
 }
 
+export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
+  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error("Runtime is unavailable"));
+  const requestId = rid();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cloudRequests.delete(requestId); reject(new Error("云库请求超时")); }, command.type === "skills.cloud.install" ? 120_000 : 25_000);
+    cloudRequests.set(requestId, {
+      resolve: (response) => { clearTimeout(timer); cloudRequests.delete(requestId); resolve(response); },
+      reject: (error) => { clearTimeout(timer); cloudRequests.delete(requestId); reject(error); },
+    });
+    useStore.getState().send({ ...command, requestId } as CloudCommand).then((sent) => {
+      if (!sent) cloudRequests.get(requestId)?.reject(new Error("云库请求发送失败"));
+    });
+  });
+}
+
 export const useStore = create<AgentState>((set, get) => ({
   connected: false,
   sessionsLoaded: !hasTauriBridge(),
@@ -193,6 +225,7 @@ export const useStore = create<AgentState>((set, get) => ({
   mcpServers: [],
   mcpConnectingIds: [],
   browserStatus: undefined,
+  reachChannels: [],
   runs: [],
   artifacts: [],
   messages: [],
@@ -617,7 +650,13 @@ export function initBridge() {
         s.send({ type: "workspace.list", requestId: rid() });
         s.send({ type: "model.list", requestId: rid() });
         s.send({ type: "mcp.list", requestId: rid() });
-        if (msg.capabilities?.includes("browser.connect")) s.send({ type: "browser.status", requestId: rid() });
+        if (msg.capabilities?.includes("reach.channels")) s.send({ type: "reach.channels", requestId: rid() });
+        if (msg.capabilities?.includes("browser.connect")) {
+          s.send({ type: "browser.status", requestId: rid() });
+          if (browserAutoReconnectEnabled()) {
+            void s.send({ type: "browser.connect", requestId: rid() });
+          }
+        }
         s.send({ type: "permission.list", requestId: rid() });
         s.send({ type: "events.replay", requestId: rid(), sessionId: useStore.getState().currentSessionId, afterSequence: lastSequence });
         break;
@@ -826,11 +865,22 @@ export function initBridge() {
       case "skills.list":
         useStore.setState({ skills: msg.skills });
         break;
+      case "skills.cloud.list":
+        cloudRequests.get(msg.requestId)?.resolve(msg);
+        break;
+      case "skills.cloud.installed":
+        useStore.setState((state) => ({ skills: [...state.skills.filter((skill) => skill.id !== msg.skill.id), msg.skill] }));
+        cloudRequests.get(msg.requestId)?.resolve(msg);
+        break;
       case "plugins.list":
         useStore.setState({ plugins: msg.plugins });
         break;
       case "browser.status":
+        if (msg.status.targetConnected) rememberBrowserConnection();
         useStore.setState({ browserStatus: msg.status });
+        break;
+      case "reach.channels":
+        useStore.setState({ reachChannels: msg.channels });
         break;
       case "mcp.list":
         useStore.setState({ mcpServers: msg.servers });
@@ -892,6 +942,10 @@ export function initBridge() {
         useStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
         break;
       case "error":
+        if (msg.requestId && cloudRequests.has(msg.requestId)) {
+          cloudRequests.get(msg.requestId)?.reject(new Error(msg.message));
+          break;
+        }
         if (msg.requestId) {
           const serverId = mcpConnectRequests.get(msg.requestId);
           if (serverId) {

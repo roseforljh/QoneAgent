@@ -1,0 +1,25 @@
+.skill-cloud-dialog { width: min(680px, 100%); height: min(470px, 100%); max-height: 100%; display: flex; flex-direction: column; }
+.skill-cloud-intro { margin: -7px 0 16px; color: var(--muted-foreground); font-size: 12px; }
+.skill-cloud-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.skill-cloud-tabs { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--q-surface-muted); }
+.skill-cloud-tabs button { min-height: 27px; border: 0; border-radius: 6px; padding: 0 11px; background: transparent; color: var(--muted-foreground); font-size: 11px; cursor: pointer; transition: background .16s ease, color .16s ease; }
+.skill-cloud-tabs button.is-active { background: var(--card); color: var(--foreground); box-shadow: 0 1px 5px rgb(0 0 0 / 9%); }
+.skill-cloud-search { flex-basis: 215px; margin: 0; }
+.skill-cloud-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 3px; }
+.skill-cloud-state { flex: 1; display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 200px; color: var(--muted-foreground); font-size: 12px; text-align: center; }
+.skill-cloud-item { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 59px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--foreground); text-align: left; cursor: pointer; transition: border-color .16s ease, transform .16s ease; }
+.skill-cloud-item:hover { border-color: var(--primary); transform: translateY(-1px); }
+.skill-cloud-item-icon { flex: 0 0 32px; display: grid; place-items: center; height: 32px; border-radius: 8px; background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
+.skill-cloud-item-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.skill-cloud-item-copy strong, .skill-cloud-item-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-cloud-item-copy strong { font-size: 12px; }
+.skill-cloud-item-copy small, .skill-cloud-item-meta small { color: var(--muted-foreground); font-size: 10px; }
+.skill-cloud-item-meta { display: flex; align-items: flex-end; flex-direction: column; gap: 4px; }
+.skill-cloud-item-meta em { color: var(--primary); font-size: 10px; font-style: normal; }
+.skill-cloud-more { display: flex; justify-content: center; padding-top: 12px; }
+.skill-cloud-error { color: #e35d6a; font-size: 11px; }
+.skill-cloud-confirm { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 20px; border-radius: inherit; background: rgb(0 0 0 / 52%); }
+.skill-cloud-confirm-card { width: min(390px, 100%); padding: 18px; border: 1px solid var(--border); border-radius: 11px; background: var(--q-surface); box-shadow: 0 18px 44px rgb(0 0 0 / 25%); }
+.skill-cloud-confirm-card p { color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.skill-cloud-confirm-card .skill-cloud-error { color: #e35d6a; }
+@media (max-width: 600px) { .skill-cloud-controls { align-items: stretch; flex-direction: column; } .skill-cloud-search { flex-basis: auto; } .skill-cloud-item-meta small { display: none; } }

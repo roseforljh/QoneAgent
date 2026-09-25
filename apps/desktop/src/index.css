@@ -597,6 +597,8 @@ a { text-decoration: none; }
 .settings-connect-panel > .settings-section-toolbar { margin-bottom: 13px; }
 .settings-list-heading { margin-top: 0; }
 .settings-mcp-list, .settings-skill-list { display: flex; flex-direction: column; gap: 7px; }
+.settings-skill-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-skill-actions .settings-search { width: 185px; margin: 0; }
 .settings-mcp-list + .settings-mcp-list, .settings-mcp-list + .settings-skill-list { margin-top: 7px; }
 .settings-mcp-card, .settings-skill-card { display: flex; min-height: 54px; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease; }
 .settings-mcp-card:hover, .settings-skill-card:hover { border-color: color-mix(in srgb, var(--foreground) 34%, transparent); background: var(--q-hover); box-shadow: 0 5px 16px rgb(0 0 0 / 10%); transform: translateY(-1px); }
@@ -633,6 +635,25 @@ a { text-decoration: none; }
 .browser-extension-link { border: 0; background: transparent; color: var(--primary); font-size: 11px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .browser-import-note { color: var(--q-subtle); font-size: 10px; line-height: 1.4; }
 .browser-integration-error { color: var(--q-danger); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.reach-section { margin-top: 22px; }
+.reach-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin: 0 0 14px; }
+.reach-heading h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
+.reach-heading p, .reach-heading > span { margin: 0; color: var(--q-subtle); font-size: 11px; }
+.reach-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.reach-card { width: 100%; min-height: 160px; cursor: pointer; color: var(--foreground); text-align: center; }
+.reach-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.reach-card-icon { display: grid; width: 35px; height: 35px; place-items: center; border-radius: 10px; background: color-mix(in srgb, var(--primary) 11%, transparent); color: var(--primary); }
+.reach-card-state { font-size: 10px; }
+.reach-card-state.is-available { color: #2b9a63; }
+.reach-card-state.is-unverified, .reach-card-state.is-pending { color: #bb8733; }
+.reach-card-state.is-unavailable { color: var(--q-subtle); }
+.reach-card-desc { flex: 1; color: var(--q-subtle); font-size: 11px; line-height: 1.45; }
+.reach-card-backend { max-width: 100%; overflow: hidden; color: var(--q-subtle); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.reach-dialog { width: min(450px, calc(100% - 2rem)); }
+.reach-dialog-body { display: grid; gap: 8px; font-size: 12px; line-height: 1.5; }
+.reach-dialog-body p { margin: 0; overflow-wrap: anywhere; }
+.reach-secret-field { display: grid; gap: 6px; color: var(--q-subtle); font-size: 11px; }
+.reach-secret-field input { min-height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--foreground); }
 .browser-token-editor { display: flex; width: 100%; flex-direction: column; align-items: center; gap: 7px; }
 .browser-token-editor > p { margin: 0; color: var(--q-subtle); font-size: 10px; line-height: 1.5; }
 .browser-token-editor > input { width: 100%; min-height: 30px; border: 1px solid var(--border); border-radius: 7px; padding: 0 9px; background: var(--background); color: var(--foreground); font-size: 11px; }

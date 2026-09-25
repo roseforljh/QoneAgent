@@ -20,6 +20,7 @@ import {
   CircleUserRound,
   Command,
   CircleHelp,
+  CloudDownload,
   Globe2,
   LoaderCircle,
   Mail,
@@ -44,6 +45,7 @@ import cloudflareLogo from "@lobehub/icons-static-svg/icons/cloudflare-color.svg
 import notionLogo from "@lobehub/icons-static-svg/icons/notion.svg";
 import githubLogo from "@lobehub/icons-static-svg/icons/github.svg";
 import context7Logo from "../../assets/context7-logo.svg";
+import playwrightLogo from "../../assets/playwright-logo.svg";
 import outlookLogo from "../../assets/outlook-logo.svg";
 import gmailLogo from "../../assets/gmail-logo.svg";
 import qqmailLogo from "../../assets/qqmail-logo.svg";
@@ -55,6 +57,7 @@ import braveLogo from "@lobehub/icons-static-svg/icons/brave-color.svg";
 import perplexityLogo from "@lobehub/icons-static-svg/icons/perplexity-color.svg";
 import { ModelCard } from "./ModelCard";
 import { ProviderLogo } from "./ProviderLogo";
+import { SkillCloudDialog } from "./SkillCloudDialog";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import "./model-layout.css";
 
@@ -713,6 +716,7 @@ function SubagentsSection() {
 // 官方 MCP 预设：stdio 走 npx、远程走 Streamable HTTP，点开关即启用（关闭 = mcp.delete 移除）。
 // 带 tokenEnv/env 的项需要对应环境变量存在才能连上，描述里已注明。
 const MCP_PRESETS: { id: string; name: string; descKey: MessageKey; logo: string; mono?: boolean; lightBadge?: boolean; config: { command?: string; args?: string[]; url?: string; tokenEnv?: string; env?: Record<string, string>; authMode?: "oauth" } }[] = [
+  { id: "mcp-playwright", name: "Playwright", descKey: "mcp.presetPlaywright", logo: playwrightLogo, lightBadge: true, config: { command: "npx", args: ["-y", "@playwright/mcp@latest"] } },
   { id: "mcp-context7", name: "Context7", descKey: "mcp.presetContext7", logo: context7Logo, lightBadge: true, config: { command: "npx", args: ["-y", "@upstash/context7-mcp"] } },
   { id: "mcp-cloudflare-docs", name: "Cloudflare", descKey: "mcp.presetCloudflare", logo: cloudflareLogo, config: { url: "https://mcp.cloudflare.com/mcp", authMode: "oauth" } },
   { id: "mcp-notion", name: "Notion", descKey: "mcp.presetNotion", logo: notionLogo, mono: true, lightBadge: true, config: { url: "https://mcp.notion.com/mcp", authMode: "oauth" } },
@@ -1098,6 +1102,7 @@ function SkillsSection() {
   const workspaces = useStore((state) => state.workspaces);
   const currentWorkspaceId = useStore((state) => state.currentWorkspaceId);
   const [query, setQuery] = useState("");
+  const [cloudOpen, setCloudOpen] = useState(false);
   const q = query.trim().toLowerCase();
   const visibleSkills = skills.filter((skill) => !q || skill.name.toLowerCase().includes(q) || skill.path.toLowerCase().includes(q));
 
@@ -1108,8 +1113,9 @@ function SkillsSection() {
   return (
     <>
       <SectionHeader eyebrow={t("skills.eyebrow")} title={t("skills.title")} />
-      <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("skills.installed")}</strong><span>{visibleSkills.length} {t("skills.count")}</span></div><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
+      <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("skills.installed")}</strong><span>{visibleSkills.length} {t("skills.count")}</span></div><div className="settings-skill-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" className="settings-secondary-action" onClick={() => setCloudOpen(true)}><CloudDownload size={14} />{t("skills.cloud.button")}</button></div></div>
       <div className="settings-skill-list">{visibleSkills.length === 0 ? <p className="settings-empty">{t("skills.none")}</p> : visibleSkills.map((skill) => <button type="button" className="settings-skill-card" key={skill.id} onClick={() => openPath(skill.path).catch((error) => console.error("open skill failed", error))}><span className="settings-provider-icon"><WandSparkles size={16} /></span><div><strong>{skill.name}</strong><small>{skill.path}</small></div><ChevronRight size={15} /></button>)}</div>
+      {cloudOpen && <SkillCloudDialog onClose={() => setCloudOpen(false)} />}
     </>
   );
 }

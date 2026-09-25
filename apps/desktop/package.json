@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:sidecar": "bun build ../agent-runtime/src/index.ts --compile --outfile src-tauri/binaries/qone-runtime-x86_64-pc-windows-msvc.exe",
+    "build:sidecar": "bun run scripts/prepare-opencli.ts && bun run scripts/prepare-reach-tools.ts && bun build ../agent-runtime/src/index.ts --compile --outfile src-tauri/binaries/qone-runtime-x86_64-pc-windows-msvc.exe",
     "build": "tsc --noEmit && vite build",
     "build:release": "bun run build:sidecar && bun run build",
     "tauri:build": "bun scripts/tauri-build.ts",

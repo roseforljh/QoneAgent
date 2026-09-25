@@ -21,11 +21,11 @@
       "csp": {
         "default-src": "'self' customprotocol: asset:",
         "connect-src": "ipc: http://ipc.localhost",
-        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "img-src": "'self' asset: http://asset.localhost https://www.google.com blob: data:",
         "style-src": "'self' 'unsafe-inline'",
         "font-src": "'self' data:"
       },
-      "devCsp": "default-src 'self' tauri: asset:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; script-src 'self' 'unsafe-inline' http://127.0.0.1:1420; style-src 'self' 'unsafe-inline' http://127.0.0.1:1420; img-src 'self' tauri: asset: http://asset.localhost http://127.0.0.1:1420 blob: data:; font-src 'self' http://127.0.0.1:1420 data:"
+      "devCsp": "default-src 'self' tauri: asset:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; script-src 'self' 'unsafe-inline' http://127.0.0.1:1420; style-src 'self' 'unsafe-inline' http://127.0.0.1:1420; img-src 'self' tauri: asset: http://asset.localhost https://www.google.com http://127.0.0.1:1420 blob: data:; font-src 'self' http://127.0.0.1:1420 data:"
     }
   },
   "plugins": {
@@ -43,6 +43,7 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/qone-runtime"]
+    "externalBin": ["binaries/qone-runtime"],
+    "resources": ["binaries/yt-dlp.exe", "binaries/node.exe", "binaries/node-LICENSE", "binaries/opencli"]
   }
 }

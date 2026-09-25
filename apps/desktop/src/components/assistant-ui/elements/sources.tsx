@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -22,6 +23,26 @@ export interface SourcesProps {
   onOpenSource?: (url: string) => void;
   className?: string;
   label?: string;
+}
+
+function SourceLogo({ domain }: { domain: string }) {
+  const [failed, setFailed] = useState(false);
+  const initial = domain.charAt(0).toUpperCase() || "?";
+
+  if (failed) {
+    return <span className="bg-foreground/[0.06] text-foreground/45 flex size-4 shrink-0 items-center justify-center rounded text-[9px] font-medium" aria-hidden="true">{initial}</span>;
+  }
+
+  return (
+    <img
+      className="bg-foreground/[0.06] size-4 shrink-0 rounded object-contain"
+      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
+      alt=""
+      aria-hidden="true"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 export function Sources({
@@ -75,9 +96,7 @@ export function Sources({
               )}
             >
               <div className="flex items-center gap-1.5">
-                <span className="bg-foreground/[0.06] text-foreground/45 flex size-4 shrink-0 items-center justify-center rounded text-[9px] font-medium">
-                  {source.domain.charAt(0).toUpperCase()}
-                </span>
+                <SourceLogo domain={source.domain} />
                 <span className={cn(mono, "text-foreground/40 truncate")}>
                   {source.domain}
                 </span>

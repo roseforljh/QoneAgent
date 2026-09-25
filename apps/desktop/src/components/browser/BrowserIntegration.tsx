@@ -45,7 +45,7 @@ export function BrowserIntegration() {
           <Link2 size={12} />连接或启动 Chrome
         </button>
       </div>
-      <small className="browser-import-note">需要安装 OpenCLI Browser Bridge 扩展。Chrome 未打开时，Qone 会尝试启动你的默认 Chrome 配置。</small>
+      <small className="browser-import-note">需要安装 OpenCLI Browser Bridge 扩展。首次连接成功后，Qone 会在以后启动时自动恢复；Chrome 未打开时会尝试启动你的默认 Chrome 配置。</small>
       <button type="button" className="browser-extension-link" onClick={() => void openUrl(EXTENSION_URL).catch((reason) => setError(String(reason)))}>
         安装 OpenCLI 浏览器扩展
       </button>

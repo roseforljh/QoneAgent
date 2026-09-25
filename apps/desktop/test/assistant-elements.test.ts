@@ -28,7 +28,9 @@ test("official assistant elements render their real data slots", () => {
   expect(render(createElement(ComposerContext, { usage: { tools: 1, messages: 2, total: 128 } }))).toContain('data-slot="composer-context"');
   expect(render(createElement(File, { type: "file", data: "data:text/plain;base64,aGk=", mimeType: "text/plain", filename: "notes.txt" } as never))).toContain('data-slot="file-download"');
   expect(render(createElement(Image, { type: "image", image: "data:image/png;base64,aGk=", filename: "plot.png" } as never))).toContain('data-slot="image-preview"');
-  expect(render(createElement(Sources, { sources: [{ domain: "example.com", title: "Docs", url: "https://example.com" }], open: true, onOpenChange: () => {} }))).toContain('data-slot="sources"');
+  const sourcesMarkup = render(createElement(Sources, { sources: [{ domain: "example.com", title: "Docs", url: "https://example.com" }], open: true, onOpenChange: () => {} }));
+  expect(sourcesMarkup).toContain('data-slot="sources"');
+  expect(sourcesMarkup).toContain("https://www.google.com/s2/favicons?domain=example.com&amp;sz=64");
   const streaming = render(createElement(StreamingText, { segments: [{ text: "正在生成" }], count: 1, streaming: true }));
   expect(streaming).not.toContain("w-0.5");
   expect(render(createElement(GenerativeUIBlock, { code: '{"$type":"Text","children":"result"}', language: "generative-ui" } as never))).toContain('data-slot="generative-ui-block"');
