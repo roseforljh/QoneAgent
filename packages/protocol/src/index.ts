@@ -42,7 +42,7 @@ export interface CommandBase {
 
 export type RuntimeCommand =
   | { type: "ping"; requestId: string }
-  | { type: "session.create"; requestId: string; title?: string; workspaceId?: string }
+  | { type: "session.create"; requestId: string; title?: string; workspaceId: string }
   | { type: "session.generate-title"; requestId: string; sessionId: string; prompt: string; model?: string }
   | { type: "session.list"; requestId: string }
   | { type: "session.rename"; requestId: string; sessionId: string; title: string }
@@ -55,8 +55,10 @@ export type RuntimeCommand =
   | { type: "workspace.upsert"; requestId: string; name: string; path: string }
   | { type: "workspace.rename"; requestId: string; workspaceId: string; name: string }
   | { type: "workspace.delete"; requestId: string; workspaceId: string }
-  | { type: "workspace.files"; requestId: string; workspaceId: string }
+  | { type: "workspace.files"; requestId: string; workspaceId: string; path?: string }
   | { type: "workspace.git"; requestId: string; workspaceId: string }
+  | { type: "workspace.gitDiff"; requestId: string; workspaceId: string; path: string; scope?: "staged" | "unstaged" }
+  | { type: "file.read"; requestId: string; workspaceId: string; path: string }
   | { type: "skills.list"; requestId: string; cwd?: string }
   | { type: "plugins.list"; requestId: string }
   | { type: "mcp.list"; requestId: string }
@@ -118,8 +120,8 @@ export type RuntimeEvent =
   | { type: "workspace.updated"; workspace: WorkspaceInfo }
   | { type: "workspace.renamed"; workspace: WorkspaceInfo }
   | { type: "workspace.deleted"; workspaceId: string }
-  | { type: "workspace.files"; workspaceId: string; files: WorkspaceFileInfo[] }
-  | { type: "workspace.git"; workspaceId: string; status: string }
+  | { type: "workspace.files"; requestId?: string; workspaceId: string; path?: string; files: WorkspaceFileInfo[] }
+  | { type: "workspace.git"; requestId?: string; workspaceId: string; status: string; entries?: WorkspaceGitEntry[] }
   | { type: "skills.list"; skills: SkillInfo[] }
   | { type: "plugins.list"; plugins: PluginInfo[] }
   | { type: "mcp.list"; servers: McpServerInfo[] }
@@ -135,6 +137,8 @@ export type RuntimeEvent =
   | { type: "events.replay"; events: AgentEvent[] }
   | { type: "secret.saved"; requestId: string }
   | { type: "agent.event"; event: AgentEvent }
+  | { type: "workspace.gitDiff"; requestId?: string; workspaceId: string; path: string; diff: string; truncated?: boolean }
+  | { type: "file.read"; requestId?: string; workspaceId: string; path: string; content: string; binary?: boolean; truncated?: boolean }
   | { type: "terminal.data"; terminalId: string; data: string }
   | { type: "terminal.exit"; terminalId: string }
   | { type: "error"; requestId?: string; message: string };
@@ -210,6 +214,12 @@ export interface WorkspaceInfo {
 export interface WorkspaceFileInfo {
   path: string;
   kind: "file" | "directory";
+}
+
+export interface WorkspaceGitEntry {
+  code: string;
+  path: string;
+  originalPath?: string;
 }
 
 export interface SkillInfo {
@@ -328,7 +338,7 @@ const messageAttachment = z.object({
   (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType)));
 const commandSchemas: Record<string, z.ZodTypeAny> = {
   ping: z.object({ type: z.literal("ping"), ...request }),
-  "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id.optional() }),
+  "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id }),
   "session.generate-title": z.object({ type: z.literal("session.generate-title"), ...request, sessionId: id, prompt: z.string().min(1), model: z.string().optional() }),
   "session.list": z.object({ type: z.literal("session.list"), ...request }),
   "session.rename": z.object({ type: z.literal("session.rename"), ...request, sessionId: id, title: id }),
@@ -341,8 +351,10 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "workspace.upsert": z.object({ type: z.literal("workspace.upsert"), ...request, name: id, path: id }),
   "workspace.rename": z.object({ type: z.literal("workspace.rename"), ...request, workspaceId: id, name: id }),
   "workspace.delete": z.object({ type: z.literal("workspace.delete"), ...request, workspaceId: id }),
-  "workspace.files": z.object({ type: z.literal("workspace.files"), ...request, workspaceId: id }),
+  "workspace.files": z.object({ type: z.literal("workspace.files"), ...request, workspaceId: id, path: z.string().optional() }),
   "workspace.git": z.object({ type: z.literal("workspace.git"), ...request, workspaceId: id }),
+  "workspace.gitDiff": z.object({ type: z.literal("workspace.gitDiff"), ...request, workspaceId: id, path: id, scope: z.enum(["staged", "unstaged"]).optional() }),
+  "file.read": z.object({ type: z.literal("file.read"), ...request, workspaceId: id, path: id }),
   "skills.list": z.object({ type: z.literal("skills.list"), ...request, cwd: z.string().optional() }),
   "plugins.list": z.object({ type: z.literal("plugins.list"), ...request }),
   "mcp.list": z.object({ type: z.literal("mcp.list"), ...request }),
