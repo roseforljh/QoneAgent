@@ -36,6 +36,7 @@ mod conpty;
 #[cfg(desktop)]
 mod browser;
 
+
 #[cfg(all(windows, debug_assertions))]
 mod dev_network;
 
@@ -292,88 +293,21 @@ fn read_dropped_file(path: String) -> Result<DroppedFilePayload, String> {
 // --- Windows Credential Manager ---
 
 #[cfg(windows)]
-mod creds {
-    use windows::core::PCWSTR;
-    use windows::Win32::Security::Credentials::{
-        CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
-        CRED_TYPE_GENERIC,
-    };
-
-    const PREFIX: &str = "QoneAgent:";
-
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-
-    pub fn set(key: &str, value: &str) -> Result<(), String> {
-        let target = wide(&format!("{PREFIX}{key}"));
-        let mut blob = value.encode_utf16().collect::<Vec<u16>>();
-        let blob_bytes =
-            unsafe { std::slice::from_raw_parts(blob.as_mut_ptr() as *const u8, blob.len() * 2) };
-        let cred = CREDENTIALW {
-            Type: CRED_TYPE_GENERIC,
-            TargetName: windows::core::PWSTR(target.as_ptr() as *mut _),
-            CredentialBlobSize: (blob_bytes.len()) as u32,
-            CredentialBlob: blob_bytes.as_ptr() as *mut u8,
-            Persist: CRED_PERSIST_LOCAL_MACHINE,
-            ..Default::default()
-        };
-        unsafe { CredWriteW(&cred, 0).map_err(|e| format!("CredWrite failed: {e}")) }
-    }
-
-    pub fn get(key: &str) -> Result<Option<String>, String> {
-        let target = wide(&format!("{PREFIX}{key}"));
-        let mut cred_ptr: *mut CREDENTIALW = std::ptr::null_mut();
-        unsafe {
-            match CredReadW(
-                PCWSTR(target.as_ptr()),
-                CRED_TYPE_GENERIC,
-                None,
-                &mut cred_ptr,
-            ) {
-                Ok(()) => {
-                    let cred = &*cred_ptr;
-                    let blob = std::slice::from_raw_parts(
-                        cred.CredentialBlob,
-                        cred.CredentialBlobSize as usize,
-                    );
-                    let utf16: &[u16] =
-                        std::slice::from_raw_parts(blob.as_ptr() as *const u16, blob.len() / 2);
-                    let value = String::from_utf16_lossy(utf16)
-                        .trim_end_matches('\0')
-                        .to_string();
-                    CredFree(cred_ptr as *const _);
-                    Ok(Some(value))
-                }
-                Err(e) => {
-                    // ERROR_NOT_FOUND = 1168
-                    if e.code().0 as u32 == 0x80070490 || e.code().0 as u32 == 1168 {
-                        Ok(None)
-                    } else {
-                        Err(format!("CredRead failed: {e}"))
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn delete(key: &str) -> Result<(), String> {
-        let target = wide(&format!("{PREFIX}{key}"));
-        unsafe {
-            CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, None)
-                .map_err(|e| format!("CredDelete failed: {e}"))
-        }
-    }
-}
+mod creds;
 
 fn persist_runtime_secret(line: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    if value.get("type")?.as_str()? != "mcp.oauth.token" {
+    let event_type = value.get("type")?.as_str()?;
+    if event_type != "mcp.oauth.token" && event_type != "mcp.oauth.credential" {
         return None;
     }
     let key = value.get("key")?.as_str()?;
     let server_id = value.get("serverId")?.as_str()?;
-    let token = value.get("accessToken")?.as_str()?;
+    let token = if event_type == "mcp.oauth.credential" {
+        value.get("value")?.as_str()?
+    } else {
+        value.get("accessToken")?.as_str()?
+    };
     let result = validate_secret_key(key).and_then(|_| {
         #[cfg(windows)]
         return creds::set(key, token);
@@ -413,9 +347,6 @@ fn validate_secret_key(key: &str) -> Result<(), String> {
 #[tauri::command]
 fn secret_set(key: String, value: String) -> Result<(), String> {
     validate_secret_key(&key)?;
-    if value.encode_utf16().count() * 2 > 2560 {
-        return Err("secret value is too large".into());
-    }
     #[cfg(windows)]
     return creds::set(&key, &value);
     #[allow(unreachable_code)]
@@ -638,7 +569,7 @@ fn main() {
             browser_bounds,
             browser_visible,
             browser_eval,
-            browser_close
+            browser_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
