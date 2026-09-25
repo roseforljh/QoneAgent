@@ -1,10 +1,11 @@
 "use client";
 
-import { type ComponentProps, useMemo } from "react";
+import { type ComponentProps, type CSSProperties, useMemo } from "react";
 import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
 import { cva, type VariantProps } from "class-variance-authority";
 import { diffLines } from "diff";
 import parseDiff from "parse-diff";
+import { useShikiHighlighter } from "react-shiki";
 
 import { cn } from "../../../lib/utils";
 
@@ -302,11 +303,13 @@ function DiffViewerHeader({
 interface DiffViewerLineProps extends ComponentProps<"div"> {
   line: ParsedLine;
   showLineNumbers?: boolean;
+  language?: string;
 }
 
 function DiffViewerLine({
   line,
   showLineNumbers = true,
+  language,
   className,
   ...props
 }: DiffViewerLineProps) {
@@ -344,20 +347,35 @@ function DiffViewerLine({
         data-slot="diff-viewer-content"
         className="flex-1 pe-3.5 break-all whitespace-pre-wrap"
       >
-        {line.content}
+        <HighlightedDiffText code={line.content} language={language} />
       </span>
     </div>
   );
 }
 
+function HighlightedDiffText({ code, language }: { code: string; language: string | undefined }) {
+  const tokens = useShikiHighlighter(
+    code || " ",
+    language ?? "text",
+    { dark: "github-dark-default", light: "github-light-default" },
+    { defaultColor: "light-dark()", engine: "javascript", outputFormat: "tokens" },
+  );
+  if (!tokens) return code;
+  return tokens.tokens.flatMap((line, lineIndex) => line.map((token, tokenIndex) => (
+    <span key={`${lineIndex}:${tokenIndex}`} style={token.htmlStyle as CSSProperties}>{token.content}</span>
+  )));
+}
+
 interface DiffViewerSplitLineProps extends ComponentProps<"div"> {
   pair: SplitLinePair;
   showLineNumbers?: boolean;
+  language?: string;
 }
 
 function DiffViewerSplitLine({
   pair,
   showLineNumbers = true,
+  language,
   className,
   ...props
 }: DiffViewerSplitLineProps) {
@@ -391,7 +409,7 @@ function DiffViewerSplitLine({
           {left ? (left.type === "del" ? "-" : " ") : ""}
         </span>
         <span className="flex-1 pe-3.5 break-all whitespace-pre-wrap">
-          {left?.content ?? ""}
+          {left ? <HighlightedDiffText code={left.content} language={language} /> : ""}
         </span>
       </div>
       <div
@@ -416,7 +434,7 @@ function DiffViewerSplitLine({
           {right ? (right.type === "add" ? "+" : " ") : ""}
         </span>
         <span className="flex-1 pe-3.5 break-all whitespace-pre-wrap">
-          {right?.content ?? ""}
+          {right ? <HighlightedDiffText code={right.content} language={language} /> : ""}
         </span>
       </div>
     </div>
@@ -444,6 +462,7 @@ function DiffViewer({
   showLineNumbers = true,
   showIcon = false,
   showStats = true,
+  language,
   variant,
   size,
   className,
@@ -524,6 +543,7 @@ function DiffViewer({
                     key={pairIndex}
                     pair={pair}
                     showLineNumbers={showLineNumbers}
+                    language={language}
                   />
                 ))
               : file.lines.map((line, lineIndex) => (
@@ -531,6 +551,7 @@ function DiffViewer({
                     key={lineIndex}
                     line={line}
                     showLineNumbers={showLineNumbers}
+                    language={language}
                   />
                 ))}
           </div>

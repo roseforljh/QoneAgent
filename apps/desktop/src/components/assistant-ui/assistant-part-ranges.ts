@@ -25,10 +25,11 @@ export function assistantPartRanges(parts: readonly PartState[]): AssistantPartR
     }
     if (part.type === "tool-call") {
       const startIndex = index;
+      const parentId = part.parentId;
       index++;
       while (index < parts.length) {
         const next = parts[index]!;
-        if (next.type !== "tool-call" || isPresentation(next)) break;
+        if (next.type !== "tool-call" || isPresentation(next) || next.parentId !== parentId) break;
         index++;
       }
       ranges.push({ type: "tools", startIndex, endIndex: index });

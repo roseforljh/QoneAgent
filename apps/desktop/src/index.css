@@ -1091,6 +1091,32 @@ body {
   .q-ellipsis-dots > span { animation: none; }
 }
 
+/* The dock keeps its hit area mounted while the panel opens and closes. Its
+ * controls use opacity for the reveal animation so a layout transition cannot
+ * leave an invisible button subtree in a different hit-test state. */
+.q-dock-reveal {
+  opacity: 0;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(2px) scale(0.97);
+  filter: blur(3px);
+  transition:
+    opacity 0.16s ease-out 0.28s,
+    transform 0.2s cubic-bezier(0.32, 0.72, 0, 1) 0.28s,
+    filter 0.2s ease 0.28s;
+}
+.q-dock-reveal-zone:hover .q-dock-reveal,
+.q-dock-reveal-zone:focus-within .q-dock-reveal,
+.q-dock-reveal[data-open="true"] {
+  opacity: 1;
+  transform: none;
+  filter: none;
+  transition:
+    opacity 0.22s ease-out,
+    transform 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+    filter 0.22s ease;
+}
+
 /* Unified hover-reveal: .q-reveal content stays hidden until its surrounding
  * .q-reveal-zone is hovered/focused, or it is pinned via [data-open="true"]. */
 .q-reveal {

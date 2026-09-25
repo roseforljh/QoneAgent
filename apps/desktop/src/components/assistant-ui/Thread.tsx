@@ -21,6 +21,7 @@ import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
 import { RunOptionsPopover } from "./run-options-popover";
 import { EllipsisDots, ShimmerLabel } from "./elements/surfaces";
+import { ConversationMapAui } from "./elements/conversation-map.aui";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
 import "./thread-viewport.css";
 import { useStore } from "../../store";
@@ -105,12 +106,13 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
 
       <AuiIf condition={(s) => !s.thread.isEmpty}>
         <ThreadPrimitive.Viewport turnAnchor="top" autoScroll className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto">
+          <ConversationMapAui />
           <ThreadPrimitive.Messages>
             {({ message }) => {
               if (message.role === "user" && pairedUserIds.has(message.id)) return null;
               const date = daySeparators.get(message.id);
               return (
-                <div className="flex w-full flex-col gap-5">
+                <div className="flex w-full flex-col gap-5" data-message-block>
                   {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto max-w-2xl" />}
                   {message.role === "user"
                     ? <UserMessage messageId={message.id} />

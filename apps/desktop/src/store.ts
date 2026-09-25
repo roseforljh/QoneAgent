@@ -739,7 +739,12 @@ export function initBridge() {
       case "workspace.files":
         if (msg.requestId) workspaceRequests.delete(msg.requestId);
         if (msg.workspaceId === useStore.getState().currentWorkspaceId) useStore.setState((st) => ({
-          workspaceFiles: msg.path ? [...st.workspaceFiles.filter((file) => !file.path.startsWith(`${msg.path}/`)), ...msg.files] : msg.files,
+          workspaceFiles: [
+            ...st.workspaceFiles.filter((file) => msg.path
+              ? !file.path.startsWith(`${msg.path}/`)
+              : !file.path.includes("/")),
+            ...msg.files,
+          ],
           workspaceLoadingId: undefined,
           workspaceError: undefined,
         }));

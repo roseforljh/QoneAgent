@@ -19,7 +19,7 @@ test("official assistant elements render their real data slots", () => {
   expect(render(createElement(ToolError, { name: "read", target: "a.ts", message: "failed", retrying: false }))).toContain('data-slot="tool-error"');
   const codeRunner = render(createElement(CodeRunner, { language: "PowerShell", code: "Get-ChildItem", state: "ok", output: ["a.ts"] }));
   expect(codeRunner).toContain('data-slot="code-runner"');
-  expect(codeRunner).toContain("max-h-[min(32rem,60dvh)]");
+  expect(codeRunner).toContain("max-h-[min(18rem,40dvh)]");
   expect(codeRunner).not.toContain("min-h-48");
   expect(render(createElement(PermissionGrant, { capability: "Full access", requester: "Qone", reach: ["workspace"], scope: "pending", onGrant: () => {} }))).toContain('data-slot="permission-grant"');
   expect(render(createElement(InlineCitation, { sources: [{ domain: "example.com", url: "https://example.com", label: "1" }], openIndex: null, onOpenIndexChange: () => {} }))).toContain('data-slot="inline-citation"');

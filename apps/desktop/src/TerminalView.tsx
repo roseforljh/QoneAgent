@@ -11,7 +11,7 @@ interface Props {
 }
 
 // One TerminalView = one ConPTY on the Rust side. Input goes via terminal_write,
-// output arrives via "terminal.data" events.
+// output arrives via "terminal:data" events.
 export default function TerminalView({ terminalId, cwd }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -25,10 +25,10 @@ export default function TerminalView({ terminalId, cwd }: Props) {
     fit.fit();
     termRef.current = term;
 
-    const unData = listen<{ terminalId: string; data: string }>("terminal.data", (e) => {
+    const unData = listen<{ terminalId: string; data: string }>("terminal:data", (e) => {
       if (e.payload.terminalId === terminalId) term.write(e.payload.data);
     });
-    const unExit = listen<{ terminalId: string }>("terminal.exit", (e) => {
+    const unExit = listen<{ terminalId: string }>("terminal:exit", (e) => {
       if (e.payload.terminalId === terminalId) term.write("\r\n[process exited]\r\n");
     });
 
