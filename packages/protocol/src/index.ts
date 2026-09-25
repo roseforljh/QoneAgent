@@ -60,9 +60,13 @@ export type RuntimeCommand =
   | { type: "workspace.gitDiff"; requestId: string; workspaceId: string; path: string; scope?: "staged" | "unstaged" }
   | { type: "file.read"; requestId: string; workspaceId: string; path: string }
   | { type: "skills.list"; requestId: string; cwd?: string }
+  | { type: "skills.cloud.list"; requestId: string; collection: "popular" | "trending" | "official"; page: number; query?: string }
+  | { type: "skills.cloud.install"; requestId: string; source: string; skillId: string }
   | { type: "plugins.list"; requestId: string }
   | { type: "browser.status"; requestId: string }
   | { type: "browser.connect"; requestId: string }
+  | { type: "reach.channels"; requestId: string }
+  | { type: "reach.podcast.configure"; requestId: string; accessToken: string; refreshToken: string }
   | { type: "mcp.list"; requestId: string }
   | { type: "mcp.connect"; requestId: string; config: McpServerInfo }
   | { type: "mcp.delete"; requestId: string; serverId: string }
@@ -125,8 +129,11 @@ export type RuntimeEvent =
   | { type: "workspace.files"; requestId?: string; workspaceId: string; path?: string; files: WorkspaceFileInfo[] }
   | { type: "workspace.git"; requestId?: string; workspaceId: string; status: string; entries?: WorkspaceGitEntry[] }
   | { type: "skills.list"; skills: SkillInfo[] }
+  | { type: "skills.cloud.list"; requestId: string; skills: CloudSkillInfo[]; page: number; hasMore: boolean }
+  | { type: "skills.cloud.installed"; requestId: string; skill: SkillInfo }
   | { type: "plugins.list"; plugins: PluginInfo[] }
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
+  | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
   | { type: "mcp.list"; servers: McpServerInfo[] }
   | { type: "mcp.connected"; serverId: string; toolCount: number }
   | { type: "mcp.oauth.authorization"; requestId: string; serverId: string; url: string; state: string }
@@ -259,6 +266,14 @@ export interface McpServerInfo {
   oauthClientId?: string;
 }
 
+export interface CloudSkillInfo {
+  source: string;
+  skillId: string;
+  name: string;
+  installs: number;
+  isOfficial: boolean;
+}
+
 export interface BrowserSyncStatus {
   phase: "connecting" | "syncing" | "ready" | "error";
   targetConnected: boolean;
@@ -266,6 +281,17 @@ export interface BrowserSyncStatus {
   historyCount?: number;
   libraryError?: string;
   lastError?: string;
+}
+
+export interface ReachChannelInfo {
+  id: string;
+  name: string;
+  description: string;
+  backend: string;
+  tools: string[];
+  state: "available" | "unverified" | "needs-connection" | "unavailable";
+  detail?: string;
+  action?: "opencli" | "exa" | "youtube" | "linkedin" | "podcast" | "xueqiu" | "github" | "bilibili";
 }
 
 export interface McpOAuthInfo {
@@ -397,9 +423,13 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "workspace.gitDiff": z.object({ type: z.literal("workspace.gitDiff"), ...request, workspaceId: id, path: id, scope: z.enum(["staged", "unstaged"]).optional() }),
   "file.read": z.object({ type: z.literal("file.read"), ...request, workspaceId: id, path: id }),
   "skills.list": z.object({ type: z.literal("skills.list"), ...request, cwd: z.string().optional() }),
+  "skills.cloud.list": z.object({ type: z.literal("skills.cloud.list"), ...request, collection: z.enum(["popular", "trending", "official"]), page: z.number().int().min(1).max(200), query: z.string().max(100).optional() }),
+  "skills.cloud.install": z.object({ type: z.literal("skills.cloud.install"), ...request, source: z.string().max(200), skillId: z.string().max(64) }),
   "plugins.list": z.object({ type: z.literal("plugins.list"), ...request }),
   "browser.status": z.object({ type: z.literal("browser.status"), ...request }),
   "browser.connect": z.object({ type: z.literal("browser.connect"), ...request }),
+  "reach.channels": z.object({ type: z.literal("reach.channels"), ...request }),
+  "reach.podcast.configure": z.object({ type: z.literal("reach.podcast.configure"), ...request, accessToken: z.string().min(8).max(8192), refreshToken: z.string().min(8).max(8192) }),
   "mcp.list": z.object({ type: z.literal("mcp.list"), ...request }),
   "mcp.connect": z.object({ type: z.literal("mcp.connect"), ...request, config: mcpConfig }),
   "mcp.delete": z.object({ type: z.literal("mcp.delete"), ...request, serverId: id }),
