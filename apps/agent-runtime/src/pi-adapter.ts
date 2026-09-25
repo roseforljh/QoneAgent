@@ -236,6 +236,18 @@ export class PiAdapter {
     return operation;
   }
 
+  async refreshSkills(): Promise<void> {
+    this.resourceLoaders.clear();
+    for (const [sessionId, session] of this.sessions) {
+      if (session.isIdle) {
+        await session.dispose();
+        this.sessions.delete(sessionId);
+      } else {
+        this.staleSessions.add(sessionId);
+      }
+    }
+  }
+
   private async applyModelConfiguration(configs: ModelConfigInfo[]): Promise<void> {
     this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
     this.configuredModelConfigs = configs;

@@ -8,9 +8,14 @@ import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { createResourceLoader } from "./skills.js";
+import { installCloudSkill, listCloudSkills } from "./skill-catalog.js";
 import { containsSecretConfig } from "./secrets.js";
 import { ModelMetadataResolver } from "./model-resolver.js";
 import { BrowserSyncService } from "./browser-sync.js";
+import { createReachPublicTools } from "./reach-public-tools.js";
+import { listReachChannels, ytDlpExecutable } from "./reach-channels.js";
+import { configurePodcast, podcastConfigured } from "./reach-podcast.js";
+import { createPodcastTools } from "./reach-podcast-tools.js";
 import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } from "./workspace.js";
 
 const log = createLogger("runtime");
@@ -42,10 +47,6 @@ const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
 const toolCallRepo = new ToolCallRepo(db);
 const mcpServerRepo = new McpServerRepo(db);
-// The browser integration used to be exposed as a Playwright MCP server. It
-// is now handled by OpenCLI, so remove the old persisted entry before MCP
-// startup can reconnect it.
-mcpServerRepo.delete("mcp-playwright");
 const modelConfigRepo = new ModelConfigRepo(db);
 const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
@@ -216,6 +217,10 @@ const mcp = new McpManager(async (serverId, token) => {
   if (requestId) send({ type: "error", requestId, message: error.message });
 }, (key) => runtimeSecrets.get(key));
 for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()]) {
+  // Playwright remains available as a manually enabled fallback. OpenCLI is
+  // the default browser channel, so starting Playwright here would launch a
+  // second browser and compete with the current Chrome connection.
+  if (config.id === "mcp-playwright") continue;
   const subjectId = `mcp:${config.id}`;
   permissionRepo.ensure(subjectId, "mcp.connect", "ask");
   if (permissionRepo.get(subjectId, "mcp.connect") !== "allow") continue;
@@ -229,8 +234,11 @@ for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()]) {
 let browserSync: BrowserSyncService | undefined;
 await refreshCustomTools();
 browserSync = new BrowserSyncService(db, dbPath,
-  (status) => send({ type: "browser.status", status }), refreshCustomTools);
-void browserSync.initialize();
+  (status) => {
+    send({ type: "browser.status", status });
+    sendReachChannels();
+  }, refreshCustomTools);
+await browserSync.initialize();
 
 async function releaseBrowserSession() {
   try { await browserSync?.release(); }
@@ -238,7 +246,22 @@ async function releaseBrowserSession() {
 }
 
 async function refreshCustomTools() {
-  await adapter.setCustomTools([...mcp.tools(), ...(browserSync?.tools() ?? [])]);
+  await adapter.setCustomTools([
+    ...mcp.tools(),
+    ...createReachPublicTools({ ytDlp: ytDlpExecutable, xueqiuCookie: () => runtimeSecrets.get("reach.xueqiu.cookie") }),
+    ...createPodcastTools(() => runtimeSecrets.get("reach.groq.apiKey")),
+    ...(browserSync?.tools() ?? []),
+  ]);
+}
+
+function sendReachChannels(requestId?: string) {
+  send({ type: "reach.channels", requestId, channels: listReachChannels({
+    browserConnected: browserSync?.status().targetConnected ?? false,
+    mcpConnected: (id) => mcp.isConnected(id),
+    hasXueqiuCookie: Boolean(runtimeSecrets.get("reach.xueqiu.cookie")),
+    podcastConfigured: podcastConfigured(),
+    hasGroqKey: Boolean(runtimeSecrets.get("reach.groq.apiKey")),
+  }) });
 }
 
 function loadMcpConfigs() {
@@ -299,6 +322,8 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           "workspace.gitDiff",
           "file.read",
           "browser.connect",
+          "reach.channels",
+          "reach.podcast.configure",
         ],
       });
       return;
@@ -460,12 +485,35 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
     }
 
+    case "skills.cloud.list": {
+      const page = await listCloudSkills(cmd.collection, cmd.page, cmd.query);
+      send({ type: "skills.cloud.list", requestId: cmd.requestId, ...page });
+      return;
+    }
+    case "skills.cloud.install": {
+      const skill = await installCloudSkill(cmd.source, cmd.skillId);
+      await adapter.refreshSkills();
+      skillRepo.upsert(skill);
+      send({ type: "skills.cloud.installed", requestId: cmd.requestId, skill });
+      return;
+    }
+
     case "plugins.list":
       send({ type: "plugins.list", plugins: [] });
       return;
 
     case "browser.status":
       send({ type: "browser.status", requestId: cmd.requestId, status: browserSync!.status() });
+      return;
+
+    case "reach.channels":
+      sendReachChannels(cmd.requestId);
+      return;
+
+    case "reach.podcast.configure":
+      configurePodcast(cmd.accessToken, cmd.refreshToken);
+      send({ type: "pong", requestId: cmd.requestId });
+      sendReachChannels();
       return;
 
     case "browser.connect":
@@ -631,6 +679,12 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     }
 
     case "secret.set": {
+      if (cmd.key === "reach.xueqiu.cookie" || cmd.key === "reach.groq.apiKey") {
+        runtimeSecrets.set(cmd.key, cmd.value);
+        send({ type: "secret.saved", requestId: cmd.requestId });
+        sendReachChannels();
+        return;
+      }
       if (cmd.key.startsWith("mcp.env:")) {
         runtimeSecrets.set(cmd.key, cmd.value);
         const config = mcpServerRepo.list().find((server) => Object.values(server.env ?? {}).includes(`$${cmd.key}`));
@@ -684,6 +738,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       runtimeSecrets.delete(cmd.key);
       await adapter.deleteSecret(cmd.key);
       send({ type: "pong", requestId: cmd.requestId });
+      if (cmd.key === "reach.xueqiu.cookie" || cmd.key === "reach.groq.apiKey") sendReachChannels();
       return;
 
     case "agent.run": {

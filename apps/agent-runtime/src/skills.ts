@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   DefaultResourceLoader,
@@ -14,6 +15,10 @@ export interface SkillInfo {
   path: string;
 }
 
+export function qoneAgentDir(): string {
+  return path.join(process.env.APPDATA ?? os.homedir(), "QoneAgent", "pi");
+}
+
 /**
  * Keep skill discovery on Pi's ResourceLoader. The wrapper only exposes a
  * product-facing catalog for the GUI and persistence; it does not create a
@@ -23,14 +28,15 @@ export async function createResourceLoader(cwd: string): Promise<{
   loader: ResourceLoader;
   skills: SkillInfo[];
 }> {
-  const agentDir = process.env.PI_AGENT_DIR ??
-    path.join(process.env.APPDATA ?? process.env.HOME ?? process.cwd(), "QoneAgent", "pi");
-  const skillPaths = [path.join(cwd, "skills"), path.join(process.cwd(), "skills")]
-    .filter((p, i, all) => existsSync(p) && all.indexOf(p) === i);
+  const agentDir = qoneAgentDir();
+  const ownSkills = path.join(agentDir, "skills");
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir,
-    additionalSkillPaths: skillPaths,
+    // Pi's default discovery also includes project and package skills.
+    // QoneAgent only loads skills installed in its own data directory.
+    noSkills: true,
+    additionalSkillPaths: existsSync(ownSkills) ? [ownSkills] : [],
     noExtensions: true,
     appendSystemPromptOverride: (base) => [...base, QONE_SYSTEM_PROMPT],
   });

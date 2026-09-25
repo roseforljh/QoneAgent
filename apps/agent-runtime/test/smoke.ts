@@ -29,6 +29,7 @@ const send = (o: object) => proc.stdin.write(JSON.stringify(o) + "\n");
 await new Promise((r) => setTimeout(r, 800));
 
 send({ type: "ping", requestId: "1" });
+send({ type: "reach.channels", requestId: "reach" });
 send({ type: "session.create", requestId: "missing-workspace", title: "invalid" });
 send({ type: "session.create", requestId: "unknown-workspace", title: "invalid", workspaceId: "unknown" });
 send({ type: "workspace.list", requestId: "4" });
@@ -43,6 +44,7 @@ const reader = proc.stdout.getReader();
 const decoder = new TextDecoder();
 let buf = "";
 let pongs = 0;
+let reachChannels = 0;
 let sessions = 0;
 let catalogs = 0;
 let secretRejections = 0;
@@ -54,7 +56,7 @@ let visibleSessionTitles: string[] | undefined;
 
 const deadline = Date.now() + 8000;
 let pendingRead = reader.read();
-while (Date.now() < deadline && (pongs < 1 || sessions < 2 || catalogs < 2 || secretRejections < 1 || metadataResolved < 1 || unsupportedRejected < 1 || rejectedSessions.size < 2)) {
+while (Date.now() < deadline && (pongs < 1 || reachChannels < 1 || sessions < 2 || catalogs < 2 || secretRejections < 1 || metadataResolved < 1 || unsupportedRejected < 1 || rejectedSessions.size < 2)) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const { value, done } = await Promise.race([
     pendingRead,
@@ -79,6 +81,7 @@ while (Date.now() < deadline && (pongs < 1 || sessions < 2 || catalogs < 2 || se
       await proc.stdin.flush();
     }
     if (msg.type === "pong" && msg.capabilities?.includes("model.resolve-metadata") && msg.capabilities?.includes("model.metadata-sources")) pongs++;
+    if (msg.type === "reach.channels" && msg.requestId === "reach" && msg.channels?.length === 16 && msg.channels.some((channel: { id: string }) => channel.id === "youtube")) reachChannels++;
     if (msg.type === "session.created" || msg.type === "session.list") sessions++;
     if (msg.type === "session.list") visibleSessionTitles = msg.sessions.map((session: { title: string }) => session.title);
     if (msg.type === "error" && ["missing-workspace", "unknown-workspace"].includes(msg.requestId)) rejectedSessions.add(msg.requestId);
@@ -92,6 +95,7 @@ while (Date.now() < deadline && (pongs < 1 || sessions < 2 || catalogs < 2 || se
 proc.kill();
 await proc.exited;
 if (pongs < 1) throw new Error("no pong");
+if (reachChannels < 1) throw new Error("channel registry unavailable");
 if (sessions < 2) throw new Error("session commands failed");
 if (catalogs < 2) throw new Error("catalog commands failed");
 if (secretRejections < 1) throw new Error("plaintext model secret was accepted");
