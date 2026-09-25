@@ -195,7 +195,10 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   }, [aui]);
   useNativeFileDrop(shellRef, onNativeFiles);
   const onEditorReady = useCallback((insert: InsertComposerTool | null) => { insertToolRef.current = insert; }, []);
-  const onToolSelect = useCallback((tool: ComposerTool) => { if (tool.id === "attachment") shellRef.current?.querySelector<HTMLButtonElement>(".aui-composer-add-attachment")?.click(); else insertToolRef.current?.(tool); }, []);
+  const onToolSelect = useCallback((tool: ComposerTool) => {
+    if (tool.id === "attachment") shellRef.current?.querySelector<HTMLButtonElement>(".aui-composer-add-attachment")?.click();
+    else if (tool.id !== "image-generation") insertToolRef.current?.(tool);
+  }, []);
   const onMentionStateChange = useCallback((open: boolean, close: () => void) => {
     closeMentionRef.current = close;
     setMentionOpen(open);

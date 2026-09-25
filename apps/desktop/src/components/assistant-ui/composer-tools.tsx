@@ -1,6 +1,6 @@
 import { type FC, type ReactNode } from "react";
 import { useAuiState } from "@assistant-ui/react";
-import { FileTextIcon, Globe2Icon, PlugZapIcon, PlusIcon, SparklesIcon, type LucideIcon } from "lucide-react";
+import { FileTextIcon, Globe2Icon, ImageIcon, PlusIcon, type LucideIcon } from "lucide-react";
 import { useLocale } from "../../localization";
 import type { ComposerToolId } from "../../lib/composer-tool-editor";
 import "./composer-tools.css";
@@ -10,11 +10,29 @@ export type ComposerTool = { id: ComposerToolId; label: string; description: str
 export function getComposerTools(t: ReturnType<typeof useLocale>["t"]): ComposerTool[] {
   return [
     { id: "attachment", label: t("composer.toolAttachment"), description: t("composer.toolAttachmentDescription"), icon: FileTextIcon },
-    { id: "skills", label: t("composer.toolSkills"), description: t("composer.toolSkillsDescription"), icon: SparklesIcon },
-    { id: "mcp", label: "MCP", description: t("composer.toolMcpDescription"), icon: PlugZapIcon },
     { id: "web-search", label: t("composer.toolWebSearch"), description: t("composer.toolWebSearchDescription"), icon: Globe2Icon },
+    { id: "image-generation", label: t("composer.toolImageGeneration"), description: t("composer.toolImageGenerationDescription"), icon: ImageIcon },
   ];
 }
+
+export type ComposerSlashEntry = {
+  id: string;
+  label: string;
+  description: string;
+  kind: "skill" | "mcp";
+  icon: LucideIcon;
+};
+
+export const ComposerSlashRow: FC<{ entry: ComposerSlashEntry }> = ({ entry }) => {
+  const Icon = entry.icon;
+  return <>
+    <Icon data-tool-id={entry.kind} className="q-composer-tool-icon size-4 shrink-0" aria-hidden="true" />
+    <span className="q-composer-tool-copy">
+      <strong>{entry.label}</strong>
+      <small>{entry.description}</small>
+    </span>
+  </>;
+};
 
 export const ComposerToolChip: FC<{ directiveId: string; directiveType: string; label: string }> = ({ directiveId, directiveType, label }) => (
   <span className="q-composer-tool-chip" data-tool-id={directiveId.replace("qone-", "")} data-directive-type={directiveType} aria-label={label}>

@@ -12,7 +12,7 @@ import {
   type ExternalStoreThreadListAdapter,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import type { MessageAttachmentInfo } from "@qone/protocol";
+import type { MessageAttachmentInfo, PluginInfo } from "@qone/protocol";
 import { assistantMessageContent } from "./lib/assistant-message-parts";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
@@ -23,7 +23,7 @@ import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSke
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
 import { Link, useLocation } from "@tanstack/react-router";
 import { ApprovalCard } from "./components/tool-ui/ToolCard";
-import { ArrowLeft, Moon, PanelLeftIcon, PlusIcon, PuzzleIcon, Settings, Sun, X } from "lucide-react";
+import { ArrowLeft, Moon, PanelLeftIcon, PuzzleIcon, Settings, Sun, X } from "lucide-react";
 import { cn } from "./lib/utils";
 import { ConfirmationDialogHost } from "./components/ui/ConfirmationDialog";
 import { confirmDestructiveAction } from "./lib/confirm-action";
@@ -31,6 +31,7 @@ import { useLocale } from "./localization";
 import { QoneSelect } from "./components/ui/Select";
 import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-preferences";
 import qonePenguinUrl from "./assets/qone-penguin.png";
+import { BrowserIntegration } from "./components/browser/BrowserIntegration";
 
 type Theme = "light" | "dark";
 
@@ -311,14 +312,14 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
             />
             <Link
               to="/plugins"
-              aria-label="插件"
+              aria-label="应用"
               className={cn(
                 "hover:bg-muted text-foreground/95 hover:text-foreground flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
                 sidebarCollapsed ? "w-8 justify-center gap-0 px-2" : "w-full",
               )}
             >
               <PuzzleIcon className="size-4 shrink-0" />
-              <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}>插件</span>
+              <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}>应用</span>
             </Link>
             {sidebarLayout === "project" && (!workspacesLoaded || !sessionsLoaded) && !sidebarCollapsed && <SidebarLoadingSkeleton layout="project" />}
             {sidebarLayout === "project" && workspacesLoaded && sessionsLoaded && <div
@@ -378,31 +379,30 @@ function PageLayout({ title, theme, onToggleTheme, children }: { title: string; 
   );
 }
 
-function ManagementPanel({ kind }: { kind: "mcp" | "skills" | "plugins" | "permissions" }) {
-  const { send, mcpServers, skills, plugins, workspaces, currentWorkspaceId, permissionRules, setPermission, oauthAuthorization, lastError } = useStore();
-  const [name, setName] = useState(""); const [command, setCommand] = useState(""); const [url, setUrl] = useState(""); const [tokenEnv, setTokenEnv] = useState(""); const [args, setArgs] = useState("");
-  const [oauthAuthorizationUrl, setOauthAuthorizationUrl] = useState(""); const [oauthTokenUrl, setOauthTokenUrl] = useState(""); const [oauthClientId, setOauthClientId] = useState(""); const [oauthCode, setOauthCode] = useState("");
+function AppsPanel({ plugins }: { plugins: PluginInfo[] }) {
+  return <>
+    <div className="apps-grid">
+      <BrowserIntegration />
+    </div>
+    {plugins.length > 0 && <div className="simple-list">{plugins.map((plugin) => <div className="simple-list-row stacked" key={plugin.id}><div><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.loaded ? `已加载 · ${plugin.toolCount} tools · ${plugin.skillCount} skills` : "未加载"}</small></div><span className="status-dot" /></div>)}</div>}
+  </>;
+}
+
+function ManagementPanel({ kind }: { kind: "skills" | "plugins" | "permissions" }) {
+  const { send, skills, plugins, workspaces, currentWorkspaceId, permissionRules, setPermission, lastError } = useStore();
   const { theme, toggleTheme } = useTheme();
   useEffect(() => {
-    if (kind === "mcp") send({ type: "mcp.list", requestId: crypto.randomUUID() });
     if (kind === "plugins") send({ type: "plugins.list", requestId: crypto.randomUUID() });
     if (kind === "skills") send({ type: "skills.list", requestId: crypto.randomUUID(), cwd: workspaces.find((w) => w.id === currentWorkspaceId)?.path });
     if (kind === "permissions") send({ type: "permission.list", requestId: crypto.randomUUID() });
   }, [kind, send, workspaces, currentWorkspaceId]);
-  const connect = () => {
-    if (!name || (!command && !url)) return;
-    const id = name.toLowerCase().replace(/\s+/g, "-");
-    send({ type: "mcp.connect", requestId: crypto.randomUUID(), config: { id, name, command: command || undefined, url: url || undefined, tokenEnv: tokenEnv || undefined, args: args.trim() ? args.trim().split(/\s+/) : [], oauth: oauthAuthorizationUrl && oauthTokenUrl && oauthClientId ? { authorizationUrl: oauthAuthorizationUrl, tokenUrl: oauthTokenUrl, clientId: oauthClientId, tokenSecretKey: `mcp.oauth:${id}` } : undefined } });
-  };
-  const titles = { mcp: "MCP Servers", skills: "Skills", plugins: "Plugins", permissions: "Permissions" };
+  const titles = { skills: "Skills", plugins: "应用", permissions: "Permissions" };
   return <PageLayout title={titles[kind]} theme={theme} onToggleTheme={toggleTheme}>
     {lastError && <p className="error-banner" role="alert">{lastError}</p>}
-    <div className="settings-panel">
-      {kind === "mcp" && <><div className="panel-intro"><span className="eyebrow">Connections</span><h2>连接 MCP Server</h2><p>配置本地 stdio 或 Streamable HTTP 服务，启动 Qone 时会自动恢复。</p></div><div className="form-grid mcp-form"><label className="field">名称<input placeholder="我的工具" value={name} onChange={(e) => setName(e.target.value)} /></label><label className="field">命令<input placeholder="npx" value={command} onChange={(e) => setCommand(e.target.value)} /></label><label className="field">参数<input placeholder="参数（空格分隔）" value={args} onChange={(e) => setArgs(e.target.value)} /></label><label className="field">HTTP URL<input placeholder="或 Streamable HTTP URL" value={url} onChange={(e) => setUrl(e.target.value)} /></label><label className="field">Token 环境变量<input placeholder="可选" value={tokenEnv} onChange={(e) => setTokenEnv(e.target.value)} /></label></div><div className="form-grid mcp-form"><label className="field">OAuth Authorization URL<input value={oauthAuthorizationUrl} onChange={(e) => setOauthAuthorizationUrl(e.target.value)} /></label><label className="field">OAuth Token URL<input value={oauthTokenUrl} onChange={(e) => setOauthTokenUrl(e.target.value)} /></label><label className="field">OAuth Client ID<input value={oauthClientId} onChange={(e) => setOauthClientId(e.target.value)} /></label></div><button className="primary-button" onClick={connect}><PlusIcon size={16} />连接</button>{oauthAuthorization && <div className="oauth-banner">OAuth 已打开，请完成授权后粘贴 code：<input value={oauthCode} onChange={(e) => setOauthCode(e.target.value)} placeholder="authorization code" /><button className="secondary-button" onClick={() => send({ type: "mcp.oauth.complete", requestId: crypto.randomUUID(), serverId: oauthAuthorization.serverId, code: oauthCode, state: oauthAuthorization.state })}>完成 OAuth</button></div>}<div className="simple-list">{mcpServers.map((server) => <div className="simple-list-row" key={server.id}><div><strong>{server.name}</strong><small>{server.command ?? server.url}</small></div><span className="status-dot" /></div>)}</div></>}
+    {kind === "plugins" ? <AppsPanel plugins={plugins} /> : <div className="settings-panel">
       {kind === "skills" && <div className="simple-list">{skills.length === 0 ? <p className="muted-copy">没有发现 Skills。</p> : skills.map((skill) => <div className="simple-list-row stacked" key={skill.id}><strong>{skill.name}</strong><small>{skill.description}</small><code>{skill.path}</code></div>)}</div>}
-      {kind === "plugins" && <><p className="muted-copy">插件代码只会在 Permissions 中明确允许 `plugin.load` 后加载。</p><div className="simple-list">{plugins.map((plugin) => <div className="simple-list-row stacked" key={plugin.id}><div><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.loaded ? `已加载 · ${plugin.toolCount} tools · ${plugin.skillCount} skills` : "未加载"}</small></div><span className="status-dot" /></div>)}</div></>}
       {kind === "permissions" && <div className="simple-list">{permissionRules.length === 0 ? <p className="muted-copy">暂无权限规则。</p> : permissionRules.map((rule) => <div className="simple-list-row" key={`${rule.subjectId}:${rule.permission}`}><div><strong>{rule.subjectId}</strong><small>{rule.permission}</small></div><QoneSelect value={rule.decision} onChange={(value) => setPermission({ subjectId: rule.subjectId, permission: rule.permission, decision: value as "allow" | "ask" | "deny" })} options={[{ value: "allow", label: "ALLOW" }, { value: "ask", label: "ASK" }, { value: "deny", label: "DENY" }]} ariaLabel={`${rule.subjectId} 权限`} triggerClassName="qone-select-trigger-compact" /></div>)}</div>}
-    </div>
+    </div>}
   </PageLayout>;
 }
 
@@ -427,6 +427,6 @@ export default function App() {
     if (workspaceMatch && !running) { const routeWorkspaceId = decodeURIComponent(workspaceMatch[1]); if (workspaces.some((workspace) => workspace.id === routeWorkspaceId) && currentWorkspaceId !== routeWorkspaceId) selectWorkspace(routeWorkspaceId); }
   }, [pathname, sessions, workspaces, currentSessionId, currentWorkspaceId, running, selectSession, selectWorkspace]);
 
-  if (["/mcp", "/skills", "/plugins", "/permissions"].includes(pathname)) return <ManagementPanel kind={pathname.slice(1) as "mcp" | "skills" | "plugins" | "permissions"} />;
+  if (["/skills", "/plugins", "/permissions"].includes(pathname)) return <ManagementPanel kind={pathname.slice(1) as "skills" | "plugins" | "permissions"} />;
   return <ChatPage theme={theme} onToggleTheme={toggleTheme} initialSettingsOpen={pathname === "/settings"} />;
 }

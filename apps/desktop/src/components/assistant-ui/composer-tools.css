@@ -7,13 +7,15 @@
 .q-composer-tool-copy small { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .q-composer-tool-icon { stroke-width: 1.8; }
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="attachment"] { color: #60a5fa; }
-.q-composer-tool-option .q-composer-tool-icon[data-tool-id="skills"] { color: #c084fc; }
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="mcp"] { color: #fb923c; }
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="web-search"] { color: #2dd4bf; }
+.q-composer-tool-option .q-composer-tool-icon[data-tool-id="image-generation"] { color: #f472b6; }
+.q-composer-tool-option .q-composer-tool-icon[data-tool-id="skill"] { color: #c084fc; }
 :root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="attachment"] { color: #2563eb; }
-:root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="skills"] { color: #9333ea; }
-:root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="mcp"] { color: #ea580c; }
 :root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="web-search"] { color: #0f766e; }
+:root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="image-generation"] { color: #db2777; }
+:root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="skill"] { color: #9333ea; }
+:root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="mcp"] { color: #ea580c; }
 .q-composer-tool-chip { display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid transparent; border-radius: 999px; font-size: .82em; font-weight: 600; line-height: 1.35; white-space: nowrap; vertical-align: baseline; user-select: none; }
 .q-composer-tool-chip[data-tool-id="attachment"] { border-color: rgb(90 169 255 / 25%); background: rgb(90 169 255 / 18%); color: #78bbff; }
 .q-composer-tool-chip[data-tool-id="skills"] { border-color: rgb(181 140 255 / 25%); background: rgb(181 140 255 / 18%); color: #c5a5ff; }

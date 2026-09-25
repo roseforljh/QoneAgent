@@ -6,8 +6,9 @@ const commands: RuntimeCommand[] = [];
 let onRuntimeEvent: ((event: { payload: string }) => void) | undefined;
 
 mock.module("@tauri-apps/api/core", () => ({
-  invoke: async (command: string, args?: { cmd?: string }) => {
+  invoke: async (command: string, args?: { cmd?: string; key?: string }) => {
     if (command === "runtime_send" && args?.cmd) commands.push(JSON.parse(args.cmd));
+    if (command === "secret_get" && args?.key === "mcp.env:mcp-key-restore/TEST_API_KEY") return "restored-test-key";
   },
 }));
 mock.module("@tauri-apps/api/event", () => ({
@@ -48,6 +49,56 @@ const event = (type: string, payload: unknown): AgentEvent => ({
   type,
   timestamp: Date.now(),
   payload,
+});
+
+test("MCP loading survives the saved list and clears on success or failure", async () => {
+  const previous = useStore.getState();
+  try {
+    emit({ type: "mcp.list", servers: [{ id: "preset", name: "Preset", connected: false }, { id: "other", name: "Other", connected: false }] });
+    expect(useStore.getState().mcpServers.map((server) => server.id)).toEqual(["preset", "other"]);
+
+    await useStore.getState().send({ type: "mcp.connect", requestId: "connect-ok", config: { id: "preset", name: "Preset", command: "npx" } });
+    expect(useStore.getState().mcpConnectingIds).toEqual(["preset"]);
+    emit({ type: "mcp.list", servers: [{ id: "preset", name: "Preset", connected: false }, { id: "other", name: "Other", connected: false }] });
+    expect(useStore.getState().mcpConnectingIds).toEqual(["preset"]);
+    emit({ type: "mcp.connected", serverId: "preset", toolCount: 3 });
+    expect(useStore.getState().mcpConnectingIds).toEqual([]);
+    expect(useStore.getState().mcpServers).toEqual([
+      { id: "preset", name: "Preset", connected: true, toolCount: 3 },
+      { id: "other", name: "Other", connected: false },
+    ]);
+
+    await useStore.getState().send({ type: "mcp.connect", requestId: "connect-failed", config: { id: "other", name: "Other", command: "npx" } });
+    expect(useStore.getState().mcpConnectingIds).toEqual(["other"]);
+    emit({ type: "error", requestId: "connect-failed", message: "connection failed" });
+    expect(useStore.getState().mcpConnectingIds).toEqual([]);
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("restores a key preset credential when the saved MCP list arrives", async () => {
+  const start = commands.length;
+  emit({ type: "mcp.list", servers: [{
+    id: "mcp-key-restore", name: "Key test", command: "npx", connected: false,
+    env: { TEST_API_KEY: "$mcp.env:mcp-key-restore/TEST_API_KEY" },
+  }] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(commands.slice(start)).toContainEqual(expect.objectContaining({
+    type: "secret.set", key: "mcp.env:mcp-key-restore/TEST_API_KEY", value: "restored-test-key",
+  }));
+});
+
+test("shows an install hint when an MCP preset cannot find Node.js/npm", async () => {
+  const previous = useStore.getState();
+  try {
+    await useStore.getState().send({ type: "mcp.connect", requestId: "missing-npx", config: { id: "mcp-firecrawl", name: "Firecrawl", command: "npx" } });
+    emit({ type: "error", requestId: "missing-npx", message: "MCP_NPX_UNAVAILABLE" });
+    expect(useStore.getState().lastError).toContain("Node.js/npm");
+    expect(useStore.getState().mcpConnectingIds).not.toContain("mcp-firecrawl");
+  } finally {
+    useStore.setState(previous, true);
+  }
 });
 
 test("session creation requires an imported selected workspace at every entry", () => {

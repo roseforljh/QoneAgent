@@ -1,4 +1,4 @@
-import { parseModelMetadataResponse, type ModelMetadata, type ModelMetadataSource, type ModelMetadataSources, type ProviderApiType, type RunThinkingLevel } from "@qone/protocol";
+import { normalizeThinkingLevelForApi, parseModelMetadataResponse, thinkingLevelsForApi as protocolThinkingLevelsForApi, type ModelMetadata, type ModelMetadataSource, type ModelMetadataSources, type ProviderApiType, type RunThinkingLevel } from "@qone/protocol";
 
 export type Capability = "text" | "image" | "video" | "audio";
 export type ThinkingLevel = RunThinkingLevel;
@@ -11,12 +11,6 @@ export const thinkingLevelOptions = [
   { value: "xhigh", labelKey: "model.xhigh" },
   { value: "max", labelKey: "model.max" },
 ] as const;
-const API_THINKING_LEVELS: Record<ProviderApiType, readonly ThinkingLevel[]> = {
-  "openai-compatible": ["none", "low", "medium", "high"],
-  codex: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-  claude: ["none", "low", "medium", "high", "max"],
-  google: ["none", "minimal", "low", "medium", "high"],
-};
 export type ModelSettingField = "maxOutput" | "maxContext" | "thinking" | "input" | "output";
 
 export type ModelSettings = {
@@ -24,7 +18,6 @@ export type ModelSettings = {
   maxOutput: number;
   maxContext: number;
   thinking: ThinkingLevel;
-  thinkingLevels?: ThinkingLevel[];
   input: Capability[];
   output: Capability[];
   autoMetadata?: boolean;
@@ -37,45 +30,39 @@ export type ProviderModel = { id: string; label: string; settings?: ModelSetting
 export type ProviderProfile = { id: string; name: string; apiType: ProviderApiType; baseUrl: string; models: ProviderModel[]; updatedAt: number };
 
 export const capabilities: Capability[] = ["text", "image", "video", "audio"];
-const thinkingLevels: ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
-
 export function thinkingLevelsForApi(apiType: ProviderApiType = "openai-compatible"): ThinkingLevel[] {
-  return [...(API_THINKING_LEVELS[apiType] ?? API_THINKING_LEVELS["openai-compatible"])] as ThinkingLevel[];
+  return [...protocolThinkingLevelsForApi(apiType)];
 }
 
-export function thinkingLevelOptionsForApi(apiType?: ProviderApiType, available?: readonly string[]) {
-  const allowed = new Set(available?.length ? ["none", ...available] : thinkingLevelsForApi(apiType));
+export function thinkingLevelOptionsForApi(apiType?: ProviderApiType) {
+  const allowed = new Set(thinkingLevelsForApi(apiType));
   return thinkingLevelOptions.filter((option) => allowed.has(option.value));
 }
 
-export function normalizeThinkingLevel(value: unknown, apiType?: ProviderApiType, available?: readonly string[]): ThinkingLevel {
-  const options = thinkingLevelOptionsForApi(apiType, available);
-  return options.find((option) => option.value === value)?.value ?? "none";
+export function normalizeThinkingLevel(value: unknown, apiType?: ProviderApiType): ThinkingLevel {
+  return normalizeThinkingLevelForApi(value, apiType);
 }
 
 export function defaultModelSettings(): ModelSettings {
   return { maxOutput: 8192, maxContext: 128000, thinking: "none", input: ["text"], output: ["text"], autoMetadata: true, metadataSources: { maxOutput: "default", maxContext: "default", thinking: "default", input: "default", output: "default" } };
 }
 
-export function modelSettingsFromMetadata(metadata?: ModelMetadata, availableThinkingLevels: string[] = [], sources?: ModelMetadataSources): ModelSettings {
+export function modelSettingsFromMetadata(metadata?: ModelMetadata, sources?: ModelMetadataSources): ModelSettings {
   const defaults = defaultModelSettings();
   if (!metadata) return defaults;
   const input = metadata.input?.filter((value): value is Capability => capabilities.includes(value as Capability));
   const output = metadata.output?.filter((value): value is Capability => capabilities.includes(value as Capability));
-  const preferredThinking = availableThinkingLevels.includes("medium") ? "medium" : availableThinkingLevels.find((level): level is ThinkingLevel => thinkingLevels.includes(level as ThinkingLevel)) ?? "medium";
   return {
     ...defaults,
     ...(metadata.maxTokens ? { maxOutput: metadata.maxTokens } : {}),
     ...(metadata.contextWindow ? { maxContext: metadata.contextWindow } : {}),
     ...(input?.length ? { input } : {}),
     ...(output?.length ? { output } : {}),
-    ...(metadata.reasoning !== undefined ? { thinking: metadata.reasoning ? preferredThinking : "none" } : {}),
-    ...(availableThinkingLevels.length ? { thinkingLevels: availableThinkingLevels.filter((level): level is ThinkingLevel => thinkingLevels.includes(level as ThinkingLevel)) } : {}),
     modelMetadata: metadata,
     metadataSources: {
       maxOutput: sources?.maxTokens ?? (metadata.maxTokens ? "provider" : "default"),
       maxContext: sources?.contextWindow ?? (metadata.contextWindow ? "provider" : "default"),
-      thinking: sources?.reasoning ?? (metadata.reasoning !== undefined ? "provider" : "default"),
+      thinking: "default",
       input: sources?.input ?? (metadata.input?.length ? "provider" : "default"),
       output: sources?.output ?? (metadata.output?.length ? "provider" : "default"),
     },
@@ -90,8 +77,8 @@ export function parseModelsResponse(data: unknown): ProviderModel[] {
   }));
 }
 
-export function withResolvedModelSettings(model: ProviderModel, metadata: ModelMetadata, thinkingLevels: string[], sources: ModelMetadataSources): ProviderModel {
-  return { ...model, settings: { ...modelSettingsFromMetadata(metadata, thinkingLevels, sources), ...(model.settings?.apiType ? { apiType: model.settings.apiType } : {}), modelMetadata: model.settings?.modelMetadata } };
+export function withResolvedModelSettings(model: ProviderModel, metadata: ModelMetadata, sources: ModelMetadataSources): ProviderModel {
+  return { ...model, settings: { ...modelSettingsFromMetadata(metadata, sources), ...(model.settings?.apiType ? { apiType: model.settings.apiType } : {}), modelMetadata: model.settings?.modelMetadata } };
 }
 
 function sameValue<T>(left: T, right: T): boolean {
@@ -121,7 +108,7 @@ export function mergeFetchedModel(existing: ProviderModel, fetched: ProviderMode
       ...current,
       maxOutput: refreshedValue(current.maxOutput, hasFetched("maxOutput") ? incoming.maxOutput : undefined, cached?.maxTokens, defaults.maxOutput, overrides.maxOutput),
       maxContext: refreshedValue(current.maxContext, hasFetched("maxContext") ? incoming.maxContext : undefined, cached?.contextWindow, defaults.maxContext, overrides.maxContext),
-      thinking: refreshedValue(current.thinking, hasFetched("thinking") ? incoming.thinking : undefined, cached?.reasoning !== undefined ? cachedSettings?.thinking : undefined, defaults.thinking, overrides.thinking),
+      thinking: current.apiType || incoming.apiType ? normalizeThinkingLevel(current.thinking, current.apiType ?? incoming.apiType) : current.thinking,
       input: refreshedValue(current.input, hasFetched("input") ? incoming.input : undefined, cached?.input?.length ? cachedSettings?.input : undefined, defaults.input, overrides.input),
       output: refreshedValue(current.output, hasFetched("output") ? incoming.output : undefined, cached?.output?.length ? cachedSettings?.output : undefined, defaults.output, overrides.output),
       modelMetadata: metadata,

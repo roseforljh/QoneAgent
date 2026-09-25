@@ -6,6 +6,7 @@ import {
   ArrowRightIcon,
   ChevronRightIcon,
   GlobeIcon,
+  LoaderCircleIcon,
   PlugIcon,
   RotateCwIcon,
   Trash2Icon,
@@ -137,6 +138,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
   const { t } = useLocale();
   const send = useStore((s) => s.send);
   const servers = useStore((s) => s.mcpServers);
+  const connectingIds = useStore((s) => s.mcpConnectingIds);
   const [openId, setOpenId] = useState<string>();
 
   useEffect(() => {
@@ -145,11 +147,11 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
 
   const connected = servers.filter((server) => server.connected).length;
 
-  const reconnect = (serverId: string) => {
+  const reconnect = async (serverId: string) => {
     const server = servers.find((item) => item.id === serverId);
     if (!server) return;
-    send({ type: "mcp.connect", requestId: rid(), config: server });
-    window.setTimeout(() => send({ type: "mcp.list", requestId: rid() }), 1200);
+    if (!await send({ type: "permission.set", requestId: rid(), subjectId: `mcp:${server.id}`, permission: "mcp.connect", decision: "allow" })) return;
+    await send({ type: "mcp.connect", requestId: rid(), config: server });
   };
 
   const remove = async (serverId: string, name: string, tokenKey?: string) => {
@@ -169,6 +171,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
       <FadeScroll className="min-h-0 flex-1 py-1">
         {servers.map((server) => {
           const open = openId === server.id;
+          const connecting = connectingIds.includes(server.id);
           const transport = server.command ? `stdio · ${[server.command, ...(server.args ?? [])].join(" ")}` : `http · ${server.url ?? ""}`;
           return (
             <div key={server.id} className="mx-1.5 mb-1 overflow-hidden rounded-lg">
@@ -184,15 +187,15 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
                 <span className={cn(mono, "shrink-0 text-[11px] text-foreground/40")}>{server.toolCount ?? 0} tools</span>
                 <span
                   className={cn("size-1.5 shrink-0 rounded-full", server.connected ? "bg-emerald-500" : server.oauth ? "bg-amber-500" : "bg-foreground/25")}
-                  title={server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}
+                  title={connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}
                 />
               </button>
               {open && (
                 <div className="px-3 pb-2.5 pt-1">
                   <p className={cn(mono, "truncate text-[11px] text-foreground/45")} title={transport}>{transport}</p>
-                  <p className="mt-1 text-[11px] text-foreground/50">{server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-[11px] text-foreground/50">{connecting && <LoaderCircleIcon className="settings-spin size-3 shrink-0" aria-hidden="true" />}{connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}</p>
                   <div className="mt-2 flex items-center gap-1.5">
-                    {server.oauth && !server.connected && (
+                    {server.oauth && !server.connected && !connecting && (
                       <button
                         type="button"
                         onClick={() => send({ type: "mcp.oauth.begin", requestId: rid(), serverId: server.id })}
@@ -204,6 +207,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
                     {!server.connected && (
                       <button
                         type="button"
+                        disabled={connecting}
                         onClick={() => reconnect(server.id)}
                         className="rounded-md bg-foreground/[0.07] px-2 py-1 text-[11px] font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.12]"
                       >

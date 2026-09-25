@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { defaultModelSettings, mergeFetchedModel, modelSettingsFromMetadata, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings } from "../src/lib/model-settings";
+import { defaultModelSettings, mergeFetchedModel, modelSettingsFromMetadata, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings } from "../src/lib/model-settings";
 
 test("provider model list metadata becomes saved model settings", () => {
   const [listed] = parseModelsResponse({ data: [{ id: "gemini-demo", context_length: 64_000, modalities: { input: ["text", "image"], output: ["text"] } }] });
@@ -20,6 +20,8 @@ test("refresh keeps explicit user settings while retaining the enriched metadata
 
 test("unknown models do not claim unverified media capabilities", () => {
   expect(defaultModelSettings()).toMatchObject({ thinking: "none", input: ["text"], output: ["text"] });
+  expect(modelSettingsFromMetadata({ reasoning: true }).thinking).toBe("none");
+  expect(modelSettingsFromMetadata({ reasoning: false }).thinking).toBe("none");
 });
 
 test("id-only provider responses clear previously inferred metadata without losing manual overrides", () => {
@@ -48,15 +50,28 @@ test("unmarked legacy manual values survive a provider response without metadata
 test("resolved model settings retain each field's fallback source", () => {
   const sources = { contextWindow: "provider", maxTokens: "pi", reasoning: "models.dev", input: "pi", output: "default" } as const;
   const [listed] = parseModelsResponse({ data: [{ id: "demo", context_length: 64_000 }] });
-  const fetched = withResolvedModelSettings(listed, { contextWindow: 64_000, maxTokens: 4_096, reasoning: true, input: ["text", "image"] }, ["medium"], sources);
+  const fetched = withResolvedModelSettings(listed, { contextWindow: 64_000, maxTokens: 4_096, reasoning: true, input: ["text", "image"] }, sources);
   const merged = mergeFetchedModel({ id: "demo", label: "demo", settings: defaultModelSettings() }, fetched);
-  expect(merged.settings?.metadataSources).toEqual({ maxContext: "provider", maxOutput: "pi", thinking: "models.dev", input: "pi", output: "default" });
-  expect(merged.settings).toMatchObject({ maxContext: 64_000, maxOutput: 4_096, thinking: "medium", input: ["text", "image"] });
+  expect(merged.settings?.metadataSources).toEqual({ maxContext: "provider", maxOutput: "pi", thinking: "default", input: "pi", output: "default" });
+  expect(merged.settings).toMatchObject({ maxContext: 64_000, maxOutput: 4_096, thinking: "none", input: ["text", "image"] });
   expect(merged.settings?.modelMetadata).toEqual({ id: "demo", contextWindow: 64_000 });
 });
 
 test("model API format controls the available thinking levels", () => {
   expect(thinkingLevelOptionsForApi("openai-compatible").map((item) => item.value)).toEqual(["none", "low", "medium", "high"]);
+  expect(thinkingLevelOptionsForApi("codex").map((item) => item.value)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
   expect(thinkingLevelOptionsForApi("claude").map((item) => item.value)).toEqual(["none", "low", "medium", "high", "max"]);
-  expect(thinkingLevelOptionsForApi("google", ["low", "high"]).map((item) => item.value)).toEqual(["none", "low", "high"]);
+  expect(thinkingLevelOptionsForApi("google").map((item) => item.value)).toEqual(["none", "minimal", "low", "medium", "high"]);
+  expect(normalizeThinkingLevel("minimal", "claude")).toBe("low");
+  expect(normalizeThinkingLevel("max", "google")).toBe("high");
+  expect(normalizeThinkingLevel("xhigh", "codex")).toBe("xhigh");
+});
+
+test("model metadata does not narrow API thinking options", () => {
+  const sources = { contextWindow: "pi", maxTokens: "pi", reasoning: "pi", input: "pi", output: "pi" } as const;
+  const fetched = withResolvedModelSettings({ id: "gemini-3.1-pro-preview", label: "Gemini" }, { reasoning: false, reasoningOptions: [{ type: "effort", values: ["low"] }] }, sources);
+  const saved = mergeFetchedModel({ id: fetched.id, label: fetched.label, settings: { ...defaultModelSettings(), apiType: "google", thinking: "none", metadataOverrides: { thinking: true } } }, fetched);
+  expect(saved.settings?.thinking).toBe("none");
+  expect(thinkingLevelOptionsForApi(saved.settings?.apiType).map((item) => item.value)).toEqual(["none", "minimal", "low", "medium", "high"]);
+  expect(normalizeThinkingLevel("max", "google")).toBe("high");
 });

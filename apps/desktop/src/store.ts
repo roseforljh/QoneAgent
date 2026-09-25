@@ -2,8 +2,14 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
+import { normalizeThinkingLevel } from "./lib/model-settings";
+import { getLanguageSetting, resolveLocale, translate } from "./localization";
+
+const displayRuntimeError = (message: string) => message === "MCP_NPX_UNAVAILABLE"
+  ? translate(resolveLocale(getLanguageSetting()), "mcp.nodeRequired")
+  : message;
 
 export function hasTauriBridge() {
   return typeof window !== "undefined" && Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
@@ -80,6 +86,8 @@ interface AgentState {
   skills: SkillInfo[];
   plugins: PluginInfo[];
   mcpServers: McpServerInfo[];
+  mcpConnectingIds: string[];
+  browserStatus?: BrowserSyncStatus;
   runs: RunInfo[];
   artifacts: ArtifactInfo[];
   currentWorkspaceId?: string;
@@ -112,7 +120,8 @@ interface AgentState {
   gitDiffView?: { workspaceId: string; path: string; diff: string };
   pinnedWorkspaceIds: string[];
   oauthAuthorization?: { requestId: string; serverId: string; url: string; state: string };
-  send: (cmd: RuntimeCommand) => void;
+  githubDeviceAuthorization?: { serverId: string; userCode: string; verificationUri: string; expiresAt: number };
+  send: (cmd: RuntimeCommand) => Promise<boolean>;
   newSession: () => void;
   newSessionInWorkspace: (workspaceId: string) => void;
   createSessionForWorkspace: (workspaceId: string) => void;
@@ -142,6 +151,13 @@ const handshakeRequests = new Set<string>();
 let metadataLookupSupported = false;
 const metadataRequests = new Map<string, { resolve: (value: Extract<RuntimeEvent, { type: "model.metadata-resolved" }>["models"]) => void; reject: (error: Error) => void }>();
 const workspaceRequests = new Map<string, RuntimeCommand["type"]>();
+const mcpConnectRequests = new Map<string, string>();
+const restoredMcpSecrets = new Set<string>();
+
+function finishMcpConnection(serverId: string) {
+  for (const [requestId, id] of mcpConnectRequests) if (id === serverId) mcpConnectRequests.delete(requestId);
+  useStore.setState((st) => ({ mcpConnectingIds: st.mcpConnectingIds.filter((id) => id !== serverId) }));
+}
 
 export function requestModelMetadata(input: Omit<Extract<RuntimeCommand, { type: "model.resolve-metadata" }>, "type" | "requestId">): Promise<Extract<RuntimeEvent, { type: "model.metadata-resolved" }>["models"]> {
   if (!hasTauriBridge()) return Promise.reject(new Error("Runtime is unavailable"));
@@ -175,6 +191,8 @@ export const useStore = create<AgentState>((set, get) => ({
   skills: [],
   plugins: [],
   mcpServers: [],
+  mcpConnectingIds: [],
+  browserStatus: undefined,
   runs: [],
   artifacts: [],
   messages: [],
@@ -208,13 +226,34 @@ export const useStore = create<AgentState>((set, get) => ({
 
   send: (cmd) => {
     // Browser previews do not expose Tauri's invoke bridge.
-    if (!hasTauriBridge()) return;
+    if (!hasTauriBridge()) return Promise.resolve(false);
     if (cmd.type === "ping") handshakeRequests.add(cmd.requestId);
     if (cmd.type === "workspace.files" || cmd.type === "workspace.git" || cmd.type === "workspace.gitDiff" || cmd.type === "file.read") workspaceRequests.set(cmd.requestId, cmd.type);
-    invoke("runtime_send", { cmd: JSON.stringify(cmd) }).catch((error) => {
+    if (cmd.type === "mcp.connect") {
+      mcpConnectRequests.set(cmd.requestId, cmd.config.id);
+      set((st) => ({ mcpConnectingIds: st.mcpConnectingIds.includes(cmd.config.id) ? st.mcpConnectingIds : [...st.mcpConnectingIds, cmd.config.id] }));
+    }
+    if (cmd.type === "secret.set" && cmd.key.startsWith("mcp.env:")) restoredMcpSecrets.add(cmd.key);
+    if (cmd.type === "mcp.delete") {
+      finishMcpConnection(cmd.serverId);
+      restoredMcpSecrets.delete(`mcp.oauth:${cmd.serverId}`);
+      restoredMcpSecrets.delete(`mcp.oauth:${cmd.serverId}.client`);
+      restoredMcpSecrets.delete(`mcp.oauth:${cmd.serverId}.tokens`);
+      const server = get().mcpServers.find((item) => item.id === cmd.serverId);
+      for (const value of Object.values(server?.env ?? {})) {
+        if (value.startsWith("$mcp.env:")) restoredMcpSecrets.delete(value.slice(1));
+      }
+      set((st) => ({
+        oauthAuthorization: st.oauthAuthorization?.serverId === cmd.serverId ? undefined : st.oauthAuthorization,
+        githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === cmd.serverId ? undefined : st.githubDeviceAuthorization,
+      }));
+    }
+    return invoke("runtime_send", { cmd: JSON.stringify(cmd) }).then(() => true).catch((error) => {
       console.error("runtime_send failed", error);
+      if (cmd.type === "mcp.connect") finishMcpConnection(cmd.config.id);
+      if (cmd.type === "secret.set" && cmd.key.startsWith("mcp.env:")) restoredMcpSecrets.delete(cmd.key);
       if (cmd.type === "agent.run") {
-        if (!cmd.messageId || get().currentSessionId !== cmd.sessionId || pendingAgentRun?.requestId !== cmd.requestId) return;
+        if (!cmd.messageId || get().currentSessionId !== cmd.sessionId || pendingAgentRun?.requestId !== cmd.requestId) return false;
         pendingAgentRun = undefined;
         clearDelta();
         set({
@@ -231,6 +270,7 @@ export const useStore = create<AgentState>((set, get) => ({
       } else {
         set({ lastError: String(error) });
       }
+      return false;
     });
   },
 
@@ -379,9 +419,13 @@ export const useStore = create<AgentState>((set, get) => ({
     }));
     const options = get().runOptionsBySession[sid];
     const model = options?.modelId ?? get().selectedModelId;
+    const modelConfig = get().modelConfigs.find((item) => item.id === model)?.config;
+    const apiType = modelConfig?.apiType as ProviderApiType | undefined;
+    const requestedThinking = model ? options?.thinkingByModel?.[model] : undefined;
+    const thinking = requestedThinking === undefined ? undefined : normalizeThinkingLevel(requestedThinking, apiType);
     const requestId = rid();
     pendingAgentRun = { requestId, sessionId: sid, userMessageId: messageId };
-    get().send({ type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking: model ? options?.thinkingByModel?.[model] : undefined });
+    get().send({ type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking });
     if (history.length === 0) {
       get().send({ type: "session.generate-title", requestId: rid(), sessionId: sid, prompt: message || attachments?.map((attachment) => attachment.name).join(", ") || "图片", model });
     }
@@ -516,11 +560,16 @@ export function initBridge() {
       clearDelta();
       metadataLookupSupported = false;
       pendingAgentRun = undefined;
+      mcpConnectRequests.clear();
+      restoredMcpSecrets.clear();
       for (const request of metadataRequests.values()) request.reject(new Error("Runtime exited"));
       useStore.setState((st) => {
         const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
         return {
           connected: false,
+          browserStatus: st.browserStatus ? { ...st.browserStatus, targetConnected: false, phase: "error", lastError: "浏览器运行时已退出" } : undefined,
+          mcpConnectingIds: [],
+          githubDeviceAuthorization: undefined,
           running: false,
           activeRunId: undefined,
           approvals: [],
@@ -567,6 +616,8 @@ export function initBridge() {
         s.send({ type: "session.list", requestId: rid() });
         s.send({ type: "workspace.list", requestId: rid() });
         s.send({ type: "model.list", requestId: rid() });
+        s.send({ type: "mcp.list", requestId: rid() });
+        if (msg.capabilities?.includes("browser.connect")) s.send({ type: "browser.status", requestId: rid() });
         s.send({ type: "permission.list", requestId: rid() });
         s.send({ type: "events.replay", requestId: rid(), sessionId: useStore.getState().currentSessionId, afterSequence: lastSequence });
         break;
@@ -778,21 +829,58 @@ export function initBridge() {
       case "plugins.list":
         useStore.setState({ plugins: msg.plugins });
         break;
+      case "browser.status":
+        useStore.setState({ browserStatus: msg.status });
+        break;
       case "mcp.list":
         useStore.setState({ mcpServers: msg.servers });
         for (const server of msg.servers) {
-          const key = server.oauth?.tokenSecretKey ?? (server.oauth ? `mcp.oauth:${server.id}` : undefined);
-          if (key) invoke<string | null>("secret_get", { key }).then((value) => {
-            if (value) useStore.getState().send({ type: "secret.set", requestId: rid(), key, value });
-          }).catch(() => {});
+          const oauthKeys = server.authMode === "oauth"
+            ? [`mcp.oauth:${server.id}.client`, `mcp.oauth:${server.id}.tokens`]
+            : [server.oauth?.tokenSecretKey ?? `mcp.oauth:${server.id}`];
+          const keys = [...oauthKeys, ...Object.values(server.env ?? {})
+            .filter((value) => value.startsWith("$mcp.env:"))
+            .map((value) => value.slice(1))];
+          void (async () => {
+            for (const key of keys) {
+              if (restoredMcpSecrets.has(key)) continue;
+              restoredMcpSecrets.add(key);
+              try {
+                const value = await invoke<string | null>("secret_get", { key });
+                if (value) await useStore.getState().send({ type: "secret.set", requestId: rid(), key, value });
+              } catch (error) {
+                restoredMcpSecrets.delete(key);
+                console.error("MCP credential restore failed", error);
+              }
+            }
+          })();
         }
+        break;
+      case "mcp.connected":
+        finishMcpConnection(msg.serverId);
+        useStore.setState((st) => ({
+          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connected: true, toolCount: msg.toolCount } : server),
+          githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === msg.serverId ? undefined : st.githubDeviceAuthorization,
+          oauthAuthorization: st.oauthAuthorization?.serverId === msg.serverId ? undefined : st.oauthAuthorization,
+        }));
         break;
       case "mcp.oauth.authorization":
         useStore.setState({ oauthAuthorization: { requestId: msg.requestId, serverId: msg.serverId, url: msg.url, state: msg.state } });
-        openUrl(msg.url).catch((error) => console.error("OAuth browser launch failed", error));
+        openUrl(msg.url).catch((error) => {
+          console.error("OAuth browser launch failed", error);
+          useStore.setState({ lastError: String(error) });
+          finishMcpConnection(msg.serverId);
+        });
+        break;
+      case "mcp.github.device":
+        useStore.setState({ githubDeviceAuthorization: msg });
+        if (new URL(msg.verificationUri).hostname === "github.com") openUrl(msg.verificationUri).catch((error) => {
+          console.error("GitHub login launch failed", error);
+          useStore.setState({ lastError: String(error) });
+        });
         break;
       case "mcp.oauth.saved":
-        useStore.setState({ oauthAuthorization: undefined });
+        if (msg.key.endsWith(".tokens") || !msg.key.endsWith(".client")) useStore.setState({ oauthAuthorization: undefined });
         break;
       case "mcp.oauth.token":
         useStore.setState({ lastError: "OAuth token was not intercepted by the native credential bridge" });
@@ -804,6 +892,16 @@ export function initBridge() {
         useStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
         break;
       case "error":
+        if (msg.requestId) {
+          const serverId = mcpConnectRequests.get(msg.requestId);
+          if (serverId) {
+            finishMcpConnection(serverId);
+            useStore.setState((st) => ({
+              githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === serverId ? undefined : st.githubDeviceAuthorization,
+              oauthAuthorization: st.oauthAuthorization?.serverId === serverId ? undefined : st.oauthAuthorization,
+            }));
+          }
+        }
         const workspaceRequest = msg.requestId ? workspaceRequests.get(msg.requestId) : undefined;
         if (msg.requestId) workspaceRequests.delete(msg.requestId);
         if (pendingAgentRun && pendingAgentRun.requestId === msg.requestId) {
@@ -824,7 +922,7 @@ export function initBridge() {
           break;
         }
         useStore.setState((st) => ({
-          lastError: msg.message,
+          lastError: displayRuntimeError(msg.message),
           ...(workspaceRequest ? { workspaceError: msg.message } : {}),
           ...(st.creatingSession ? { creatingSession: false, pendingMessage: undefined } : {}),
           ...(st.running && !st.activeRunId ? { running: false } : {}),

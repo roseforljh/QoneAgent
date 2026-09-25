@@ -3,7 +3,7 @@ import {
 } from "lexical";
 import { $createDirectiveNode, $isDirectiveNode } from "@assistant-ui/react-lexical";
 
-export type ComposerToolId = "attachment" | "skills" | "mcp" | "web-search";
+export type ComposerToolId = "attachment" | "image-generation" | "skills" | "mcp" | "web-search";
 
 export function $insertComposerTool(tool: { id: ComposerToolId; label: string }) {
   const selection = $getSelection() ?? $getRoot().selectEnd();
