@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type FC } from "react";
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState, type FC } from "react";
 import {
   FileSearchIcon,
   PenLineIcon,
@@ -14,49 +14,65 @@ import {
 } from "./elements/tool-timeline";
 import { ToolCall } from "./elements/tool-call";
 import { ToolError } from "./elements/tool-error";
-import { CodeRunner } from "./elements/code-runner";
 import { ToolResultView } from "./elements/tool-result";
-import { formatToolPayload, toolCallStatus } from "./tool-call-display";
+import { formatToolPayload, toolActivity } from "./tool-call-display";
+import { detectToolPreview } from "./tool-preview";
 import { toolActionSummary, toolTarget } from "./tool-action-summary";
-import { detectToolPresentation, toolPresentationSummary } from "./tool-presentation";
+import { detectToolPresentation, toolDiffStats, toolPresentationSummary } from "./tool-presentation";
 import { useLocale } from "../../localization";
+import { formatDuration } from "../../lib/utils";
 import { useStore, type ToolCall as StoreToolCall } from "../../store";
 
-type ToolMeta = { verb: { zh: string; en: string }; icon: LucideIcon };
+type ToolMeta = { verb: { zh: string; en: string }; icon: LucideIcon; tint: string };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
+type SessionTimelineStep = TimelineStep & { target: string };
 const GenerativeUISurface = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUISurface }));
 
 const TOOL_META: Record<string, ToolMeta> = {
-  read: { verb: { zh: "读取", en: "Read" }, icon: FileSearchIcon },
-  write: { verb: { zh: "写入", en: "Write" }, icon: PenLineIcon },
-  edit: { verb: { zh: "编辑", en: "Edit" }, icon: PenLineIcon },
-  grep: { verb: { zh: "搜索", en: "Search" }, icon: SearchIcon },
-  find: { verb: { zh: "查找", en: "Find" }, icon: SearchIcon },
-  ls: { verb: { zh: "查看", en: "List" }, icon: FileSearchIcon },
-  bash: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
-  powershell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
-  shell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
+  read: { verb: { zh: "读取", en: "Read" }, icon: FileSearchIcon, tint: "text-sky-500 dark:text-sky-400" },
+  write: { verb: { zh: "写入", en: "Write" }, icon: PenLineIcon, tint: "text-emerald-500 dark:text-emerald-400" },
+  edit: { verb: { zh: "编辑", en: "Edit" }, icon: PenLineIcon, tint: "text-amber-500 dark:text-amber-400" },
+  apply_patch: { verb: { zh: "补丁", en: "Patch" }, icon: PenLineIcon, tint: "text-amber-500 dark:text-amber-400" },
+  grep: { verb: { zh: "搜索", en: "Search" }, icon: SearchIcon, tint: "text-cyan-500 dark:text-cyan-400" },
+  find: { verb: { zh: "查找", en: "Find" }, icon: SearchIcon, tint: "text-teal-500 dark:text-teal-400" },
+  glob: { verb: { zh: "查找", en: "Find" }, icon: SearchIcon, tint: "text-teal-500 dark:text-teal-400" },
+  ls: { verb: { zh: "查看", en: "List" }, icon: FileSearchIcon, tint: "text-indigo-500 dark:text-indigo-400" },
+  bash: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon, tint: "text-lime-500 dark:text-lime-400" },
+  powershell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon, tint: "text-blue-500 dark:text-blue-400" },
+  shell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon, tint: "text-lime-500 dark:text-lime-400" },
+  exec: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon, tint: "text-lime-500 dark:text-lime-400" },
+  web_search: { verb: { zh: "联网", en: "Search" }, icon: SearchIcon, tint: "text-violet-500 dark:text-violet-400" },
+  web_fetch: { verb: { zh: "联网", en: "Fetch" }, icon: FileSearchIcon, tint: "text-violet-500 dark:text-violet-400" },
 };
+const FALLBACK_TINT = "text-foreground/60";
 
-function toStep(part: ToolPartState, index: number, locale: string, call?: StoreToolCall): TimelineStep {
+function toStep(part: ToolPartState, locale: string, call?: StoreToolCall): SessionTimelineStep {
   const meta = TOOL_META[part.toolName];
   const verb = meta?.verb[locale === "en" ? "en" : "zh"] ?? (locale === "en" ? "Call" : "调用");
   const target = toolTarget(part, call);
-  return { verb, target, chip: `${target} · ${index + 1}`, icon: meta?.icon ?? WrenchIcon };
+  const done = call?.status === "success" || (call === undefined && part.result !== undefined && !part.isError);
+  return { id: part.toolCallId, verb, target, chip: target, icon: meta?.icon ?? WrenchIcon, tint: meta?.tint ?? FALLBACK_TINT, done };
 }
 
-const ToolCallEntry: FC<{ part: ToolPartState; step: TimelineStep; prepared?: boolean }> = ({ part, step, prepared = false }) => {
+const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; messageRunning: boolean }> = ({ part, step, prepared = false, messageRunning }) => {
   const { locale, t } = useLocale();
   const [open, setOpen] = useState(false);
   const call = useStore((state) => state.toolCalls.find((item) => item.toolCallId === part.toolCallId));
-  const status = toolCallStatus(part, call);
+  const status = toolActivity(part, call, prepared, messageRunning);
   const failed = String(status) === "failed";
   const result = call?.result !== undefined ? call.result : part.result !== undefined ? part.result : call?.summary;
   const formattedResult = formatToolPayload(result);
-  const args = call?.args ?? part.args;
-  const normalizedResult = result !== undefined ? detectToolPresentation(result, args) : undefined;
-  const livePresentation = result === undefined ? detectToolPresentation(undefined, args) : undefined;
-  const presentation = normalizedResult ?? (livePresentation?.kind === "terminal" ? livePresentation : undefined);
+  const args = useDeferredValue(call?.args ?? part.args);
+  const normalizedResult = useMemo(() => result !== undefined ? detectToolPresentation(result, failed ? undefined : args) : undefined, [result, args, failed]);
+  const livePresentation = useMemo(() => detectToolPreview(args), [args]);
+  const presentation = normalizedResult ?? (status !== "success" && status !== "failed" ? livePresentation : undefined);
+  const editing = livePresentation?.kind === "diff" || livePresentation?.kind === "file" || step.icon === PenLineIcon;
+  const activeLabel = status === "generating"
+    ? editing ? t("chat.toolGeneratingEdit") : t("chat.toolGenerating", { operation: step.verb })
+    : status === "queued" ? t("chat.toolQueued")
+      : status === "waiting" ? t("chat.toolApprovalPending")
+        : editing ? t("chat.toolApplyingEdit") : t("chat.toolWorking");
+  const preview = editing && status !== "success" && status !== "failed";
   const resultText = presentation
     ? toolPresentationSummary(presentation)
     : formattedResult
@@ -64,40 +80,30 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: TimelineStep; prepared?: bo
       : status === "waiting" ? t("chat.toolApprovalPending")
         : status === "failed" ? t("chat.toolFailed")
           : status === "success" ? t("chat.toolNoResult") : t("chat.toolResultPending");
-  const command = presentation?.kind === "terminal" ? presentation.command : undefined;
-  const durationMs = call?.startedAt !== undefined && call.completedAt !== undefined
-    ? Math.max(0, call.completedAt - call.startedAt)
-    : undefined;
+  const stat = useMemo(() => presentation && status === "success" ? toolDiffStats(presentation) : undefined, [presentation, status]);
 
   if (status === "failed") return (
     <ToolError
       name={part.toolName}
       target={step.chip}
-      message={resultText}
-      className="min-w-0 max-w-none flex-1"
-    />
-  );
-
-  if (presentation?.kind === "terminal" && command && (prepared || status === "running")) return (
-    <CodeRunner
-      language="Terminal"
-      code={command}
-      state={prepared ? "idle" : status === "running" ? "running" : "ok"}
-      output={prepared || status === "running" && !formattedResult ? [] : resultText.split(/\r?\n/)}
-      durationMs={durationMs}
+      message={presentation?.kind === "diff" ? t("chat.toolFailed") : resultText}
       className="min-w-0 max-w-none flex-1"
     />
   );
 
   return (
     <ToolCall
-      label={locale === "en" ? part.toolName : step.verb}
-      activeLabel={t("chat.toolWorking")}
+      label={status === "queued" || status === "waiting" ? activeLabel : locale === "en" ? part.toolName : step.verb}
+      activeLabel={activeLabel}
       query={step.chip}
+      stat={stat && (stat.added > 0 || stat.removed > 0) ? stat : undefined}
       request={formatToolPayload(call?.argsText || part.argsText || part.args)}
-      result={presentation ? <ToolResultView presentation={presentation} /> : <span className="px-1 py-1 text-xs text-foreground/70">{resultText}</span>}
-      running={status === "running" && !prepared}
-      pending={prepared}
+      result={<>
+        {preview && <p className="mb-2 text-xs text-foreground/50">{t("chat.toolPreview")}</p>}
+        {presentation ? <ToolResultView presentation={presentation} /> : <span className="px-1 py-1 text-xs text-foreground/70">{status === "success" ? resultText : activeLabel}</span>}
+      </>}
+      running={status === "running" || status === "generating"}
+      pending={status === "queued" || status === "generating"}
       waiting={status === "waiting"}
       failed={failed}
       requestLabel={t("chat.toolRequest")}
@@ -129,18 +135,10 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
     () => new Map(liveToolCalls.map((call) => [call.toolCallId, call])),
     [liveToolCalls],
   );
-  const executedToolParts = useMemo(
-    () => toolParts.filter((part) => !messageRunning || liveCallsById.has(part.toolCallId) || part.result !== undefined || part.isError || preparedIds.has(part.toolCallId)),
-    [liveCallsById, messageRunning, preparedIds, toolParts],
-  );
-  const pendingToolParts = useMemo(
-    () => messageRunning
-      ? toolParts.filter((part) => !liveCallsById.has(part.toolCallId) && part.result === undefined && !part.isError)
-      : [],
-    [liveCallsById, messageRunning, toolParts],
-  );
+  // Show the row from block start, including while arguments are generated.
+  const executedToolParts = toolParts;
   const steps = useMemo(
-    () => executedToolParts.map((part, index) => toStep(part, index, locale, liveCallsById.get(part.toolCallId))),
+    () => executedToolParts.map((part) => toStep(part, locale, liveCallsById.get(part.toolCallId))),
     [executedToolParts, liveCallsById, locale],
   );
   const activeIndex = useMemo(() => {
@@ -148,8 +146,11 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
       const call = liveCallsById.get(executedToolParts[index]?.toolCallId ?? "");
       if (call?.status === "running" || call?.status === "waiting") return index;
     }
-    return -1;
-  }, [executedToolParts, liveCallsById]);
+    return executedToolParts.findIndex((part) => {
+      const activity = toolActivity(part, liveCallsById.get(part.toolCallId), preparedIds.has(part.toolCallId), messageRunning);
+      return activity === "generating" || activity === "queued";
+    });
+  }, [executedToolParts, liveCallsById, preparedIds, messageRunning]);
   const toolWorking = activeIndex >= 0;
   const activePart = activeIndex >= 0 ? executedToolParts[activeIndex] : undefined;
   const activeStep = activeIndex >= 0 ? steps[activeIndex] : undefined;
@@ -158,25 +159,12 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
   const lastStep = lastIndex >= 0 ? steps[lastIndex] : undefined;
   const lastPart = lastIndex >= 0 ? executedToolParts[lastIndex] : undefined;
   const lastCall = lastPart ? liveCallsById.get(lastPart.toolCallId) : undefined;
-  const pendingPart = pendingToolParts[0];
-  const pendingKey = pendingPart?.toolCallId;
-  const pendingPrepared = Boolean(pendingPart && preparedIds.has(pendingPart.toolCallId) && !liveCallsById.has(pendingPart.toolCallId));
-  const preparedIndex = pendingPrepared
-    ? executedToolParts.findIndex((part) => part.toolCallId === pendingPart?.toolCallId)
-    : -1;
-  const preparedStep = preparedIndex >= 0 ? steps[preparedIndex] : undefined;
-  const [preparationKey, setPreparationKey] = useState<string>();
-
-  useEffect(() => {
-    if (!pendingKey) {
-      setPreparationKey(undefined);
-      return undefined;
-    }
-    const timer = setTimeout(() => setPreparationKey(pendingKey), 400);
-    return () => clearTimeout(timer);
-  }, [pendingKey]);
-
-  const showingPreparation = pendingKey !== undefined && !pendingPrepared && preparationKey === pendingKey;
+  const headerPart = toolWorking ? activePart : lastPart;
+  const headerCall = toolWorking ? activeCall : lastCall;
+  const headerResult = headerCall?.result !== undefined ? headerCall.result : headerPart?.result;
+  const headerStat = headerResult !== undefined
+    ? toolDiffStats(detectToolPresentation(headerResult, headerCall?.args ?? headerPart?.args))
+    : undefined;
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -187,31 +175,53 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
     return () => clearInterval(timer);
   }, [activeCall?.startedAt, activeCall?.status, activeCall?.toolCallId]);
 
-  const activeLabel = toolWorking && activePart && activeStep
-    ? toolActionSummary(activePart, activeStep, activeCall, true, now, locale)
-    : pendingPrepared && pendingPart && preparedStep
-      ? t("chat.toolSummaryPrepared", { operation: preparedStep.verb, target: preparedStep.target })
-      : showingPreparation
-        ? t("chat.toolPreparingNext")
-        : t("chat.toolPreparingNext");
-  const restingLabel = lastStep
+  const regionOpen = messageRunning && endIndex === parts.length;
+  const summaryLabel = lastStep
     ? toolActionSummary(lastPart!, lastStep, lastCall, false, now, locale)
     : "";
+  const regionElapsed = useMemo(() => {
+    let start = Infinity;
+    let end = 0;
+    for (const part of executedToolParts) {
+      const call = liveCallsById.get(part.toolCallId);
+      if (call?.startedAt !== undefined && Number.isFinite(call.startedAt)) start = Math.min(start, call.startedAt);
+      if (call?.completedAt !== undefined && Number.isFinite(call.completedAt)) end = Math.max(end, call.completedAt);
+    }
+    return start !== Infinity && end > start ? Math.max(1, Math.round((end - start) / 1000)) : undefined;
+  }, [executedToolParts, liveCallsById]);
+  const activity = activePart ? toolActivity(activePart, activeCall, preparedIds.has(activePart.toolCallId), messageRunning) : undefined;
+  const activeLabel = activePart && activeStep
+    ? activity === "generating"
+      ? `${t("chat.toolGenerating", { operation: activeStep.verb })} · ${activeStep.target}`
+      : activity === "queued" ? `${t("chat.toolQueued")} · ${activeStep.target}`
+        : activity === "waiting" ? `${t("chat.toolApprovalPending")} · ${activeStep.target}`
+          : toolActionSummary(activePart, activeStep, activeCall, true, now, locale)
+    : regionOpen ? summaryLabel : "";
+  const restingLabel = !messageRunning && regionElapsed !== undefined
+    ? t("chat.toolRegionElapsed", { duration: formatDuration(regionElapsed, locale) })
+    : summaryLabel;
 
-  if (steps.length === 0 && !showingPreparation) return null;
+  if (steps.length === 0) return null;
+
+  if (steps.length === 1) {
+    const part = executedToolParts[0];
+    return <ToolCallEntry part={part} step={steps[0]} prepared={preparedIds.has(part.toolCallId)} messageRunning={messageRunning} />;
+  }
 
   return (
     <ToolTimeline
       steps={steps}
       visibleSteps={steps.length}
-      streaming={toolWorking || pendingPrepared || showingPreparation}
-      activeStepIndex={activeIndex >= 0 ? activeIndex : preparedIndex >= 0 ? preparedIndex : undefined}
+      streaming={toolWorking || regionOpen}
       open={open}
       onOpenChange={setOpen}
       restingLabel={restingLabel}
       activeLabel={activeLabel}
+      headerIcon={(activeStep ?? lastStep)?.icon}
+      headerTint={toolWorking ? undefined : lastStep?.tint}
+      headerStat={headerStat}
       stats={[]}
-      renderStep={(_, index) => <ToolCallEntry part={executedToolParts[index]} step={steps[index]} prepared={preparedIds.has(executedToolParts[index]?.toolCallId ?? "")} />}
+      renderStep={(_, index) => <ToolCallEntry part={executedToolParts[index]} step={steps[index]} prepared={preparedIds.has(executedToolParts[index]?.toolCallId ?? "")} messageRunning={messageRunning} />}
       className="q-tool-timeline max-w-2xl"
     />
   );

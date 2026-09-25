@@ -20,6 +20,7 @@ const SessionRow: FC<{ session: SessionInfo }> = ({ session }) => {
   const deleteSession = useStore((s) => s.deleteSession);
   const priority = useSidebarPreferences((s) => s.priorityIds.includes(session.id));
   const titleGenerating = useStore((s) => s.titleGeneratingSessionIds.includes(session.id));
+  const isRunning = useStore((s) => s.running && s.activeRunId !== undefined && s.runs.some((run) => run.id === s.activeRunId && run.sessionId === session.id));
   const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(session.title);
@@ -27,12 +28,15 @@ const SessionRow: FC<{ session: SessionInfo }> = ({ session }) => {
   const active = currentSessionId === session.id;
   useEffect(() => { if (renaming) inputRef.current?.select(); }, [renaming]);
   const submitRename = () => { const next = title.trim(); if (next && next !== session.title) renameSession(session.id, next); setRenaming(false); };
-  return <motion.div layout className={cn("group relative flex h-8 items-center rounded-md", (active || renaming) && "bg-muted")}>
+  const isBusy = titleGenerating || isRunning;
+  return <motion.div layout data-active={active || undefined} className={cn("q-sidebar-session-row group relative flex h-8 items-center rounded-md", (active || renaming) && "bg-muted")}>
     {renaming ? <input ref={inputRef} value={title} onChange={(event) => setTitle(event.target.value)} onBlur={submitRename} onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setTitle(session.title); setRenaming(false); } }} className="border-input bg-background focus:border-ring mx-1 h-6 min-w-0 flex-1 rounded-md border px-2 text-xs outline-none" aria-label={t("sidebar.renameSession")} /> : <button type="button" className={rowButtonClass} onClick={() => selectSession(session.id)}>
-      {titleGenerating && <MorphingSpinner className="text-muted-foreground" label={t("chat.generatingTitle")} />}
-      <span className="min-w-0 flex-1 truncate">{session.title || t("sidebar.newChat")}</span>{priority && <PinIcon className="text-muted-foreground size-3 shrink-0" />}
+      <span className="q-sidebar-session-title">{session.title || t("sidebar.newChat")}</span>{priority && <PinIcon className="text-muted-foreground size-3 shrink-0" />}
     </button>}
-    {!renaming && <div className={cn("absolute end-1 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100", active && "opacity-100")}><SidebarEntityMenu pinned={priority} onTogglePinned={() => togglePriority(session.id)} onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session.title || t("sidebar.newChat") }))) deleteSession(session.id); }} ariaLabel={t("sidebar.chatOptions")} /></div>}
+    {!renaming && <div className="absolute end-1 top-1/2 grid size-6 -translate-y-1/2 place-items-center opacity-0 transition-opacity group-hover:opacity-100">
+      {isBusy && <MorphingSpinner className="text-muted-foreground pointer-events-none absolute transition-opacity group-hover:opacity-0" label={isRunning ? undefined : t("chat.generatingTitle")} />}
+      <div className={cn("transition-opacity", isBusy && "opacity-0 group-hover:opacity-100")}><SidebarEntityMenu pinned={priority} onTogglePinned={() => togglePriority(session.id)} onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session.title || t("sidebar.newChat") }))) deleteSession(session.id); }} ariaLabel={t("sidebar.chatOptions")} /></div>
+    </div>}
   </motion.div>;
 };
 

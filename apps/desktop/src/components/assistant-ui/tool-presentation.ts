@@ -395,6 +395,14 @@ export function detectToolPresentation(result: unknown, args?: unknown): ToolPre
   const parsedResult = parseJson(result);
   const resultText = textFrom(parsedResult);
   const name = pathFrom(parsedResult) ?? pathFrom(args);
+  // Command output stays terminal even when stdout looks like a patch:
+  // `git diff` prints a diff but the call itself edited nothing.
+  const command = commandFrom(args, true) ?? commandFrom(parsedResult);
+  const terminalRecord = asRecord(parsedResult);
+  if (command || (terminalRecord && (terminalRecord.stdout !== undefined || terminalRecord.stderr !== undefined || terminalRecord.exitCode !== undefined))) {
+    return { kind: "terminal", ...(command ? { command } : {}), output: resultText ?? "" };
+  }
+
   const patch = findPatch(parsedResult) ?? findPatch(args);
   if (patch) return { kind: "diff", patch, ...(name ? { name } : {}) };
 
@@ -431,12 +439,6 @@ export function detectToolPresentation(result: unknown, args?: unknown): ToolPre
   const image = findImage(parsedResult);
   if (image) return { kind: "image", ...image };
 
-  const command = commandFrom(args, true) ?? commandFrom(parsedResult);
-  const terminalRecord = asRecord(parsedResult);
-  if (command || (terminalRecord && (terminalRecord.stdout !== undefined || terminalRecord.stderr !== undefined || terminalRecord.exitCode !== undefined))) {
-    return { kind: "terminal", ...(command ? { command } : {}), output: resultText ?? "" };
-  }
-
   const query = searchQueryFrom(args);
   if (query && resultText && looksLikeSearch(resultText)) {
     return { kind: "search", query, items: searchItemsFrom(resultText), text: resultText };
@@ -445,6 +447,34 @@ export function detectToolPresentation(result: unknown, args?: unknown): ToolPre
   if (name && resultText) return { kind: "file", content: resultText, name };
   if (resultText) return { kind: "text", text: resultText };
   return { kind: "unknown", ...(resultText ? { text: resultText } : {}), debugJson: debugJson(parsedResult) };
+}
+
+/** Count added/removed lines for a diff presentation using a line-multiset diff. */
+export function toolDiffStats(presentation: ToolPresentation): { file: string; added: number; removed: number } | undefined {
+  if (presentation.kind !== "diff") return undefined;
+  const file = presentation.name ?? "文件";
+  if (presentation.patch) {
+    let added = 0;
+    let removed = 0;
+    for (const line of presentation.patch.split(/\r?\n/)) {
+      if (line.startsWith("+") && !line.startsWith("+++")) added += 1;
+      else if (line.startsWith("-") && !line.startsWith("---")) removed += 1;
+    }
+    return { file, added, removed };
+  }
+  const oldLines = presentation.oldFile?.content ? presentation.oldFile.content.split(/\r?\n/) : [];
+  const newLines = presentation.newFile?.content ? presentation.newFile.content.split(/\r?\n/) : [];
+  const remaining = new Map<string, number>();
+  for (const line of oldLines) remaining.set(line, (remaining.get(line) ?? 0) + 1);
+  let added = 0;
+  for (const line of newLines) {
+    const left = remaining.get(line) ?? 0;
+    if (left > 0) remaining.set(line, left - 1);
+    else added += 1;
+  }
+  let removed = 0;
+  for (const count of remaining.values()) removed += count;
+  return { file, added, removed };
 }
 
 export function toolPresentationSummary(presentation: ToolPresentation): string {

@@ -13,6 +13,13 @@ export function toolCallStatus(part: ToolPart, call?: Pick<ToolCall, "status">):
   return part.result !== undefined ? "success" : "running";
 }
 
+export function toolActivity(part: ToolPart, call: Pick<ToolCall, "status"> | undefined, prepared: boolean, messageRunning: boolean) {
+  const status = toolCallStatus(part, call);
+  if (status === "failed" || status === "waiting") return status;
+  if (!call && part.result === undefined && messageRunning) return prepared ? "queued" : "generating";
+  return status;
+}
+
 export function formatToolPayload(value: unknown): string {
   if (value === undefined) return "";
   let formatted: string;

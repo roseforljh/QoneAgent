@@ -148,30 +148,30 @@ export const ThreadListItem: FC = () => {
         data-slot="aui_thread-list-item-trigger"
         className="focus-visible:ring-ring/50 text-foreground/95 group-hover:text-foreground group-data-active:text-foreground flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start outline-none transition-colors group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
       >
-        {isRunning && <MorphingSpinner data-slot="aui_thread-list-item-running" className="text-muted-foreground me-1.5" />}
-        <span data-slot="aui_thread-list-item-title" className="min-w-0 flex-1 truncate">
+        <span data-slot="aui_thread-list-item-title" className="q-sidebar-session-title">
           <ThreadListItemPrimitive.Title fallback="New Chat" />
         </span>
         {isRunning && <span className="sr-only">Running</span>}
       </ThreadListItemPrimitive.Trigger>}
-      <ThreadListItemMore onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session?.title ?? t("sidebar.newChat") }))) deleteSession(id); }} />
+      <ThreadListItemMore isRunning={isRunning} onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session?.title ?? t("sidebar.newChat") }))) deleteSession(id); }} />
     </ThreadListItemPrimitive.Root>
   );
 };
 
-const ThreadListItemMore: FC<{ onRename: () => void; onDelete: () => void | Promise<void> }> = ({ onRename, onDelete }) => {
+const ThreadListItemMore: FC<{ isRunning: boolean; onRename: () => void; onDelete: () => void | Promise<void> }> = ({ isRunning, onRename, onDelete }) => {
   const { t } = useLocale();
   const id = useAuiState((s) => s.threadListItem.id);
   const priority = useSidebarPreferences((s) => s.priorityIds.includes(id));
   const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   return (
     <ThreadListItemMorePrimitive.Root sharedFocusGroup>
+      {isRunning && <MorphingSpinner data-slot="aui_thread-list-item-running" className="text-muted-foreground pointer-events-none absolute end-1.5 top-1/2 size-3.5 -translate-y-1/2 transition-opacity group-hover:opacity-0" />}
       <ThreadListItemMorePrimitive.Trigger asChild>
         <Button
           variant="ghost"
           size="icon"
           data-slot="aui_thread-list-item-more"
-          className="data-[state=open]:bg-accent absolute end-1.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 group-hover:opacity-100 group-has-focus-visible:opacity-100 group-data-active:opacity-100 data-[state=open]:opacity-100"
+          className="data-[state=open]:bg-accent absolute end-1.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 group-hover:opacity-100 focus-visible:ring-0"
         >
           <MoreHorizontalIcon className="size-3.5" />
           <span className="sr-only">{t("sidebar.chatOptions")}</span>

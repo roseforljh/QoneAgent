@@ -50,6 +50,58 @@ const event = (type: string, payload: unknown): AgentEvent => ({
   payload,
 });
 
+test("session creation requires an imported selected workspace at every entry", () => {
+  const previous = useStore.getState();
+  const start = commands.length;
+  const workspace = { id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 };
+  try {
+    useStore.setState({ workspaces: [], currentWorkspaceId: undefined, currentSessionId: undefined, draftWorkspaceId: undefined, running: false, creatingSession: false });
+    useStore.getState().newSession();
+    useStore.getState().newSessionInWorkspace("missing");
+    useStore.getState().createSessionForWorkspace("missing");
+    expect(commands).toHaveLength(start);
+    expect(useStore.getState().draftWorkspaceId).toBeUndefined();
+
+    useStore.setState({ workspaces: [workspace], currentWorkspaceId: "deleted-workspace" });
+    useStore.getState().newSession();
+    expect(commands).toHaveLength(start);
+
+    useStore.setState({ currentWorkspaceId: workspace.id, running: true });
+    useStore.getState().newSession();
+    expect(commands).toHaveLength(start);
+
+    useStore.setState({ running: false });
+    useStore.getState().newSession();
+    expect(commands.slice(start)).toEqual([expect.objectContaining({ type: "session.create", workspaceId: workspace.id })]);
+
+    useStore.getState().newSessionInWorkspace(workspace.id);
+    expect(useStore.getState().draftWorkspaceId).toBe(workspace.id);
+    useStore.getState().createSessionForWorkspace(workspace.id);
+    expect(commands.filter((command) => command.type === "session.create").slice(-2)).toEqual([
+      expect.objectContaining({ workspaceId: workspace.id }),
+      expect.objectContaining({ workspaceId: workspace.id }),
+    ]);
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("removing a workspace refreshes sessions to exclude its orphaned chats", () => {
+  const previous = useStore.getState();
+  const start = commands.length;
+  try {
+    useStore.setState({ currentWorkspaceId: "workspace-1", currentSessionId: "session-1", workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }] });
+    emit({ type: "workspace.deleted", workspaceId: "workspace-1" });
+    expect(commands.slice(start)).toEqual([expect.objectContaining({ type: "session.list" })]);
+    emit({ type: "session.list", sessions: [] });
+    expect(useStore.getState().sessions).toEqual([]);
+    expect(useStore.getState().currentSessionId).toBeUndefined();
+    expect(useStore.getState().currentWorkspaceId).toBeUndefined();
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
 test("failed reply stays with its user message and retry replaces that turn once", () => {
   useStore.setState({
     currentSessionId: "session-1",
@@ -337,4 +389,58 @@ test("reloaded tool rows restore the Pi tool-call id", () => {
     startedAt: 1_000,
     completedAt: 2_000,
   });
+});
+
+test("reloaded legacy tool rows use the persisted assistant part id", () => {
+  useStore.setState({ currentSessionId: "session-legacy-tool-id", toolCalls: [], messages: [{
+    id: "assistant-legacy", role: "assistant", content: "", runId: "run-legacy-tool-id", createdAt: 0,
+    parts: [{ type: "tool-call", toolCallId: "pi-legacy-tool-id", toolName: "bash", args: {}, messageSequence: 1 }],
+  }] });
+  emit({ type: "session.toolCalls", sessionId: "session-legacy-tool-id", toolCalls: [{
+    id: "legacy-random-row-id",
+    runId: "run-legacy-tool-id",
+    toolName: "bash",
+    arguments: "{}",
+    resultSummary: "ok",
+    status: "success",
+    startedAt: 1_000,
+    completedAt: 12_000,
+  }] });
+  expect(useStore.getState().toolCalls[0]).toMatchObject({
+    toolCallId: "pi-legacy-tool-id",
+    startedAt: 1_000,
+    completedAt: 12_000,
+  });
+});
+
+test("streaming tool arguments update one preview without entering prose or completing the tool", () => {
+  const sessionId = "live-tool-session";
+  const runId = "live-tool-run";
+  useStore.setState({ currentSessionId: sessionId, activeRunId: runId, running: true,
+    activeMessageSequence: undefined, streaming: "", streamingParts: [], toolCalls: [], preparedToolCallIds: [] });
+  const send = (type: string, sequence: number, payload: unknown, eventRunId = runId) => emit({
+    type: "agent.event", event: { eventId: crypto.randomUUID(), sessionId, runId: eventRunId, sequence, type, timestamp: sequence, payload },
+  });
+  send("message.started", 400, { message: { role: "assistant", content: [] } });
+  send("message.block.started", 401, { blockType: "tool-call", contentIndex: 0, toolName: "edit", args: {} });
+  send("message.delta", 402, { blockType: "tool-call", contentIndex: 0, toolCallId: "live-edit", toolName: "edit", args: { path: "a.ts", oldText: "old", newText: "n" } });
+  send("message.delta", 403, { blockType: "tool-call", contentIndex: 0, toolCallId: "live-edit", toolName: "edit", args: { path: "a.ts", oldText: "old", newText: "new" } });
+  expect(useStore.getState().streaming).toBe("");
+  expect(useStore.getState().streamingParts).toEqual([{
+    type: "tool-call", toolCallId: "live-edit", toolName: "edit", messageSequence: 400,
+    args: { path: "a.ts", oldText: "old", newText: "new" },
+  }]);
+  expect(useStore.getState().toolCalls).toHaveLength(0);
+  expect(useStore.getState().preparedToolCallIds).toEqual([]);
+  send("message.block.completed", 404, { blockType: "tool-call", contentIndex: 0, toolCallId: "live-edit", args: { path: "a.ts", oldText: "old", newText: "new final" } });
+  expect(useStore.getState().preparedToolCallIds).toEqual(["live-edit"]);
+  send("tool.started", 405, { toolCallId: "live-edit", toolName: "edit", args: { path: "a.ts", oldText: "old", newText: "new final" } });
+  send("tool.updated", 406, { toolCallId: "live-edit", update: "applying" });
+  expect(useStore.getState().toolCalls[0]).toMatchObject({ result: "applying", status: "running" });
+  send("tool.updated", 407, { toolCallId: "live-edit", update: "wrong run" }, "another-run");
+  expect(useStore.getState().toolCalls[0]?.result).toBe("applying");
+  send("tool.completed", 408, { toolCallId: "live-edit", result: "done" });
+  send("tool.updated", 409, { toolCallId: "live-edit", update: "late update" });
+  expect(useStore.getState().toolCalls[0]).toMatchObject({ result: "done", status: "success" });
+  expect(useStore.getState().streamingParts).toHaveLength(1);
 });

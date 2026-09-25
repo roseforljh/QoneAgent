@@ -20,7 +20,7 @@ import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
 import { RunOptionsPopover } from "./run-options-popover";
-import { ShimmerLabel } from "./elements/surfaces";
+import { EllipsisDots, ShimmerLabel } from "./elements/surfaces";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
 import "./thread-viewport.css";
 import { useStore } from "../../store";
@@ -104,7 +104,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       </AuiIf>
 
       <AuiIf condition={(s) => !s.thread.isEmpty}>
-        <ThreadPrimitive.Viewport turnAnchor="top" className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto">
+        <ThreadPrimitive.Viewport turnAnchor="top" autoScroll className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto">
           <ThreadPrimitive.Messages>
             {({ message }) => {
               if (message.role === "user" && pairedUserIds.has(message.id)) return null;
@@ -488,10 +488,14 @@ const AgentPreparation: FC = () => {
     return call?.status === "running" || call?.status === "waiting"
       || (!call && part.result === undefined && !part.isError);
   });
+  const parts = useAuiState((state) => state.message.parts);
+  const tailPart = parts.at(-1);
+  const tailIsToolRegion = tailPart?.type === "tool-call"
+    && (tailPart.toolName !== "present" || Boolean(tailPart.isError));
   // The run can be active before Pi emits message.started. Keep this fallback
   // independent of activeMessageSequence so the first visible state is not a
   // blank assistant bubble.
-  const candidate = messageRunning && !hasCurrentText && !hasUnfinishedTool;
+  const candidate = messageRunning && !hasCurrentText && !hasUnfinishedTool && !tailIsToolRegion;
   const [visiblePhase, setVisiblePhase] = useState<string>();
 
   useEffect(() => {
@@ -507,8 +511,9 @@ const AgentPreparation: FC = () => {
   return (
     <div className="text-foreground/55 flex items-center py-1 text-sm" role="status" aria-live="polite">
       <ShimmerLabel active className="relative inline-block leading-none">
-        {t("chat.toolPreparingNext")}
+        {t("chat.connecting")}
       </ShimmerLabel>
+      <EllipsisDots />
     </div>
   );
 };

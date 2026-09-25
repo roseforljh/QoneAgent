@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 
 export function hasTauriBridge() {
@@ -42,6 +42,26 @@ export interface ToolCall {
   summary?: string;
   startedAt?: number;
   completedAt?: number;
+}
+
+function alignToolCallIds(calls: readonly ToolCall[], messages: readonly ChatMessage[]): ToolCall[] {
+  const partsByRun = new Map<string, Extract<AssistantMessagePart, { type: "tool-call" }>[] >();
+  for (const message of messages) {
+    if (!message.runId || !message.parts) continue;
+    const parts = message.parts.filter((part): part is Extract<AssistantMessagePart, { type: "tool-call" }> => part.type === "tool-call");
+    if (parts.length > 0) partsByRun.set(message.runId, [...(partsByRun.get(message.runId) ?? []), ...parts]);
+  }
+  const used = new Map<string, Set<string>>();
+  return calls.map((call) => {
+    const runParts = partsByRun.get(call.runId) ?? [];
+    const runUsed = used.get(call.runId) ?? new Set<string>();
+    const exact = runParts.find((part) => part.toolCallId === call.toolCallId);
+    const match = exact ?? runParts.find((part) => part.toolName === call.toolName && !runUsed.has(part.toolCallId));
+    if (!match) return call;
+    runUsed.add(match.toolCallId);
+    used.set(call.runId, runUsed);
+    return match.toolCallId === call.toolCallId ? call : { ...call, toolCallId: match.toolCallId };
+  });
 }
 
 interface AgentState {
@@ -84,6 +104,12 @@ interface AgentState {
   permissionRules: PermissionRuleInfo[];
   workspaceFiles: WorkspaceFileInfo[];
   gitStatus: string;
+  gitEntries: WorkspaceGitEntry[];
+  gitLoaded: boolean;
+  runtimeCapabilities: string[];
+  workspaceError?: string;
+  openFile?: { workspaceId: string; path: string; content: string };
+  gitDiffView?: { workspaceId: string; path: string; diff: string };
   pinnedWorkspaceIds: string[];
   oauthAuthorization?: { requestId: string; serverId: string; url: string; state: string };
   send: (cmd: RuntimeCommand) => void;
@@ -115,6 +141,7 @@ let pendingAgentRun: { requestId: string; sessionId: string; userMessageId: stri
 const handshakeRequests = new Set<string>();
 let metadataLookupSupported = false;
 const metadataRequests = new Map<string, { resolve: (value: Extract<RuntimeEvent, { type: "model.metadata-resolved" }>["models"]) => void; reject: (error: Error) => void }>();
+const workspaceRequests = new Map<string, RuntimeCommand["type"]>();
 
 export function requestModelMetadata(input: Omit<Extract<RuntimeCommand, { type: "model.resolve-metadata" }>, "type" | "requestId">): Promise<Extract<RuntimeEvent, { type: "model.metadata-resolved" }>["models"]> {
   if (!hasTauriBridge()) return Promise.reject(new Error("Runtime is unavailable"));
@@ -167,6 +194,10 @@ export const useStore = create<AgentState>((set, get) => ({
   permissionRules: [],
   workspaceFiles: [],
   gitStatus: "",
+  gitEntries: [],
+  gitLoaded: false,
+  runtimeCapabilities: [],
+  workspaceError: undefined,
   pinnedWorkspaceIds: (() => {
     try {
       const raw = window.localStorage.getItem("qone-pinned-workspaces");
@@ -179,6 +210,7 @@ export const useStore = create<AgentState>((set, get) => ({
     // Browser previews do not expose Tauri's invoke bridge.
     if (!hasTauriBridge()) return;
     if (cmd.type === "ping") handshakeRequests.add(cmd.requestId);
+    if (cmd.type === "workspace.files" || cmd.type === "workspace.git" || cmd.type === "workspace.gitDiff" || cmd.type === "file.read") workspaceRequests.set(cmd.requestId, cmd.type);
     invoke("runtime_send", { cmd: JSON.stringify(cmd) }).catch((error) => {
       console.error("runtime_send failed", error);
       if (cmd.type === "agent.run") {
@@ -194,6 +226,8 @@ export const useStore = create<AgentState>((set, get) => ({
           preparedToolCallIds: [],
           activeRunId: undefined,
         });
+      } else if (workspaceRequests.delete(cmd.requestId)) {
+        set({ lastError: String(error), workspaceError: String(error) });
       } else {
         set({ lastError: String(error) });
       }
@@ -201,14 +235,21 @@ export const useStore = create<AgentState>((set, get) => ({
   },
 
   newSession: () => {
-    set({ draftRunOptions: {} });
-    get().send({ type: "session.create", requestId: rid(), workspaceId: get().currentWorkspaceId });
+    const state = get();
+    if (state.running) return;
+    const workspaceId = state.currentWorkspaceId;
+    if (!workspaceId || !state.workspaces.some((workspace) => workspace.id === workspaceId)) {
+      set({ lastError: "请先导入项目，再创建会话。" });
+      return;
+    }
+    set({ draftRunOptions: {}, lastError: undefined });
+    get().send({ type: "session.create", requestId: rid(), workspaceId });
   },
 
   newSessionInWorkspace: (workspaceId) => {
     if (get().running || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
     clearDelta();
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [], lastError: undefined, chatRunError: undefined });
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [], lastError: undefined, chatRunError: undefined });
     get().refreshWorkspace(workspaceId);
   },
 
@@ -256,7 +297,7 @@ export const useStore = create<AgentState>((set, get) => ({
 
   selectWorkspace: (id) => {
     if (!get().workspaces.some((workspace) => workspace.id === id)) return;
-    set((state) => ({ currentWorkspaceId: id, ...(state.currentWorkspaceId === id ? {} : { workspaceLoadingId: id }) }));
+    set((state) => state.currentWorkspaceId === id ? {} : { currentWorkspaceId: id, workspaceLoadingId: id, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined });
     get().refreshWorkspace(id);
   },
 
@@ -287,7 +328,7 @@ export const useStore = create<AgentState>((set, get) => ({
     pendingMessageReplacements.delete(id);
     const workspaceId = get().sessions.find((session) => session.id === id)?.workspaceId;
     const workspaceChanged = workspaceId !== undefined && workspaceId !== get().currentWorkspaceId;
-    set({ currentSessionId: id, messagesLoadingSessionId: id, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [], chatRunError: undefined });
+    set({ currentSessionId: id, messagesLoadingSessionId: id, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [], chatRunError: undefined });
     get().send({ type: "session.messages", requestId: rid(), sessionId: id });
     get().send({ type: "session.toolCalls", requestId: rid(), sessionId: id });
     get().send({ type: "session.runs", requestId: rid(), sessionId: id });
@@ -522,7 +563,7 @@ export function initBridge() {
         }
         if (!handshakeRequests.delete(msg.requestId)) break;
         metadataLookupSupported = Boolean(msg.capabilities?.includes("model.resolve-metadata") && msg.capabilities?.includes("model.metadata-sources"));
-        useStore.setState({ connected: true });
+        useStore.setState({ connected: true, runtimeCapabilities: msg.capabilities ?? [] });
         s.send({ type: "session.list", requestId: rid() });
         s.send({ type: "workspace.list", requestId: rid() });
         s.send({ type: "model.list", requestId: rid() });
@@ -610,7 +651,7 @@ export function initBridge() {
           const replacedMessageId = pendingMessageReplacements.get(msg.sessionId);
           if (replacedMessageId && msg.messages.some((message) => message.id === replacedMessageId)) break;
           if (replacedMessageId) pendingMessageReplacements.delete(msg.sessionId);
-          useStore.setState({ messagesLoadingSessionId: undefined, messages: msg.messages.map((m: MessageInfo) => ({
+          const messages = msg.messages.map((m: MessageInfo) => ({
             id: m.id,
             role: m.role,
             content: m.content,
@@ -618,26 +659,40 @@ export function initBridge() {
             attachments: m.attachments,
             runId: m.runId,
             createdAt: m.createdAt,
-          })) });
+          }));
+          useStore.setState((st) => ({ messagesLoadingSessionId: undefined, messages, toolCalls: alignToolCallIds(st.toolCalls, messages) }));
         }
         break;
       case "session.toolCalls":
         if (msg.sessionId === useStore.getState().currentSessionId) {
-          useStore.setState({ toolCalls: msg.toolCalls.map((t) => ({
-            toolCallId: t.id.startsWith(`${t.runId}:`) ? t.id.slice(t.runId.length + 1) : t.id,
-            runId: t.runId, toolName: t.toolName,
-            status: t.status === "failed" || t.status === "cancelled" ? "failed" : t.status === "running" ? "running" : t.status === "waiting_approval" ? "waiting" : "success",
-            args: (() => { try { return t.arguments ? JSON.parse(t.arguments) : undefined; } catch { return undefined; } })(),
-            argsText: t.arguments ?? undefined,
-            result: (() => { try { return t.resultSummary ? JSON.parse(t.resultSummary) : undefined; } catch { return t.resultSummary; } })(),
-            summary: t.resultSummary,
-            startedAt: t.startedAt,
-            completedAt: t.completedAt,
-          })) });
+          useStore.setState((st) => {
+            const calls = msg.toolCalls.map((t) => ({
+                toolCallId: t.id.startsWith(`${t.runId}:`) ? t.id.slice(t.runId.length + 1) : t.id,
+                runId: t.runId, toolName: t.toolName,
+                status: t.status === "failed" || t.status === "cancelled" ? "failed" : t.status === "running" ? "running" : t.status === "waiting_approval" ? "waiting" : "success",
+                args: (() => { try { return t.arguments ? JSON.parse(t.arguments) : undefined; } catch { return undefined; } })(),
+                argsText: t.arguments ?? undefined,
+                result: (() => { try { return t.resultSummary ? JSON.parse(t.resultSummary) : undefined; } catch { return t.resultSummary; } })(),
+                summary: t.resultSummary,
+                startedAt: t.startedAt,
+                completedAt: t.completedAt,
+              } satisfies ToolCall));
+            return { toolCalls: alignToolCallIds(calls, st.messages) };
+          });
         }
         break;
       case "session.runs":
-        if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ runs: msg.runs });
+        if (msg.sessionId === useStore.getState().currentSessionId) {
+          const activeRun = msg.runs.find((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));
+          useStore.setState((st) => ({
+            runs: msg.runs,
+            ...(activeRun && !st.running
+              ? { running: true, activeRunId: activeRun.id }
+              : !activeRun && st.running && st.activeRunId === undefined
+                ? { running: false }
+                : {}),
+          }));
+        }
         break;
       case "artifact.list":
         if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ artifacts: msg.artifacts });
@@ -647,7 +702,7 @@ export function initBridge() {
         const current = useStore.getState().currentWorkspaceId;
         const selected = current && msg.workspaces.some((workspace) => workspace.id === current) ? current : msg.workspaces[0]?.id;
         if (selected) {
-          useStore.setState({ currentWorkspaceId: selected, workspaceLoadingId: selected });
+          useStore.setState({ currentWorkspaceId: selected, workspaceLoadingId: selected, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined });
           useStore.getState().refreshWorkspace(selected);
         }
         break;
@@ -658,6 +713,7 @@ export function initBridge() {
           workspaces: [msg.workspace, ...st.workspaces.filter((w) => w.id !== msg.workspace.id)],
           currentWorkspaceId: msg.workspace.id,
           workspaceLoadingId: msg.workspace.id,
+          workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined,
         }));
         useStore.getState().refreshWorkspace(msg.workspace.id);
         useStore.setState({ draftWorkspaceId: msg.workspace.id, currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [] });
@@ -674,16 +730,23 @@ export function initBridge() {
           return {
             workspaces,
             currentWorkspaceId: nextWorkspaceId,
-            ...(wasCurrent ? { currentSessionId: undefined, workspaceLoadingId: nextWorkspaceId, messagesLoadingSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [] } : {}),
+            ...(wasCurrent ? { currentSessionId: undefined, workspaceLoadingId: nextWorkspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [] } : {}),
           };
         });
         if (useStore.getState().currentWorkspaceId) useStore.getState().refreshWorkspace();
+        s.send({ type: "session.list", requestId: rid() });
         break;
       case "workspace.files":
-        if (msg.workspaceId === useStore.getState().currentWorkspaceId) useStore.setState({ workspaceFiles: msg.files, workspaceLoadingId: undefined });
+        if (msg.requestId) workspaceRequests.delete(msg.requestId);
+        if (msg.workspaceId === useStore.getState().currentWorkspaceId) useStore.setState((st) => ({
+          workspaceFiles: msg.path ? [...st.workspaceFiles.filter((file) => !file.path.startsWith(`${msg.path}/`)), ...msg.files] : msg.files,
+          workspaceLoadingId: undefined,
+          workspaceError: undefined,
+        }));
         break;
       case "workspace.git":
-        if (msg.workspaceId === useStore.getState().currentWorkspaceId) useStore.setState({ gitStatus: msg.status });
+        if (msg.requestId) workspaceRequests.delete(msg.requestId);
+        if (msg.workspaceId === useStore.getState().currentWorkspaceId) useStore.setState({ gitStatus: msg.status, gitEntries: msg.entries ?? [], gitLoaded: true, workspaceError: undefined });
         break;
       case "model.list":
         useStore.setState((st) => ({
@@ -736,6 +799,8 @@ export function initBridge() {
         useStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
         break;
       case "error":
+        const workspaceRequest = msg.requestId ? workspaceRequests.get(msg.requestId) : undefined;
+        if (msg.requestId) workspaceRequests.delete(msg.requestId);
         if (pendingAgentRun && pendingAgentRun.requestId === msg.requestId) {
           const pending = pendingAgentRun;
           pendingAgentRun = undefined;
@@ -755,6 +820,7 @@ export function initBridge() {
         }
         useStore.setState((st) => ({
           lastError: msg.message,
+          ...(workspaceRequest ? { workspaceError: msg.message } : {}),
           ...(st.creatingSession ? { creatingSession: false, pendingMessage: undefined } : {}),
           ...(st.running && !st.activeRunId ? { running: false } : {}),
         }));
@@ -815,7 +881,7 @@ export function initBridge() {
           });
         }
 
-        else if (ev.type === "message.block.completed" && ev.runId === useStore.getState().activeRunId && p?.blockType === "tool-call") {
+        else if ((ev.type === "message.block.completed" || ev.type === "message.delta") && ev.runId === useStore.getState().activeRunId && p?.blockType === "tool-call") {
           useStore.setState((st) => {
             const fallbackId = st.activeMessageSequence !== undefined && typeof p.contentIndex === "number"
               ? `pi-${st.activeMessageSequence}-${p.contentIndex}`
@@ -830,7 +896,7 @@ export function initBridge() {
             const hasStartedCall = st.toolCalls.some((call) => call.runId === ev.runId && call.toolCallId === toolCallId);
             return {
               streamingParts: applyAssistantToolEvent(parts, "tool.started", { ...p, toolCallId }),
-              preparedToolCallIds: hasStartedCall || st.preparedToolCallIds.includes(toolCallId)
+              preparedToolCallIds: ev.type !== "message.block.completed" || hasStartedCall || st.preparedToolCallIds.includes(toolCallId)
                 ? st.preparedToolCallIds
                 : [...st.preparedToolCallIds, toolCallId],
             };
@@ -890,8 +956,13 @@ export function initBridge() {
             const lastPart = st.streamingParts.at(-1);
             const messageSequence = st.activeMessageSequence
               ?? (lastPart?.type === "tool-call" ? lastPart.messageSequence : ev.sequence);
+            const existing = st.toolCalls.find((t) => t.toolCallId === toolCallId);
             return {
-              toolCalls: [...st.toolCalls, tc],
+              toolCalls: existing
+                ? st.toolCalls.map((t) => t.toolCallId === toolCallId
+                    ? { ...t, ...tc, startedAt: t.startedAt ?? tc.startedAt, completedAt: undefined }
+                    : t)
+                : [...st.toolCalls, tc],
               preparedToolCallIds: st.preparedToolCallIds.filter((id) => id !== toolCallId),
               ...(ev.runId === st.activeRunId ? {
                 streaming: "",
@@ -905,6 +976,14 @@ export function initBridge() {
               } : {}),
             };
           });
+        } else if (ev.type === "tool.updated" && ev.runId === useStore.getState().activeRunId) {
+          useStore.setState((st) => ({
+            toolCalls: st.toolCalls.map((call) =>
+              call.runId === ev.runId && call.toolCallId === p?.toolCallId && (call.status === "running" || call.status === "waiting")
+                ? { ...call, status: "running", result: p.update }
+                : call
+            ),
+          }));
         } else if (ev.type === "tool.completed" || ev.type === "tool.failed") {
           const id = String(p?.toolCallId ?? "");
           const isErr = ev.type === "tool.failed" || Boolean(p?.isError ?? p?.error);
@@ -950,11 +1029,10 @@ export function initBridge() {
           ev.type === "agent.cancelled" ||
           ev.type === "agent.failed"
         ) {
-          if (ev.runId && ev.runId !== useStore.getState().activeRunId) break;
-          clearDelta();
+          const isActiveRun = !ev.runId || ev.runId === useStore.getState().activeRunId;
+          if (isActiveRun) clearDelta();
           const completedMessage = p?.message;
           if (
-            ev.type === "agent.completed" &&
             completedMessage &&
             typeof completedMessage === "object" &&
             typeof (completedMessage as { id?: unknown }).id === "string" &&
@@ -974,7 +1052,7 @@ export function initBridge() {
                   }],
             }));
           }
-          if (ev.type === "agent.failed") {
+          if (ev.type === "agent.failed" && isActiveRun) {
             useStore.setState((st) => {
               const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
               return userMessage && st.currentSessionId ? {
@@ -990,7 +1068,9 @@ export function initBridge() {
             const status = ev.type === "agent.completed" ? "completed" : ev.type === "agent.cancelled" ? "cancelled" : "failed";
             useStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status, completedAt: Date.now() } : run) }));
           }
-          useStore.setState({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], running: false, activeRunId: undefined, approvals: [] });
+          if (isActiveRun) {
+            useStore.setState({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], running: false, activeRunId: undefined, approvals: [] });
+          }
           const sessionId = ev.sessionId ?? useStore.getState().currentSessionId;
           if (sessionId) {
             const state = useStore.getState();
@@ -1002,6 +1082,14 @@ export function initBridge() {
         }
         break;
       }
+      case "file.read":
+        if (msg.requestId) workspaceRequests.delete(msg.requestId);
+        useStore.setState({ openFile: { workspaceId: msg.workspaceId, path: msg.path, content: msg.content }, workspaceError: undefined });
+        break;
+      case "workspace.gitDiff":
+        if (msg.requestId) workspaceRequests.delete(msg.requestId);
+        useStore.setState({ gitDiffView: { workspaceId: msg.workspaceId, path: msg.path, diff: msg.diff }, workspaceError: undefined });
+        break;
       case "events.replay":
         for (const ev of msg.events) {
           lastSequence = Math.max(lastSequence, ev.sequence);

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../../../lib/utils";
 
 export const paper = "bg-background border border-border/60 dark:bg-popover";
@@ -43,10 +43,56 @@ export const collapsePanel =
 // Shared detail viewports let long results scroll without reserving empty
 // space for short responses.
 export const detailViewport =
-  "max-h-[min(28rem,55dvh)] overflow-auto";
+  "min-h-0 max-h-[min(16rem,38dvh)] overflow-auto";
 
 export const terminalViewport =
-  "max-h-[min(32rem,60dvh)] overflow-auto";
+  "min-h-0 max-h-[min(18rem,40dvh)] overflow-auto";
+
+// Expandable regions share one cap: content under it flows naturally, taller
+// content scrolls inside and fades at whichever edge is clipped.
+export const regionViewport = "max-h-[min(22rem,60dvh)]";
+
+export function FadeScroll({ className, children, ...props }: ComponentProps<"div">) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [fadeTop, setFadeTop] = useState(false);
+  const [fadeBottom, setFadeBottom] = useState(false);
+
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    const contentEl = contentRef.current;
+    if (!scrollEl || !contentEl) return undefined;
+    const update = () => {
+      const remaining = scrollEl.scrollHeight - scrollEl.clientHeight;
+      setFadeTop(scrollEl.scrollTop > 2);
+      setFadeBottom(remaining - scrollEl.scrollTop > 2);
+    };
+    update();
+    scrollEl.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(scrollEl);
+    observer.observe(contentEl);
+    return () => {
+      scrollEl.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, []);
+
+  const maskImage = fadeTop || fadeBottom
+    ? `linear-gradient(to bottom, transparent, black ${fadeTop ? "1.25rem" : "0rem"}, black calc(100% - ${fadeBottom ? "1.25rem" : "0rem"}), transparent)`
+    : undefined;
+
+  return (
+    <div
+      ref={scrollRef}
+      className={cn("overflow-y-auto", className)}
+      style={maskImage ? { maskImage, WebkitMaskImage: maskImage } : undefined}
+      {...props}
+    >
+      <div ref={contentRef}>{children}</div>
+    </div>
+  );
+}
 
 export const live = "text-blue-500 dark:text-blue-400";
 
@@ -55,13 +101,28 @@ export const mono = "font-mono text-[11px] tracking-tight";
 export function ShimmerLabel({
   active = true,
   className,
+  children,
   ...props
 }: ComponentProps<"span"> & { active?: boolean }) {
   return (
-    <span
-      className={cn(active && "shimmer motion-reduce:animate-none", className)}
-      {...props}
-    />
+    <span className={cn("relative inline-block", className)} {...props}>
+      {children}
+      {active && (
+        <span aria-hidden className="q-shine-text motion-reduce:hidden">
+          {children}
+        </span>
+      )}
+    </span>
+  );
+}
+
+export function EllipsisDots() {
+  return (
+    <span aria-hidden className="q-ellipsis-dots">
+      <span />
+      <span />
+      <span />
+    </span>
   );
 }
 

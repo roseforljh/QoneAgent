@@ -1,5 +1,4 @@
-.q-run-options-trigger { display: inline-grid; width: 28px; height: 28px; place-items: center; visibility: hidden; border: 0; border-radius: 50%; background: transparent; color: var(--muted-foreground); cursor: pointer; opacity: 0; pointer-events: none; transform: scale(.92); transition: visibility 0s linear .18s, opacity .15s ease, transform .15s ease, background .15s ease, color .15s ease; }
-.aui-composer-action-wrapper:hover .q-run-options-trigger, .aui-composer-action-wrapper:focus-within .q-run-options-trigger, .aui-composer-action-wrapper .q-run-options-trigger[data-state="open"] { visibility: visible; opacity: 1; pointer-events: auto; transform: scale(1); transition-delay: 0s; }
+.q-run-options-trigger { display: inline-grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background .15s ease, color .15s ease; }
 .q-run-options-trigger:hover, .q-run-options-trigger[data-state="open"] { background: var(--q-hover); color: var(--foreground); }
 .q-run-options-trigger[data-permission-mode="auto"] { color: var(--foreground); }
 .q-run-options-trigger[data-permission-mode="full"] { color: #ef8b45; }

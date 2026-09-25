@@ -17,6 +17,7 @@ import { assistantMessageContent } from "./lib/assistant-message-parts";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
+import { WorkspaceDock } from "./components/assistant-ui/workspace-dock";
 import { ProjectSection } from "./components/assistant-ui/project-section";
 import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
@@ -92,7 +93,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const hasStreamingAssistant = running;
   const runtimeMessages = useMemo(
     () => hasStreamingAssistant
-      ? [...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }]
+      ? [...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts.length ? streamingParts : undefined, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }]
       : messages,
     [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant],
   );
@@ -174,6 +175,10 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
         return;
       }
       if (!state.currentSessionId) {
+        if (!state.currentWorkspaceId || !state.workspaces.some((workspace) => workspace.id === state.currentWorkspaceId)) {
+          useStore.setState({ lastError: "请先导入项目，再发送消息。" });
+          return;
+        }
         pendingRun.current = { text, attachments };
         newSession();
         return;
@@ -335,7 +340,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
 
         <div className="relative min-w-0 flex-1 overflow-hidden bg-background">
           {lastError && (
-            <div className="error-banner absolute inset-x-4 top-3 z-20" role="alert">
+            <div className="error-banner absolute inset-x-4 top-3 z-50" role="alert">
               <span>{lastError}</span>
               <button className="icon-button" onClick={() => useStore.setState({ lastError: undefined })} aria-label="关闭错误"><X size={15} /></button>
             </div>
@@ -344,6 +349,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
             <Thread><PendingApprovals /></Thread>
           </Suspense>
         </div>
+        <WorkspaceDock />
         {settingsOpen && <Suspense fallback={null}>
           <SettingsDialog open={settingsOpen} onClose={closeSettings} theme={theme} onToggleTheme={onToggleTheme} />
         </Suspense>}

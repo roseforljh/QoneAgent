@@ -1,13 +1,13 @@
 "use client";
 
 import { ChevronDownIcon } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   Collapsible,
-  CollapsibleContent,
   CollapsibleTrigger,
 } from "../../ui/collapsible";
 import { cn } from "../../../lib/utils";
-import { collapsePanel, fieldInteractive, mono, paper } from "./surfaces";
+import { FadeScroll, fieldInteractive, mono, paper, regionViewport } from "./surfaces";
 
 export interface Source {
   domain: string;
@@ -51,8 +51,17 @@ export function Sources({
         </span>
         <ChevronDownIcon className="size-3 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-open/trigger:rotate-180 group-data-panel-open/trigger:rotate-180 motion-reduce:transition-none" />
       </CollapsibleTrigger>
-      <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
-        <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pt-2.5">
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
+            className="overflow-hidden outline-none"
+          >
+        <FadeScroll className={cn(regionViewport, "pt-2.5")}>
+        <div className="grid grid-cols-2 gap-2">
           {sources.map((source) => (
             <a
               key={source.url ?? source.domain}
@@ -79,7 +88,10 @@ export function Sources({
             </a>
           ))}
         </div>
-      </CollapsibleContent>
+        </FadeScroll>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Collapsible>
   );
 }

@@ -1,5 +1,6 @@
 import type { Locale } from "../../localization";
 import { translate } from "../../localization";
+import { formatDuration } from "../../lib/utils";
 import type { ToolCall } from "../../store";
 import { toolCallStatus } from "./tool-call-display";
 
@@ -56,7 +57,12 @@ function elapsedSeconds(call: ToolCall | undefined, now: number): number | undef
   if (call?.startedAt === undefined || !Number.isFinite(call.startedAt)) return undefined;
   const end = call.completedAt ?? now;
   if (!Number.isFinite(end)) return undefined;
-  return Math.max(0, Math.floor((end - call.startedAt) / 1000));
+  return Math.max(0, (end - call.startedAt) / 1000);
+}
+
+function formatToolDuration(seconds: number, locale: Locale): string {
+  if (seconds < 1) return translate(locale, "chat.toolDurationLessThanSecond");
+  return formatDuration(seconds, locale);
 }
 
 export function toolActionSummary(
@@ -73,12 +79,12 @@ export function toolActionSummary(
     if (active) {
       return duration === undefined
         ? translate(locale, "chat.toolSummaryRunningCommandFallback", { target: step.target })
-        : translate(locale, "chat.toolSummaryRunningCommand", { seconds: duration, target: step.target });
+        : translate(locale, "chat.toolSummaryRunningCommand", { duration: formatToolDuration(duration, locale), target: step.target });
     }
     if (failed) return translate(locale, "chat.toolSummaryFailedCommand");
     return duration === undefined
       ? translate(locale, "chat.toolSummaryCompletedCommandFallback")
-      : translate(locale, "chat.toolSummaryCompletedCommand", { seconds: duration });
+      : translate(locale, "chat.toolSummaryCompletedCommand", { duration: formatToolDuration(duration, locale) });
   }
   if (active) return translate(locale, "chat.toolSummaryRunning", { operation: step.verb, target: step.target });
   if (failed) return translate(locale, "chat.toolSummaryFailed", { operation: step.verb, target: step.target });

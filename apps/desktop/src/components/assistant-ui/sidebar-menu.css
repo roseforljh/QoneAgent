@@ -34,6 +34,8 @@
 .q-sidebar-menu-item[data-highlighted],
 .q-sidebar-menu-item[data-state="open"],
 .q-sidebar-menu-trigger[data-state="open"] { background: var(--accent); }
+.q-sidebar [data-slot="aui-thread-list-item-more"]:focus-visible,
+.q-sidebar .q-sidebar-menu-trigger:focus-visible { outline: none; box-shadow: none; }
 .q-sidebar-section-label > span:last-child { transform-origin: center; }
 .q-sidebar-menu-item-danger { color: var(--destructive); }
 .q-sidebar-menu-item-danger:hover,

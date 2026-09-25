@@ -57,11 +57,13 @@ export const RunOptionsPopover: FC<{ anchorRef: RefObject<HTMLDivElement | null>
 
   return <AssistantModalPrimitive.Root unstable_openOnRunStart={false} open={open} onOpenChange={setOpen}>
     <AssistantModalPrimitive.Anchor virtualRef={anchorRef} />
-    <AssistantModalPrimitive.Trigger asChild>
-      <button type="button" className="q-run-options-trigger" data-state={open ? "open" : "closed"} data-permission-mode={permissionMode} aria-label={`${t("composer.runOptions")}：${modeLabel}`} title={`${t("composer.runOptions")}：${modeLabel}`}>
-        <SlidersHorizontalIcon size={16} aria-hidden="true" />
-      </button>
-    </AssistantModalPrimitive.Trigger>
+    <span className="q-reveal-zone -m-1 inline-flex p-1">
+      <AssistantModalPrimitive.Trigger asChild>
+        <button type="button" className="q-reveal q-run-options-trigger" data-state={open ? "open" : "closed"} data-open={open} data-permission-mode={permissionMode} aria-label={`${t("composer.runOptions")}：${modeLabel}`} title={`${t("composer.runOptions")}：${modeLabel}`}>
+          <SlidersHorizontalIcon size={16} aria-hidden="true" />
+        </button>
+      </AssistantModalPrimitive.Trigger>
+    </span>
     <AssistantModalPrimitive.Content side="top" align="end" sideOffset={10} collisionPadding={12} dissmissOnInteractOutside className="q-run-options-card" aria-label={t("composer.runOptions")}
       onOpenAutoFocus={(event) => {
         event.preventDefault();
