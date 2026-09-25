@@ -283,7 +283,7 @@ export class SettingsRepo {
 export class McpServerRepo {
   constructor(private db: Db) {}
 
-  upsert(config: { id: string; name: string; command?: string; url?: string; tokenEnv?: string; args?: string[]; env?: Record<string, string>; oauth?: { authorizationUrl: string; tokenUrl: string; clientId: string; scopes?: string[]; redirectUri?: string; tokenSecretKey?: string } }) {
+  upsert(config: { id: string; name: string; command?: string; url?: string; tokenEnv?: string; args?: string[]; env?: Record<string, string>; authMode?: "oauth" | "github-device"; oauthClientId?: string; oauth?: { authorizationUrl: string; tokenUrl: string; clientId: string; scopes?: string[]; redirectUri?: string; tokenSecretKey?: string } }) {
     const now = Date.now();
     // Environment values may contain API keys. Persist only explicit $ENV
     // references; the live connection may still use the supplied value once.
@@ -300,7 +300,7 @@ export class McpServerRepo {
 
   list() {
     return this.db.select().from(mcpServers).where(eq(mcpServers.enabled, true)).all().flatMap((row) => {
-      try { return [JSON.parse(row.config) as { id: string; name: string; command?: string; url?: string; tokenEnv?: string; args?: string[]; env?: Record<string, string>; oauth?: { authorizationUrl: string; tokenUrl: string; clientId: string; scopes?: string[]; redirectUri?: string; tokenSecretKey?: string } }]; }
+      try { return [JSON.parse(row.config) as { id: string; name: string; command?: string; url?: string; tokenEnv?: string; args?: string[]; env?: Record<string, string>; authMode?: "oauth" | "github-device"; oauthClientId?: string; oauth?: { authorizationUrl: string; tokenUrl: string; clientId: string; scopes?: string[]; redirectUri?: string; tokenSecretKey?: string } }]; }
       catch { return []; }
     });
   }

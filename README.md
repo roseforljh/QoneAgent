@@ -26,6 +26,12 @@ bun run apps/agent-runtime/test/smoke.ts
 
 可用 `QONE_DB`、`QONE_LOG_DIR`、`QONE_ARTIFACTS_DIR` 覆盖测试路径。
 
+## OpenCLI 当前浏览器
+
+应用页的“OpenCLI 当前浏览器”通过 OpenCLI Browser Bridge 直接连接用户的 Chrome。AI 直接读取页面并执行导航、点击、输入、等待和提取操作，复用 Chrome 当前登录态，不复制 Cookies，也不创建 Qone 独立浏览器。程序启动不会自动连接；点击连接按钮或 AI 首次调用浏览器工具时才建立连接。
+
+首次使用需要安装 Node.js 20.18.1 或更高版本和 OpenCLI Browser Bridge 扩展。Chrome 已打开时，Qone 绑定现有标签页；Chrome 未打开时，Qone 会尝试启动默认 Chrome 配置并绑定空白标签页，再导航到目标网址。每次 AI 任务结束后会解除绑定，不关闭用户的 Chrome 页面。Chrome、Edge、Brave 和 Firefox 的书签、浏览历史仍从本机配置读取并保存到 Qone 数据库，AI 可搜索这些记录。
+
 ## 外部发布配置
 
 Updater 插件和设置页入口已经接入。正式打包时通过构建环境变量注入配置，仓库内不保存具体发布服务器地址：

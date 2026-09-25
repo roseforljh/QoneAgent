@@ -8,3 +8,7 @@ target/
 gen/
 apps/desktop/src-tauri/binaries/
 .playwright-cli/
+.playwright-mcp/
+.env
+.env.*
+!.env.example

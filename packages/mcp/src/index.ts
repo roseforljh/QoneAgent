@@ -1,8 +1,11 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSecureServiceUrl } from "@qone/protocol";
+import { HostedMcpOAuth, type HostedOAuthAuthorization, type HostedOAuthCredential } from "./hosted-oauth";
+import { resolveStdioLaunch } from "./stdio-launch";
+export { resolveStdioLaunch } from "./stdio-launch";
 
 export interface McpServerConfig {
   id: string;
@@ -12,6 +15,7 @@ export interface McpServerConfig {
   tokenEnv?: string;
   args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
   oauth?: {
     authorizationUrl: string;
     tokenUrl: string;
@@ -20,6 +24,24 @@ export interface McpServerConfig {
     redirectUri?: string;
     tokenSecretKey?: string;
   };
+  authMode?: "oauth" | "github-device";
+  oauthClientId?: string;
+}
+
+/** Resolve persisted MCP environment references without storing API keys in the database. */
+export function resolveMcpEnvironment(
+  env: Record<string, string> | undefined,
+  secret: (key: string) => string | undefined,
+): Record<string, string> | undefined {
+  if (!env) return undefined;
+  return Object.fromEntries(Object.entries(env).map(([key, value]) => {
+    if (value.startsWith("$mcp.env:")) {
+      const restored = secret(value.slice(1));
+      if (!restored) throw new Error(`MCP API key is unavailable for ${key}`);
+      return [key, restored];
+    }
+    return [key, value.startsWith("$") ? process.env[value.slice(1)] ?? "" : value];
+  }));
 }
 
 interface Conn {
@@ -70,14 +92,24 @@ export class McpManager {
   private conns = new Map<string, Conn>();
   private exposedToolNames = new Map<string, string>();
   private accessTokens = new Map<string, string>();
+  private hostedOAuth = new Map<string, HostedMcpOAuth>();
   private pendingOAuth = new Map<string, PendingOAuth>();
+  private pendingHostedOAuth = new Map<string, { config: McpServerConfig; createdAt: number }>();
+  private deviceAuthGenerations = new Map<string, string>();
   private oauthCallbackServers = new Map<string, BunHttpServer>();
 
-  constructor(private readonly onOAuthComplete?: (serverId: string, token: string) => void | Promise<void>) {}
+  constructor(
+    private readonly onOAuthComplete?: (serverId: string, token?: string) => void | Promise<void>,
+    private readonly onOAuthCredential?: (serverId: string, kind: HostedOAuthCredential, value: string) => void | Promise<void>,
+    private readonly onOAuthAuthorization?: (serverId: string, authorization: HostedOAuthAuthorization) => void,
+    private readonly onOAuthFailure?: (serverId: string, error: Error) => void,
+    private readonly resolveSecret: (key: string) => string | undefined = () => undefined,
+  ) {}
 
   private validateConfig(config: McpServerConfig) {
     if (Boolean(config.command) === Boolean(config.url)) throw new Error(`MCP server ${config.id} requires exactly one transport`);
     if (config.url && !isSecureServiceUrl(config.url)) throw new Error("MCP URL must use HTTPS or loopback HTTP");
+    if (config.authMode && !config.url) throw new Error("Account login requires an HTTP MCP server");
     if (config.oauth) {
       if (!isSecureServiceUrl(config.oauth.authorizationUrl)) throw new Error("OAuth authorization URL must use HTTPS or loopback HTTP");
       if (!isSecureServiceUrl(config.oauth.tokenUrl)) throw new Error("OAuth token URL must use HTTPS or loopback HTTP");
@@ -89,9 +121,96 @@ export class McpManager {
     this.accessTokens.set(serverId, token);
   }
 
+  private hosted(config: McpServerConfig) {
+    if (!config.url) throw new Error("Hosted MCP OAuth requires a server URL");
+    let provider = this.hostedOAuth.get(config.id);
+    if (!provider) {
+      provider = new HostedMcpOAuth(config.url,
+        (kind, value) => this.onOAuthCredential?.(config.id, kind, value),
+        (authorization) => {
+          this.pendingHostedOAuth.set(authorization.state, { config, createdAt: Date.now() });
+          this.ensureOAuthCallbackServer("http://127.0.0.1:17891/mcp/oauth/callback");
+          this.onOAuthAuthorization?.(config.id, authorization);
+        });
+      this.hostedOAuth.set(config.id, provider);
+    }
+    return provider;
+  }
+
+  restoreHostedCredential(config: McpServerConfig, kind: HostedOAuthCredential, value: string) {
+    this.hosted(config).restore(kind, value);
+  }
+
+  hasHostedToken(config: McpServerConfig) { return this.hosted(config).hasToken(); }
+  hasAccessToken(serverId: string) { return this.accessTokens.has(serverId); }
+  clearCredentials(serverId: string) {
+    this.deviceAuthGenerations.delete(serverId);
+    this.accessTokens.delete(serverId);
+    this.hostedOAuth.get(serverId)?.clear();
+    this.hostedOAuth.delete(serverId);
+    for (const [state, pending] of this.pendingHostedOAuth) if (pending.config.id === serverId) this.pendingHostedOAuth.delete(state);
+    for (const [state, pending] of this.pendingOAuth) if (pending.serverId === serverId) this.pendingOAuth.delete(state);
+  }
+
+  /** GitHub's remote MCP does not support DCR; a user-provided OAuth App ID uses device login. */
+  async beginGitHubDeviceAuth(config: McpServerConfig): Promise<{ userCode: string; verificationUri: string; expiresAt: number; completion: Promise<void> }> {
+    if (config.authMode !== "github-device" || !config.oauthClientId) throw new Error("GitHub OAuth App Client ID is required");
+    const response = await fetch("https://github.com/login/device/code", {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: config.oauthClientId, scope: "repo read:org workflow gist project" }),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`GitHub device authorization failed: HTTP ${response.status}${detail ? ` · ${detail}` : ""}`);
+    }
+    const device = await response.json() as { device_code?: string; user_code?: string; verification_uri?: string; expires_in?: number; interval?: number; error?: string };
+    if (!device.device_code || !device.user_code || !device.verification_uri) throw new Error(`GitHub device authorization failed: ${device.error ?? "invalid response"}`);
+    const expiresAt = Date.now() + (device.expires_in ?? 900) * 1000;
+    const generation = crypto.randomUUID();
+    this.deviceAuthGenerations.set(config.id, generation);
+    const completion = this.pollGitHubDevice(config, device.device_code, Math.max(5, device.interval ?? 5), expiresAt, generation)
+      .finally(() => { if (this.deviceAuthGenerations.get(config.id) === generation) this.deviceAuthGenerations.delete(config.id); });
+    return { userCode: device.user_code, verificationUri: device.verification_uri, expiresAt, completion };
+  }
+
+  private async pollGitHubDevice(config: McpServerConfig, deviceCode: string, interval: number, expiresAt: number, generation: string) {
+    while (Date.now() < expiresAt && this.deviceAuthGenerations.get(config.id) === generation) {
+      await new Promise((resolve) => setTimeout(resolve, interval * 1000));
+      if (this.deviceAuthGenerations.get(config.id) !== generation) return;
+      const response = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: config.oauthClientId!, device_code: deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(`GitHub login failed: HTTP ${response.status}${detail ? ` · ${detail}` : ""}`);
+      }
+      const result = await response.json() as { access_token?: string; error?: string; interval?: number };
+      if (result.access_token) {
+        this.setAccessToken(config.id, result.access_token);
+        await this.onOAuthComplete?.(config.id, result.access_token);
+        return;
+      }
+      if (result.error === "authorization_pending") continue;
+      if (result.error === "slow_down") { interval = Math.max(interval + 5, result.interval ?? 0); continue; }
+      throw new Error(`GitHub login failed: ${result.error ?? "invalid token response"}`);
+    }
+    if (this.deviceAuthGenerations.get(config.id) === generation) throw new Error("GitHub login timed out");
+  }
+
   /** Start an OAuth 2.1 authorization-code + PKCE flow for an HTTP MCP server. */
-  async beginOAuth(config: McpServerConfig): Promise<{ url: string; state: string }> {
+  async beginOAuth(config: McpServerConfig): Promise<{ url: string; state: string } | undefined> {
     this.validateConfig(config);
+    if (config.authMode === "oauth") {
+      const authorization = await this.hosted(config).begin();
+      if (authorization) {
+        this.pendingHostedOAuth.set(authorization.state, { config, createdAt: Date.now() });
+        this.ensureOAuthCallbackServer("http://127.0.0.1:17891/mcp/oauth/callback");
+      }
+      return authorization;
+    }
     if (!config.oauth) throw new Error(`MCP server ${config.id} has no OAuth configuration`);
     const state = crypto.randomUUID();
     const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
@@ -110,7 +229,15 @@ export class McpManager {
     return { url: url.toString(), state };
   }
 
-  async completeOAuth(config: McpServerConfig, code: string, state: string): Promise<string> {
+  async completeOAuth(config: McpServerConfig, code: string, state: string, iss?: string): Promise<string | undefined> {
+    if (config.authMode === "oauth") {
+      const pending = this.pendingHostedOAuth.get(state);
+      if (!pending || pending.config.id !== config.id || Date.now() - pending.createdAt > 10 * 60_000) throw new Error("invalid or expired MCP OAuth state");
+      this.pendingHostedOAuth.delete(state);
+      await this.hosted(config).complete(code, state, iss);
+      await this.onOAuthComplete?.(config.id);
+      return undefined;
+    }
     const pending = this.pendingOAuth.get(state);
     if (!pending || pending.serverId !== config.id || Date.now() - pending.createdAt > 10 * 60_000) {
       this.pendingOAuth.delete(state);
@@ -156,16 +283,20 @@ export class McpManager {
         const requestUrl = new URL(request.url);
         const state = requestUrl.searchParams.get("state") ?? "";
         const code = requestUrl.searchParams.get("code") ?? "";
-        const pending = this.pendingOAuth.get(state);
-        if (!pending || !code || new URL(pending.redirectUri).pathname !== requestUrl.pathname) {
+        const manual = this.pendingOAuth.get(state);
+        const hosted = this.pendingHostedOAuth.get(state);
+        const config = manual?.config ?? hosted?.config;
+        const redirectUri = manual?.redirectUri ?? "http://127.0.0.1:17891/mcp/oauth/callback";
+        if (!config || !code || new URL(redirectUri).pathname !== requestUrl.pathname) {
           return new Response("Invalid or expired OAuth state", { status: 400 });
         }
         try {
-          await this.completeOAuth(pending.config, code, state);
+          await this.completeOAuth(config, code, state, requestUrl.searchParams.get("iss") ?? undefined);
           return new Response("QoneAgent authorization complete. You may close this tab.", {
             headers: { "content-type": "text/plain; charset=utf-8" },
           });
-        } catch {
+        } catch (error) {
+          this.onOAuthFailure?.(config.id, error instanceof Error ? error : new Error(String(error)));
           return new Response("QoneAgent authorization failed.", { status: 500 });
         }
       },
@@ -178,22 +309,29 @@ export class McpManager {
     const existing = this.conns.get(config.id);
     if (existing) return existing.tools;
 
-    const resolvedEnv = config.env
-      ? Object.fromEntries(Object.entries(config.env).map(([key, value]) => [key, value.startsWith("$") ? process.env[value.slice(1)] ?? "" : value]))
-      : undefined;
+    const resolvedEnv = resolveMcpEnvironment(config.env, this.resolveSecret);
     const token = this.accessTokens.get(config.id) ?? (config.tokenEnv ? process.env[config.tokenEnv] : undefined);
+    if (config.authMode === "oauth" && !this.hosted(config).hasToken()) throw new Error("MCP account login is required");
+    if (config.authMode === "github-device" && !token) throw new Error("GitHub account login is required");
+    const authProvider = config.authMode === "oauth"
+      ? this.hosted(config).bearerProvider()
+      : token ? { token: async () => this.accessTokens.get(config.id) ?? (config.tokenEnv ? process.env[config.tokenEnv] : undefined) } : undefined;
+    const launch = config.command ? resolveStdioLaunch(config.command, config.args ?? []) : undefined;
     const transport = config.url
-      ? new StreamableHTTPClientTransport(new URL(config.url), token
-        ? { authProvider: { token: async () => token } }
-        : undefined)
-      : new StdioClientTransport({ command: config.command!, args: config.args ?? [], env: resolvedEnv });
+      ? new StreamableHTTPClientTransport(new URL(config.url), authProvider ? { authProvider } : undefined)
+      : new StdioClientTransport({ command: launch!.command, args: launch!.args,
+        env: resolvedEnv ? { ...getDefaultEnvironment(), ...resolvedEnv } : undefined, cwd: config.cwd });
     const client = new Client({ name: "qone-agent", version: "0.0.1" }, { capabilities: {} });
-    await client.connect(transport);
-
-    const { tools } = await client.listTools();
-    const defs = tools.map((t) => this.adaptTool(config.id, client, t));
-    this.conns.set(config.id, { config, client, tools: defs });
-    return defs;
+    try {
+      await client.connect(transport);
+      const { tools } = await client.listTools();
+      const defs = tools.map((t) => this.adaptTool(config.id, client, t));
+      this.conns.set(config.id, { config, client, tools: defs });
+      return defs;
+    } catch (error) {
+      await client.close().catch(() => {});
+      throw error;
+    }
   }
 
   private adaptTool(
@@ -246,6 +384,19 @@ export class McpManager {
     return this.conns.get(id)?.tools.length ?? 0;
   }
 
+  /** Internal application workflows can call a server tool without exposing it to the model. */
+  async callTool(id: string, name: string, args: Record<string, unknown>): Promise<void> {
+    const connection = this.conns.get(id);
+    if (!connection) throw new Error(`MCP server ${id} is not connected`);
+    const result = await connection.client.callTool({ name, arguments: args });
+    if (result.isError) {
+      const detail = Array.isArray(result.content)
+        ? result.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n")
+        : "";
+      throw new Error(detail || `${name} failed`);
+    }
+  }
+
   async disconnect(id: string) {
     const c = this.conns.get(id);
     if (!c) return;
@@ -260,6 +411,7 @@ export class McpManager {
     for (const server of this.oauthCallbackServers.values()) server.stop();
     this.oauthCallbackServers.clear();
     this.pendingOAuth.clear();
+    this.pendingHostedOAuth.clear();
   }
 }
 

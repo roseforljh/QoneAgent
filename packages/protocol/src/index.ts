@@ -61,11 +61,13 @@ export type RuntimeCommand =
   | { type: "file.read"; requestId: string; workspaceId: string; path: string }
   | { type: "skills.list"; requestId: string; cwd?: string }
   | { type: "plugins.list"; requestId: string }
+  | { type: "browser.status"; requestId: string }
+  | { type: "browser.connect"; requestId: string }
   | { type: "mcp.list"; requestId: string }
   | { type: "mcp.connect"; requestId: string; config: McpServerInfo }
   | { type: "mcp.delete"; requestId: string; serverId: string }
   | { type: "mcp.oauth.begin"; requestId: string; serverId: string }
-  | { type: "mcp.oauth.complete"; requestId: string; serverId: string; code: string; state: string }
+  | { type: "mcp.oauth.complete"; requestId: string; serverId: string; code: string; state: string; iss?: string }
   | { type: "permission.list"; requestId: string }
   | { type: "permission.set"; requestId: string; subjectId: string; permission: string; decision: PermissionDecision }
   | { type: "model.list"; requestId: string }
@@ -124,11 +126,14 @@ export type RuntimeEvent =
   | { type: "workspace.git"; requestId?: string; workspaceId: string; status: string; entries?: WorkspaceGitEntry[] }
   | { type: "skills.list"; skills: SkillInfo[] }
   | { type: "plugins.list"; plugins: PluginInfo[] }
+  | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
   | { type: "mcp.list"; servers: McpServerInfo[] }
   | { type: "mcp.connected"; serverId: string; toolCount: number }
   | { type: "mcp.oauth.authorization"; requestId: string; serverId: string; url: string; state: string }
   | { type: "mcp.oauth.token"; requestId: string; serverId: string; key: string; accessToken: string }
   | { type: "mcp.oauth.saved"; serverId: string; key: string }
+  | { type: "mcp.oauth.credential"; serverId: string; key: string; value: string }
+  | { type: "mcp.github.device"; serverId: string; userCode: string; verificationUri: string; expiresAt: number }
   | { type: "permission.list"; rules: PermissionRuleInfo[] }
   | { type: "permission.updated"; rule: PermissionRuleInfo }
   | { type: "model.list"; configs: ModelConfigInfo[] }
@@ -250,6 +255,17 @@ export interface McpServerInfo {
   args?: string[];
   env?: Record<string, string>;
   oauth?: McpOAuthInfo;
+  authMode?: "oauth" | "github-device";
+  oauthClientId?: string;
+}
+
+export interface BrowserSyncStatus {
+  phase: "connecting" | "syncing" | "ready" | "error";
+  targetConnected: boolean;
+  bookmarkCount?: number;
+  historyCount?: number;
+  libraryError?: string;
+  lastError?: string;
 }
 
 export interface McpOAuthInfo {
@@ -264,6 +280,29 @@ export interface McpOAuthInfo {
 export type PermissionDecision = "allow" | "ask" | "deny";
 export type RunPermissionMode = "ask" | "auto" | "full";
 export type RunThinkingLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+const API_THINKING_LEVELS: Record<ProviderApiType, readonly RunThinkingLevel[]> = {
+  "openai-compatible": ["none", "low", "medium", "high"],
+  codex: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+  claude: ["none", "low", "medium", "high", "max"],
+  google: ["none", "minimal", "low", "medium", "high"],
+};
+
+export function thinkingLevelsForApi(apiType: ProviderApiType = "openai-compatible"): readonly RunThinkingLevel[] {
+  return API_THINKING_LEVELS[apiType] ?? API_THINKING_LEVELS["openai-compatible"];
+}
+
+export function normalizeThinkingLevelForApi(value: unknown, apiType: ProviderApiType = "openai-compatible"): RunThinkingLevel {
+  const available = thinkingLevelsForApi(apiType);
+  if (available.includes(value as RunThinkingLevel)) return value as RunThinkingLevel;
+  const order: readonly RunThinkingLevel[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const requestedIndex = order.indexOf(value as RunThinkingLevel);
+  if (requestedIndex >= 0) {
+    return order.slice(requestedIndex + 1).find((level) => available.includes(level))
+      ?? [...order.slice(0, requestedIndex)].reverse().find((level) => available.includes(level))
+      ?? available[0];
+  }
+  return available[0];
+}
 export interface PermissionRuleInfo {
   subjectId: string;
   permission: string;
@@ -324,11 +363,13 @@ const mcpConfig = z.object({
   id, name: id, command: z.string().min(1).optional(), url: secureUrl.optional(),
   tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  authMode: z.enum(["oauth", "github-device"]).optional(),
+  oauthClientId: z.string().min(1).optional(),
   oauth: z.object({
     authorizationUrl: secureUrl, tokenUrl: secureUrl, clientId: id,
     scopes: z.array(z.string()).optional(), redirectUri: secureUrl.optional(), tokenSecretKey: z.string().optional(),
   }).optional(),
-}).refine((config) => Boolean(config.command) !== Boolean(config.url));
+}).refine((config) => Boolean(config.command) !== Boolean(config.url) && (!config.authMode || Boolean(config.url)));
 const messageAttachment = z.object({
   type: z.enum(["image", "file"]),
   name: z.string().min(1).max(255),
@@ -357,11 +398,13 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "file.read": z.object({ type: z.literal("file.read"), ...request, workspaceId: id, path: id }),
   "skills.list": z.object({ type: z.literal("skills.list"), ...request, cwd: z.string().optional() }),
   "plugins.list": z.object({ type: z.literal("plugins.list"), ...request }),
+  "browser.status": z.object({ type: z.literal("browser.status"), ...request }),
+  "browser.connect": z.object({ type: z.literal("browser.connect"), ...request }),
   "mcp.list": z.object({ type: z.literal("mcp.list"), ...request }),
   "mcp.connect": z.object({ type: z.literal("mcp.connect"), ...request, config: mcpConfig }),
   "mcp.delete": z.object({ type: z.literal("mcp.delete"), ...request, serverId: id }),
   "mcp.oauth.begin": z.object({ type: z.literal("mcp.oauth.begin"), ...request, serverId: id }),
-  "mcp.oauth.complete": z.object({ type: z.literal("mcp.oauth.complete"), ...request, serverId: id, code: id, state: id }),
+  "mcp.oauth.complete": z.object({ type: z.literal("mcp.oauth.complete"), ...request, serverId: id, code: id, state: id, iss: secureUrl.optional() }),
   "model.list": z.object({ type: z.literal("model.list"), ...request }),
   "model.resolve-metadata": z.object({ type: z.literal("model.resolve-metadata"), ...request, provider: id, apiType: z.enum(["openai-compatible", "codex", "claude", "google"]), baseUrl: z.string().max(2048), models: z.array(z.object({ id, metadata: z.record(z.string(), z.unknown()).optional() })).min(1).max(500) }),
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
