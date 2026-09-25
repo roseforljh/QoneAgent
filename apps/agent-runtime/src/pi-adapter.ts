@@ -452,6 +452,7 @@ export class PiAdapter {
       throw error;
     }
 
+    let lastToolDeltaAt = 0;
     session.subscribe((e) => {
       const runId = [...this.runs.entries()].find(([, s]) => s === session)?.[0];
       const raw = e as unknown as Record<string, unknown>;
@@ -461,7 +462,10 @@ export class PiAdapter {
         : raw;
       let protocolType: string = e.type;
       let protocolPayload = normalized;
-      if (e.type === "message_start") protocolType = "message.started";
+      if (e.type === "message_start") {
+        lastToolDeltaAt = 0;
+        protocolType = "message.started";
+      }
       else if (e.type === "message_update") {
         const content = (raw.message as { content?: unknown } | undefined)?.content;
         const block = Array.isArray(content) && typeof messageEvent?.contentIndex === "number"
@@ -480,6 +484,19 @@ export class PiAdapter {
                 toolName: toolNameByModelName.get(String(block?.name ?? "")) ?? block?.name,
                 args: block?.arguments,
               };
+        } else if (messageEvent?.type === "toolcall_delta") {
+          // Pi has already parsed the partial JSON. Send snapshots at ~30fps;
+          // block.completed always delivers the final arguments without throttling.
+          const now = Date.now();
+          if (now - lastToolDeltaAt < 32) return;
+          lastToolDeltaAt = now;
+          protocolType = "message.delta";
+          protocolPayload = {
+            blockType: "tool-call", contentIndex: messageEvent.contentIndex,
+            toolCallId: block?.id,
+            toolName: toolNameByModelName.get(String(block?.name ?? "")) ?? block?.name,
+            args: block?.arguments,
+          };
         } else if (messageEvent?.type === "toolcall_end") {
           const toolCall = messageEvent.toolCall as { id?: string; name?: string; arguments?: unknown } | undefined ?? block;
           protocolType = "message.block.completed";
@@ -505,21 +522,21 @@ export class PiAdapter {
       else if (e.type === "agent_end") protocolType = "turn.completed";
       this.push(protocolType, protocolPayload, sessionId, runId);
       if (!runId) return;
-      const payload = normalized;
-      const p = payload as { type?: string; assistantMessageEvent?: { type?: string; delta?: string }; message?: unknown; toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
+      const p = normalized as { type?: string; assistantMessageEvent?: { type?: string; delta?: string }; message?: unknown; toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
+      const toolPayload = protocolPayload as { toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
       const delta = p.assistantMessageEvent?.delta;
-      if (typeof delta === "string" && delta) this.hooks.onMessage?.(sessionId, runId, "assistant", delta);
+      if (p.assistantMessageEvent?.type === "text_delta" && typeof delta === "string" && delta) this.hooks.onMessage?.(sessionId, runId, "assistant", delta);
       if (e.type === "message_end" && e.message.role === "assistant" && e.message.stopReason !== "error" && e.message.stopReason !== "aborted") {
         const finalText = extractTextContent(raw.message);
         if (finalText) this.hooks.onAssistantFinal?.(sessionId, runId, finalText);
       }
       if (e.type === "tool_execution_start") {
-        const name = toolNameByModelName.get(String(p.toolName ?? "")) ?? String(p.toolName ?? "tool");
-        this.hooks.onTool?.(sessionId, runId, "start", name, p.args, undefined, p.toolCallId);
+        const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
+        this.hooks.onTool?.(sessionId, runId, "start", name, toolPayload.args, undefined, toolPayload.toolCallId);
       }
       if (e.type === "tool_execution_end") {
-        const name = toolNameByModelName.get(String(p.toolName ?? "")) ?? String(p.toolName ?? "tool");
-        this.hooks.onTool?.(sessionId, runId, "end", name, p.args, p.result, p.toolCallId);
+        const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
+        this.hooks.onTool?.(sessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId);
       }
     });
 

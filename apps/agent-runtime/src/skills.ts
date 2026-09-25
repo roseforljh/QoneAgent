@@ -5,6 +5,7 @@ import {
   type Skill,
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
+import { QONE_SYSTEM_PROMPT } from "./system-prompt.js";
 
 export interface SkillInfo {
   id: string;
@@ -31,6 +32,7 @@ export async function createResourceLoader(cwd: string): Promise<{
     agentDir,
     additionalSkillPaths: skillPaths,
     noExtensions: true,
+    appendSystemPromptOverride: (base) => [...base, QONE_SYSTEM_PROMPT],
   });
   await loader.reload();
   return { loader, skills: loader.getSkills().skills.map(toInfo) };

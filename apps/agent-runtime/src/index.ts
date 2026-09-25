@@ -1,15 +1,16 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, WorkspaceFileInfo } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
 import { PiAdapter } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
-import { existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { createResourceLoader } from "./skills.js";
 import { containsSecretConfig } from "./secrets.js";
 import { ModelMetadataResolver } from "./model-resolver.js";
+import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } from "./workspace.js";
 
 const log = createLogger("runtime");
 
@@ -106,11 +107,27 @@ eventBus.subscribe((busEvent) => {
   send({ type: "agent.event", event: agentEvent });
 });
 const assistantBuffers = new Map<string, string>();
+// Raw streamed deltas per run; survives aborts so partial answers can be saved.
+const assistantStreamBuffers = new Map<string, string>();
 const assistantPartsByRun = new Map<string, AssistantMessagePart[]>();
 const assistantMessageSequenceByRun = new Map<string, number>();
 const toolCallIds = new Map<string, string>();
 const cancelledRuns = new Set<string>();
 const startingRunSessions = new Set<string>();
+
+// Persist whatever the run produced so far (final text, streamed deltas, tool parts).
+function persistPartialAssistant(sessionId: string, runId: string, model?: string) {
+  const parts = assistantPartsByRun.get(runId) ?? [];
+  const streamText = assistantStreamBuffers.get(runId)?.trim() ?? "";
+  const partsText = parts
+    .filter((part): part is Extract<AssistantMessagePart, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n\n")
+    .trim();
+  const content = streamText || assistantBuffers.get(runId)?.trim() || partsText;
+  if (!content && !parts.length) return undefined;
+  return messageRepo.addAssistant(sessionId, content, runId, model, parts);
+}
 const approvalRuns = new Map<string, string>();
 const approvalToolCalls = new Map<string, string>();
 const commandApprovals = new ApprovalQueue();
@@ -126,6 +143,9 @@ const adapter = new PiAdapter((event) => eventBus.emit({
 }), {
   onAssistantFinal: (_sessionId, runId, content) => {
     if (content.trim()) assistantBuffers.set(runId, content);
+  },
+  onMessage: (_sessionId, runId, role, delta) => {
+    if (role === "assistant") assistantStreamBuffers.set(runId, (assistantStreamBuffers.get(runId) ?? "") + delta);
   },
   onTool: (sessionId, runId, phase, name, args, result, toolCallId) => {
     if (phase === "start") {
@@ -206,35 +226,6 @@ function loadMcpConfigs() {
   }
 }
 
-function listWorkspaceFiles(root: string, max = 1000): WorkspaceFileInfo[] {
-  const result: WorkspaceFileInfo[] = [];
-  const ignored = new Set([".git", "node_modules", "dist", "target", ".test-data"]);
-  const walk = (current: string, relative: string) => {
-    if (result.length >= max) return;
-    let entries;
-    try { entries = readdirSync(current, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-      if (result.length >= max || ignored.has(entry.name)) continue;
-      const rel = relative ? path.join(relative, entry.name) : entry.name;
-      result.push({ path: rel, kind: entry.isDirectory() ? "directory" : "file" });
-      if (entry.isDirectory()) walk(path.join(current, entry.name), rel);
-    }
-  };
-  walk(root, "");
-  return result;
-}
-
-async function gitStatus(root: string): Promise<string> {
-  try {
-    const process = Bun.spawn(["git", "-C", root, "status", "--short"], { stdout: "pipe", stderr: "pipe" });
-    const output = await new Response(process.stdout).text();
-    await process.exited;
-    return output.slice(0, 20_000);
-  } catch (error) {
-    return `git status unavailable: ${String(error)}`;
-  }
-}
-
 const toInfo = (s: {
   id: string;
   title: string;
@@ -265,11 +256,23 @@ async function authorizeCommand(subjectId: string, permission: string, toolName:
 async function handle(cmd: RuntimeCommand): Promise<void> {
   switch (cmd.type) {
     case "ping":
-      send({ type: "pong", requestId: cmd.requestId, capabilities: ["model.resolve-metadata", "model.metadata-sources"] });
+      send({
+        type: "pong",
+        requestId: cmd.requestId,
+        capabilities: [
+          "model.resolve-metadata",
+          "model.metadata-sources",
+          "workspace.explorer.v2",
+          "workspace.files",
+          "workspace.git",
+          "workspace.gitDiff",
+          "file.read",
+        ],
+      });
       return;
 
     case "session.create": {
-      if (cmd.workspaceId && !workspaceRepo.get(cmd.workspaceId)) {
+      if (!workspaceRepo.get(cmd.workspaceId)) {
         send({ type: "error", requestId: cmd.requestId, message: `unknown workspace ${cmd.workspaceId}` });
         return;
       }
@@ -289,9 +292,16 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
     }
 
-    case "session.list":
-      send({ type: "session.list", sessions: sessionRepo.list().map(toInfo) });
+    case "session.list": {
+      const workspaceIds = new Set(workspaceRepo.list().map((workspace) => workspace.id));
+      send({
+        type: "session.list",
+        sessions: sessionRepo.list()
+          .filter((session) => session.workspaceId && workspaceIds.has(session.workspaceId))
+          .map(toInfo),
+      });
       return;
+    }
 
     case "session.rename": {
       try {
@@ -388,20 +398,24 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       send({ type: "workspace.deleted", workspaceId: cmd.workspaceId });
       return;
 
-    case "workspace.files": {
+    case "workspace.files":
+    case "workspace.git":
+    case "workspace.gitDiff":
+    case "file.read": {
       const workspace = workspaceRepo.get(cmd.workspaceId);
-      if (!workspace) { send({ type: "error", requestId: cmd.requestId, message: "unknown workspace" }); return; }
-      send({ type: "workspace.files", workspaceId: workspace.id, files: listWorkspaceFiles(workspace.path) });
+      if (!workspace) throw new Error("Unknown workspace");
+      const context = { requestId: cmd.requestId, workspaceId: workspace.id };
+      if (cmd.type === "workspace.files") {
+        send({ type: cmd.type, ...context, path: cmd.path ?? "", files: await listWorkspaceFiles(workspace.path, cmd.path) });
+      } else if (cmd.type === "workspace.git") {
+        send({ type: cmd.type, ...context, ...await workspaceGit(workspace.path) });
+      } else if (cmd.type === "workspace.gitDiff") {
+        send({ type: cmd.type, ...context, path: cmd.path, ...await workspaceDiff(workspace.path, cmd.path, cmd.scope) });
+      } else {
+        send({ type: cmd.type, ...context, path: cmd.path, ...await readWorkspaceFile(workspace.path, cmd.path) });
+      }
       return;
     }
-
-    case "workspace.git": {
-      const workspace = workspaceRepo.get(cmd.workspaceId);
-      if (!workspace) { send({ type: "error", requestId: cmd.requestId, message: "unknown workspace" }); return; }
-      send({ type: "workspace.git", workspaceId: workspace.id, status: await gitStatus(workspace.path) });
-      return;
-    }
-
     case "skills.list": {
       const requestedCwd = cmd.cwd ? path.resolve(cmd.cwd) : process.cwd();
       if (cmd.cwd && !workspaceRepo.list().some((workspace) => path.resolve(workspace.path).toLowerCase() === requestedCwd.toLowerCase())) {
@@ -606,17 +620,15 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           emit(type, payload, cmd.sessionId, run.id)
         ))
         .then(() => {
-          const assistant = assistantBuffers.get(run.id);
-          if (!assistant?.trim() && !cancelledRuns.has(run.id)) throw new Error("AI returned an empty response");
+          const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
-          const assistantMessage = assistant?.trim()
-            ? messageRepo.addAssistant(cmd.sessionId, assistant, run.id, cmd.model, parts)
-            : undefined;
+          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
+          if (!assistantMessage && !cancelled) throw new Error("AI returned an empty response");
           assistantBuffers.delete(run.id);
+          assistantStreamBuffers.delete(run.id);
           assistantPartsByRun.delete(run.id);
           assistantMessageSequenceByRun.delete(run.id);
           for (const key of toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) toolCallIds.delete(key);
-          const cancelled = cancelledRuns.delete(run.id);
           const status = cancelled ? "cancelled" : "completed";
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status);
@@ -633,15 +645,20 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           } : {}, cmd.sessionId, run.id);
         })
         .catch((err) => {
+          const cancelled = cancelledRuns.delete(run.id);
+          const parts = assistantPartsByRun.get(run.id) ?? [];
+          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
           assistantBuffers.delete(run.id);
+          assistantStreamBuffers.delete(run.id);
           assistantPartsByRun.delete(run.id);
           assistantMessageSequenceByRun.delete(run.id);
           for (const key of toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) toolCallIds.delete(key);
-          const cancelled = cancelledRuns.delete(run.id);
           const status = cancelled ? "cancelled" : "failed";
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status, cancelled ? undefined : String(err));
-          emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled ? {} : { message: String(err) }, cmd.sessionId, run.id);
+          emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled
+            ? (assistantMessage ? { message: { id: assistantMessage.id, role: assistantMessage.role, content: assistantMessage.content, parts, runId: assistantMessage.runId, createdAt: assistantMessage.createdAt } } : {})
+            : { message: String(err) }, cmd.sessionId, run.id);
         });
 
       send({ type: "pong", requestId: cmd.requestId });
