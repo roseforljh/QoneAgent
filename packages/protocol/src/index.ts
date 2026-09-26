@@ -187,6 +187,7 @@ export interface MessageAttachmentInfo {
   name: string;
   mimeType: string;
   data: string;
+  localPath?: string;
 }
 
 export interface RunInfo {
@@ -425,9 +426,13 @@ const messageAttachment = z.object({
   type: z.enum(["image", "file"]),
   name: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(128),
-  data: z.string().max(70_000_000).regex(/^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i),
-}).refine((attachment) => attachment.data.toLowerCase().startsWith(`data:${attachment.mimeType.toLowerCase()}`) &&
-  (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType)));
+  data: z.string().max(70_000_000),
+  localPath: z.string().min(1).max(4096).optional(),
+}).refine((attachment) => attachment.localPath
+  ? attachment.type === "file" && /^(?:audio|video)\//i.test(attachment.mimeType) && attachment.data === ""
+  : /^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i.test(attachment.data) &&
+    attachment.data.toLowerCase().startsWith(`data:${attachment.mimeType.toLowerCase()}`) &&
+    (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType)));
 const capabilityId = z.enum(["webSearch", "videoRecognition", "stt", "tts"]);
 const subagentProfile = z.object({
   id: id.max(128), name: z.string().trim().min(1).max(120),
