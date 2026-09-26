@@ -67,6 +67,8 @@ export type RuntimeCommand =
   | { type: "browser.connect"; requestId: string }
   | { type: "reach.channels"; requestId: string }
   | { type: "reach.podcast.configure"; requestId: string; accessToken: string; refreshToken: string }
+  | { type: "subagent.list"; requestId: string }
+  | { type: "subagent.sync"; requestId: string; config: SubagentConfigInfo }
   | { type: "mcp.list"; requestId: string }
   | { type: "mcp.connect"; requestId: string; config: McpServerInfo }
   | { type: "mcp.delete"; requestId: string; serverId: string }
@@ -90,6 +92,8 @@ export type RuntimeCommand =
       model?: string;
       permissionMode?: RunPermissionMode;
       thinking?: RunThinkingLevel;
+      capability?: CapabilityId;
+      subagentId?: string;
     }
   | { type: "agent.stop"; requestId: string; runId: string }
   | { type: "tool.approve"; requestId: string; approvalId: string }
@@ -129,11 +133,12 @@ export type RuntimeEvent =
   | { type: "workspace.files"; requestId?: string; workspaceId: string; path?: string; files: WorkspaceFileInfo[] }
   | { type: "workspace.git"; requestId?: string; workspaceId: string; status: string; entries?: WorkspaceGitEntry[] }
   | { type: "skills.list"; skills: SkillInfo[] }
-  | { type: "skills.cloud.list"; requestId: string; skills: CloudSkillInfo[]; page: number; hasMore: boolean }
+  | { type: "skills.cloud.list"; requestId: string; skills: CloudSkillInfo[]; page: number; total: number; pageSize: number; hasMore: boolean }
   | { type: "skills.cloud.installed"; requestId: string; skill: SkillInfo }
   | { type: "plugins.list"; plugins: PluginInfo[] }
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
   | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
+  | { type: "subagent.list"; requestId?: string; config: SubagentConfigInfo }
   | { type: "mcp.list"; servers: McpServerInfo[] }
   | { type: "mcp.connected"; serverId: string; toolCount: number }
   | { type: "mcp.oauth.authorization"; requestId: string; serverId: string; url: string; state: string }
@@ -283,6 +288,26 @@ export interface BrowserSyncStatus {
   lastError?: string;
 }
 
+export const CAPABILITY_IDS = ["webSearch", "videoRecognition", "stt", "tts"] as const;
+export type CapabilityId = (typeof CAPABILITY_IDS)[number];
+
+export interface SubagentProfileInfo {
+  id: string;
+  name: string;
+  instructions: string;
+  modelId: string;
+  enabled: boolean;
+  updatedAt: number;
+}
+
+export type CapabilityRouting = Partial<Record<CapabilityId, string>>;
+
+export interface SubagentConfigInfo {
+  profiles: SubagentProfileInfo[];
+  routing: CapabilityRouting;
+  updatedAt: number;
+}
+
 export interface ReachChannelInfo {
   id: string;
   name: string;
@@ -400,9 +425,20 @@ const messageAttachment = z.object({
   type: z.enum(["image", "file"]),
   name: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(128),
-  data: z.string().max(8_000_000).regex(/^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i),
+  data: z.string().max(70_000_000).regex(/^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i),
 }).refine((attachment) => attachment.data.toLowerCase().startsWith(`data:${attachment.mimeType.toLowerCase()}`) &&
   (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType)));
+const capabilityId = z.enum(["webSearch", "videoRecognition", "stt", "tts"]);
+const subagentProfile = z.object({
+  id: id.max(128), name: z.string().trim().min(1).max(120),
+  instructions: z.string().trim().min(1).max(32_000), modelId: id.max(512),
+  enabled: z.boolean(), updatedAt: z.number().int().nonnegative(),
+});
+const subagentConfig = z.object({
+  profiles: z.array(subagentProfile).max(100),
+  routing: z.record(z.string(), z.string().max(512)).optional().default({}),
+  updatedAt: z.number().int().nonnegative(),
+});
 const commandSchemas: Record<string, z.ZodTypeAny> = {
   ping: z.object({ type: z.literal("ping"), ...request }),
   "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id }),
@@ -430,6 +466,8 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "browser.connect": z.object({ type: z.literal("browser.connect"), ...request }),
   "reach.channels": z.object({ type: z.literal("reach.channels"), ...request }),
   "reach.podcast.configure": z.object({ type: z.literal("reach.podcast.configure"), ...request, accessToken: z.string().min(8).max(8192), refreshToken: z.string().min(8).max(8192) }),
+  "subagent.list": z.object({ type: z.literal("subagent.list"), ...request }),
+  "subagent.sync": z.object({ type: z.literal("subagent.sync"), ...request, config: subagentConfig }),
   "mcp.list": z.object({ type: z.literal("mcp.list"), ...request }),
   "mcp.connect": z.object({ type: z.literal("mcp.connect"), ...request, config: mcpConfig }),
   "mcp.delete": z.object({ type: z.literal("mcp.delete"), ...request, serverId: id }),
@@ -440,7 +478,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
-  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && (run.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 16_000_000, "Message or valid attachments required"),
+  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(), capability: capabilityId.optional(), subagentId: id.max(128).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && (run.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 140_000_000, "Message or valid attachments required"),
   "agent.stop": z.object({ type: z.literal("agent.stop"), ...request, runId: id }),
   "tool.approve": z.object({ type: z.literal("tool.approve"), ...request, approvalId: id }),
   "tool.reject": z.object({ type: z.literal("tool.reject"), ...request, approvalId: id, reason: z.string().optional() }),
