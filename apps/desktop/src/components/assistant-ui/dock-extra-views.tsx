@@ -39,12 +39,13 @@ function toUrl(input: string): string | undefined {
 
 // The page area is a real WebView2 child of the main window (src-tauri
 // browser.rs); this view only owns the toolbar and reports its rect.
-export function DockBrowserView({ active }: { active: boolean }) {
+export function DockBrowserView({ active, initialUrl }: { active: boolean; initialUrl: string }) {
   const { t } = useLocale();
   const hostRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
-  const [address, setAddress] = useState(BROWSER_HOME);
+  const browserUrlRef = useRef(initialUrl);
+  const [address, setAddress] = useState(initialUrl);
   const [failed, setFailed] = useState<string>();
   const sessionRef = useRef<ReturnType<typeof createDockBrowserSession> | undefined>(undefined);
 
@@ -52,9 +53,10 @@ export function DockBrowserView({ active }: { active: boolean }) {
     const host = hostRef.current;
     if (!host) return undefined;
     let alive = true;
-    const session = createDockBrowserSession(invoke, BROWSER_HOME, (error) => setFailed(String(error)));
+    const session = createDockBrowserSession(invoke, initialUrl, (error) => setFailed(String(error)));
     sessionRef.current = session;
     const sync = () => {
+      if (!alive) return;
       const bounds = clipBrowserBounds(host.getBoundingClientRect(), window.innerWidth, window.innerHeight);
       session.update(bounds, activeRef.current);
     };
@@ -62,21 +64,27 @@ export function DockBrowserView({ active }: { active: boolean }) {
     const unNav = listen<{ url: string }>("browser:navigated", (event) => {
       if (alive) setAddress(event.payload.url);
     });
-    let raf = 0;
-    const tick = () => {
-      if (!alive) return;
-      sync();
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
+    const ro = new ResizeObserver(sync);
+    ro.observe(host);
+    window.addEventListener("resize", sync);
+    window.addEventListener("transitionend", sync);
     return () => {
       alive = false;
-      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("transitionend", sync);
       unNav.then((off) => off()).catch(() => {});
       session.dispose();
       sessionRef.current = undefined;
     };
   }, []);
+
+  useEffect(() => {
+    if (browserUrlRef.current === initialUrl) return;
+    browserUrlRef.current = initialUrl;
+    setAddress(initialUrl);
+    void sessionRef.current?.command("browser_navigate", { url: initialUrl });
+  }, [initialUrl]);
 
   useEffect(() => {
     const host = hostRef.current;

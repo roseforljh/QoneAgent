@@ -158,7 +158,7 @@ export function ReachChannels() {
             <label className="reach-secret-field">access_token<input type="password" value={podcastAccessToken} onChange={(event) => setPodcastAccessToken(event.target.value)} autoComplete="off" /></label>
             <label className="reach-secret-field">refresh_token<input type="password" value={podcastRefreshToken} onChange={(event) => setPodcastRefreshToken(event.target.value)} autoComplete="off" /></label>
             <label className="reach-secret-field">Groq API Key<input type="password" value={groqKey} onChange={(event) => setGroqKey(event.target.value)} autoComplete="off" placeholder={groqConfigured ? "已配置，可输入新 Key 更新" : "无字幕音频转写时填写"} /></label>
-            <p>小宇宙令牌写入本机 OpenCLI 配置文件供后端刷新；Groq Key 保存在 Windows 凭据管理器。音频转写上限 25 MB。</p>
+            <p>小宇宙令牌写入本机 OpenCLI 配置文件供后端刷新；Groq Key 保存在 Windows 凭据管理器。大音频会在本机分段后转写。</p>
           </>}
           {selected.action === "github" && <>
             <p>公开仓库无需配置。私有仓库和账号操作可连接 GitHub MCP。</p>

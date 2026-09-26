@@ -23,11 +23,11 @@
   border-radius: 7px;
   font-size: 13px;
   outline: none;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   transition: background-color 120ms ease, color 120ms ease;
 }
-.q-sidebar button { cursor: default; }
+.q-sidebar button { cursor: pointer; }
 .q-sidebar-menu-item > svg { flex-shrink: 0; }
 .q-sidebar-menu-subtrigger > svg:last-child { margin-left: auto; }
 .q-sidebar-menu-item:hover,

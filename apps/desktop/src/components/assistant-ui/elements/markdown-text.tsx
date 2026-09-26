@@ -22,6 +22,46 @@ import { cn } from "../../../lib/utils";
 import { normalizeMultilineDisplayMath } from "../../../lib/normalize-display-math";
 import { ShikiCode, PrismCode, MermaidCode, GenerativeUICode } from "../code-renderers";
 
+type MarkdownNode = { type?: string; value?: string; children?: MarkdownNode[] };
+
+// Some model responses contain a bare URL instead of Markdown link syntax.
+// Turn those URLs into links so they use Qone's browser Dock as well.
+function remarkQoneAutolink() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (node.type === "code" || node.type === "inlineCode" || node.type === "link") return;
+      if (!node.children) return;
+      const children: MarkdownNode[] = [];
+      for (const child of node.children) {
+        if (child.type === "text" && child.value) {
+          let cursor = 0;
+          const matcher = /https?:\/\/[^\s<>]+/gi;
+          for (const match of child.value.matchAll(matcher)) {
+            const start = match.index ?? 0;
+            const raw = match[0];
+            const url = raw.replace(/[.,!?;:，。！？；：）》】]+$/u, "");
+            if (start > cursor) children.push({ type: "text", value: child.value.slice(cursor, start) });
+            if (url) {
+              children.push({ type: "link", url, children: [{ type: "text", value: url }] } as MarkdownNode);
+              const punctuation = raw.slice(url.length);
+              if (punctuation) children.push({ type: "text", value: punctuation });
+            } else {
+              children.push({ type: "text", value: raw });
+            }
+            cursor = start + raw.length;
+          }
+          if (cursor < child.value.length) children.push({ type: "text", value: child.value.slice(cursor) });
+        } else {
+          visit(child);
+          children.push(child);
+        }
+      }
+      node.children = children;
+    };
+    visit(tree);
+  };
+}
+
 type MarkdownTextProps = Partial<TextMessagePartProps> & {
   components?: Parameters<typeof memoizeMarkdownComponents>[0];
 };
@@ -54,7 +94,7 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
 
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm, remarkMath]}
+      remarkPlugins={[remarkGfm, remarkMath, remarkQoneAutolink]}
       rehypePlugins={[rehypeKatex]}
       preprocess={(text) => escapeCurrencyDollars(normalizeMultilineDisplayMath(normalizeMathDelimiters(text)))}
       className="aui-md"

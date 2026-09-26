@@ -1,9 +1,8 @@
 import { unstable_memoizeMarkdownComponents as memoizeMarkdownComponents, useIsMarkdownCodeBlock } from "@assistant-ui/react-markdown";
 import { memo, useRef, useState, type ComponentProps } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { cn } from "../../lib/utils";
-import { hasTauriBridge } from "../../store";
+import { openBrowserInDock } from "../../lib/browser-dock";
 import { InlineCitation } from "./elements/inline-citation";
 import { MathBlock } from "./elements/math-block";
 import { MarkdownText as OfficialMarkdownText } from "./elements/markdown-text";
@@ -70,8 +69,7 @@ export function citationSource(href: string | undefined, label: unknown, title?:
 function CitationLink({ source }: { source: NonNullable<ReturnType<typeof citationSource>> }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const openSource = (url: string) => {
-    if (hasTauriBridge()) void openUrl(url);
-    else window.open(url, "_blank", "noopener,noreferrer");
+    openBrowserInDock(url);
   };
   return <InlineCitation sources={[source]} openIndex={openIndex} onOpenIndexChange={setOpenIndex} onOpenSource={openSource} />;
 }
@@ -100,7 +98,17 @@ const defaultComponents = memoizeMarkdownComponents({
   a: ({ className, href, title, children, ...props }) => {
     const source = citationSource(href, children, title);
     if (source) return <CitationLink source={source} />;
-    return <a href={href} title={title} className={cn("aui-md-a text-primary hover:text-primary/80 underline underline-offset-2", className)} {...props}>{children}</a>;
+    return <a
+      href={href}
+      title={title}
+      className={cn("aui-md-a text-primary hover:text-primary/80 underline underline-offset-2", className)}
+      onClick={(event) => {
+        if (!href) return;
+        event.preventDefault();
+        openBrowserInDock(href);
+      }}
+      {...props}
+    >{children}</a>;
   },
   blockquote: ({ className, ...props }) => <blockquote className={cn("aui-md-blockquote border-muted-foreground/30 text-muted-foreground my-3 border-s-2 ps-4", className)} {...props} />,
   ul: ({ className, ...props }) => <ul className={cn("aui-md-ul marker:text-muted-foreground my-3 ms-5 list-disc [&>li]:mt-1", className)} {...props} />,

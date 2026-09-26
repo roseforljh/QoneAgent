@@ -44,6 +44,6 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/qone-runtime"],
-    "resources": ["binaries/yt-dlp.exe", "binaries/node.exe", "binaries/node-LICENSE", "binaries/opencli"]
+    "resources": ["binaries/yt-dlp.exe", "binaries/node.exe", "binaries/node-LICENSE", "binaries/opencli", "binaries/ffmpeg.exe", "binaries/ffmpeg-LICENSE", "binaries/ffmpeg-build.txt"]
   }
 }

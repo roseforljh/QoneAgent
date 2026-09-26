@@ -39,6 +39,7 @@ import { FadeScroll, mono } from "./elements/surfaces";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { reportStartup } from "../../lib/startup-diagnostic";
+import { onOpenBrowserInDock } from "../../lib/browser-dock";
 
 type DockView = "terminal" | "files" | "git" | "browser" | "mcp" | "skills";
 
@@ -535,6 +536,7 @@ export function WorkspaceDock() {
   const workspaceId = useStore((s) => s.currentWorkspaceId);
   const workspacePath = useStore((s) => s.workspaces.find((w) => w.id === s.currentWorkspaceId)?.path);
   const [view, setView] = useState<DockView>();
+  const [browserUrl, setBrowserUrl] = useState("https://www.bing.com");
   const [openViews, setOpenViews] = useState<DockView[]>([]);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [terminalOpened, setTerminalOpened] = useState(false);
@@ -544,6 +546,13 @@ export function WorkspaceDock() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [panelW, setPanelW] = useState(416);
   const [dragging, setDragging] = useState(false);
+  const [isNarrowScreen, setIsNarrowScreen] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
+
+  useEffect(() => {
+    const checkWidth = () => setIsNarrowScreen(window.innerWidth < 1024);
+    window.addEventListener("resize", checkWidth);
+    return () => window.removeEventListener("resize", checkWidth);
+  }, []);
   const moreRef = useRef<HTMLDivElement>(null);
   const launcherRef = useRef<HTMLDivElement>(null);
   const expandRef = useRef<HTMLDivElement>(null);
@@ -557,6 +566,14 @@ export function WorkspaceDock() {
     setTerminalStatus(status);
     setTerminalDetail(detail);
   }, []);
+
+  useEffect(() => onOpenBrowserInDock((url) => {
+    setBrowserUrl(url);
+    setMoreOpen(false);
+    setLauncherOpen(false);
+    setOpenViews((current) => current.includes("browser") ? current : [...current, "browser"]);
+    setView("browser");
+  }), []);
 
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -792,10 +809,20 @@ export function WorkspaceDock() {
           </div>
         </div>
       </div>
+      {view && isNarrowScreen && (
+        <div
+          role="presentation"
+          onClick={closePanel}
+          className="fixed inset-0 z-35 bg-black/40 backdrop-blur-xs transition-opacity"
+        />
+      )}
       <div
         ref={panelRef}
         className={cn(
-          "relative z-20 flex h-full shrink-0 justify-end overflow-hidden bg-background",
+          "flex h-full shrink-0 justify-end overflow-hidden bg-background",
+          isNarrowScreen
+            ? "fixed inset-y-0 right-0 z-40 shadow-2xl"
+            : "relative z-20",
           view ? "pointer-events-auto visible" : "pointer-events-none invisible",
           view && "border-s border-border/60",
         )}
@@ -876,7 +903,7 @@ export function WorkspaceDock() {
             {terminalOpened && workspaceId && <TerminalView workspaceId={workspaceId} active={view === "terminal"} apiRef={terminalApiRef} onStatus={onTerminalStatus} />}
           </div>
           <div className={cn("min-h-0 flex-1", view === "browser" ? "flex flex-col" : "hidden")}>
-            {view === "browser" && <DockBrowserView active={!launcherOpen && !moreOpen && !dragging} />}
+            {view === "browser" && <DockBrowserView active={!launcherOpen && !moreOpen && !dragging} initialUrl={browserUrl} />}
           </div>
           {view === "mcp" && <DockMcpView refreshNonce={refreshNonce} />}
           {view === "skills" && <DockSkillsView workspaceId={workspaceId} refreshNonce={refreshNonce} />}

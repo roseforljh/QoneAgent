@@ -18,7 +18,18 @@ const MIME_TYPES: Record<string, string> = {
   json: "application/json",
   md: "text/markdown",
   mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  ogg: "audio/ogg",
+  flac: "audio/flac",
+  wav: "audio/wav",
+  aac: "audio/aac",
   mp4: "video/mp4",
+  m4v: "video/x-m4v",
+  mov: "video/quicktime",
+  mkv: "video/x-matroska",
+  avi: "video/x-msvideo",
+  mpeg: "video/mpeg",
+  webm: "video/webm",
   pdf: "application/pdf",
   png: "image/png",
   ppt: "application/vnd.ms-powerpoint",
@@ -52,6 +63,8 @@ const isInside = (element: HTMLElement | null, position: DropPosition) => {
   ].some(({ x, y }) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom);
 };
 
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+
 export function useNativeFileDrop(
   targetRef: RefObject<HTMLElement | null>,
   onFiles: (files: File[]) => Promise<void>,
@@ -60,6 +73,10 @@ export function useNativeFileDrop(
     const files = await Promise.all(paths.map(async (path) => {
       try {
         const payload = await invoke<NativeFilePayload>("read_dropped_file", { path });
+        if (payload.data.length * 0.75 > MAX_FILE_SIZE_BYTES) {
+          useStore.setState({ lastError: `文件 ${payload.name} 超过 50MB 限制，暂不支持拖拽上传` });
+          return null;
+        }
         return new globalThis.File([decodeBase64(payload.data)], payload.name, { type: getMimeType(payload.name) });
       } catch (error) {
         useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });

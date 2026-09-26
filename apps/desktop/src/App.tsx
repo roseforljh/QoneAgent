@@ -197,12 +197,15 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   });
 }
 
-function Logo() {
+function Logo({ collapsed }: { collapsed: boolean }) {
   return (
     <Link
       to="/"
       aria-label="返回主页面"
-      className="ml-2 flex min-w-0 items-center gap-2 truncate text-[15px] font-semibold transition-opacity hover:opacity-80"
+      className={cn(
+        "ml-2 flex min-w-0 items-center gap-2 truncate text-[15px] font-semibold transition-[opacity,max-width] duration-200 hover:opacity-80",
+        collapsed ? "max-w-0 opacity-0" : "max-w-32 opacity-100",
+      )}
     >
       <img src={qonePenguinUrl} alt="" aria-hidden="true" className="qone-logo size-5 shrink-0" />
       <span className="text-foreground truncate">Qone</span>
@@ -282,7 +285,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
         <aside
           className={cn(
             "q-sidebar bg-muted/30 flex h-full shrink-0 flex-col overflow-hidden border-r border-border/50 transition-[width] duration-200",
-            sidebarCollapsed ? "w-12" : "w-65",
+            sidebarCollapsed ? "w-12" : "w-64",
           )}
         >
           <div className="flex h-12 shrink-0 items-center overflow-hidden px-2">
@@ -296,12 +299,12 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
             >
               <PanelLeftIcon className="size-4" />
             </TooltipIconButton>
-            {!sidebarCollapsed && <Logo />}
+            <Logo collapsed={sidebarCollapsed} />
           </div>
           <ThreadListRoot
             className={cn(
               "relative flex-1 overflow-x-hidden transition-[padding,width] duration-200",
-              sidebarCollapsed ? "w-12 overflow-hidden px-2 pt-1" : "w-65 overflow-y-auto [scrollbar-gutter:stable] p-3",
+              sidebarCollapsed ? "w-12 overflow-hidden px-2 pt-1" : "w-64 overflow-y-auto [scrollbar-gutter:stable] p-3",
             )}
           >
             <ThreadListNew

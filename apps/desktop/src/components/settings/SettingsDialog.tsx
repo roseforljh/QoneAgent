@@ -34,6 +34,9 @@ import {
   Trash2,
   Upload,
   WandSparkles,
+  Video,
+  Mic2,
+  Volume2,
   X,
 } from "lucide-react";
 import { useStore } from "../../store";
@@ -58,11 +61,12 @@ import perplexityLogo from "@lobehub/icons-static-svg/icons/perplexity-color.svg
 import { ModelCard } from "./ModelCard";
 import { ProviderLogo } from "./ProviderLogo";
 import { SkillCloudDialog } from "./SkillCloudDialog";
+import { CapabilitySection, type CapabilityId } from "./CapabilitySection";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import "./model-layout.css";
 
 type Theme = "light" | "dark";
-type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents";
+type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents" | CapabilityId;
 
 type SettingsSection = {
   id: SettingsSectionId;
@@ -81,6 +85,10 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "mcp", labelKey: "nav.mcp", icon: Command },
   { id: "skills", labelKey: "nav.skills", icon: BrainCircuit },
   { id: "subagents", labelKey: "nav.subagents", icon: BotMessageSquare },
+  { id: "webSearch", labelKey: "nav.webSearch", icon: Globe2 },
+  { id: "videoRecognition", labelKey: "nav.videoRecognition", icon: Video },
+  { id: "stt", labelKey: "nav.stt", icon: Mic2 },
+  { id: "tts", labelKey: "nav.tts", icon: Volume2 },
 ];
 
 const DEFAULT_ORDER = SETTINGS_SECTIONS.map((section) => section.id);
@@ -431,20 +439,32 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
     onDeleted(initial); onClose();
   };
 
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog provider-dialog" role="dialog" aria-modal="true" aria-label={t("provider.newConfiguration")}>
-    <div className="settings-subdialog-header"><div><span>{t("provider.configuration")}</span><h3>{initial ? t("provider.editConfiguration") : t("provider.newConfiguration")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
-    <div className="settings-form-grid"><label>{t("provider.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("provider.namePlaceholder")} /></label><label>{t("provider.apiType")}<QoneSelect value={apiType} onChange={(value) => setApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("provider.apiType")} /></label><label className="is-wide">{t("provider.baseUrl")}<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t("provider.baseUrlPlaceholder")} /><small className="settings-url-preview">{t("provider.urlPreview", { url: preview || t("provider.waitingForInput") })}</small></label><label className="is-wide">{t("provider.apiKey")}<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t("provider.apiKeyPlaceholder")} /></label></div>
-    <div className="settings-provider-actions"><button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchModels}>{fetching ? <><LoaderCircle size={15} className="settings-spin" />{t("provider.fetching")}</> : <><Globe2 size={15} />{t("provider.fetchModels")}</>}</button><span>{models.length ? t("provider.configuredModels", { count: models.length }) : t("provider.noModels")}</span></div>
-    {status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}
-    <div className="settings-subdialog-footer">{initial && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("provider.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("provider.saveConfiguration")}</button></div>
-    <ModelSyncDialog
-      open={syncOpen}
-      fetched={fetchedModels}
-      existing={models}
-      onClose={() => setSyncOpen(false)}
-      onAdd={(newModels) => setModels((current) => [...current, ...newModels.filter((model) => !current.some((existing) => existing.id === model.id))])}
-    />
-  </div></div>;
+  return (
+    <div
+      className="settings-subdialog-layer"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="settings-subdialog provider-dialog" role="dialog" aria-modal="true" aria-label={t("provider.newConfiguration")}>
+        <div className="settings-subdialog-header"><div><span>{t("provider.configuration")}</span><h3>{initial ? t("provider.editConfiguration") : t("provider.newConfiguration")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
+        <div className="settings-form-grid"><label>{t("provider.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("provider.namePlaceholder")} /></label><label>{t("provider.apiType")}<QoneSelect value={apiType} onChange={(value) => setApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("provider.apiType")} /></label><label className="is-wide">{t("provider.baseUrl")}<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t("provider.baseUrlPlaceholder")} /><small className="settings-url-preview">{t("provider.urlPreview", { url: preview || t("provider.waitingForInput") })}</small></label><label className="is-wide">{t("provider.apiKey")}<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t("provider.apiKeyPlaceholder")} /></label></div>
+        <div className="settings-provider-actions"><button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchModels}>{fetching ? <><LoaderCircle size={15} className="settings-spin" />{t("provider.fetching")}</> : <><Globe2 size={15} />{t("provider.fetchModels")}</>}</button><span>{models.length ? t("provider.configuredModels", { count: models.length }) : t("provider.noModels")}</span></div>
+        {status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}
+        <div className="settings-subdialog-footer">{initial && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("provider.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("provider.saveConfiguration")}</button></div>
+        <ModelSyncDialog
+          open={syncOpen}
+          fetched={fetchedModels}
+          existing={models}
+          onClose={() => setSyncOpen(false)}
+          onAdd={(newModels) => setModels((current) => [...current, ...newModels.filter((model) => !current.some((existing) => existing.id === model.id))])}
+        />
+      </div>
+    </div>
+  );
 }
 
 function ConfigurationSection() {
@@ -587,7 +607,48 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
   };
   const save = () => { if (!name.trim()) return; onSaved({ id: name.trim(), label: name.trim(), settings: { ...settings, apiType, thinking: selectedThinking } }, model?.id); onClose(); };
   const remove = async () => { if (model && await confirmDestructiveAction(t("model.deleteConfirm", { name: model.label }))) { onDeleted(model); onClose(); } };
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("model.parameters")}><div className="settings-subdialog-header"><div><span>{provider.name}</span><h3>{t("model.parameters")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-model-fetch"><button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchConfiguration}>{fetching ? <LoaderCircle size={15} className="settings-spin" /> : <Globe2 size={15} />}{fetching ? t("provider.fetching") : t("model.fetchConfiguration")}</button>{status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}</div><ModelSourceSummary settings={settings} /><div className="settings-form-grid"><label className="is-wide">{t("model.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("model.namePlaceholder")} /></label><label className="is-wide">{t("model.apiType")}<QoneSelect value={apiType} onChange={(value) => updateApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("model.apiType")} /></label><label>{t("model.maxOutput")}<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label><label>{t("model.maxContext")}<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label><label>{t("model.thinking")}<QoneSelect value={selectedThinking} onChange={(value) => update("thinking", value as ThinkingLevel)} options={thinkingOptions.map((option) => ({ value: option.value, label: t(option.labelKey) }))} ariaLabel={t("model.thinking")} /></label></div><div className="settings-capability-grid"><CapabilityEditor title={t("model.inputCapabilities")} values={settings.input} onToggle={(value) => toggleCapability("input", value)} /><CapabilityEditor title={t("model.outputCapabilities")} values={settings.output} onToggle={(value) => toggleCapability("output", value)} /></div><div className="settings-subdialog-footer">{model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("model.saveParameters")}</button></div></div></div>;
+  return (
+    <div
+      className="settings-subdialog-layer"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("model.parameters")}>
+        <div className="settings-subdialog-header">
+          <div><span>{provider.name}</span><h3>{t("model.parameters")}</h3></div>
+          <button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button>
+        </div>
+        <div className="settings-model-fetch">
+          <button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchConfiguration}>
+            {fetching ? <LoaderCircle size={15} className="settings-spin" /> : <Globe2 size={15} />}
+            {fetching ? t("provider.fetching") : t("model.fetchConfiguration")}
+          </button>
+          {status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}
+        </div>
+        <ModelSourceSummary settings={settings} />
+        <div className="settings-form-grid">
+          <label className="is-wide">{t("model.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("model.namePlaceholder")} /></label>
+          <label className="is-wide">{t("model.apiType")}<QoneSelect value={apiType} onChange={(value) => updateApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("model.apiType")} /></label>
+          <label>{t("model.maxOutput")}<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label>
+          <label>{t("model.maxContext")}<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label>
+          <label>{t("model.thinking")}<QoneSelect value={selectedThinking} onChange={(value) => update("thinking", value as ThinkingLevel)} options={thinkingOptions.map((option) => ({ value: option.value, label: t(option.labelKey) }))} ariaLabel={t("model.thinking")} /></label>
+        </div>
+        <div className="settings-capability-grid">
+          <CapabilityEditor title={t("model.inputCapabilities")} values={settings.input} onToggle={(value) => toggleCapability("input", value)} />
+          <CapabilityEditor title={t("model.outputCapabilities")} values={settings.output} onToggle={(value) => toggleCapability("output", value)} />
+        </div>
+        <div className="settings-subdialog-footer">
+          {model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}
+          <button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button>
+          <button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("model.saveParameters")}</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CapabilityEditor({ title, values, onToggle }: { title: string; values: Capability[]; onToggle: (value: Capability) => void }) {
@@ -694,6 +755,8 @@ function SubagentEditorDialog({ open, initial, modelOptions, onClose, onSaved }:
 function SubagentsSection() {
   const { t } = useLocale();
   const modelConfigs = useStore((state) => state.modelConfigs);
+  const runtimeSubagentConfig = useStore((state) => state.subagentConfig);
+  const send = useStore((state) => state.send);
   const [profiles, setProfiles] = useState<ProviderProfile[]>(loadProviderProfiles);
   const [agents, setAgents] = useState<SubagentProfile[]>(loadSubagents);
   const [editing, setEditing] = useState<SubagentProfile | undefined>();
@@ -702,13 +765,23 @@ function SubagentsSection() {
     ...modelConfigs.map((model) => [`${model.provider}/${model.model}`, { id: model.id, label: `${model.provider} / ${model.model}` }] as const),
     ...profiles.flatMap((provider) => provider.models.map((model) => [`${provider.id}/${model.id}`, { id: `${provider.id}/${model.id}`, label: `${provider.name} / ${model.label}` }] as const)),
   ]).values());
-  const saveAgents = (next: SubagentProfile[]) => { setAgents(next); window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(next)); };
+  useEffect(() => {
+    if (runtimeSubagentConfig.updatedAt <= 0) return;
+    setAgents(runtimeSubagentConfig.profiles);
+    window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(runtimeSubagentConfig.profiles));
+  }, [runtimeSubagentConfig.updatedAt]);
+  const saveAgents = (next: SubagentProfile[]) => {
+    const config = { profiles: next, routing: runtimeSubagentConfig.routing, updatedAt: Date.now() };
+    setAgents(next);
+    window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(next));
+    void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config });
+  };
   const saveAgent = (agent: SubagentProfile) => saveAgents([...agents.filter((item) => item.id !== agent.id), agent]);
   const deleteAgent = async (agent: SubagentProfile) => { if (await confirmDestructiveAction(t("subagent.deleteConfirm", { name: agent.name }))) saveAgents(agents.filter((item) => item.id !== agent.id)); };
   return <>
     <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.title")} />
     <div className="settings-section-toolbar"><div><strong>{t("subagent.mine")}</strong><span>{agents.length} {t("subagent.count")}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("subagent.new")}</button></div>
-    <div className="settings-subagent-list">{agents.map((agent) => <div className="settings-subagent-card" key={agent.id}><div className="settings-subagent-card-main"><span className="settings-provider-icon"><BotMessageSquare size={17} /></span><div><strong>{agent.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? agent.modelId}</small><p>{agent.instructions}</p></div></div><div className="settings-subagent-actions"><button type="button" onClick={() => { setEditing(agent); setDialogOpen(true); }}>{t("common.edit")}</button><button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={() => deleteAgent(agent)}><Trash2 size={14} /></button></div></div>)}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
+    <div className="settings-subagent-list">{agents.map((agent) => <div className={cn("settings-subagent-card", !agent.enabled && "is-disabled")} key={agent.id}><div className="settings-subagent-card-main"><span className="settings-provider-icon"><BotMessageSquare size={17} /></span><div><strong>{agent.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? agent.modelId} · {agent.enabled ? t("subagent.enabled") : t("subagent.disabled")}</small><p>{agent.instructions}</p></div></div><div className="settings-subagent-actions"><button type="button" onClick={() => saveAgents(agents.map((item) => item.id === agent.id ? { ...item, enabled: !item.enabled, updatedAt: Date.now() } : item))}>{agent.enabled ? t("subagent.disable") : t("subagent.enable")}</button><button type="button" onClick={() => { setEditing(agent); setDialogOpen(true); }}>{t("common.edit")}</button><button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={() => deleteAgent(agent)}><Trash2 size={14} /></button></div></div>)}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
     <SubagentEditorDialog open={dialogOpen} initial={editing} modelOptions={modelOptions} onClose={() => setDialogOpen(false)} onSaved={saveAgent} />
   </>;
 }
@@ -1129,6 +1202,10 @@ function SectionContent({ activeSection, theme, onToggleTheme }: { activeSection
     case "mcp": return <McpSection />;
     case "skills": return <SkillsSection />;
     case "subagents": return <SubagentsSection />;
+    case "webSearch":
+    case "videoRecognition":
+    case "stt":
+    case "tts": return <CapabilitySection id={activeSection} />;
   }
 }
 
@@ -1252,7 +1329,7 @@ export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: 
       window.removeEventListener("pointerup", cancelPendingPointer);
       window.removeEventListener("pointercancel", cancelPendingPointer);
     };
-  });
+  }, []);
 
   useEffect(() => {
     if (!draggingId) return;

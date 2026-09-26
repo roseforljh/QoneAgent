@@ -299,7 +299,7 @@ const ThreadScrollToBottom: FC = () => {
 };
 
 const assistantActionClassName =
-  "flex size-7 items-center justify-center rounded-md text-[#6f6f6f] transition-colors hover:bg-black/[0.07] hover:text-[#333] dark:text-[#a6a6a6] dark:hover:bg-white/10 dark:hover:text-[#ececec]";
+  "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground";
 
 const retryUserMessage = (messageId: string) => {
   const state = useStore.getState();
@@ -314,7 +314,7 @@ const UserMessageText: FC<{ paired?: boolean }> = ({ paired = false }) => {
   if (!hasText) return null;
 
   return (
-    <div className={cn("w-fit min-w-0 break-words rounded-[18px] bg-[#0d0d0d] px-3.5 py-2 text-start text-sm leading-[1.5] text-white dark:bg-[#2a2a2a] dark:text-[#f5f5f5]", paired ? "max-w-full" : "max-w-[85%]")}>
+    <div className={cn("w-fit min-w-0 break-words rounded-[18px] bg-primary text-primary-foreground px-3.5 py-2 text-start text-sm leading-[1.5]", paired ? "max-w-full" : "max-w-[85%]")}>
       <MessagePrimitive.Parts>
         {({ part }) => part.type === "text" ? <span className="whitespace-pre-wrap">{part.text}</span> : null}
       </MessagePrimitive.Parts>

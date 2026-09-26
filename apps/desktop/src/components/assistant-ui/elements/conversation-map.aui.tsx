@@ -9,7 +9,7 @@ import { ConversationMap, type ConversationMapEntry } from "./conversation-map";
 const TITLE_LENGTH = 72;
 const PREVIEW_LENGTH = 240;
 /** Rail needs a real gutter beside the centered max-w-2xl column. */
-const MIN_RAIL_VIEWPORT_WIDTH = 780;
+const MIN_RAIL_VIEWPORT_WIDTH = 960;
 
 /**
  * A message scrolled to the top of the viewport lands a fraction of a pixel

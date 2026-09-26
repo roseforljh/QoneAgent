@@ -1,7 +1,9 @@
 import type { AppendMessage } from "@assistant-ui/react";
 import type { MessageAttachmentInfo } from "@qone/protocol";
+import { GEMINI_FILE_LIMIT_BYTES, isGeminiMedia, type NativeAttachmentFile } from "./native-attachment-file";
 
-const MAX_DATA_LENGTH = 8_000_000;
+const MAX_DATA_LENGTH = 70_000_000;
+const MAX_TOTAL_DATA_LENGTH = 140_000_000;
 
 function readDataUrl(file: File): Promise<string> {
   if (typeof FileReader === "undefined") return file.arrayBuffer().then((buffer) => {
@@ -24,6 +26,12 @@ export async function serializeMessageAttachments(message: AppendMessage): Promi
   const attachments = await Promise.all(input.map(async (attachment) => {
     const type: MessageAttachmentInfo["type"] = attachment.type === "image" ? "image" : "file";
     const mimeType = attachment.contentType || attachment.file?.type || (type === "image" ? "image/png" : "text/plain");
+    const nativeFile = attachment.file as NativeAttachmentFile | undefined;
+    if (nativeFile?.qoneLocalPath) {
+      if (!isGeminiMedia(mimeType)) throw new Error(`大型附件仅支持 Gemini 音频或视频：${attachment.name}`);
+      if ((nativeFile.qoneFileSize ?? 0) > GEMINI_FILE_LIMIT_BYTES) throw new Error(`Gemini Files API 单文件不能超过 2 GB：${attachment.name}`);
+      return { type: "file", name: attachment.name, mimeType, data: "", localPath: nativeFile.qoneLocalPath };
+    }
     const data = type === "image"
       ? attachment.content.find((part) => part.type === "image")?.image
       : attachment.file ? await readDataUrl(attachment.file) : undefined;
@@ -35,8 +43,8 @@ export async function serializeMessageAttachments(message: AppendMessage): Promi
     const serialized: MessageAttachmentInfo = { type, name: attachment.name, mimeType, data };
     return serialized;
   }));
-  if (attachments.reduce((total, attachment) => total + attachment.data.length, 0) > 16_000_000) {
-    throw new Error("附件总大小不能超过 16 MB");
+  if (attachments.reduce((total, attachment) => total + attachment.data.length, 0) > MAX_TOTAL_DATA_LENGTH) {
+    throw new Error("附件总大小不能超过 100 MB");
   }
   return attachments;
 }

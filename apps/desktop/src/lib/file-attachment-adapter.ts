@@ -4,6 +4,7 @@ import type {
   CompleteAttachment,
   PendingAttachment,
 } from "@assistant-ui/react";
+import type { NativeAttachmentFile } from "./native-attachment-file";
 
 const createAttachmentId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -49,6 +50,7 @@ export class AnyFileAttachmentAdapter implements AttachmentAdapter {
 
   public async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
     const mimeType = attachment.contentType || "application/octet-stream";
+    const nativeFile = attachment.file as NativeAttachmentFile;
     return {
       ...attachment,
       status: { type: "complete" },
@@ -56,7 +58,7 @@ export class AnyFileAttachmentAdapter implements AttachmentAdapter {
         type: "file",
         filename: attachment.name,
         mimeType,
-        data: await readFileDataUrl(attachment.file),
+        data: nativeFile.qoneLocalPath ? "" : await readFileDataUrl(attachment.file),
       }],
     };
   }

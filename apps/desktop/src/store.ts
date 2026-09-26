@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate } from "./localization";
@@ -86,6 +86,7 @@ interface AgentState {
   skills: SkillInfo[];
   plugins: PluginInfo[];
   mcpServers: McpServerInfo[];
+  subagentConfig: SubagentConfigInfo;
   mcpConnectingIds: string[];
   browserStatus?: BrowserSyncStatus;
   reachChannels: ReachChannelInfo[];
@@ -148,6 +149,18 @@ interface AgentState {
 
 const rid = () => crypto.randomUUID();
 const BROWSER_AUTO_RECONNECT_KEY = "qone-browser-auto-reconnect";
+const SUBAGENTS_STORAGE_KEY = "qone-subagents";
+const CAPABILITY_ROUTING_STORAGE_KEY = "qone-capability-routing";
+
+function loadLocalSubagentConfig(): SubagentConfigInfo {
+  try {
+    const profiles = JSON.parse(window.localStorage.getItem(SUBAGENTS_STORAGE_KEY) ?? "[]");
+    const routing = JSON.parse(window.localStorage.getItem(CAPABILITY_ROUTING_STORAGE_KEY) ?? "{}");
+    return { profiles: Array.isArray(profiles) ? profiles : [], routing: routing && typeof routing === "object" ? routing : {}, updatedAt: Date.now() };
+  } catch {
+    return { profiles: [], routing: {}, updatedAt: Date.now() };
+  }
+}
 
 function browserAutoReconnectEnabled(): boolean {
   try { return window.localStorage.getItem(BROWSER_AUTO_RECONNECT_KEY) === "1"; }
@@ -167,6 +180,7 @@ type CloudResponse = Extract<RuntimeEvent, { type: "skills.cloud.list" | "skills
 type CloudCommand = Extract<RuntimeCommand, { type: "skills.cloud.list" | "skills.cloud.install" }>;
 type CloudInput = CloudCommand extends infer Command ? Command extends CloudCommand ? Omit<Command, "requestId"> : never : never;
 const cloudRequests = new Map<string, { resolve: (response: CloudResponse) => void; reject: (error: Error) => void }>();
+const cloudInFlight = new Map<string, Promise<CloudResponse>>();
 const workspaceRequests = new Map<string, RuntimeCommand["type"]>();
 const mcpConnectRequests = new Map<string, string>();
 const restoredMcpSecrets = new Set<string>();
@@ -194,9 +208,12 @@ export function requestModelMetadata(input: Omit<Extract<RuntimeCommand, { type:
 
 export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
   if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error("Runtime is unavailable"));
+  const cacheKey = JSON.stringify(command);
+  const existing = cloudInFlight.get(cacheKey);
+  if (existing) return existing;
   const requestId = rid();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cloudRequests.delete(requestId); reject(new Error("云库请求超时")); }, command.type === "skills.cloud.install" ? 120_000 : 25_000);
+  const request = new Promise<CloudResponse>((resolve, reject) => {
+    const timer = setTimeout(() => { cloudRequests.delete(requestId); reject(new Error("云库请求超时")); }, command.type === "skills.cloud.install" ? 120_000 : 60_000);
     cloudRequests.set(requestId, {
       resolve: (response) => { clearTimeout(timer); cloudRequests.delete(requestId); resolve(response); },
       reject: (error) => { clearTimeout(timer); cloudRequests.delete(requestId); reject(error); },
@@ -205,6 +222,9 @@ export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
       if (!sent) cloudRequests.get(requestId)?.reject(new Error("云库请求发送失败"));
     });
   });
+  cloudInFlight.set(cacheKey, request);
+  void request.then(() => cloudInFlight.delete(cacheKey), () => cloudInFlight.delete(cacheKey));
+  return request;
 }
 
 export const useStore = create<AgentState>((set, get) => ({
@@ -223,6 +243,7 @@ export const useStore = create<AgentState>((set, get) => ({
   skills: [],
   plugins: [],
   mcpServers: [],
+  subagentConfig: loadLocalSubagentConfig(),
   mcpConnectingIds: [],
   browserStatus: undefined,
   reachChannels: [],
@@ -650,6 +671,12 @@ export function initBridge() {
         s.send({ type: "workspace.list", requestId: rid() });
         s.send({ type: "model.list", requestId: rid() });
         s.send({ type: "mcp.list", requestId: rid() });
+        const localSubagents = loadLocalSubagentConfig();
+        if (localSubagents.profiles.length > 0 || Object.keys(localSubagents.routing).length > 0) {
+          s.send({ type: "subagent.sync", requestId: rid(), config: localSubagents });
+        } else {
+          s.send({ type: "subagent.list", requestId: rid() });
+        }
         if (msg.capabilities?.includes("reach.channels")) s.send({ type: "reach.channels", requestId: rid() });
         if (msg.capabilities?.includes("browser.connect")) {
           s.send({ type: "browser.status", requestId: rid() });
@@ -881,6 +908,15 @@ export function initBridge() {
         break;
       case "reach.channels":
         useStore.setState({ reachChannels: msg.channels });
+        break;
+      case "subagent.list":
+        useStore.setState({ subagentConfig: msg.config });
+        try {
+          window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(msg.config.profiles));
+          window.localStorage.setItem(CAPABILITY_ROUTING_STORAGE_KEY, JSON.stringify(msg.config.routing));
+        } catch (error) {
+          console.error("subagent configuration cache failed", error);
+        }
         break;
       case "mcp.list":
         useStore.setState({ mcpServers: msg.servers });

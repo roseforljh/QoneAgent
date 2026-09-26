@@ -270,14 +270,14 @@ struct DroppedFilePayload {
 
 #[tauri::command]
 fn read_dropped_file(path: String) -> Result<DroppedFilePayload, String> {
-    const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+    const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
     let file_path = std::path::PathBuf::from(&path);
     let metadata = std::fs::metadata(&file_path).map_err(|error| format!("无法读取附件：{error}"))?;
     if !metadata.is_file() {
         return Err("拖入的项目不是文件".into());
     }
     if metadata.len() > MAX_FILE_BYTES {
-        return Err("附件过大，单个文件不能超过 8 MB".into());
+        return Err("附件过大，单个文件不能超过 50 MB".into());
     }
     let name = file_path
         .file_name()

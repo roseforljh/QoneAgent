@@ -44,7 +44,7 @@ export function MessagePair({
   const userSurfaceClass = cn(
     "min-w-0 max-w-[85%] self-end break-words text-sm",
     variant === "bubble"
-      ? "rounded-2xl border border-black/10 bg-[#0d0d0d] px-3.5 py-2 text-start text-white dark:border-white/10 dark:bg-[#2a2a2a] dark:text-[#f5f5f5]"
+      ? "rounded-2xl border border-border/40 bg-primary px-3.5 py-2 text-start text-primary-foreground"
       : "text-foreground/90 text-end",
   );
 

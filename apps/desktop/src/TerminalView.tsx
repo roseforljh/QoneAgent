@@ -46,15 +46,24 @@ export default function TerminalView({ terminalId, cwd }: Props) {
     });
     ro.observe(ref.current);
 
+    let isMounted = true;
+
     invoke("terminal_spawn", {
       terminalId,
       shell: "powershell.exe",
       cwd,
       cols: term.cols,
       rows: term.rows,
-    }).catch((e) => term.write(`\r\nspawn failed: ${e}\r\n`));
+    }).then(() => {
+      if (!isMounted) {
+        invoke("terminal_kill", { terminalId }).catch(() => {});
+      }
+    }).catch((e) => {
+      if (isMounted) term.write(`\r\nspawn failed: ${e}\r\n`);
+    });
 
     return () => {
+      isMounted = false;
       sub.dispose();
       ro.disconnect();
       unData.then((f) => f());

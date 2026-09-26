@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { CloudDownload, LoaderCircle, Search, X } from "lucide-react";
 import type { CloudSkillInfo } from "@qone/protocol";
 import { requestSkillCloud, useStore } from "../../store";
@@ -14,9 +15,9 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<CloudSkillInfo[]>([]);
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [pageSize, setPageSize] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<CloudSkillInfo | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -29,7 +30,8 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
     setLoading(true);
     setItems([]);
     setPage(1);
-    setHasMore(false);
+    setTotal(0);
+    setPageSize(1);
     setError("");
     const timer = window.setTimeout(() => {
       requestSkillCloud({ type: "skills.cloud.list", collection, page: 1, query: query.trim() })
@@ -37,33 +39,37 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
           if (cancelled || response.type !== "skills.cloud.list") return;
           setItems(response.skills);
           setPage(response.page);
-          setHasMore(response.hasMore);
+          setTotal(response.total);
+          setPageSize(Math.max(1, response.pageSize));
         })
-        .catch((cause) => { if (!cancelled) setError(String(cause instanceof Error ? cause.message : cause)); })
+        .catch((cause) => { if (!cancelled) setError(formatCloudError(cause, t)); })
         .finally(() => { if (!cancelled) setLoading(false); });
     }, query.trim() ? 250 : 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [collection, query, retry]);
 
-  const loadMore = async () => {
-    if (loadingMore || !hasMore) return;
-    setLoadingMore(true);
+  const loadPage = async (nextPage: number) => {
+    if (loading) return;
+    setLoading(true);
     setError("");
     try {
-      const response = await requestSkillCloud({ type: "skills.cloud.list", collection, page: page + 1 });
+      const response = await requestSkillCloud({ type: "skills.cloud.list", collection, page: nextPage, query: query.trim() });
       if (response.type !== "skills.cloud.list") throw new Error(t("skills.cloud.invalidResponse"));
-      setItems((current) => {
-        const seen = new Set(current.map((item) => `${item.source}#${item.skillId}`));
-        return [...current, ...response.skills.filter((item) => !seen.has(`${item.source}#${item.skillId}`))];
-      });
+      setItems(response.skills);
       setPage(response.page);
-      setHasMore(response.hasMore);
+      setTotal(response.total);
+      setPageSize(Math.max(1, response.pageSize));
     } catch (cause) {
-      setError(String(cause instanceof Error ? cause.message : cause));
+      setError(formatCloudError(cause, t));
     } finally {
-      setLoadingMore(false);
+      setLoading(false);
     }
   };
+
+  const maxPage = query.trim() ? 1 : Math.max(1, Math.ceil(total / pageSize));
+  const pageStart = Math.max(1, Math.min(page - 3, maxPage - 6));
+  const pageEnd = Math.min(maxPage, pageStart + 6);
+  const pageNumbers = Array.from({ length: pageEnd - pageStart + 1 }, (_, index) => pageStart + index);
 
   const install = async () => {
     if (!selected || installing) return;
@@ -75,14 +81,14 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
       setInstalledKeys((current) => [...current, `${selected.source}#${selected.skillId}`]);
       setSelected(null);
     } catch (cause) {
-      setInstallError(String(cause instanceof Error ? cause.message : cause));
+      setInstallError(formatCloudError(cause, t));
     } finally {
       setInstalling(false);
     }
   };
 
-  return (
-    <div className="settings-subdialog-layer">
+  return createPortal(
+    <div className="skill-cloud-overlay">
       <div className="settings-subdialog skill-cloud-dialog" role="dialog" aria-modal="true" aria-label={t("skills.cloud.title")}>
         <div className="settings-subdialog-header">
           <div><span>SKILLS.SH</span><h3>{t("skills.cloud.title")}</h3></div>
@@ -110,7 +116,12 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
               })}
         </div>
         {error && items.length > 0 && <p className="skill-cloud-error" role="alert">{error}</p>}
-        {hasMore && !query.trim() && <div className="skill-cloud-more"><button type="button" className="settings-secondary-action" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? <LoaderCircle className="settings-spin" size={14} /> : null}{t("skills.cloud.more")}</button></div>}
+        {!query.trim() && maxPage > 1 && <nav className="skill-cloud-pagination" aria-label={t("skills.cloud.pagination")}>
+          <button type="button" className="skill-cloud-page-arrow" disabled={loading || page <= 1} onClick={() => void loadPage(page - 1)} aria-label={t("skills.cloud.previousPage")}>‹</button>
+          {pageNumbers.map((number) => <button key={number} type="button" className={number === page ? "is-active" : ""} disabled={loading} onClick={() => void loadPage(number)} aria-current={number === page ? "page" : undefined}>{number}</button>)}
+          <button type="button" className="skill-cloud-page-arrow" disabled={loading || page >= maxPage} onClick={() => void loadPage(page + 1)} aria-label={t("skills.cloud.nextPage")}>›</button>
+          <span>{page} / {maxPage}</span>
+        </nav>}
         {selected && <div className="skill-cloud-confirm" role="dialog" aria-modal="true" aria-label={t("skills.cloud.import")}>
           <div className="skill-cloud-confirm-card">
             <div className="settings-subdialog-header"><div><span>{selected.source}</span><h3>{selected.name}</h3></div><button type="button" className="settings-dialog-close" disabled={installing} onClick={() => setSelected(null)} aria-label={t("common.close")}><X size={17} /></button></div>
@@ -120,6 +131,12 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
           </div>
         </div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
+}
+
+function formatCloudError(cause: unknown, t: (key: "skills.cloud.timeout") => string): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return /timed out|timeout/i.test(message) ? t("skills.cloud.timeout") : message;
 }
