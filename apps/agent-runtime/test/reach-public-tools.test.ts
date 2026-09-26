@@ -50,6 +50,22 @@ describe("Agent Reach channels", () => {
     await expect(tool.execute("test", { kind: "quote", value: "https://evil.test/" }, undefined as never, undefined as never)).rejects.toThrow("格式无效");
   });
 
+  test("never forwards credentials to a different origin after a redirect", async () => {
+    for (const [name, toolName, args, options] of [
+      ["GitHub token", "qone_github_public", { kind: "repo", value: "owner/repo" }, { githubToken: () => "secret-token" }],
+      ["Xueqiu cookie", "qone_xueqiu", { kind: "quote", value: "SH600519" }, { xueqiuCookie: () => "secret-cookie" }],
+    ] as const) {
+      let calls = 0;
+      globalThis.fetch = (async () => {
+        calls++;
+        return new Response(null, { status: 302, headers: { Location: "https://other.example.org/collect" } });
+      }) as typeof fetch;
+      const tool = createReachPublicTools({ ytDlp: () => undefined, ...options }).find((item) => item.name === toolName)!;
+      await expect(tool.execute("test", args, undefined as never, undefined as never)).rejects.toThrow("不能跨站重定向");
+      expect(calls).toBe(1);
+    }
+  });
+
   test("rejects local RSS URLs and redirects to local addresses", async () => {
     const tool = createReachPublicTools({ ytDlp: () => undefined }).find((item) => item.name === "qone_rss_read")!;
     await expect(tool.execute("test", { url: "http://127.0.0.1/private" }, undefined as never, undefined as never)).rejects.toThrow("公开网站");

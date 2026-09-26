@@ -1,5 +1,5 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
@@ -17,6 +17,7 @@ import { listReachChannels, ytDlpExecutable } from "./reach-channels.js";
 import { configurePodcast, podcastConfigured } from "./reach-podcast.js";
 import { createPodcastTools } from "./reach-podcast-tools.js";
 import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } from "./workspace.js";
+import { buildSubagentPrompt, inferCapability, normalizeSubagentConfig, resolveSubagent } from "./subagents.js";
 
 const log = createLogger("runtime");
 
@@ -51,6 +52,7 @@ const modelConfigRepo = new ModelConfigRepo(db);
 const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
+let subagentConfig: SubagentConfigInfo = normalizeSubagentConfig(settingsRepo.get("subagents.config"));
 const eventRepo = new EventRepo(db);
 const artifactRepo = new ArtifactRepo(db);
 const permissionRepo = new PermissionRepo(db);
@@ -324,6 +326,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           "browser.connect",
           "reach.channels",
           "reach.podcast.configure",
+          "subagents.v1",
         ],
       });
       return;
@@ -514,6 +517,16 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       configurePodcast(cmd.accessToken, cmd.refreshToken);
       send({ type: "pong", requestId: cmd.requestId });
       sendReachChannels();
+      return;
+
+    case "subagent.list":
+      sendSubagentConfig(cmd.requestId);
+      return;
+
+    case "subagent.sync":
+      subagentConfig = normalizeSubagentConfig(cmd.config);
+      settingsRepo.set("subagents.config", subagentConfig);
+      sendSubagentConfig(cmd.requestId);
       return;
 
     case "browser.connect":
@@ -787,14 +800,21 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         return;
       }
 
+      const capability = cmd.capability ?? inferCapability(cmd.message, cmd.attachments);
+      const subagent = capability ? resolveSubagent(subagentConfig, capability, cmd.model, cmd.subagentId) : undefined;
+      const executionSessionId = subagent ? `${cmd.sessionId}::subagent::${run.id}` : cmd.sessionId;
+      const executionModel = subagent?.modelId ?? cmd.model;
+      const executionMessage = subagent ? buildSubagentPrompt(subagent, cmd.message) : cmd.message;
+      if (subagent) log.info("dispatching capability task to subagent", { capability, subagentId: subagent.id, model: executionModel, route: subagent.route });
+
       Promise.resolve()
-        .then(() => adapter.run(cmd.sessionId, cmd.message, { model: cmd.model, cwd: workspaceCwd, runId: run.id, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments }, (type, payload) =>
+        .then(() => adapter.run(executionSessionId, executionMessage, { model: executionModel, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, mcpServerId: subagent?.mcpServerId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments }, (type, payload) =>
           emit(type, payload, cmd.sessionId, run.id)
         ))
         .then(async () => {
           const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
-          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
+          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, executionModel);
           if (!assistantMessage && !cancelled) throw new Error("AI returned an empty response");
           assistantBuffers.delete(run.id);
           assistantStreamBuffers.delete(run.id);
@@ -820,7 +840,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         .catch(async (err) => {
           const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
-          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
+          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, executionModel);
           assistantBuffers.delete(run.id);
           assistantStreamBuffers.delete(run.id);
           assistantPartsByRun.delete(run.id);
@@ -833,6 +853,9 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled
             ? (assistantMessage ? { message: { id: assistantMessage.id, role: assistantMessage.role, content: assistantMessage.content, parts, runId: assistantMessage.runId, createdAt: assistantMessage.createdAt } } : {})
             : { message: String(err) }, cmd.sessionId, run.id);
+        })
+        .finally(() => {
+          if (subagent) void adapter.disposeSession(executionSessionId);
         });
 
       send({ type: "pong", requestId: cmd.requestId });
@@ -885,8 +908,12 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         type: "error",
         requestId: (cmd as { requestId?: string }).requestId,
         message: `unhandled command ${(cmd as { type: string }).type}`,
-      });
-  }
+  });
+}
+
+function sendSubagentConfig(requestId?: string) {
+  send({ type: "subagent.list", requestId, config: subagentConfig });
+}
 }
 
 // Read NDJSON commands from stdin.

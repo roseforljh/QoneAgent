@@ -20,6 +20,7 @@ import { modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type Messa
 import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
+import { googleMediaContent, googleStreamSimple } from "./google-media.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
 
 const log = createLogger("pi-adapter");
@@ -52,10 +53,11 @@ export function imageContent(attachments: readonly MessageAttachmentInfo[] = [])
   });
 }
 
-export function promptWithAttachments(message: string, attachments: readonly MessageAttachmentInfo[] = []): string {
+export function promptWithAttachments(message: string, attachments: readonly MessageAttachmentInfo[] = [], nativeMedia = false): string {
   const escapeName = (name: string) => name.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
   const files = attachments.flatMap((attachment) => {
     if (attachment.type !== "file") return [];
+    if (nativeMedia && /^(?:audio|video)\//i.test(attachment.mimeType)) return [];
     const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
     if (!match) return [];
     const body = Buffer.from(match[1]!, "base64").toString("utf8");
@@ -91,8 +93,9 @@ export function createPiSessionEntries(
     if (message.role === "assistant" && !model) continue;
     const id = crypto.randomUUID();
     const base = { type: "message" as const, id, parentId, timestamp: new Date(message.createdAt).toISOString() };
-    const images = imageContent(message.attachments);
-    const prompt = promptWithAttachments(message.content, message.attachments);
+    const isGoogle = model?.api === "google-generative-ai";
+    const images = isGoogle ? googleMediaContent(message.attachments) : imageContent(message.attachments);
+    const prompt = promptWithAttachments(message.content, message.attachments, isGoogle);
     const value = message.role === "user"
       ? { ...base, message: { role: "user" as const, content: images.length ? [
           { type: "text" as const, text: prompt },
@@ -272,6 +275,7 @@ export class PiAdapter {
         name: provider,
         baseUrl: firstResolved.baseUrl,
         api: firstResolved.api as never,
+        ...(firstResolved.api === "google-generative-ai" ? { streamSimple: googleStreamSimple as never } : {}),
         models: models.map((item, index) => {
           const model = resolved[index];
           return {
@@ -376,7 +380,7 @@ export class PiAdapter {
     });
   }
 
-  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel): Promise<AgentSession> {
+  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string): Promise<AgentSession> {
     const modelKey = modelName ? splitModelName(modelName).join("/") : undefined;
     const apiType = modelKey ? this.modelApiTypes.get(modelKey) : undefined;
     const override = thinkingOverride ? normalizeThinkingLevelForApi(thinkingOverride, apiType) : undefined;
@@ -414,14 +418,17 @@ export class PiAdapter {
       createFindTool(workspacePath),
       createLsTool(workspacePath),
     ];
-    const wrapped = [...builtinTools, ...this.customTools].map((t) =>
+    const customTools = mcpServerId
+      ? this.customTools.filter((tool) => (tool as ToolDefinition & { qoneToolName?: string }).qoneToolName?.startsWith(`mcp:${mcpServerId}:`))
+      : this.customTools;
+    const wrapped = [...builtinTools, ...customTools].map((t) =>
       withPermission(t, {
         queue: this.approvals,
         workspacePath,
         rules: this.permissionRules,
         mode: () => this.runModes.get(sessionId) ?? "ask",
         emitApproval: (approvalId, toolName, args, toolCallId) =>
-          this.push("approval.requested", { approvalId, toolName, args, toolCallId }, sessionId, this.activeRunIds.get(sessionId)),
+          this.push("approval.requested", { approvalId, toolName, args, toolCallId }, eventSessionId, this.activeRunIds.get(sessionId)),
       })
     );
     assertModelToolNames(wrapped.map((tool) => tool.name));
@@ -533,23 +540,23 @@ export class PiAdapter {
         protocolPayload = { toolCallId: raw.toolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: raw.result, isError: result?.isError ?? false };
       } else if (e.type === "agent_start") protocolType = "turn.started";
       else if (e.type === "agent_end") protocolType = "turn.completed";
-      this.push(protocolType, protocolPayload, sessionId, runId);
+      this.push(protocolType, protocolPayload, eventSessionId, runId);
       if (!runId) return;
       const p = normalized as { type?: string; assistantMessageEvent?: { type?: string; delta?: string }; message?: unknown; toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
       const toolPayload = protocolPayload as { toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
       const delta = p.assistantMessageEvent?.delta;
-      if (p.assistantMessageEvent?.type === "text_delta" && typeof delta === "string" && delta) this.hooks.onMessage?.(sessionId, runId, "assistant", delta);
+      if (p.assistantMessageEvent?.type === "text_delta" && typeof delta === "string" && delta) this.hooks.onMessage?.(eventSessionId, runId, "assistant", delta);
       if (e.type === "message_end" && e.message.role === "assistant" && e.message.stopReason !== "error" && e.message.stopReason !== "aborted") {
         const finalText = extractTextContent(raw.message);
-        if (finalText) this.hooks.onAssistantFinal?.(sessionId, runId, finalText);
+        if (finalText) this.hooks.onAssistantFinal?.(eventSessionId, runId, finalText);
       }
       if (e.type === "tool_execution_start") {
         const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
-        this.hooks.onTool?.(sessionId, runId, "start", name, toolPayload.args, undefined, toolPayload.toolCallId);
+        this.hooks.onTool?.(eventSessionId, runId, "start", name, toolPayload.args, undefined, toolPayload.toolCallId);
       }
       if (e.type === "tool_execution_end") {
         const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
-        this.hooks.onTool?.(sessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId);
+        this.hooks.onTool?.(eventSessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId);
       }
     });
 
@@ -568,7 +575,7 @@ export class PiAdapter {
   async run(
     sessionId: string,
     message: string,
-    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[] },
+    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string },
     runEmit: RunEmitFn
   ): Promise<void> {
     if (this.activeRunIds.has(sessionId)) throw new Error(`session ${sessionId} already has an active run`);
@@ -577,11 +584,17 @@ export class PiAdapter {
     this.runModes.set(sessionId, opts.permissionMode ?? "ask");
     let session: AgentSession | undefined;
     try {
-      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking);
+      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId);
       if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
       this.runs.set(runId, session);
       const previousLength = session.messages.length;
-      await session.prompt(promptWithAttachments(message, opts.attachments), { images: imageContent(opts.attachments) });
+      const selectedModel = opts.model
+        ? this.modelRuntime?.getModel(...splitModelName(opts.model))
+        : session.agent.state.model;
+      const isGoogle = selectedModel?.api === "google-generative-ai";
+      await session.prompt(promptWithAttachments(message, opts.attachments, isGoogle), {
+        images: isGoogle ? googleMediaContent(opts.attachments) : imageContent(opts.attachments),
+      });
       const assistantMessages = session.messages.slice(previousLength).filter((item) => item.role === "assistant");
       const final = assistantMessages.at(-1);
       if (!final) throw new Error("Model returned no assistant response");

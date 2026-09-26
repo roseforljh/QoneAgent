@@ -17,9 +17,11 @@ test("cloud catalog reads the skills.sh collection and search", async () => {
   const urls: string[] = [];
   const fetcher = (async (input: string | URL | Request) => {
     urls.push(String(input));
-    return Response.json({ skills: [{ source: "owner/repo", skillId: "demo", name: "Demo", installs: 42, isOfficial: true }], hasMore: true });
+    return Response.json({ total: 200, skills: [{ source: "owner/repo", skillId: "demo", name: "Demo", installs: 42, isOfficial: true }], hasMore: true });
   }) as typeof fetch;
-  expect((await listCloudSkills("popular", 1, "", fetcher)).skills[0]?.skillId).toBe("demo");
+  const popular = await listCloudSkills("popular", 1, "", fetcher);
+  expect(popular.skills[0]?.skillId).toBe("demo");
+  expect(popular.total).toBe(200);
   expect((await listCloudSkills("trending", 1, "abc", fetcher)).hasMore).toBe(false);
   expect(urls).toEqual(["https://skills.sh/api/skills/all-time/1", "https://skills.sh/api/search?q=abc&limit=100"]);
 });

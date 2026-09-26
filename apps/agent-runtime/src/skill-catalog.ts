@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 import { qoneAgentDir, type SkillInfo } from "./skills.js";
@@ -15,6 +16,8 @@ export interface CloudSkill {
 export interface CloudSkillPage {
   skills: CloudSkill[];
   page: number;
+  total: number;
+  pageSize: number;
   hasMore: boolean;
 }
 
@@ -24,11 +27,46 @@ const SKILL_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const IGNORED_ROOTS = new Set([".git", ".github", "node_modules", "build", "dist", "references", "templates", "assets", "scripts", "examples", "example", "test", "tests"]);
 const MAX_FILES = 1_000;
 const MAX_BYTES = 100 * 1024 * 1024;
+const CATALOG_CACHE_MAX_AGE = 10 * 60 * 1_000;
+const CATALOG_REQUEST_TIMEOUT = 20_000;
 
 async function getJson(url: string, fetcher: typeof fetch): Promise<unknown> {
-  const response = await fetcher(url, { headers: { Accept: "application/json", "User-Agent": "QoneAgent-Skills" }, signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) throw new Error(`云库请求失败：HTTP ${response.status}`);
-  return response.json();
+  const canCache = fetcher === fetch;
+  const cachePath = canCache ? path.join(qoneAgentDir(), "skill-catalog", `${createHash("sha256").update(url).digest("hex")}.json`) : undefined;
+  const readCache = async () => {
+    if (!cachePath) return undefined;
+    try {
+      const [metadata, body] = await Promise.all([stat(cachePath), readFile(cachePath, "utf8")]);
+      return { body: JSON.parse(body) as unknown, fresh: Date.now() - metadata.mtimeMs < CATALOG_CACHE_MAX_AGE };
+    } catch {
+      return undefined;
+    }
+  };
+  const cached = await readCache();
+  if (cached?.fresh) return cached.body;
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CATALOG_REQUEST_TIMEOUT);
+    try {
+      const response = await fetcher(url, { headers: { Accept: "application/json", "User-Agent": "QoneAgent-Skills" }, signal: controller.signal });
+      if (!response.ok) throw new Error(`云库请求失败：HTTP ${response.status}`);
+      const body = await response.json() as unknown;
+      if (cachePath) {
+        await mkdir(path.dirname(cachePath), { recursive: true });
+        await writeFile(cachePath, JSON.stringify(body), "utf8");
+      }
+      return body;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 250));
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  if (cached) return cached.body;
+  throw lastError instanceof Error ? lastError : new Error("云库请求失败");
 }
 
 export async function listCloudSkills(collection: "popular" | "trending" | "official", page: number, query = "", fetcher: typeof fetch = fetch): Promise<CloudSkillPage> {
@@ -38,7 +76,7 @@ export async function listCloudSkills(collection: "popular" | "trending" | "offi
   const url = search
     ? `https://skills.sh/api/search?q=${encodeURIComponent(search)}&limit=100`
     : `https://skills.sh/api/skills/${collection === "trending" ? "trending" : "all-time"}/${page}`;
-  const data = await getJson(url, fetcher) as { skills?: unknown; hasMore?: unknown };
+  const data = await getJson(url, fetcher) as { skills?: unknown; total?: unknown; hasMore?: unknown };
   if (!Array.isArray(data.skills)) throw new Error("云库返回了无效数据");
   const skills = data.skills.flatMap((raw): CloudSkill[] => {
     if (!raw || typeof raw !== "object") return [];
@@ -47,7 +85,14 @@ export async function listCloudSkills(collection: "popular" | "trending" | "offi
     if (collection === "official" && !search && item.isOfficial !== true) return [];
     return [{ source: item.source, skillId: item.skillId, name: typeof item.name === "string" ? item.name : item.skillId, installs: typeof item.installs === "number" ? item.installs : 0, isOfficial: item.isOfficial === true }];
   });
-  return { skills, page, hasMore: !search && data.hasMore === true };
+  const pageSize = data.skills.length;
+  return {
+    skills,
+    page,
+    total: typeof data.total === "number" && Number.isSafeInteger(data.total) ? data.total : skills.length,
+    pageSize,
+    hasMore: !search && data.hasMore === true,
+  };
 }
 
 function safeRelativeFile(file: string): boolean {

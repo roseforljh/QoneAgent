@@ -22,6 +22,11 @@ export function ytDlpExecutable(): string | undefined {
   return configured && existsSync(configured) ? configured : executable("yt-dlp");
 }
 
+export function ffmpegExecutable(): string | undefined {
+  const configured = process.env.QONE_FFMPEG;
+  return configured && existsSync(configured) ? configured : executable("ffmpeg");
+}
+
 interface ChannelContext { browserConnected: boolean; mcpConnected: (id: string) => boolean; hasXueqiuCookie?: boolean; podcastConfigured?: boolean; hasGroqKey?: boolean }
 
 export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
@@ -59,7 +64,7 @@ export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
     },
     {
       id: "xiaoyuzhou", name: "小宇宙", description: "播客、单集、字幕与音频转写", backend: "OpenCLI / Groq Whisper",
-      tools: ["qone_opencli_discover", "qone_opencli_run", "qone_podcast_transcribe"], state: context.podcastConfigured ? "unverified" : "needs-connection", detail: context.podcastConfigured ? (context.hasGroqKey ? "令牌和 Groq Key 已配置，实际有效性需请求验证；音频上限 25 MB" : "令牌已配置；无字幕音频转写还需 Groq API Key") : "点击卡片配置小宇宙 access_token 和 refresh_token", action: "podcast",
+      tools: ["qone_opencli_discover", "qone_opencli_run", "qone_podcast_transcribe"], state: context.podcastConfigured ? "unverified" : "needs-connection", detail: context.podcastConfigured ? (context.hasGroqKey ? "令牌和 Groq Key 已配置，实际有效性需请求验证；大音频会自动分段转写" : "令牌已配置；无字幕音频转写还需 Groq API Key") : "点击卡片配置小宇宙 access_token 和 refresh_token", action: "podcast",
     },
   ];
   return channels;

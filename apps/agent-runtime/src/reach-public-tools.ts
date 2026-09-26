@@ -33,6 +33,7 @@ async function requirePublicResolution(url: URL): Promise<void> {
 
 async function boundedFetch(url: URL, headers: Record<string, string> = {}): Promise<string> {
   let current = url;
+  const carriesCredentials = Object.keys(headers).some((name) => /^(authorization|cookie|proxy-authorization)$/i.test(name));
   for (let redirects = 0; redirects < 4; redirects++) {
     await requirePublicResolution(current);
     const response = await fetch(current, {
@@ -42,7 +43,9 @@ async function boundedFetch(url: URL, headers: Record<string, string> = {}): Pro
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");
       if (!location) throw new Error("网站重定向缺少目标地址");
-      current = publicUrl(new URL(location, current).href);
+      const next = publicUrl(new URL(location, current).href);
+      if (carriesCredentials && next.origin !== current.origin) throw new Error("带有凭据的请求不能跨站重定向");
+      current = next;
       continue;
     }
     if (!response.ok) throw new Error(`网站请求失败：HTTP ${response.status}`);
