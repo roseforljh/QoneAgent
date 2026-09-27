@@ -21,6 +21,8 @@ export {
   settings,
   modelConfigs,
   events,
+  goals,
+  goalEvents,
 } from "./schema.js";
 
 export type Db = ReturnType<typeof openDb>;
@@ -76,6 +78,7 @@ function migrate(sqlite: Database) {
       parts TEXT,
       attachments TEXT,
       model TEXT,
+      goal_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -87,7 +90,10 @@ function migrate(sqlite: Database) {
       status TEXT NOT NULL DEFAULT 'created',
       started_at INTEGER,
       completed_at INTEGER,
-      error TEXT
+      error TEXT,
+      origin TEXT NOT NULL DEFAULT 'manual',
+      goal_id TEXT,
+      goal_epoch INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
 
@@ -201,7 +207,41 @@ function migrate(sqlite: Database) {
       payload TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_events_session_sequence ON events(session_id, sequence);
+
+    CREATE TABLE IF NOT EXISTS goals (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      objective TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      waiting_reason TEXT,
+      waiting_until INTEGER,
+      stop_reason TEXT,
+      run_options TEXT,
+      epoch INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_goals_session ON goals(session_id);
+
+    CREATE TABLE IF NOT EXISTS goal_events (
+      id TEXT PRIMARY KEY,
+      goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      run_id TEXT,
+      type TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_goal_events_goal ON goal_events(goal_id, created_at);
   `);
+  const messageColumns = new Set(sqlite.query("PRAGMA table_info(messages)").all().map((column) => (column as { name: string }).name));
+  if (!messageColumns.has("goal_id")) sqlite.exec("ALTER TABLE messages ADD COLUMN goal_id TEXT");
+  const runColumns = new Set(sqlite.query("PRAGMA table_info(runs)").all().map((column) => (column as { name: string }).name));
+  if (!runColumns.has("origin")) sqlite.exec("ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'");
+  if (!runColumns.has("goal_id")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_id TEXT");
+  if (!runColumns.has("goal_epoch")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_epoch INTEGER");
+  const goalColumns = new Set(sqlite.query("PRAGMA table_info(goals)").all().map((column) => (column as { name: string }).name));
+  if (!goalColumns.has("run_options")) sqlite.exec("ALTER TABLE goals ADD COLUMN run_options TEXT");
   if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "attachments")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN attachments TEXT");
   }

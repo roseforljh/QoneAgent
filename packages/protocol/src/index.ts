@@ -48,9 +48,15 @@ export type RuntimeCommand =
   | { type: "session.rename"; requestId: string; sessionId: string; title: string }
   | { type: "session.delete"; requestId: string; sessionId: string }
   | { type: "session.messages"; requestId: string; sessionId: string }
+  | { type: "session.queue.list"; requestId: string; sessionId: string }
   | { type: "session.runs"; requestId: string; sessionId: string }
   | { type: "session.toolCalls"; requestId: string; sessionId: string }
   | { type: "session.subagents"; requestId: string; sessionId: string }
+  | { type: "goal.get"; requestId: string; sessionId: string }
+  | { type: "goal.start"; requestId: string; sessionId: string; objective: string; attachments?: MessageAttachmentInfo[]; messageId?: string; replaceFromMessageId?: string; model?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel }
+  | { type: "goal.pause"; requestId: string; sessionId: string; reason?: string }
+  | { type: "goal.resume"; requestId: string; sessionId: string }
+  | { type: "goal.clear"; requestId: string; sessionId: string }
   | { type: "artifact.list"; requestId: string; sessionId: string }
   | { type: "workspace.list"; requestId: string }
   | { type: "workspace.upsert"; requestId: string; name: string; path: string }
@@ -63,6 +69,8 @@ export type RuntimeCommand =
   | { type: "skills.list"; requestId: string; cwd?: string }
   | { type: "skills.cloud.list"; requestId: string; collection: "popular" | "trending" | "official"; page: number; query?: string }
   | { type: "skills.cloud.install"; requestId: string; source: string; skillId: string }
+  | { type: "skills.import"; requestId: string; content: string }
+  | { type: "skills.create"; requestId: string; name: string; description: string; instructions: string }
   | { type: "plugins.list"; requestId: string }
   | { type: "browser.status"; requestId: string }
   | { type: "browser.connect"; requestId: string }
@@ -90,6 +98,8 @@ export type RuntimeCommand =
       requestId: string;
       sessionId: string;
       message: string;
+      goal?: boolean;
+      goalContinuation?: boolean;
       attachments?: MessageAttachmentInfo[];
       messageId?: string;
       replaceFromMessageId?: string;
@@ -98,7 +108,13 @@ export type RuntimeCommand =
       thinking?: RunThinkingLevel;
       capability?: CapabilityId;
       subagentId?: string;
+      queueItemId?: string;
     }
+  | { type: "agent.steer"; requestId: string; sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }
+  | { type: "queue.upsert"; requestId: string; sessionId: string; item: QueueItemInfo }
+  | { type: "queue.edit"; requestId: string; sessionId: string; item: QueueItemInfo }
+  | { type: "queue.sync"; requestId: string; sessionId: string; items: QueueItemInfo[] }
+  | { type: "queue.remove"; requestId: string; sessionId: string; queueItemId: string }
   | { type: "agent.stop"; requestId: string; runId: string }
   | { type: "tool.approve"; requestId: string; approvalId: string }
   | { type: "tool.reject"; requestId: string; approvalId: string; reason?: string }
@@ -132,9 +148,13 @@ export type RuntimeEvent =
   | { type: "session.list"; sessions: SessionInfo[] }
   | { type: "session.renamed"; session: SessionInfo }
   | { type: "session.messages"; sessionId: string; messages: MessageInfo[] }
+  | { type: "session.queue"; sessionId: string; items: QueueItemInfo[] }
   | { type: "session.runs"; sessionId: string; runs: RunInfo[] }
   | { type: "session.toolCalls"; sessionId: string; toolCalls: ToolCallInfo[] }
   | { type: "session.subagents"; sessionId: string; subagents: SubagentRunInfo[] }
+  | { type: "goal.current"; sessionId: string; goal?: GoalInfo }
+  | { type: "goal.updated"; goal: GoalInfo }
+  | { type: "goal.cleared"; sessionId: string; goalId: string }
   | { type: "subagent.updated"; subagent: SubagentRunInfo }
   | { type: "artifact.list"; sessionId: string; artifacts: ArtifactInfo[] }
   | { type: "workspace.list"; workspaces: WorkspaceInfo[] }
@@ -146,6 +166,8 @@ export type RuntimeEvent =
   | { type: "skills.list"; skills: SkillInfo[] }
   | { type: "skills.cloud.list"; requestId: string; skills: CloudSkillInfo[]; page: number; total: number; pageSize: number; hasMore: boolean }
   | { type: "skills.cloud.installed"; requestId: string; skill: SkillInfo }
+  | { type: "skills.imported"; requestId: string; skill: SkillInfo }
+  | { type: "skills.created"; requestId: string; skill: SkillInfo }
   | { type: "plugins.list"; plugins: PluginInfo[] }
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
   | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
@@ -192,7 +214,38 @@ export interface MessageInfo {
   parts?: AssistantMessagePart[];
   attachments?: MessageAttachmentInfo[];
   model?: string;
+  goalId?: string;
   createdAt: number;
+}
+
+export type GoalStatus = "active" | "paused" | "blocked" | "complete";
+
+export interface GoalInfo {
+  id: string;
+  sessionId: string;
+  objective: string;
+  status: GoalStatus;
+  waitingReason?: string;
+  waitingUntil?: number;
+  stopReason?: string;
+  epoch: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type QueueItemStatus = "queued" | "steering" | "scheduled";
+export type QueueItemLane = "queue" | "steer";
+
+export interface QueueItemInfo {
+  id: string;
+  sessionId: string;
+  text: string;
+  attachments?: MessageAttachmentInfo[];
+  lane: QueueItemLane;
+  status: QueueItemStatus;
+  position: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface MessageAttachmentInfo {
@@ -565,9 +618,15 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.rename": z.object({ type: z.literal("session.rename"), ...request, sessionId: id, title: id }),
   "session.delete": z.object({ type: z.literal("session.delete"), ...request, sessionId: id }),
   "session.messages": z.object({ type: z.literal("session.messages"), ...request, sessionId: id }),
+  "session.queue.list": z.object({ type: z.literal("session.queue.list"), ...request, sessionId: id }),
   "session.runs": z.object({ type: z.literal("session.runs"), ...request, sessionId: id }),
   "session.toolCalls": z.object({ type: z.literal("session.toolCalls"), ...request, sessionId: id }),
   "session.subagents": z.object({ type: z.literal("session.subagents"), ...request, sessionId: id }),
+  "goal.get": z.object({ type: z.literal("goal.get"), ...request, sessionId: id }),
+  "goal.start": z.object({ type: z.literal("goal.start"), ...request, sessionId: id, objective: z.string().trim().min(1), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((goal) => (goal.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 140_000_000, "Goal attachments exceed the maximum size"),
+  "goal.pause": z.object({ type: z.literal("goal.pause"), ...request, sessionId: id, reason: z.string().optional() }),
+  "goal.resume": z.object({ type: z.literal("goal.resume"), ...request, sessionId: id }),
+  "goal.clear": z.object({ type: z.literal("goal.clear"), ...request, sessionId: id }),
   "artifact.list": z.object({ type: z.literal("artifact.list"), ...request, sessionId: id }),
   "workspace.list": z.object({ type: z.literal("workspace.list"), ...request }),
   "workspace.upsert": z.object({ type: z.literal("workspace.upsert"), ...request, name: id, path: id }),
@@ -580,6 +639,8 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "skills.list": z.object({ type: z.literal("skills.list"), ...request, cwd: z.string().optional() }),
   "skills.cloud.list": z.object({ type: z.literal("skills.cloud.list"), ...request, collection: z.enum(["popular", "trending", "official"]), page: z.number().int().min(1).max(200), query: z.string().max(100).optional() }),
   "skills.cloud.install": z.object({ type: z.literal("skills.cloud.install"), ...request, source: z.string().max(200), skillId: z.string().max(64) }),
+  "skills.import": z.object({ type: z.literal("skills.import"), ...request, content: z.string().min(1).max(2_097_152) }),
+  "skills.create": z.object({ type: z.literal("skills.create"), ...request, name: z.string().max(64), description: z.string().max(500), instructions: z.string().min(1).max(2_000_000) }),
   "plugins.list": z.object({ type: z.literal("plugins.list"), ...request }),
   "browser.status": z.object({ type: z.literal("browser.status"), ...request }),
   "browser.connect": z.object({ type: z.literal("browser.connect"), ...request }),
@@ -599,7 +660,12 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
-  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(), capability: capabilityId.optional(), subagentId: id.max(128).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && (run.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 140_000_000, "Message or valid attachments required"),
+  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(), capability: capabilityId.optional(), subagentId: id.max(128).optional(), queueItemId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && (run.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 140_000_000, "Message or valid attachments required"),
+  "agent.steer": z.object({ type: z.literal("agent.steer"), ...request, sessionId: id, runId: id, queueItemId: id, message: z.string(), attachments: z.array(messageAttachment).max(8).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length), "Message or valid attachments required"),
+  "queue.upsert": z.object({ type: z.literal("queue.upsert"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).max(8).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
+  "queue.edit": z.object({ type: z.literal("queue.edit"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).max(8).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
+  "queue.sync": z.object({ type: z.literal("queue.sync"), ...request, sessionId: id, items: z.array(z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).max(8).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() })).max(100) }),
+  "queue.remove": z.object({ type: z.literal("queue.remove"), ...request, sessionId: id, queueItemId: id }),
   "agent.stop": z.object({ type: z.literal("agent.stop"), ...request, runId: id }),
   "tool.approve": z.object({ type: z.literal("tool.approve"), ...request, approvalId: id }),
   "tool.reject": z.object({ type: z.literal("tool.reject"), ...request, approvalId: id, reason: z.string().optional() }),

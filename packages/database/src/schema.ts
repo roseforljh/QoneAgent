@@ -25,6 +25,7 @@ export const messages = sqliteTable(
     parts: text("parts"), // ordered visible Pi assistant parts; null for legacy messages
     attachments: text("attachments"),
     model: text("model"),
+    goalId: text("goal_id"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -43,6 +44,9 @@ export const runs = sqliteTable(
     startedAt: integer("started_at"),
     completedAt: integer("completed_at"),
     error: text("error"),
+    origin: text("origin").notNull().default("manual"),
+    goalId: text("goal_id"),
+    goalEpoch: integer("goal_epoch"),
   },
   (t) => [index("idx_runs_session").on(t.sessionId)]
 );
@@ -228,4 +232,36 @@ export const events = sqliteTable(
     payload: text("payload").notNull(),
   },
   (t) => [index("idx_events_session_sequence").on(t.sessionId, t.sequence)]
+);
+
+export const goals = sqliteTable(
+  "goals",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    objective: text("objective").notNull(),
+    status: text("status").notNull().default("active"),
+    waitingReason: text("waiting_reason"),
+    waitingUntil: integer("waiting_until"),
+    stopReason: text("stop_reason"),
+    runOptions: text("run_options"),
+    epoch: integer("epoch").notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("idx_goals_session").on(t.sessionId)],
+);
+
+export const goalEvents = sqliteTable(
+  "goal_events",
+  {
+    id: text("id").primaryKey(),
+    goalId: text("goal_id").notNull().references(() => goals.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    runId: text("run_id"),
+    type: text("type").notNull(),
+    payload: text("payload").notNull().default("{}"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_goal_events_goal").on(t.goalId, t.createdAt)],
 );

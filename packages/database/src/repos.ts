@@ -1,7 +1,7 @@
 import { desc, eq, inArray, sql } from "drizzle-orm";
-import { sessions, messages, runs, subagentRuns, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills } from "./schema.js";
+import { sessions, messages, runs, subagentRuns, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
 import type { Db } from "./index.js";
-import type { AssistantMessagePart, MessageAttachmentInfo } from "@qone/protocol";
+import type { AssistantMessagePart, GoalInfo, GoalStatus, MessageAttachmentInfo, QueueItemInfo, RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
 
 export class SessionRepo {
   constructor(private db: Db) {}
@@ -54,7 +54,7 @@ export class SessionRepo {
 export class MessageRepo {
   constructor(private db: Db) {}
 
-  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[], parts?: AssistantMessagePart[]) {
+  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[], parts?: AssistantMessagePart[], goalId?: string) {
     const now = Date.now();
     const row = {
       id: messageId ?? crypto.randomUUID(),
@@ -65,6 +65,7 @@ export class MessageRepo {
       parts: parts ? JSON.stringify(parts) : null,
       attachments: attachments?.length ? JSON.stringify(attachments) : null,
       model,
+      goalId: goalId ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -113,8 +114,8 @@ export class MessageRepo {
     });
   }
 
-  addAssistant(sessionId: string, content: string, runId?: string, model?: string, parts?: AssistantMessagePart[]) {
-    return this.add(sessionId, "assistant", content, runId, model, undefined, undefined, parts);
+  addAssistant(sessionId: string, content: string, runId?: string, model?: string, parts?: AssistantMessagePart[], goalId?: string) {
+    return this.add(sessionId, "assistant", content, runId, model, undefined, undefined, parts, goalId);
   }
 }
 
@@ -195,7 +196,7 @@ export class SubagentRunRepo {
 export class RunRepo {
   constructor(private db: Db) {}
 
-  create(sessionId: string) {
+  create(sessionId: string, input: { origin?: string; goalId?: string; goalEpoch?: number } = {}) {
     const row = {
       id: crypto.randomUUID(),
       sessionId,
@@ -203,6 +204,9 @@ export class RunRepo {
       startedAt: Date.now(),
       completedAt: null as number | null,
       error: null as string | null,
+      origin: input.origin ?? "manual",
+      goalId: input.goalId ?? null,
+      goalEpoch: input.goalEpoch ?? null,
     };
     this.db.insert(runs).values(row).run();
     return row;
@@ -236,6 +240,79 @@ export class RunRepo {
   listBySession(sessionId: string) {
     return this.db.select().from(runs).where(eq(runs.sessionId, sessionId)).orderBy(desc(runs.startedAt)).all();
   }
+}
+
+export class GoalRepo {
+  constructor(private db: Db) {}
+
+  private static parseOptions(value: string | null | undefined): GoalRunOptions {
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(value) as Record<string, unknown>;
+      return {
+        model: typeof parsed.model === "string" ? parsed.model : undefined,
+        permissionMode: parsed.permissionMode === "ask" || parsed.permissionMode === "auto" || parsed.permissionMode === "full"
+          ? parsed.permissionMode
+          : undefined,
+        thinking: typeof parsed.thinking === "string" ? parsed.thinking as RunThinkingLevel : undefined,
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  private info(row: typeof goals.$inferSelect): GoalInfo {
+    return {
+      id: row.id, sessionId: row.sessionId, objective: row.objective,
+      status: row.status as GoalStatus, waitingReason: row.waitingReason ?? undefined,
+      waitingUntil: row.waitingUntil ?? undefined, stopReason: row.stopReason ?? undefined,
+      epoch: row.epoch, createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
+  }
+
+  getBySession(sessionId: string) {
+    const row = this.db.select().from(goals).where(eq(goals.sessionId, sessionId)).orderBy(desc(goals.updatedAt)).get();
+    return row ? this.info(row) : undefined;
+  }
+
+  create(sessionId: string, objective: string, options: GoalRunOptions = {}) {
+    const now = Date.now();
+    const row = { id: crypto.randomUUID(), sessionId, objective: objective.trim(), status: "active", waitingReason: null, waitingUntil: null, stopReason: null, runOptions: JSON.stringify(options), epoch: 1, createdAt: now, updatedAt: now };
+    this.db.insert(goals).values(row).run();
+    this.event(row.id, sessionId, "created", { objective: row.objective });
+    return this.info(row);
+  }
+
+  update(id: string, patch: { status?: GoalStatus; waitingReason?: string | null; waitingUntil?: number | null; stopReason?: string | null; objective?: string; bumpEpoch?: boolean }) {
+    const current = this.db.select().from(goals).where(eq(goals.id, id)).get();
+    if (!current) throw new Error(`goal not found: ${id}`);
+    const nextEpoch = patch.bumpEpoch ? current.epoch + 1 : current.epoch;
+    this.db.update(goals).set({
+      status: patch.status ?? current.status,
+      waitingReason: patch.waitingReason === undefined ? current.waitingReason : patch.waitingReason,
+      waitingUntil: patch.waitingUntil === undefined ? current.waitingUntil : patch.waitingUntil,
+      stopReason: patch.stopReason === undefined ? current.stopReason : patch.stopReason,
+      objective: patch.objective ?? current.objective, epoch: nextEpoch, updatedAt: Date.now(),
+    }).where(eq(goals.id, id)).run();
+    return this.get(id)!;
+  }
+
+  get(id: string) { const row = this.db.select().from(goals).where(eq(goals.id, id)).get(); return row ? this.info(row) : undefined; }
+  getOptions(id: string): GoalRunOptions {
+    const row = this.db.select({ runOptions: goals.runOptions }).from(goals).where(eq(goals.id, id)).get();
+    return GoalRepo.parseOptions(row?.runOptions);
+  }
+  delete(id: string) { this.db.delete(goals).where(eq(goals.id, id)).run(); }
+  deleteForSession(sessionId: string) { this.db.delete(goals).where(eq(goals.sessionId, sessionId)).run(); }
+  event(goalId: string, sessionId: string, type: string, payload: unknown, runId?: string) {
+    this.db.insert(goalEvents).values({ id: crypto.randomUUID(), goalId, sessionId, runId: runId ?? null, type, payload: JSON.stringify(payload ?? {}), createdAt: Date.now() }).run();
+  }
+}
+
+export interface GoalRunOptions {
+  model?: string;
+  permissionMode?: RunPermissionMode;
+  thinking?: RunThinkingLevel;
 }
 
 export class TurnRepo {
@@ -367,6 +444,42 @@ export class SettingsRepo {
   set(key: string, value: unknown) {
     const row = { key, value: JSON.stringify(value), updatedAt: Date.now() };
     this.db.insert(settings).values(row).onConflictDoUpdate({ target: settings.key, set: { value: row.value, updatedAt: row.updatedAt } }).run();
+  }
+}
+
+/** Queue state uses the existing settings store so it follows the runtime's
+ * single SQLite persistence path and survives process restarts. */
+export class QueueRepo {
+  constructor(private settingsRepo: SettingsRepo) {}
+
+  list(sessionId: string): QueueItemInfo[] {
+    const items = this.settingsRepo.get<QueueItemInfo[]>(`queue:${sessionId}`);
+    return Array.isArray(items)
+      ? items.filter((item) => item && item.sessionId === sessionId).sort((a, b) => a.position - b.position)
+      : [];
+  }
+
+  upsert(item: QueueItemInfo): QueueItemInfo[] {
+    const items = this.list(item.sessionId).filter((candidate) => candidate.id !== item.id);
+    items.push({ ...item, updatedAt: Date.now() });
+    const normalized = items.map((candidate, position) => ({ ...candidate, position }));
+    this.settingsRepo.set(`queue:${item.sessionId}`, normalized);
+    return normalized;
+  }
+
+  replace(sessionId: string, next: QueueItemInfo[]): QueueItemInfo[] {
+    const normalized = next
+      .filter((item) => item.sessionId === sessionId)
+      .sort((a, b) => a.position - b.position)
+      .map((item, position) => ({ ...item, position }));
+    this.settingsRepo.set(`queue:${sessionId}`, normalized);
+    return normalized;
+  }
+
+  remove(sessionId: string, itemId: string): QueueItemInfo[] {
+    const items = this.list(sessionId).filter((item) => item.id !== itemId).map((item, position) => ({ ...item, position }));
+    this.settingsRepo.set(`queue:${sessionId}`, items);
+    return items;
   }
 }
 
