@@ -72,6 +72,13 @@ type DelegateSubagent = (input: { parentSessionId: string; parentRunId: string; 
 type WorkflowStep = { id: string; title: string; task: string; subagentId?: string; dependsOn?: string[] };
 type SubagentController = import("./subagent-runner.js").SubagentController;
 
+export interface GoalRuntimeBridge {
+  get(sessionId: string, goalId: string, epoch: number, runId: string): unknown;
+  complete(sessionId: string, goalId: string, epoch: number, runId: string, summary: string): unknown;
+  blocked(sessionId: string, goalId: string, epoch: number, runId: string, reason: string, evidence: string): unknown;
+  wait(sessionId: string, goalId: string, epoch: number, runId: string, reason: string, resumeAfterMs?: number): unknown;
+}
+
 export interface PersistedPiMessage {
   role: string;
   content: string;
@@ -231,6 +238,7 @@ export class PiAdapter {
   private modelApiTypes = new Map<string, ProviderApiType>();
   private modelApiKeys = new Map<string, string>();
   private configuredModelConfigs: ModelConfigInfo[] = [];
+  private goalBridge?: GoalRuntimeBridge;
   private modelConfigurationQueue: Promise<void> = Promise.resolve();
   private readonly settingsManager = SettingsManager.inMemory();
   private compactionPreferences: PiCompactionPreferences;
@@ -342,6 +350,10 @@ export class PiAdapter {
     this.subagentPolicy = policy;
   }
 
+  setGoalBridge(bridge: GoalRuntimeBridge) {
+    this.goalBridge = bridge;
+  }
+
   async refreshSkills(): Promise<void> {
     this.resourceLoaders.clear();
     for (const [sessionId, session] of this.sessions) {
@@ -438,7 +450,12 @@ export class PiAdapter {
   }
 
   isRunning(sessionId: string): boolean {
-    return this.activeRunIds.has(sessionId);
+    return this.executionSessionFor(sessionId) !== undefined;
+  }
+
+  private executionSessionFor(sessionId: string): string | undefined {
+    if (this.activeRunIds.has(sessionId)) return sessionId;
+    return [...this.activeRunIds.keys()].find((id) => id.startsWith(`${sessionId}::subagent::`));
   }
 
   async deleteSecret(key: string): Promise<void> {
@@ -484,7 +501,7 @@ export class PiAdapter {
     });
   }
 
-  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, toolAllowList?: string[]): Promise<AgentSession> {
+  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, toolAllowList?: string[], goalId?: string, goalEpoch?: number, goalRunId?: string): Promise<AgentSession> {
     const modelKey = modelName ? splitModelName(modelName).join("/") : undefined;
     const apiType = modelKey ? this.modelApiTypes.get(modelKey) : undefined;
     const override = thinkingOverride ? normalizeThinkingLevelForApi(thinkingOverride, apiType) : undefined;
@@ -629,18 +646,37 @@ export class PiAdapter {
         return { content: [{ type: "text", text: result }], details: {} };
       },
     }] : [];
-    const wrapped = [...builtinTools, ...customTools, ...inspectTools, ...delegateTool].map((t) =>
+    const goalTools: ToolDefinition[] = goalId && goalEpoch !== undefined && goalRunId && this.goalBridge ? [{
+      name: "get_goal", label: "Get goal", description: "Read the current goal and its execution state.",
+      parameters: Type.Object({}),
+      execute: async () => ({ content: [{ type: "text", text: JSON.stringify(this.goalBridge!.get(eventSessionId, goalId, goalEpoch, goalRunId)) }], details: {} }),
+    }, {
+      name: "goal_complete", label: "Complete goal", description: "Mark the current goal complete only after the requested work and verification are finished.",
+      parameters: Type.Object({ summary: Type.String({ minLength: 1 }) }),
+      execute: async (_toolCallId, params) => ({ content: [{ type: "text", text: JSON.stringify(this.goalBridge!.complete(eventSessionId, goalId, goalEpoch, goalRunId, (params as { summary: string }).summary)) }], details: {} }),
+    }, {
+      name: "goal_blocked", label: "Block goal", description: "Report a real external or technical blocker with evidence.",
+      parameters: Type.Object({ reason: Type.String({ minLength: 1 }), evidence: Type.String({ minLength: 1 }) }),
+      execute: async (_toolCallId, params) => { const input = params as { reason: string; evidence: string }; return { content: [{ type: "text", text: JSON.stringify(this.goalBridge!.blocked(eventSessionId, goalId, goalEpoch, goalRunId, input.reason, input.evidence)) }], details: {} }; },
+    }, {
+      name: "goal_wait", label: "Wait for goal event", description: "Wait for an external event before continuing the goal.",
+      parameters: Type.Object({ reason: Type.String({ minLength: 1 }), resume_after_ms: Type.Optional(Type.Number({ minimum: 1 })) }),
+      execute: async (_toolCallId, params) => { const input = params as { reason: string; resume_after_ms?: number }; return { content: [{ type: "text", text: JSON.stringify(this.goalBridge!.wait(eventSessionId, goalId, goalEpoch, goalRunId, input.reason, input.resume_after_ms)) }], details: {} }; },
+    }] : [];
+    const goalToolNames = new Set(goalTools.map((tool) => tool.name));
+    const wrapped = [...builtinTools, ...customTools, ...inspectTools, ...delegateTool, ...goalTools].map((t) =>
       withPermission(t, {
         queue: this.approvals,
         workspacePath,
         rules: this.permissionRules,
         mode: () => this.runModes.get(sessionId) ?? "ask",
+        internal: goalToolNames.has(t.name),
         emitApproval: (approvalId, toolName, args, toolCallId) =>
           this.push("approval.requested", { approvalId, toolName, args, toolCallId }, eventSessionId, this.activeRunIds.get(sessionId)),
       })
     );
     const allowed = toolAllowList
-      ? wrapped.filter((tool) => toolAllowList.includes(tool.name) || toolAllowList.includes((tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? ""))
+      ? wrapped.filter((tool) => goalToolNames.has(tool.name) || toolAllowList.includes(tool.name) || toolAllowList.includes((tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? ""))
       : wrapped;
     assertModelToolNames(allowed.map((tool) => tool.name));
 
@@ -787,7 +823,7 @@ export class PiAdapter {
   async run(
     sessionId: string,
     message: string,
-    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; toolAllowList?: string[] },
+    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; toolAllowList?: string[]; goalId?: string; goalEpoch?: number },
     runEmit: RunEmitFn
   ): Promise<void> {
     if (this.activeRunIds.has(sessionId)) throw new Error(`session ${sessionId} already has an active run`);
@@ -796,7 +832,7 @@ export class PiAdapter {
     this.runModes.set(sessionId, opts.permissionMode ?? "ask");
     let session: AgentSession | undefined;
     try {
-      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.toolAllowList);
+      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.toolAllowList, opts.goalId, opts.goalEpoch, runId);
       if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
       this.runs.set(runId, session);
       const previousLength = session.messages.length;
@@ -859,11 +895,16 @@ export class PiAdapter {
     return ![...this.activeRunIds.values()].includes(runId);
   }
 
-  async sendToSession(sessionId: string, message: string, mode: "steer" | "follow_up"): Promise<boolean> {
-    const session = this.sessions.get(sessionId);
+  async sendToSession(sessionId: string, message: string, mode: "steer" | "follow_up", attachments?: MessageAttachmentInfo[]): Promise<boolean> {
+    const executionSessionId = this.executionSessionFor(sessionId);
+    const session = executionSessionId ? this.sessions.get(executionSessionId) : undefined;
     if (!session || !session.isStreaming) return false;
-    if (mode === "steer") await session.steer(message);
-    else await session.followUp(message);
+    const selectedModel = session.agent.state.model;
+    const isGoogle = selectedModel?.api === "google-generative-ai";
+    const prompt = promptWithAttachments(message, attachments, isGoogle);
+    const images = isGoogle ? googleMediaContent(attachments) : imageContent(attachments);
+    if (mode === "steer") await session.steer(prompt, images);
+    else await session.followUp(prompt, images);
     return true;
   }
 }

@@ -138,6 +138,29 @@ describe("runtime persistence and permissions", () => {
     expect(executed).toBe(true);
   });
 
+  test("runs Goal state tools without requesting external capability approval", async () => {
+    let executed = false;
+    let approvalRequested = false;
+    const definition = defineTool({
+      name: "goal_complete",
+      label: "Complete goal",
+      description: "complete",
+      parameters: Type.Object({}),
+      execute: async () => {
+        executed = true;
+        return { content: [{ type: "text" as const, text: "ok" }] };
+      },
+    });
+    const tool = withPermission(definition, {
+      queue: new ApprovalQueue(),
+      internal: true,
+      emitApproval: () => { approvalRequested = true; },
+    });
+    await tool.execute("goal-tool", {}, undefined, undefined, undefined);
+    expect(executed).toBe(true);
+    expect(approvalRequested).toBe(false);
+  });
+
   test("run modes change approvals while preserving explicit and protected denials", async () => {
     let mode: "ask" | "auto" | "full" = "ask";
     let prompts = 0;

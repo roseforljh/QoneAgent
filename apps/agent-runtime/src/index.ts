@@ -1,13 +1,13 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi } from "@qone/protocol";
-import { openDb, SessionRepo, MessageRepo, RunRepo, SubagentRunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
+import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
 import { existsSync, mkdirSync, statSync } from "node:fs";
-import { createResourceLoader } from "./skills.js";
+import { createLocalSkill, createResourceLoader, installLocalSkill } from "./skills.js";
 import { installCloudSkill, listCloudSkills } from "./skill-catalog.js";
 import { containsSecretConfig } from "./secrets.js";
 import { ModelMetadataResolver } from "./model-resolver.js";
@@ -45,6 +45,7 @@ const db = openDb(dbPath);
 const sessionRepo = new SessionRepo(db);
 const messageRepo = new MessageRepo(db);
 const runRepo = new RunRepo(db);
+const goalRepo = new GoalRepo(db);
 const subagentRunRepo = new SubagentRunRepo(db);
 const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
@@ -54,6 +55,7 @@ const modelConfigRepo = new ModelConfigRepo(db);
 const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
+const queueRepo = new QueueRepo(settingsRepo);
 const compactionPreferences: PiCompactionPreferences = normalizePiCompactionPreferences(
   settingsRepo.get("compaction.settings") ?? DEFAULT_PI_COMPACTION_PREFERENCES,
 );
@@ -177,6 +179,7 @@ const assistantMessageSequenceByRun = new Map<string, number>();
 const toolCallIds = new Map<string, string>();
 const cancelledRuns = new Set<string>();
 const startingRunSessions = new Set<string>();
+const goalContinuationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 // Persist whatever the run produced so far (final text, streamed deltas, tool parts).
 function persistPartialAssistant(sessionId: string, runId: string, model?: string) {
@@ -248,6 +251,43 @@ subagentController = registerSubagentDispatcher({
   publish: publishSubagent, emit: (type, payload, sessionId, runId) => eventBus.emit({ type, payload, sessionId, runId }),
 });
 adapter.setSubagentController(subagentController);
+const publishGoal = (goal: GoalInfo) => send({ type: "goal.updated", goal });
+const currentGoalForTool = (sessionId: string, goalId: string, epoch: number, runId: string) => {
+    const goal = goalRepo.get(goalId);
+  const run = runRepo.get(runId);
+  const current = goalRepo.getBySession(sessionId);
+  if (!goal || current?.id !== goalId || goal.sessionId !== sessionId || goal.epoch !== epoch || goal.status !== "active" ||
+      !run || run.sessionId !== sessionId || run.goalId !== goalId || run.goalEpoch !== epoch || run.status !== "running" ||
+      cancelledRuns.has(runId)) throw new Error("goal run is no longer active");
+  return goal;
+};
+ adapter.setGoalBridge({
+   get: (sessionId, goalId, epoch, runId) => currentGoalForTool(sessionId, goalId, epoch, runId),
+   complete: (sessionId, goalId, epoch, runId, summary) => {
+     currentGoalForTool(sessionId, goalId, epoch, runId);
+    const updated = goalRepo.update(goalId, { status: "complete", waitingReason: null, waitingUntil: null, stopReason: summary });
+     goalRepo.event(goalId, sessionId, "completed", { summary }, runId);
+    publishGoal(updated);
+    return updated;
+  },
+   blocked: (sessionId, goalId, epoch, runId, reason, evidence) => {
+     currentGoalForTool(sessionId, goalId, epoch, runId);
+    const updated = goalRepo.update(goalId, { status: "blocked", waitingReason: null, waitingUntil: null, stopReason: `${reason}\n${evidence}` });
+     goalRepo.event(goalId, sessionId, "blocked", { reason, evidence }, runId);
+    publishGoal(updated);
+    return updated;
+  },
+   wait: (sessionId, goalId, epoch, runId, reason, resumeAfterMs) => {
+     currentGoalForTool(sessionId, goalId, epoch, runId);
+    const updated = goalRepo.update(goalId, { waitingReason: reason, waitingUntil: resumeAfterMs ? Date.now() + resumeAfterMs : null });
+     goalRepo.event(goalId, sessionId, "waiting", { reason, resumeAfterMs }, runId);
+    publishGoal(updated);
+    if (resumeAfterMs && resumeAfterMs > 0) {
+      scheduleGoalWakeup(sessionId, goalId, reason, updated.waitingUntil!);
+    }
+    return updated;
+  },
+});
 await adapter.configureModels(modelConfigRepo.list());
 for (const [permission, decision] of [
   ["agent.delegate", "allow"],
@@ -375,6 +415,10 @@ const toInfo = (s: {
 const emit = (type: string, payload: unknown, sessionId?: string, runId?: string) =>
   eventBus.emit({ type, payload, sessionId, runId });
 
+function sendQueue(sessionId: string) {
+  send({ type: "session.queue", sessionId, items: queueRepo.list(sessionId) });
+}
+
 async function authorizeCommand(subjectId: string, permission: string, toolName: string, args: unknown) {
   const decision = permissionRepo.get(subjectId, permission) ?? "ask";
   if (decision === "deny") throw new Error(`${toolName} denied by permission policy`);
@@ -383,6 +427,36 @@ async function authorizeCommand(subjectId: string, permission: string, toolName:
   const approval = commandApprovals.request(approvalId, toolName, args);
   emit("approval.requested", { approvalId, toolName, args });
   if (!await approval) throw new Error(`${toolName} rejected by user`);
+}
+
+function scheduleGoalContinuation(sessionId: string, goalId: string, epoch: number) {
+  if (goalContinuationTimers.has(sessionId)) return;
+  const timer = setTimeout(() => {
+    goalContinuationTimers.delete(sessionId);
+    const goal = goalRepo.get(goalId);
+    if (!goal || goal.sessionId !== sessionId || goal.status !== "active" || goal.epoch !== epoch || goal.waitingReason || queueRepo.list(sessionId).length > 0) return;
+    const options = goalRepo.getOptions(goalId);
+    void handle({
+      type: "agent.run", requestId: crypto.randomUUID(), sessionId,
+      message: `Continue working toward the goal. Inspect the current state, make the next useful changes, and call goal_complete only when the goal is fully verified. If a real blocker prevents progress, call goal_blocked with evidence.\n\nGoal: ${goal.objective}`,
+      goal: true, goalContinuation: true, ...options,
+    });
+  }, 0);
+  goalContinuationTimers.set(sessionId, timer);
+}
+
+function scheduleGoalWakeup(sessionId: string, goalId: string, reason: string, waitingUntil: number) {
+  if (goalContinuationTimers.has(sessionId)) return;
+  const timer = setTimeout(() => {
+    if (goalContinuationTimers.get(sessionId) === timer) goalContinuationTimers.delete(sessionId);
+    const current = goalRepo.get(goalId);
+    if (!current || current.status !== "active" || current.waitingReason !== reason || current.waitingUntil !== waitingUntil) return;
+    const resumed = goalRepo.update(goalId, { waitingReason: null, waitingUntil: null });
+    goalRepo.event(goalId, sessionId, "resumed", { source: "wait_expired" });
+    publishGoal(resumed);
+    scheduleGoalContinuation(sessionId, goalId, resumed.epoch);
+  }, Math.max(0, waitingUntil - Date.now()));
+  goalContinuationTimers.set(sessionId, timer);
 }
 
 async function handle(cmd: RuntimeCommand): Promise<void> {
@@ -452,6 +526,8 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     case "session.delete":
       await subagentController.dispose(cmd.sessionId);
       await adapter.disposeSession(cmd.sessionId);
+      const deletedGoalTimer = goalContinuationTimers.get(cmd.sessionId);
+      if (deletedGoalTimer) { clearTimeout(deletedGoalTimer); goalContinuationTimers.delete(cmd.sessionId); }
       sessionRepo.delete(cmd.sessionId);
       send({ type: "pong", requestId: cmd.requestId });
       return;
@@ -469,9 +545,143 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
           attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
           model: m.model ?? undefined,
+          goalId: m.goalId ?? undefined,
           createdAt: m.createdAt,
         })),
       });
+      return;
+
+    case "goal.get": {
+      const goal = goalRepo.getBySession(cmd.sessionId);
+      send({ type: "goal.current", sessionId: cmd.sessionId, ...(goal ? { goal } : {}) });
+      if (goal?.status === "active") {
+        if (goal.waitingUntil && goal.waitingReason) scheduleGoalWakeup(cmd.sessionId, goal.id, goal.waitingReason, goal.waitingUntil);
+        else if (!goal.waitingReason && !runRepo.listBySession(cmd.sessionId).some((run) => run.goalId === goal.id && ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
+          scheduleGoalContinuation(cmd.sessionId, goal.id, goal.epoch);
+        }
+      }
+      return;
+    }
+
+    case "goal.start": {
+      const session = sessionRepo.get(cmd.sessionId);
+      if (!session || !session.workspaceId) {
+        send({ type: "error", requestId: cmd.requestId, message: "select a workspace before starting a goal" });
+        return;
+      }
+      if (!cmd.objective.trim()) {
+        send({ type: "error", requestId: cmd.requestId, message: "goal objective cannot be empty" });
+        return;
+      }
+      const previous = goalRepo.getBySession(cmd.sessionId);
+      if (cmd.replaceFromMessageId && !messageRepo.listBySession(cmd.sessionId).some((message) => message.id === cmd.replaceFromMessageId && message.role === "user")) {
+        send({ type: "error", requestId: cmd.requestId, message: "user message not found in session" });
+        return;
+      }
+      const activeRun = runRepo.listBySession(cmd.sessionId).find((run) =>
+        !subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status));
+      if (startingRunSessions.has(cmd.sessionId) ||
+          (activeRun && activeRun.goalId !== previous?.id) ||
+          (adapter.isRunning(cmd.sessionId) && activeRun?.goalId !== previous?.id)) {
+        send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
+        return;
+      }
+      if (previous && ["active", "paused", "blocked"].includes(previous.status)) {
+        const active = runRepo.listBySession(cmd.sessionId).find((run) => run.goalId === previous.id && ["created", "running", "waiting_approval", "paused"].includes(run.status));
+        if (active) { adapter.stop(active.id); cancelledRuns.add(active.id); await adapter.waitForRun(active.id); }
+        const timer = goalContinuationTimers.get(cmd.sessionId);
+        if (timer) { clearTimeout(timer); goalContinuationTimers.delete(cmd.sessionId); }
+      }
+      if (previous) {
+        goalRepo.deleteForSession(cmd.sessionId);
+      }
+      // Rebuild the Pi session so a session that was created for a normal
+      // message receives the Goal tools before the kickoff turn.
+      await adapter.disposeSession(cmd.sessionId);
+      const goal = goalRepo.create(cmd.sessionId, cmd.objective, { model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking });
+      publishGoal(goal);
+      await handle({ type: "agent.run", requestId: cmd.requestId, sessionId: cmd.sessionId, message: cmd.objective, goal: true, attachments: cmd.attachments, messageId: cmd.messageId, replaceFromMessageId: cmd.replaceFromMessageId, model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking });
+      return;
+    }
+
+    case "goal.pause": {
+      const goal = goalRepo.getBySession(cmd.sessionId);
+      if (!goal) throw new Error("no goal in this session");
+      if (goal.status !== "active") throw new Error("only an active goal can be paused");
+      const active = runRepo.listBySession(cmd.sessionId).find((run) => run.goalId === goal.id && ["created", "running", "waiting_approval", "paused"].includes(run.status));
+      if (active) { adapter.stop(active.id); cancelledRuns.add(active.id); }
+      const timer = goalContinuationTimers.get(cmd.sessionId);
+      if (timer) { clearTimeout(timer); goalContinuationTimers.delete(cmd.sessionId); }
+      const updated = goalRepo.update(goal.id, { status: "paused", waitingReason: null, waitingUntil: null, stopReason: cmd.reason ?? "Paused by user", bumpEpoch: true });
+      goalRepo.event(goal.id, cmd.sessionId, "paused", { reason: cmd.reason ?? "Paused by user" });
+      publishGoal(updated);
+      return;
+    }
+
+    case "goal.resume": {
+      const goal = goalRepo.getBySession(cmd.sessionId);
+      if (!goal) throw new Error("no goal in this session");
+      if (goal.status === "complete") throw new Error("completed goal cannot be resumed");
+      if (goal.status === "active" && !goal.waitingReason) throw new Error("goal is already active");
+      const active = runRepo.listBySession(cmd.sessionId).find((run) => run.goalId === goal.id && ["created", "running", "waiting_approval", "paused"].includes(run.status));
+      if (active) { adapter.stop(active.id); cancelledRuns.add(active.id); await adapter.waitForRun(active.id); }
+      const resumeTimer = goalContinuationTimers.get(cmd.sessionId);
+      if (resumeTimer) { clearTimeout(resumeTimer); goalContinuationTimers.delete(cmd.sessionId); }
+      const updated = goalRepo.update(goal.id, { status: "active", waitingReason: null, waitingUntil: null, stopReason: null, bumpEpoch: true });
+      goalRepo.event(goal.id, cmd.sessionId, "resumed", {});
+      publishGoal(updated);
+      const options = goalRepo.getOptions(goal.id);
+      void handle({ type: "agent.run", requestId: crypto.randomUUID(), sessionId: cmd.sessionId, message: `Continue working toward the goal. Re-check the current state, make the next useful changes, and call goal_complete when the goal is fully verified.\n\nGoal: ${updated.objective}`, goal: true, goalContinuation: true, ...options });
+      return;
+    }
+
+    case "goal.clear": {
+      const goal = goalRepo.getBySession(cmd.sessionId);
+      if (goal) {
+        const active = runRepo.listBySession(cmd.sessionId).find((run) => run.goalId === goal.id && ["created", "running", "waiting_approval", "paused"].includes(run.status));
+        if (active) { adapter.stop(active.id); cancelledRuns.add(active.id); await adapter.waitForRun(active.id); }
+        const timer = goalContinuationTimers.get(cmd.sessionId);
+        if (timer) { clearTimeout(timer); goalContinuationTimers.delete(cmd.sessionId); }
+        goalRepo.deleteForSession(cmd.sessionId);
+        send({ type: "goal.cleared", sessionId: cmd.sessionId, goalId: goal.id });
+      }
+      return;
+    }
+
+    case "session.queue.list":
+      sendQueue(cmd.sessionId);
+      return;
+
+    case "queue.upsert":
+      if (cmd.item.sessionId !== cmd.sessionId) {
+        send({ type: "error", requestId: cmd.requestId, message: "queue item session mismatch" });
+        return;
+      }
+      queueRepo.upsert(cmd.item);
+      sendQueue(cmd.sessionId);
+      return;
+
+    case "queue.edit":
+      if (cmd.item.sessionId !== cmd.sessionId) {
+        send({ type: "error", requestId: cmd.requestId, message: "queue item session mismatch" });
+        return;
+      }
+      queueRepo.upsert(cmd.item);
+      sendQueue(cmd.sessionId);
+      return;
+
+    case "queue.sync":
+      if (cmd.items.some((item) => item.sessionId !== cmd.sessionId)) {
+        send({ type: "error", requestId: cmd.requestId, message: "queue item session mismatch" });
+        return;
+      }
+      queueRepo.replace(cmd.sessionId, cmd.items);
+      sendQueue(cmd.sessionId);
+      return;
+
+    case "queue.remove":
+      queueRepo.remove(cmd.sessionId, cmd.queueItemId);
+      sendQueue(cmd.sessionId);
       return;
 
     case "session.runs":
@@ -583,6 +793,20 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       await adapter.refreshSkills();
       skillRepo.upsert(skill);
       send({ type: "skills.cloud.installed", requestId: cmd.requestId, skill });
+      return;
+    }
+    case "skills.import": {
+      const skill = await installLocalSkill(cmd.content);
+      await adapter.refreshSkills();
+      skillRepo.upsert(skill);
+      send({ type: "skills.imported", requestId: cmd.requestId, skill });
+      return;
+    }
+    case "skills.create": {
+      const skill = await createLocalSkill(cmd.name, cmd.description, cmd.instructions);
+      await adapter.refreshSkills();
+      skillRepo.upsert(skill);
+      send({ type: "skills.created", requestId: cmd.requestId, skill });
       return;
     }
 
@@ -867,6 +1091,16 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
 
     case "agent.run": {
+      if (!cmd.goal) {
+        const timer = goalContinuationTimers.get(cmd.sessionId);
+        if (timer) { clearTimeout(timer); goalContinuationTimers.delete(cmd.sessionId); }
+        const waitingGoal = goalRepo.getBySession(cmd.sessionId);
+        if (waitingGoal?.status === "active" && waitingGoal.waitingReason) {
+          const resumed = goalRepo.update(waitingGoal.id, { waitingReason: null, waitingUntil: null, stopReason: null, bumpEpoch: true });
+          goalRepo.event(waitingGoal.id, cmd.sessionId, "resumed", { source: "user_input" });
+          publishGoal(resumed);
+        }
+      }
       const s = sessionRepo.get(cmd.sessionId);
       if (!s) {
         send({ type: "error", requestId: cmd.requestId, message: `unknown session ${cmd.sessionId}` });
@@ -880,6 +1114,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           runRepo.listBySession(cmd.sessionId).some((run) => !subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
         send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
         return;
+      }
+      if (cmd.queueItemId) {
+        queueRepo.remove(cmd.sessionId, cmd.queueItemId);
+        sendQueue(cmd.sessionId);
       }
       if (cmd.replaceFromMessageId) {
         startingRunSessions.add(cmd.sessionId);
@@ -900,10 +1138,19 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           startingRunSessions.delete(cmd.sessionId);
         }
       }
-      const run = runRepo.create(cmd.sessionId);
+      const goal = cmd.goal ? goalRepo.getBySession(cmd.sessionId) : undefined;
+      if (cmd.goal && (!goal || goal.status !== "active")) {
+        send({ type: "error", requestId: cmd.requestId, message: "goal is not active" });
+        return;
+      }
+      const run = runRepo.create(cmd.sessionId, {
+        origin: goal ? (cmd.goalContinuation ? "goal_continuation" : "goal_kickoff") : "manual",
+        goalId: goal?.id,
+        goalEpoch: goal?.epoch,
+      });
       assistantPartsByRun.set(run.id, []);
       const turn = turnRepo.create(run.id);
-      messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments);
+      if (!cmd.goalContinuation) messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id);
       emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
       const workspaceCwd = s.workspaceId ? workspaceRepo.get(s.workspaceId)?.path : undefined;
       if (s.workspaceId && !workspaceCwd) {
@@ -924,7 +1171,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       if (subagent) log.info("dispatching capability task to subagent", { capability, subagentId: subagent.id, model: executionModel, route: subagent.route });
 
       Promise.resolve()
-        .then(() => adapter.run(executionSessionId, executionMessage, { model: executionModel, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, mcpServerId: subagent?.mcpServerId, permissionMode: subagent?.permissionMode ?? cmd.permissionMode, toolAllowList: subagent?.tools?.length ? subagent.tools : undefined, thinking: cmd.thinking, attachments: cmd.attachments }, (type, payload) =>
+        .then(() => adapter.run(executionSessionId, executionMessage, { model: executionModel, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, mcpServerId: subagent?.mcpServerId, permissionMode: subagent?.permissionMode ?? cmd.permissionMode, toolAllowList: subagent?.tools?.length ? subagent.tools : undefined, thinking: cmd.thinking, attachments: cmd.attachments, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
           emit(type, payload, cmd.sessionId, run.id)
         ))
         .then(async () => {
@@ -941,6 +1188,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status);
           sessionRepo.touch(cmd.sessionId);
+          if (goal) await adapter.disposeSession(executionSessionId);
           await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.completed", assistantMessage ? {
             message: {
@@ -952,6 +1200,13 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
               createdAt: assistantMessage.createdAt,
             },
           } : {}, cmd.sessionId, run.id);
+          if (goal && !cancelled) {
+            const current = goalRepo.get(goal.id);
+            if (current?.status === "active" && !current.waitingReason && current.epoch === goal.epoch) scheduleGoalContinuation(cmd.sessionId, goal.id, goal.epoch);
+          } else if (!goal && !cancelled) {
+            const current = goalRepo.getBySession(cmd.sessionId);
+            if (current?.status === "active" && !current.waitingReason) scheduleGoalContinuation(cmd.sessionId, current.id, current.epoch);
+          }
         })
         .catch(async (err) => {
           const cancelled = cancelledRuns.delete(run.id);
@@ -965,10 +1220,19 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           const status = cancelled ? "cancelled" : "failed";
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status, cancelled ? undefined : String(err));
+          if (goal) await adapter.disposeSession(executionSessionId);
           await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled
             ? (assistantMessage ? { message: { id: assistantMessage.id, role: assistantMessage.role, content: assistantMessage.content, parts, runId: assistantMessage.runId, createdAt: assistantMessage.createdAt } } : {})
             : { message: String(err) }, cmd.sessionId, run.id);
+          if (goal && !cancelled) {
+            const current = goalRepo.get(goal.id);
+            if (current?.status === "active" && current.epoch === goal.epoch) {
+              const updated = goalRepo.update(goal.id, { status: "blocked", stopReason: String(err) });
+              goalRepo.event(goal.id, cmd.sessionId, "error", { error: String(err) }, run.id);
+              publishGoal(updated);
+            }
+          }
         })
         .finally(() => {
           if (subagent) void adapter.disposeSession(executionSessionId);
@@ -978,14 +1242,67 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
     }
 
-    case "agent.stop":
+    case "agent.steer": {
+      const session = sessionRepo.get(cmd.sessionId);
+      if (!session || !adapter.isRunning(cmd.sessionId)) {
+        send({ type: "error", requestId: cmd.requestId, message: "当前 Agent 已不在运行，无法引导" });
+        return;
+      }
+      const activeRun = runRepo.listBySession(cmd.sessionId).find((run) => run.id === cmd.runId && ["created", "running", "waiting_approval", "paused"].includes(run.status));
+      if (!activeRun) {
+        send({ type: "error", requestId: cmd.requestId, message: "目标 Agent run 已结束" });
+        return;
+      }
+      const accepted = await adapter.sendToSession(cmd.sessionId, cmd.message, "steer", cmd.attachments);
+      if (!accepted) {
+        send({ type: "error", requestId: cmd.requestId, message: "Pi 当前不接受引导消息" });
+        return;
+      }
+      // Pi has accepted the message into the live run. Persist it with that
+      // run so a restart cannot lose a successful steer from the transcript.
+      messageRepo.add(cmd.sessionId, "user", cmd.message, cmd.runId, undefined, undefined, cmd.attachments);
+      queueRepo.remove(cmd.sessionId, cmd.queueItemId);
+      sendQueue(cmd.sessionId);
+      send({
+        type: "session.messages",
+        sessionId: cmd.sessionId,
+        messages: messageRepo.listBySession(cmd.sessionId).map((m) => ({
+          id: m.id,
+          sessionId: m.sessionId,
+          runId: m.runId ?? undefined,
+          role: m.role,
+          content: m.content,
+          parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
+          attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
+          model: m.model ?? undefined,
+          goalId: m.goalId ?? undefined,
+          createdAt: m.createdAt,
+        })),
+      });
+      send({ type: "pong", requestId: cmd.requestId });
+      return;
+    }
+
+    case "agent.stop": {
+      const stoppedRun = runRepo.get(cmd.runId);
       if (!adapter.stop(cmd.runId)) {
         send({ type: "error", requestId: cmd.requestId, message: `unknown active run ${cmd.runId}` });
         return;
       }
       cancelledRuns.add(cmd.runId);
+      if (stoppedRun?.goalId) {
+        const goal = goalRepo.get(stoppedRun.goalId);
+        if (goal?.status === "active") {
+          const timer = goalContinuationTimers.get(stoppedRun.sessionId);
+          if (timer) { clearTimeout(timer); goalContinuationTimers.delete(stoppedRun.sessionId); }
+          const updated = goalRepo.update(goal.id, { status: "paused", waitingReason: null, waitingUntil: null, stopReason: "Paused by user", bumpEpoch: true });
+          goalRepo.event(goal.id, stoppedRun.sessionId, "paused", { reason: "Paused by user" }, cmd.runId);
+          publishGoal(updated);
+        }
+      }
       send({ type: "pong", requestId: cmd.requestId });
       return;
+    }
 
     case "tool.approve":
       adapter.approve(cmd.approvalId);

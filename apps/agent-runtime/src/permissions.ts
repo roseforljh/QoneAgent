@@ -285,12 +285,16 @@ export function withPermission<T extends ToolDefinition>(
     workspacePath?: string;
     rules?: PermissionRuleStore;
     mode?: () => RunPermissionMode;
+    internal?: boolean;
   }
 ): T {
   const inner = tool.execute;
   return {
     ...tool,
     execute: async (id, params, signal, onUpdate, ctx) => {
+      if (opts.internal) {
+        return inner(id, params, signal, onUpdate, ctx);
+      }
       const context = {
         toolName: logicalToolName(tool),
         args: params,

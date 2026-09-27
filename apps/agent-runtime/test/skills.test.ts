@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createResourceLoader } from "../src/skills.js";
+import { createLocalSkill, createResourceLoader, installLocalSkill } from "../src/skills.js";
 
 const originalAppData = process.env.APPDATA;
 const originalPiAgentDir = process.env.PI_AGENT_DIR;
@@ -37,4 +37,29 @@ test("loads only QoneAgent skills, excluding workspace and Pi skills", async () 
   const { loader, skills } = await createResourceLoader(cwd);
   expect(skills).toEqual([{ id: "own", name: "own", description: "own skill", path: ownSkill }]);
   expect(loader.getSkills().skills.map((skill) => skill.name)).toEqual(["own"]);
+});
+
+test("creates a skill in the QoneAgent skill directory", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "qone-skill-create-"));
+  roots.push(root);
+  process.env.APPDATA = path.join(root, "appdata");
+
+  const skill = await createLocalSkill("daily-helper", "A daily helper", "Follow these steps carefully.");
+
+  expect(skill.name).toBe("daily-helper");
+  expect(readFileSync(skill.path, "utf8")).toContain("name: daily-helper");
+  expect(readFileSync(skill.path, "utf8")).toContain("Follow these steps carefully.");
+});
+
+test("imports a valid SKILL.md and rejects invalid or duplicate skills", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "qone-skill-import-"));
+  roots.push(root);
+  process.env.APPDATA = path.join(root, "appdata");
+  const content = "---\nname: imported-helper\ndescription: Imported helper\n---\n\nUse the helper.\n";
+
+  const skill = await installLocalSkill(content);
+
+  expect(skill.name).toBe("imported-helper");
+  await expect(installLocalSkill(content)).rejects.toThrow("已安装");
+  await expect(installLocalSkill("# Missing frontmatter")).rejects.toThrow("格式无效");
 });
