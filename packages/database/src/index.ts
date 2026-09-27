@@ -7,6 +7,8 @@ export {
   sessions,
   messages,
   runs,
+  subagentRuns,
+  subagentMessages,
   turns,
   toolCalls,
   workspaces,
@@ -206,4 +208,54 @@ function migrate(sqlite: Database) {
   if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "parts")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN parts TEXT");
   }
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS subagent_runs (
+      run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+      parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      parent_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      parent_subagent_id TEXT,
+      depth INTEGER NOT NULL DEFAULT 0,
+      tool_call_id TEXT NOT NULL,
+      execution_session_id TEXT,
+      profile_id TEXT,
+      title TEXT NOT NULL,
+      task TEXT NOT NULL,
+      model TEXT,
+      permission_mode TEXT,
+      tools TEXT,
+      content TEXT NOT NULL DEFAULT '',
+      parts TEXT NOT NULL DEFAULT '[]',
+      turn_count INTEGER NOT NULL DEFAULT 1,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      workflow_id TEXT,
+      workflow_step_id TEXT,
+      depends_on TEXT,
+      context_mode TEXT NOT NULL DEFAULT 'snapshot',
+      context_message_count INTEGER NOT NULL DEFAULT 0,
+      token_usage TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent ON subagent_runs(parent_session_id, parent_run_id);
+    CREATE TABLE IF NOT EXISTS subagent_messages (
+      id TEXT PRIMARY KEY,
+      subagent_run_id TEXT NOT NULL REFERENCES subagent_runs(run_id) ON DELETE CASCADE,
+      sequence INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      parts TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_subagent_messages_run ON subagent_messages(subagent_run_id, sequence);
+  `);
+  const subagentColumns = new Set(sqlite.query("PRAGMA table_info(subagent_runs)").all().map((column) => (column as { name: string }).name));
+  const additions: [string, string][] = [
+    ["parent_subagent_id", "TEXT"], ["depth", "INTEGER NOT NULL DEFAULT 0"],
+    ["execution_session_id", "TEXT"], ["profile_id", "TEXT"], ["turn_count", "INTEGER NOT NULL DEFAULT 1"],
+    ["retry_count", "INTEGER NOT NULL DEFAULT 0"], ["workflow_id", "TEXT"],
+    ["workflow_step_id", "TEXT"], ["depends_on", "TEXT"],
+    ["permission_mode", "TEXT"], ["tools", "TEXT"],
+    ["context_mode", "TEXT NOT NULL DEFAULT 'snapshot'"],
+    ["context_message_count", "INTEGER NOT NULL DEFAULT 0"], ["token_usage", "TEXT"],
+  ];
+  for (const [name, definition] of additions) if (!subagentColumns.has(name)) sqlite.exec(`ALTER TABLE subagent_runs ADD COLUMN ${name} ${definition}`);
+  if (!sqlite.query("PRAGMA table_info(subagent_messages)").all().some((column) => (column as { name: string }).name === "raw_message")) sqlite.exec("ALTER TABLE subagent_messages ADD COLUMN raw_message TEXT");
 }

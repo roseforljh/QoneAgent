@@ -1,5 +1,5 @@
 import { desc, eq, inArray, sql } from "drizzle-orm";
-import { sessions, messages, runs, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills } from "./schema.js";
+import { sessions, messages, runs, subagentRuns, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills } from "./schema.js";
 import type { Db } from "./index.js";
 import type { AssistantMessagePart, MessageAttachmentInfo } from "@qone/protocol";
 
@@ -45,6 +45,8 @@ export class SessionRepo {
   }
 
   delete(id: string) {
+    const childIds = this.db.select({ runId: subagentRuns.runId }).from(subagentRuns).where(eq(subagentRuns.parentSessionId, id)).all().map((row) => row.runId);
+    if (childIds.length) this.db.delete(runs).where(inArray(runs.id, childIds)).run();
     this.db.delete(sessions).where(eq(sessions.id, id)).run();
   }
 }
@@ -90,6 +92,20 @@ export class MessageRepo {
       const runIds = [...new Set(removed.flatMap((message) => message.runId ? [message.runId] : []))];
       tx.delete(messages).where(inArray(messages.id, removed.map((message) => message.id))).run();
       if (runIds.length) {
+        const descendants = new Set(runIds);
+        const children = tx.select().from(subagentRuns).where(eq(subagentRuns.parentSessionId, sessionId)).all();
+        for (let changed = true; changed;) {
+          changed = false;
+          for (const child of children) if (descendants.has(child.parentRunId) && !descendants.has(child.runId)) {
+            descendants.add(child.runId);
+            changed = true;
+          }
+        }
+        const childRunIds = [...descendants].filter(id => !runIds.includes(id));
+        if (childRunIds.length) {
+          tx.delete(events).where(inArray(events.runId, childRunIds)).run();
+          tx.delete(runs).where(inArray(runs.id, childRunIds)).run();
+        }
         tx.delete(events).where(inArray(events.runId, runIds)).run();
         tx.delete(runs).where(inArray(runs.id, runIds)).run();
       }
@@ -99,6 +115,80 @@ export class MessageRepo {
 
   addAssistant(sessionId: string, content: string, runId?: string, model?: string, parts?: AssistantMessagePart[]) {
     return this.add(sessionId, "assistant", content, runId, model, undefined, undefined, parts);
+  }
+}
+
+export class SubagentRunRepo {
+  constructor(private db: Db) {}
+
+  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; profileId?: string; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number }) {
+    this.db.insert(subagentRuns).values({
+      runId: input.runId, parentSessionId: input.parentSessionId, parentRunId: input.parentRunId,
+      parentSubagentId: input.parentSubagentId ?? null, depth: input.depth ?? 0, toolCallId: input.toolCallId,
+      executionSessionId: input.executionSessionId ?? null, profileId: input.profileId ?? null, title: input.title, task: input.task,
+      model: input.model ?? null, permissionMode: input.permissionMode ?? null, tools: input.tools ? JSON.stringify(input.tools) : null,
+      workflowId: input.workflowId ?? null, workflowStepId: input.workflowStepId ?? null,
+      dependsOn: input.dependsOn?.length ? JSON.stringify(input.dependsOn) : null,
+      contextMode: input.contextMode ?? "snapshot", contextMessageCount: input.contextMessageCount ?? 0,
+    }).run();
+  }
+
+  save(runId: string, content: string, parts: AssistantMessagePart[]) {
+    this.db.update(subagentRuns).set({ content, parts: JSON.stringify(parts) }).where(eq(subagentRuns.runId, runId)).run();
+  }
+
+  incrementTurn(runId: string) {
+    this.db.update(subagentRuns).set({ turnCount: sql`${subagentRuns.turnCount} + 1` }).where(eq(subagentRuns.runId, runId)).run();
+  }
+
+  incrementRetry(runId: string) {
+    this.db.update(subagentRuns).set({ retryCount: sql`${subagentRuns.retryCount} + 1` }).where(eq(subagentRuns.runId, runId)).run();
+  }
+
+  updateExecutionSession(runId: string, executionSessionId: string) {
+    this.db.update(subagentRuns).set({ executionSessionId }).where(eq(subagentRuns.runId, runId)).run();
+  }
+
+  updateUsage(runId: string, usage: unknown) {
+    const row = this.get(runId);
+    const previous = row?.tokenUsage ? JSON.parse(row.tokenUsage) as Record<string, number> : {};
+    const next = usage && typeof usage === "object" ? usage as Record<string, number> : {};
+    const merged = {
+      input: (previous.input ?? 0) + (next.input ?? 0),
+      output: (previous.output ?? 0) + (next.output ?? 0),
+      cacheRead: (previous.cacheRead ?? 0) + (next.cacheRead ?? 0),
+      cacheWrite: (previous.cacheWrite ?? 0) + (next.cacheWrite ?? 0),
+      total: (previous.total ?? 0) + (next.total ?? 0),
+      cost: (previous.cost ?? 0) + (next.cost ?? 0),
+    };
+    this.db.update(subagentRuns).set({ tokenUsage: JSON.stringify(merged) }).where(eq(subagentRuns.runId, runId)).run();
+    return merged;
+  }
+
+  appendMessage(runId: string, role: string, content: string, parts?: AssistantMessagePart[], rawMessage?: unknown) {
+    const last = this.db.select({ sequence: subagentMessages.sequence }).from(subagentMessages)
+      .where(eq(subagentMessages.subagentRunId, runId)).orderBy(desc(subagentMessages.sequence)).get();
+    this.db.insert(subagentMessages).values({
+      id: crypto.randomUUID(), subagentRunId: runId, sequence: (last?.sequence ?? -1) + 1,
+      role, content, parts: parts ? JSON.stringify(parts) : null, createdAt: Date.now(),
+      rawMessage: rawMessage ? JSON.stringify(rawMessage) : null,
+    }).run();
+  }
+
+  listMessages(runId: string) {
+    return this.db.select().from(subagentMessages).where(eq(subagentMessages.subagentRunId, runId)).orderBy(subagentMessages.sequence).all();
+  }
+
+  get(runId: string) {
+    return this.db.select().from(subagentRuns).where(eq(subagentRuns.runId, runId)).get();
+  }
+
+  getByExecutionSession(executionSessionId: string) {
+    return this.db.select().from(subagentRuns).where(eq(subagentRuns.executionSessionId, executionSessionId)).get();
+  }
+
+  listBySession(sessionId: string) {
+    return this.db.select().from(subagentRuns).where(eq(subagentRuns.parentSessionId, sessionId)).all();
   }
 }
 
@@ -126,8 +216,8 @@ export class RunRepo {
       .run();
   }
 
-  setStatus(id: string, status: "running" | "waiting_approval" | "paused") {
-    this.db.update(runs).set({ status }).where(eq(runs.id, id)).run();
+  setStatus(id: string, status: "created" | "running" | "waiting_approval" | "paused") {
+    this.db.update(runs).set({ status, completedAt: null, error: null }).where(eq(runs.id, id)).run();
   }
 
   get(id: string) {

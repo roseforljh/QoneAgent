@@ -47,6 +47,43 @@ export const runs = sqliteTable(
   (t) => [index("idx_runs_session").on(t.sessionId)]
 );
 
+export const subagentRuns = sqliteTable("subagent_runs", {
+  runId: text("run_id").primaryKey().references(() => runs.id, { onDelete: "cascade" }),
+  parentSessionId: text("parent_session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  parentRunId: text("parent_run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
+  parentSubagentId: text("parent_subagent_id"),
+  depth: integer("depth").notNull().default(0),
+  toolCallId: text("tool_call_id").notNull(),
+  executionSessionId: text("execution_session_id"),
+  profileId: text("profile_id"),
+  title: text("title").notNull(),
+  task: text("task").notNull(),
+  model: text("model"),
+  permissionMode: text("permission_mode"),
+  tools: text("tools"),
+  content: text("content").notNull().default(""),
+  parts: text("parts").notNull().default("[]"),
+  turnCount: integer("turn_count").notNull().default(1),
+  retryCount: integer("retry_count").notNull().default(0),
+  workflowId: text("workflow_id"),
+  workflowStepId: text("workflow_step_id"),
+  dependsOn: text("depends_on"),
+  contextMode: text("context_mode").notNull().default("snapshot"),
+  contextMessageCount: integer("context_message_count").notNull().default(0),
+  tokenUsage: text("token_usage"),
+});
+
+export const subagentMessages = sqliteTable("subagent_messages", {
+  id: text("id").primaryKey(),
+  subagentRunId: text("subagent_run_id").notNull().references(() => subagentRuns.runId, { onDelete: "cascade" }),
+  sequence: integer("sequence").notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  parts: text("parts"),
+  rawMessage: text("raw_message"),
+  createdAt: integer("created_at").notNull(),
+}, (t) => [index("idx_subagent_messages_run").on(t.subagentRunId, t.sequence)]);
+
 export const toolCalls = sqliteTable(
   "tool_calls",
   {

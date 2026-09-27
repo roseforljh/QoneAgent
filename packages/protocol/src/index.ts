@@ -50,6 +50,7 @@ export type RuntimeCommand =
   | { type: "session.messages"; requestId: string; sessionId: string }
   | { type: "session.runs"; requestId: string; sessionId: string }
   | { type: "session.toolCalls"; requestId: string; sessionId: string }
+  | { type: "session.subagents"; requestId: string; sessionId: string }
   | { type: "artifact.list"; requestId: string; sessionId: string }
   | { type: "workspace.list"; requestId: string }
   | { type: "workspace.upsert"; requestId: string; name: string; path: string }
@@ -69,6 +70,8 @@ export type RuntimeCommand =
   | { type: "reach.podcast.configure"; requestId: string; accessToken: string; refreshToken: string }
   | { type: "subagent.list"; requestId: string }
   | { type: "subagent.sync"; requestId: string; config: SubagentConfigInfo }
+  | { type: "subagent.query"; requestId: string; runId: string }
+  | { type: "subagent.control"; requestId: string; runId: string; action: SubagentControlAction; message?: string }
   | { type: "mcp.list"; requestId: string }
   | { type: "mcp.connect"; requestId: string; config: McpServerInfo }
   | { type: "mcp.delete"; requestId: string; serverId: string }
@@ -76,6 +79,7 @@ export type RuntimeCommand =
   | { type: "mcp.oauth.complete"; requestId: string; serverId: string; code: string; state: string; iss?: string }
   | { type: "permission.list"; requestId: string }
   | { type: "permission.set"; requestId: string; subjectId: string; permission: string; decision: PermissionDecision }
+  | { type: "compaction.settings.set"; requestId: string; autoCompactionEnabled: boolean; compactionThreshold: number }
   | { type: "model.list"; requestId: string }
   | { type: "model.resolve-metadata"; requestId: string; provider: string; apiType: ProviderApiType; baseUrl: string; models: { id: string; metadata?: ModelMetadata }[] }
   | { type: "model.upsert"; requestId: string; config: ModelConfigInfo }
@@ -117,14 +121,21 @@ export interface EventBase {
   type: string;
 }
 
+export interface CompactionSettingsInfo {
+  autoCompactionEnabled: boolean;
+  compactionThreshold: number;
+}
+
 export type RuntimeEvent =
-  | { type: "pong"; requestId: string; capabilities?: string[] }
+  | { type: "pong"; requestId: string; capabilities?: string[]; compaction?: CompactionSettingsInfo }
   | { type: "session.created"; session: SessionInfo }
   | { type: "session.list"; sessions: SessionInfo[] }
   | { type: "session.renamed"; session: SessionInfo }
   | { type: "session.messages"; sessionId: string; messages: MessageInfo[] }
   | { type: "session.runs"; sessionId: string; runs: RunInfo[] }
   | { type: "session.toolCalls"; sessionId: string; toolCalls: ToolCallInfo[] }
+  | { type: "session.subagents"; sessionId: string; subagents: SubagentRunInfo[] }
+  | { type: "subagent.updated"; subagent: SubagentRunInfo }
   | { type: "artifact.list"; sessionId: string; artifacts: ArtifactInfo[] }
   | { type: "workspace.list"; workspaces: WorkspaceInfo[] }
   | { type: "workspace.updated"; workspace: WorkspaceInfo }
@@ -139,6 +150,8 @@ export type RuntimeEvent =
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
   | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
   | { type: "subagent.list"; requestId?: string; config: SubagentConfigInfo }
+  | { type: "subagent.query"; requestId: string; subagent: SubagentRunInfo }
+  | { type: "subagent.controlled"; requestId: string; subagent: SubagentRunInfo }
   | { type: "mcp.list"; servers: McpServerInfo[] }
   | { type: "mcp.connected"; serverId: string; toolCount: number }
   | { type: "mcp.oauth.authorization"; requestId: string; serverId: string; url: string; state: string }
@@ -234,6 +247,60 @@ export interface WorkspaceFileInfo {
   kind: "file" | "directory";
 }
 
+export interface SubagentRunInfo {
+  id: string;
+  parentSessionId: string;
+  parentRunId: string;
+  parentSubagentId?: string;
+  depth: number;
+  toolCallId: string;
+  executionSessionId?: string;
+  profileId?: string;
+  title: string;
+  task: string;
+  model?: string;
+  permissionMode?: RunPermissionMode;
+  tools?: string[];
+  status: RunInfo["status"];
+  startedAt: number;
+  completedAt?: number;
+  content: string;
+  parts: AssistantMessagePart[];
+  streaming?: string;
+  error?: string;
+  turnCount: number;
+  retryCount: number;
+  workflowId?: string;
+  workflowStepId?: string;
+  dependsOn?: string[];
+  contextMode?: SubagentContextMode;
+  contextMessageCount?: number;
+  tokenUsage?: SubagentTokenUsage;
+  children?: string[];
+  messages?: SubagentMessageInfo[];
+}
+
+export interface SubagentMessageInfo {
+  id: string;
+  sequence: number;
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  parts?: AssistantMessagePart[];
+  createdAt: number;
+}
+
+export type SubagentControlAction = "stop" | "resume" | "retry" | "steer" | "follow_up";
+export type SubagentContextMode = "task-only" | "snapshot";
+
+export interface SubagentTokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  cost?: number;
+}
+
 export interface WorkspaceGitEntry {
   code: string;
   path: string;
@@ -298,6 +365,8 @@ export interface SubagentProfileInfo {
   instructions: string;
   modelId: string;
   enabled: boolean;
+  tools?: string[];
+  permissionMode?: RunPermissionMode;
   updatedAt: number;
 }
 
@@ -306,8 +375,38 @@ export type CapabilityRouting = Partial<Record<CapabilityId, string>>;
 export interface SubagentConfigInfo {
   profiles: SubagentProfileInfo[];
   routing: CapabilityRouting;
+  runtime: SubagentRuntimeConfig;
   updatedAt: number;
 }
+
+export interface SubagentRuntimeConfig {
+  /** Model used by AI-created temporary subagents when no saved profile is selected. Empty means follow the parent model. */
+  temporaryModelId: string;
+  maxConcurrent: number;
+  timeoutMs: number;
+  tokenBudget: number;
+  maxRetries: number;
+  contextMode: SubagentContextMode;
+  contextMessages: number;
+  allowNested: boolean;
+  maxDepth: number;
+  workflowMaxSteps: number;
+  backgroundEnabled: boolean;
+}
+
+export const DEFAULT_SUBAGENT_RUNTIME: SubagentRuntimeConfig = {
+  temporaryModelId: "",
+  maxConcurrent: 4,
+  timeoutMs: 30 * 60_000,
+  tokenBudget: 0,
+  maxRetries: 2,
+  contextMode: "snapshot",
+  contextMessages: 20,
+  allowNested: true,
+  maxDepth: 3,
+  workflowMaxSteps: 32,
+  backgroundEnabled: true,
+};
 
 export interface ReachChannelInfo {
   id: string;
@@ -437,11 +536,25 @@ const capabilityId = z.enum(["webSearch", "videoRecognition", "stt", "tts"]);
 const subagentProfile = z.object({
   id: id.max(128), name: z.string().trim().min(1).max(120),
   instructions: z.string().trim().min(1).max(32_000), modelId: id.max(512),
-  enabled: z.boolean(), updatedAt: z.number().int().nonnegative(),
+  enabled: z.boolean(), tools: z.array(z.string().regex(/^[a-zA-Z0-9_:-]+$/).max(64)).max(100).optional(),
+  permissionMode: z.enum(["ask", "auto", "full"]).optional(), updatedAt: z.number().int().nonnegative(),
 });
 const subagentConfig = z.object({
   profiles: z.array(subagentProfile).max(100),
   routing: z.record(z.string(), z.string().max(512)).optional().default({}),
+  runtime: z.object({
+    temporaryModelId: z.string().max(512).optional(),
+    maxConcurrent: z.number().int().min(1).max(32).optional(),
+    timeoutMs: z.number().int().min(10_000).max(86_400_000).optional(),
+    tokenBudget: z.number().int().min(0).max(10_000_000).optional(),
+    maxRetries: z.number().int().min(0).max(10).optional(),
+    contextMode: z.enum(["task-only", "snapshot"]).optional(),
+    contextMessages: z.number().int().min(0).max(100).optional(),
+    allowNested: z.boolean().optional(),
+    maxDepth: z.number().int().min(1).max(8).optional(),
+    workflowMaxSteps: z.number().int().min(1).max(128).optional(),
+    backgroundEnabled: z.boolean().optional(),
+  }).optional().default({}),
   updatedAt: z.number().int().nonnegative(),
 });
 const commandSchemas: Record<string, z.ZodTypeAny> = {
@@ -454,6 +567,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.messages": z.object({ type: z.literal("session.messages"), ...request, sessionId: id }),
   "session.runs": z.object({ type: z.literal("session.runs"), ...request, sessionId: id }),
   "session.toolCalls": z.object({ type: z.literal("session.toolCalls"), ...request, sessionId: id }),
+  "session.subagents": z.object({ type: z.literal("session.subagents"), ...request, sessionId: id }),
   "artifact.list": z.object({ type: z.literal("artifact.list"), ...request, sessionId: id }),
   "workspace.list": z.object({ type: z.literal("workspace.list"), ...request }),
   "workspace.upsert": z.object({ type: z.literal("workspace.upsert"), ...request, name: id, path: id }),
@@ -473,6 +587,8 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "reach.podcast.configure": z.object({ type: z.literal("reach.podcast.configure"), ...request, accessToken: z.string().min(8).max(8192), refreshToken: z.string().min(8).max(8192) }),
   "subagent.list": z.object({ type: z.literal("subagent.list"), ...request }),
   "subagent.sync": z.object({ type: z.literal("subagent.sync"), ...request, config: subagentConfig }),
+  "subagent.query": z.object({ type: z.literal("subagent.query"), ...request, runId: id }),
+  "subagent.control": z.object({ type: z.literal("subagent.control"), ...request, runId: id, action: z.enum(["stop", "resume", "retry", "steer", "follow_up"]), message: z.string().max(32_000).optional() }),
   "mcp.list": z.object({ type: z.literal("mcp.list"), ...request }),
   "mcp.connect": z.object({ type: z.literal("mcp.connect"), ...request, config: mcpConfig }),
   "mcp.delete": z.object({ type: z.literal("mcp.delete"), ...request, serverId: id }),
@@ -489,6 +605,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "tool.reject": z.object({ type: z.literal("tool.reject"), ...request, approvalId: id, reason: z.string().optional() }),
   "permission.list": z.object({ type: z.literal("permission.list"), ...request }),
   "permission.set": z.object({ type: z.literal("permission.set"), ...request, subjectId: id, permission: id, decision }),
+  "compaction.settings.set": z.object({ type: z.literal("compaction.settings.set"), ...request, autoCompactionEnabled: z.boolean(), compactionThreshold: z.number().int().min(50).max(95) }),
   "secret.set": z.object({ type: z.literal("secret.set"), ...request, key: secretKey, value: z.string().max(65_536) }),
   "secret.delete": z.object({ type: z.literal("secret.delete"), ...request, key: secretKey }),
 };
