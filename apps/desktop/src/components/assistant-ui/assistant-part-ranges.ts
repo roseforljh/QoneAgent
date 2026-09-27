@@ -9,6 +9,10 @@ function isPresentation(part: PartState): boolean {
   return part.type === "tool-call" && part.toolName === "present" && !part.isError;
 }
 
+function parentId(part: PartState): string | undefined {
+  return (part as PartState & { parentId?: string }).parentId;
+}
+
 export function assistantPartRanges(parts: readonly PartState[]): AssistantPartRange[] {
   const ranges: AssistantPartRange[] = [];
   for (let index = 0; index < parts.length;) {
@@ -25,10 +29,13 @@ export function assistantPartRanges(parts: readonly PartState[]): AssistantPartR
     }
     if (part.type === "tool-call") {
       const startIndex = index;
+      const firstParentId = parentId(part);
       index++;
       while (index < parts.length) {
         const next = parts[index]!;
         if (next.type !== "tool-call" || isPresentation(next)) break;
+        const nextParentId = parentId(next);
+        if (firstParentId !== undefined && nextParentId !== undefined && nextParentId !== firstParentId) break;
         index++;
       }
       ranges.push({ type: "tools", startIndex, endIndex: index });

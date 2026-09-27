@@ -658,6 +658,9 @@ a { text-decoration: none; }
 .settings-mcp-list, .settings-skill-list { display: flex; flex-direction: column; gap: 7px; }
 .settings-skill-actions { display: flex; align-items: center; flex-direction: row !important; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .settings-skill-actions .settings-search { width: 185px; flex: 0 1 185px; height: 30px; margin: 0; }
+.settings-skill-action-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.settings-file-input { display: none; }
+.settings-skill-error { margin: 9px 0 0; color: #e35d6a; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
 .settings-mcp-list + .settings-mcp-list, .settings-mcp-list + .settings-skill-list { margin-top: 7px; }
 .settings-mcp-card, .settings-skill-card { display: flex; min-height: 54px; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease; }
 .settings-mcp-card:hover, .settings-skill-card:hover { border-color: color-mix(in srgb, var(--foreground) 34%, transparent); background: var(--q-hover); box-shadow: 0 5px 16px rgb(0 0 0 / 10%); transform: translateY(-1px); }

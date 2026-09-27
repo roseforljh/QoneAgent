@@ -27,14 +27,18 @@ import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { pickNativeAttachmentFiles, useNativeFileDrop } from "../../lib/native-file-drop";
 import { hasTauriBridge } from "../../store";
+import { fileFromDataUrl, getQoneMessageQueue } from "../../lib/qone-message-queue";
+import { createNativeAttachmentFile } from "../../lib/native-attachment-file";
 import {
   ActionBarPrimitive,
   AuiIf,
   ComposerPrimitive,
+  QueueItemPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useAui,
   useAuiState,
+  type QueueItemState,
 } from "@assistant-ui/react";
 import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 import {
@@ -47,6 +51,7 @@ import {
   SquareIcon,
   FolderPlusIcon,
   Loader2Icon,
+  TargetIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FC, type RefObject } from "react";
 
@@ -179,8 +184,20 @@ const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canCha
 const composerInputClass =
   "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-9 w-full resize-none bg-transparent px-2.5 py-1 text-sm leading-6 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1";
 
+const QueueItemRow: FC<{ queueItem: QueueItemState; persistentId?: string; onEdit: () => void }> = ({ queueItem, onEdit }) => (
+  <div className="q-composer-queue-item flex min-w-0 items-center gap-2 border-b border-foreground/5 px-2.5 py-1.5 text-xs last:border-b-0">
+    <span className="shrink-0 text-muted-foreground/60" aria-hidden>↳</span>
+    <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate" title={queueItem.prompt} />
+    <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={onEdit}>编辑</button>
+    <QueueItemPrimitive.Steer className="shrink-0 text-muted-foreground hover:text-foreground">引导</QueueItemPrimitive.Steer>
+    <QueueItemPrimitive.Remove className="shrink-0 px-1 text-muted-foreground hover:text-foreground" aria-label="删除待发送消息">×</QueueItemPrimitive.Remove>
+  </div>
+);
+
 const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const aui = useAui();
+  const sessionId = useStore((state) => state.currentSessionId);
+  const editingQueueItem = useStore((state) => state.editingQueueItem);
   const insertToolRef = useRef<InsertComposerTool | null>(null);
   const toggleMentionRef = useRef<ToggleComposerMention | null>(null);
   const closeMentionRef = useRef<(() => void) | null>(null);
@@ -217,6 +234,8 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   }, [mentionOpen]);
 
   return (
+    <>
+    <GoalStatusBar />
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.Unstable_TriggerPopoverRoot>
       <ComposerPrimitive.AttachmentDropzone asChild>
@@ -225,6 +244,46 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
           data-slot="aui_composer-shell"
           className="border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
         >
+          <div className="max-h-32 overflow-y-auto">
+            <ComposerPrimitive.Queue>
+              {({ queueItem }) => {
+              const persistentId = sessionId ? getQoneMessageQueue(sessionId)?.getPersistentId(queueItem.id) : undefined;
+              if (persistentId && editingQueueItem?.id === persistentId) return null;
+              return <QueueItemRow queueItem={queueItem} persistentId={persistentId} onEdit={() => {
+                if (!sessionId || !persistentId) return;
+                const item = useStore.getState().queueItems.find((candidate) => candidate.id === persistentId);
+                if (!item) return;
+                const localId = getQoneMessageQueue(sessionId)?.getLocalId(item.id);
+                if (!localId || !getQoneMessageQueue(sessionId)?.beginEdit(localId)) return;
+                useStore.setState({ editingQueueItem: item });
+                aui.composer().setText(item.text);
+                void aui.composer().clearAttachments().then(async () => {
+                  for (const attachment of item.attachments ?? []) {
+                    if (attachment.localPath) {
+                      await aui.composer().addAttachment(createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0));
+                    } else {
+                      await aui.composer().addAttachment({
+                        id: crypto.randomUUID(),
+                        type: attachment.type,
+                        name: attachment.name,
+                        contentType: attachment.mimeType,
+                        content: attachment.type === "image"
+                          ? [{ type: "image", image: attachment.data, filename: attachment.name }]
+                          : [{ type: "file", data: attachment.data, filename: attachment.name, mimeType: attachment.mimeType }],
+                      });
+                    }
+                  }
+                }).catch(() => undefined);
+              }} />;
+              }}
+            </ComposerPrimitive.Queue>
+          </div>
+          {editingQueueItem && (
+            <div className="flex items-center justify-between px-2.5 py-1 text-xs text-muted-foreground" role="status">
+              <span>正在编辑待发送消息</span>
+              <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); useStore.setState({ editingQueueItem: undefined }); void aui.composer().reset(); }}>取消</button>
+            </div>
+          )}
           <ComposerAttachments />
           <ComposerAddAttachment hidden />
           <LexicalComposerInput autoFocus placeholder={placeholder} className={composerInputClass} directiveChip={ComposerToolChip}>
@@ -237,7 +296,23 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
       </ComposerPrimitive.AttachmentDropzone>
       </ComposerPrimitive.Unstable_TriggerPopoverRoot>
     </ComposerPrimitive.Root>
+    </>
   );
+};
+
+const GoalStatusBar: FC = () => {
+  const goal = useStore((state) => state.goal);
+  const pause = useStore((state) => state.pauseGoal);
+  const resume = useStore((state) => state.resumeGoal);
+  const clear = useStore((state) => state.clearGoal);
+  if (!goal) return null;
+  const status = goal.waitingReason ? "等待外部事件" : goal.status === "active" ? "执行中" : goal.status === "paused" ? "已暂停" : goal.status === "blocked" ? "已阻塞" : "已完成";
+  return <div className="mx-auto mb-2 flex w-full max-w-2xl items-center gap-2 rounded-xl border border-foreground/10 bg-muted/30 px-3 py-2 text-xs" role="status">
+    <span className="flex min-w-0 flex-1 items-center gap-1.5"><TargetIcon className="size-3.5 shrink-0 text-primary" /><strong className="shrink-0">Goal · {status}</strong><span className="truncate text-muted-foreground" title={goal.objective}>{goal.objective}</span></span>
+    {goal.status === "active" && !goal.waitingReason && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={pause}>暂停</button>}
+    {(goal.status === "paused" || goal.status === "blocked" || Boolean(goal.waitingReason)) && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={resume}>恢复</button>}
+    <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={clear}>清除</button>
+  </div>;
 };
 
 const ComposerAction: FC<{ anchorRef: RefObject<HTMLDivElement | null>; mentionOpen: boolean; onToggleMention: () => void }> = ({ anchorRef, mentionOpen, onToggleMention }) => {
@@ -311,7 +386,7 @@ const assistantActionClassName =
 const retryUserMessage = (messageId: string) => {
   const state = useStore.getState();
   const source = state.messages.find((message) => message.id === messageId && message.role === "user");
-  if (source) state.runAgent(source.content, source.id, source.attachments);
+  if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId));
 };
 
 const UserMessageText: FC<{ paired?: boolean }> = ({ paired = false }) => {

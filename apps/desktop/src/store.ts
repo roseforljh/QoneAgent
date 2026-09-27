@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, DEFAULT_SUBAGENT_RUNTIME, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, DEFAULT_SUBAGENT_RUNTIME, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate } from "./localization";
@@ -22,6 +22,7 @@ export interface ChatMessage {
   parts?: AssistantMessagePart[];
   attachments?: MessageAttachmentInfo[];
   runId?: string;
+  goalId?: string;
   createdAt?: number;
 }
 
@@ -96,13 +97,18 @@ interface AgentState {
   currentWorkspaceId?: string;
   workspaceLoadingId?: string;
   currentSessionId?: string;
+  goal?: GoalInfo;
   messagesLoadingSessionId?: string;
   draftWorkspaceId?: string;
   creatingSession: boolean;
   pendingMessage?: string;
+  pendingGoal?: boolean;
   pendingAttachments?: MessageAttachmentInfo[];
   titleGeneratingSessionIds: string[];
   messages: ChatMessage[];
+  queueItems: QueueItemInfo[];
+  queueLoadedSessionId?: string;
+  editingQueueItem?: QueueItemInfo;
   streaming: string;
   streamingParts: AssistantMessagePart[];
   activeMessageSequence?: number;
@@ -138,8 +144,12 @@ interface AgentState {
   togglePinWorkspace: (id: string) => void;
   selectWorkspace: (id: string) => void;
   selectSession: (id: string) => void;
-  runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[]) => void;
+  runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean) => void;
+  pauseGoal: () => void;
+  resumeGoal: () => void;
+  clearGoal: () => void;
   stopAgent: () => void;
+  steerAgent: (input: { sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }) => Promise<boolean>;
   approve: (id: string) => void;
   reject: (id: string) => void;
   setPermission: (rule: Omit<PermissionRuleInfo, "updatedAt">) => void;
@@ -180,13 +190,18 @@ function rememberBrowserConnection(): void {
 }
 
 let pendingAgentRun: { requestId: string; sessionId: string; userMessageId: string } | undefined;
+const steerRequests = new Map<string, { resolve: (accepted: boolean) => void }>();
 const handshakeRequests = new Set<string>();
 let metadataLookupSupported = false;
 const metadataRequests = new Map<string, { resolve: (value: Extract<RuntimeEvent, { type: "model.metadata-resolved" }>["models"]) => void; reject: (error: Error) => void }>();
 type CloudResponse = Extract<RuntimeEvent, { type: "skills.cloud.list" | "skills.cloud.installed" }>;
 type CloudCommand = Extract<RuntimeCommand, { type: "skills.cloud.list" | "skills.cloud.install" }>;
 type CloudInput = CloudCommand extends infer Command ? Command extends CloudCommand ? Omit<Command, "requestId"> : never : never;
+type SkillMutationResponse = Extract<RuntimeEvent, { type: "skills.imported" | "skills.created" }>;
+type SkillMutationCommand = Extract<RuntimeCommand, { type: "skills.import" | "skills.create" }>;
+type SkillMutationInput = SkillMutationCommand extends infer Command ? Command extends SkillMutationCommand ? Omit<Command, "requestId"> : never : never;
 const cloudRequests = new Map<string, { resolve: (response: CloudResponse) => void; reject: (error: Error) => void }>();
+const skillMutationRequests = new Map<string, { resolve: (response: SkillMutationResponse) => void; reject: (error: Error) => void }>();
 const cloudInFlight = new Map<string, Promise<CloudResponse>>();
 const workspaceRequests = new Map<string, RuntimeCommand["type"]>();
 const mcpConnectRequests = new Map<string, string>();
@@ -234,6 +249,21 @@ export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
   return request;
 }
 
+export function requestSkillMutation(command: SkillMutationInput): Promise<SkillMutationResponse> {
+  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error("Runtime is unavailable"));
+  const requestId = rid();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { skillMutationRequests.delete(requestId); reject(new Error("Skill 操作超时")); }, 20_000);
+    skillMutationRequests.set(requestId, {
+      resolve: (response) => { clearTimeout(timer); skillMutationRequests.delete(requestId); resolve(response); },
+      reject: (error) => { clearTimeout(timer); skillMutationRequests.delete(requestId); reject(error); },
+    });
+    useStore.getState().send({ ...command, requestId } as SkillMutationCommand).then((sent) => {
+      if (!sent) skillMutationRequests.get(requestId)?.reject(new Error("Skill 操作发送失败"));
+    });
+  });
+}
+
 export const useStore = create<AgentState>((set, get) => ({
   connected: false,
   sessionsLoaded: !hasTauriBridge(),
@@ -258,6 +288,9 @@ export const useStore = create<AgentState>((set, get) => ({
   runs: [],
   artifacts: [],
   messages: [],
+  queueItems: [],
+  queueLoadedSessionId: undefined,
+  editingQueueItem: undefined,
   messagesLoadingSessionId: undefined,
   streaming: "",
   streamingParts: [],
@@ -431,8 +464,10 @@ export const useStore = create<AgentState>((set, get) => ({
     pendingMessageReplacements.delete(id);
     const workspaceId = get().sessions.find((session) => session.id === id)?.workspaceId;
     const workspaceChanged = workspaceId !== undefined && workspaceId !== get().currentWorkspaceId;
-    set({ currentSessionId: id, messagesLoadingSessionId: id, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], chatRunError: undefined });
+    set({ currentSessionId: id, messagesLoadingSessionId: id, queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], chatRunError: undefined });
     get().send({ type: "session.messages", requestId: rid(), sessionId: id });
+    get().send({ type: "goal.get", requestId: rid(), sessionId: id });
+    get().send({ type: "session.queue.list", requestId: rid(), sessionId: id });
     get().send({ type: "session.toolCalls", requestId: rid(), sessionId: id });
     get().send({ type: "session.runs", requestId: rid(), sessionId: id });
     get().send({ type: "session.subagents", requestId: rid(), sessionId: id });
@@ -440,12 +475,12 @@ export const useStore = create<AgentState>((set, get) => ({
     if (workspaceId) get().refreshWorkspace(workspaceId);
   },
 
-  runAgent: (message, replaceFromMessageId, attachments) => {
+  runAgent: (message, replaceFromMessageId, attachments, queueItemId, goal) => {
     const sid = get().currentSessionId;
     if (!sid) {
       const workspaceId = get().draftWorkspaceId;
       if (!workspaceId || get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
-      set({ pendingMessage: message, pendingAttachments: attachments, currentWorkspaceId: workspaceId, lastError: undefined });
+      set({ pendingMessage: message, pendingGoal: goal, pendingAttachments: attachments, currentWorkspaceId: workspaceId, lastError: undefined });
       get().createSessionForWorkspace(workspaceId);
       return;
     }
@@ -464,7 +499,7 @@ export const useStore = create<AgentState>((set, get) => ({
     const messageId = rid();
     clearDelta();
     set((s) => ({
-      messages: [...keptMessages, { id: messageId, role: "user", content: message, attachments, createdAt: Date.now() }],
+      messages: [...keptMessages, { id: messageId, role: "user", content: message, attachments, goalId: goal ? "__pending_goal__" : undefined, createdAt: Date.now() }],
       streaming: "",
       streamingParts: [],
       activeMessageSequence: undefined,
@@ -472,6 +507,7 @@ export const useStore = create<AgentState>((set, get) => ({
       running: true,
       creatingSession: false,
       pendingMessage: undefined,
+      pendingGoal: undefined,
       pendingAttachments: undefined,
       lastError: undefined,
       chatRunError: undefined,
@@ -490,7 +526,9 @@ export const useStore = create<AgentState>((set, get) => ({
     const thinking = requestedThinking === undefined ? undefined : normalizeThinkingLevel(requestedThinking, apiType);
     const requestId = rid();
     pendingAgentRun = { requestId, sessionId: sid, userMessageId: messageId };
-    get().send({ type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking });
+    get().send(goal
+      ? { type: "goal.start", requestId, sessionId: sid, objective: message, attachments, messageId, replaceFromMessageId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking }
+      : { type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId, queueItemId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking });
     if (history.length === 0) {
       get().send({ type: "session.generate-title", requestId: rid(), sessionId: sid, prompt: message || attachments?.map((attachment) => attachment.name).join(", ") || "图片", model });
     }
@@ -500,6 +538,23 @@ export const useStore = create<AgentState>((set, get) => ({
     const runId = get().activeRunId;
     if (!runId) return;
     get().send({ type: "agent.stop", requestId: rid(), runId });
+  },
+
+  pauseGoal: () => { const sessionId = get().currentSessionId; if (sessionId) void get().send({ type: "goal.pause", requestId: rid(), sessionId }); },
+  resumeGoal: () => { const sessionId = get().currentSessionId; if (sessionId) void get().send({ type: "goal.resume", requestId: rid(), sessionId }); },
+  clearGoal: () => { const sessionId = get().currentSessionId; if (sessionId) void get().send({ type: "goal.clear", requestId: rid(), sessionId }); },
+
+  steerAgent: async ({ sessionId, runId, queueItemId, message, attachments }) => {
+    const requestId = rid();
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => { steerRequests.delete(requestId); resolve(false); }, 15_000);
+      steerRequests.set(requestId, {
+        resolve: (accepted) => { clearTimeout(timer); steerRequests.delete(requestId); resolve(accepted); },
+      });
+      get().send({ type: "agent.steer", requestId, sessionId, runId, queueItemId, message, attachments }).then((sent) => {
+        if (!sent) steerRequests.get(requestId)?.resolve(false);
+      });
+    });
   },
 
   approve: (id) => {
@@ -649,6 +704,9 @@ export function initBridge() {
           streamingParts: [],
           activeMessageSequence: undefined,
           preparedToolCallIds: [],
+          queueItems: [],
+          queueLoadedSessionId: undefined,
+          editingQueueItem: undefined,
           ...(st.running && st.currentSessionId && userMessage ? {
             chatRunError: { sessionId: st.currentSessionId, userMessageId: userMessage.id, detail: "Runtime exited" },
           } : {}),
@@ -678,6 +736,10 @@ export function initBridge() {
     const s = useStore.getState();
     switch (msg.type) {
       case "pong":
+        if (steerRequests.has(msg.requestId)) {
+          steerRequests.get(msg.requestId)?.resolve(true);
+          break;
+        }
         if (pendingAgentRun?.requestId === msg.requestId) {
           pendingAgentRun = undefined;
           break;
@@ -732,7 +794,7 @@ export function initBridge() {
         if (useStore.getState().creatingSession && useStore.getState().pendingMessage !== undefined) {
           queueMicrotask(() => {
             const state = useStore.getState();
-            if (state.currentSessionId === msg.session.id && state.pendingMessage !== undefined) state.runAgent(state.pendingMessage, undefined, state.pendingAttachments);
+            if (state.currentSessionId === msg.session.id && state.pendingMessage !== undefined) state.runAgent(state.pendingMessage, undefined, state.pendingAttachments, undefined, state.pendingGoal);
           });
         }
         break;
@@ -753,6 +815,9 @@ export function initBridge() {
           ...(selectionChanged ? {
             messages: [],
             messagesLoadingSessionId: selected?.id,
+             queueItems: [],
+             queueLoadedSessionId: undefined,
+             editingQueueItem: undefined,
             streaming: "",
             streamingParts: [],
             activeMessageSequence: undefined,
@@ -765,6 +830,8 @@ export function initBridge() {
         });
         if (selected) {
           s.send({ type: "session.messages", requestId: rid(), sessionId: selected.id });
+          s.send({ type: "goal.get", requestId: rid(), sessionId: selected.id });
+          s.send({ type: "session.queue.list", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.toolCalls", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.runs", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.subagents", requestId: rid(), sessionId: selected.id });
@@ -792,9 +859,22 @@ export function initBridge() {
             attachments: m.attachments,
             runId: m.runId,
             createdAt: m.createdAt,
+            goalId: m.goalId,
           }));
           useStore.setState((st) => ({ messagesLoadingSessionId: undefined, messages, toolCalls: alignToolCallIds(st.toolCalls, messages) }));
         }
+        break;
+      case "goal.current":
+        if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ goal: msg.goal });
+        break;
+      case "goal.updated":
+        if (msg.goal.sessionId === useStore.getState().currentSessionId) useStore.setState({ goal: msg.goal });
+        break;
+      case "goal.cleared":
+        if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ goal: undefined });
+        break;
+      case "session.queue":
+        if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ queueItems: msg.items, queueLoadedSessionId: msg.sessionId });
         break;
       case "session.toolCalls":
         if (msg.sessionId === useStore.getState().currentSessionId) {
@@ -941,6 +1021,11 @@ export function initBridge() {
         useStore.setState((state) => ({ skills: [...state.skills.filter((skill) => skill.id !== msg.skill.id), msg.skill] }));
         cloudRequests.get(msg.requestId)?.resolve(msg);
         break;
+      case "skills.imported":
+      case "skills.created":
+        useStore.setState((state) => ({ skills: [...state.skills.filter((skill) => skill.id !== msg.skill.id), msg.skill] }));
+        skillMutationRequests.get(msg.requestId)?.resolve(msg);
+        break;
       case "plugins.list":
         useStore.setState({ plugins: msg.plugins });
         break;
@@ -1021,6 +1106,14 @@ export function initBridge() {
         useStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
         break;
       case "error":
+        if (msg.requestId && steerRequests.has(msg.requestId)) {
+          steerRequests.get(msg.requestId)?.resolve(false);
+          break;
+        }
+        if (msg.requestId && skillMutationRequests.has(msg.requestId)) {
+          skillMutationRequests.get(msg.requestId)?.reject(new Error(msg.message));
+          break;
+        }
         if (msg.requestId && cloudRequests.has(msg.requestId)) {
           cloudRequests.get(msg.requestId)?.reject(new Error(msg.message));
           break;

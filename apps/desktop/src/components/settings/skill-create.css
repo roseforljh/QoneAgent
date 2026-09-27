@@ -1,0 +1,9 @@
+.skill-create-overlay { position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(0 0 0 / 54%); }
+.skill-create-dialog { width: min(540px, 100%); max-height: min(680px, calc(100vh - 48px)); }
+.skill-create-fields { display: flex; flex-direction: column; gap: 15px; }
+.skill-create-fields label { display: flex; flex-direction: column; gap: 6px; color: var(--muted-foreground); font-size: 11px; }
+.skill-create-fields input, .skill-create-fields textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; outline: none; background: var(--background); color: var(--foreground); font-size: 12px; }
+.skill-create-fields input:focus, .skill-create-fields textarea:focus { border-color: var(--ring); }
+.skill-create-fields textarea { min-height: 160px; line-height: 1.5; resize: vertical; }
+.skill-create-fields small { color: var(--q-subtle); font-size: 10px; }
+.skill-create-error { margin: 12px 0 0; color: #e35d6a; font-size: 11px; }

@@ -15,7 +15,12 @@ import { ComposerSlashRow, ComposerToolRow, getComposerTools, type ComposerSlash
 import { PlugZapIcon, SparklesIcon } from "lucide-react";
 
 const popoverClass = `${floating} absolute bottom-full start-2 z-50 mb-2 w-[min(30rem,calc(100vw-24px))] max-h-72 overflow-y-auto rounded-2xl p-1.5 shadow-xl`;
-const slashFormatter = { ...unstable_defaultDirectiveFormatter, serialize: (item: { label: string }) => item.label };
+const slashFormatter = {
+  ...unstable_defaultDirectiveFormatter,
+  serialize: (item: { id: string; label: string }) => item.id.startsWith("mcp:")
+    ? `/mcp:${item.id.slice("mcp:".length)}`
+    : item.label,
+};
 
 const MentionPopoverState: FC<{ onStateChange: (open: boolean, close: () => void) => void }> = ({ onStateChange }) => {
   const resource = unstable_useTriggerPopoverScopeContext();
@@ -37,10 +42,10 @@ export const ComposerTriggers: FC<{
   const tools = useMemo(() => getComposerTools(t), [t]);
   const slashEntries = useMemo<ComposerSlashEntry[]>(() => [
     ...skills.map((skill) => ({ id: `skill:${skill.id}`, label: `/skill:${skill.name}`, description: skill.description, kind: "skill" as const, icon: SparklesIcon })),
-    ...mcpServers.map((server) => ({
+    ...mcpServers.filter((server) => server.connected).map((server) => ({
       id: `mcp:${server.id}`,
-      label: `/mcp:${server.name}`,
-      description: server.connected ? `${server.toolCount ?? 0} ${t("mcp.tools")}` : t("mcp.disconnectedStatus"),
+      label: server.name,
+      description: `${server.toolCount ?? 0} ${t("mcp.tools")}`,
       kind: "mcp" as const,
       icon: PlugZapIcon,
     })),

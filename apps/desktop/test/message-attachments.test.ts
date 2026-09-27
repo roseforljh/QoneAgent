@@ -37,3 +37,17 @@ test("local media above the Gemini 2 GB limit is rejected before sending", async
   const input = { attachments: [{ type: "file", name: file.name, contentType: file.type, file, content: [] }] } as unknown as AppendMessage;
   expect(serializeMessageAttachments(input)).rejects.toThrow("2 GB");
 });
+
+test("restored inline file attachments can be serialized again without a File object", async () => {
+  const input = {
+    attachments: [{
+      type: "file",
+      name: "restored.txt",
+      contentType: "text/plain",
+      content: [{ type: "file", filename: "restored.txt", mimeType: "text/plain", data: "data:text/plain;base64,SGk=" }],
+    }],
+  } as unknown as AppendMessage;
+  expect(await serializeMessageAttachments(input)).toEqual([{
+    type: "file", name: "restored.txt", mimeType: "text/plain", data: "data:text/plain;base64,SGk=",
+  }]);
+});

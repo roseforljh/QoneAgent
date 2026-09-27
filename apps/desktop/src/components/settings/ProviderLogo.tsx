@@ -1,26 +1,23 @@
 import { useState } from "react";
+import { providerLogoUrls } from "./provider-logo-urls";
 
-function getHostname(baseUrl: string) {
-  try {
-    return new URL(/^https?:\/\//i.test(baseUrl) ? baseUrl : `https://${baseUrl}`).hostname;
-  } catch {
-    return undefined;
-  }
+export function ProviderLogo({ name, baseUrl, logoUrl }: { name: string; baseUrl: string; logoUrl?: string }) {
+  const initial = Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "?";
+  const urls = providerLogoUrls(baseUrl, logoUrl);
+  return <ProviderLogoImage key={`${baseUrl}:${logoUrl ?? ""}`} urls={urls} initial={initial} />;
 }
 
-export function ProviderLogo({ name, baseUrl }: { name: string; baseUrl: string }) {
-  const [failed, setFailed] = useState(false);
-  const hostname = getHostname(baseUrl.trim());
-  const initial = Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "?";
+function ProviderLogoImage({ urls, initial }: { urls: string[]; initial: string }) {
+  const [index, setIndex] = useState(0);
 
-  if (hostname && !failed) {
+  if (urls[index]) {
     return (
       <img
         className="settings-provider-logo"
-        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`}
+        src={urls[index]}
         alt=""
         aria-hidden="true"
-        onError={() => setFailed(true)}
+        onError={() => setIndex((current) => current + 1)}
       />
     );
   }

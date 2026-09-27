@@ -35,7 +35,8 @@ export async function serializeMessageAttachments(message: AppendMessage): Promi
     if (nativeFile && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) throw new Error("超过 50 MB 的音视频请通过附件菜单选择本地文件");
     const data = type === "image"
       ? attachment.content.find((part) => part.type === "image")?.image
-      : attachment.file ? await readDataUrl(attachment.file) : undefined;
+      : attachment.file ? await readDataUrl(attachment.file)
+        : attachment.content.find((part) => part.type === "file")?.data;
     if (!data) throw new Error(`附件无法读取：${attachment.name}`);
     if (data.length > MAX_DATA_LENGTH) throw new Error(`附件过大：${attachment.name}`);
     if (type === "image" && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(data)) {

@@ -3,13 +3,13 @@ import { NumberField } from "@base-ui/react/number-field";
 import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
 import { fetchProviderModelCatalog } from "../../lib/provider-model-catalog";
 import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings, type Capability, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { check } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { hasTauriBridge, requestModelMetadata } from "../../store";
+import { hasTauriBridge, requestModelMetadata, requestSkillMutation } from "../../store";
 import { MemoryChips, type MemoryChip } from "../assistant-ui/elements/memory-chips";
 import { QoneSelect } from "../ui/Select";
 import { Slider } from "../ui/Slider";
@@ -63,6 +63,7 @@ import perplexityLogo from "@lobehub/icons-static-svg/icons/perplexity-color.svg
 import { ModelCard } from "./ModelCard";
 import { ProviderLogo } from "./ProviderLogo";
 import { SkillCloudDialog } from "./SkillCloudDialog";
+import { SkillCreateDialog } from "./SkillCreateDialog";
 import { CapabilitySection, type CapabilityId } from "./CapabilitySection";
 import { SubagentRuntimeSettings } from "./SubagentRuntimeSettings";
 import { SubagentTemporarySettings } from "./SubagentTemporarySettings";
@@ -373,6 +374,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
   const [name, setName] = useState(initial?.name ?? "");
   const [apiType, setApiType] = useState<ProviderApiType>(initial?.apiType ?? "openai-compatible");
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
+  const [logoUrl, setLogoUrl] = useState(initial?.logoUrl ?? "");
   const [apiKey, setApiKey] = useState("");
   const [models, setModels] = useState<ProviderModel[]>(initial?.models ?? []);
   const [fetching, setFetching] = useState(false);
@@ -383,7 +385,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
   useEffect(() => {
     fetchSequence.current++;
     if (!open) return;
-    setName(initial?.name ?? ""); setApiType(initial?.apiType ?? "openai-compatible"); setBaseUrl(initial?.baseUrl ?? ""); setApiKey(""); setModels(initial?.models ?? []); setStatus(null); setSyncOpen(false); setFetchedModels([]); setFetching(false);
+    setName(initial?.name ?? ""); setApiType(initial?.apiType ?? "openai-compatible"); setBaseUrl(initial?.baseUrl ?? ""); setLogoUrl(initial?.logoUrl ?? ""); setApiKey(""); setModels(initial?.models ?? []); setStatus(null); setSyncOpen(false); setFetchedModels([]); setFetching(false);
   }, [open, initial?.id]);
   if (!open) return null;
   const preview = modelsEndpoint(apiType, baseUrl);
@@ -428,7 +430,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
 
   const save = async () => {
     if (!name.trim() || !baseUrl.trim()) { setStatus({ key: "provider.requiredFields" }); return; }
-    const profile: ProviderProfile = { id: initial?.id ?? providerId(name), name: name.trim(), apiType, baseUrl: normalizeBaseUrl(baseUrl), models, updatedAt: Date.now() };
+    const profile: ProviderProfile = { id: initial?.id ?? providerId(name), name: name.trim(), apiType, baseUrl: normalizeBaseUrl(baseUrl), logoUrl: logoUrl.trim() || undefined, models, updatedAt: Date.now() };
     if (apiKey) {
       if (hasTauriBridge()) await invoke("secret_set", { key: `model.apiKey:${profile.id}`, value: apiKey });
       useStore.getState().send({ type: "secret.set", requestId: crypto.randomUUID(), key: `model.apiKey:${profile.id}`, value: apiKey });
@@ -456,7 +458,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
     >
       <div className="settings-subdialog provider-dialog" role="dialog" aria-modal="true" aria-label={t("provider.newConfiguration")}>
         <div className="settings-subdialog-header"><div><span>{t("provider.configuration")}</span><h3>{initial ? t("provider.editConfiguration") : t("provider.newConfiguration")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
-        <div className="settings-form-grid"><label>{t("provider.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("provider.namePlaceholder")} /></label><label>{t("provider.apiType")}<QoneSelect value={apiType} onChange={(value) => setApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("provider.apiType")} /></label><label className="is-wide">{t("provider.baseUrl")}<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t("provider.baseUrlPlaceholder")} /><small className="settings-url-preview">{t("provider.urlPreview", { url: preview || t("provider.waitingForInput") })}</small></label><label className="is-wide">{t("provider.apiKey")}<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t("provider.apiKeyPlaceholder")} /></label></div>
+        <div className="settings-form-grid"><label>{t("provider.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("provider.namePlaceholder")} /></label><label>{t("provider.apiType")}<QoneSelect value={apiType} onChange={(value) => setApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("provider.apiType")} /></label><label className="is-wide">{t("provider.baseUrl")}<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t("provider.baseUrlPlaceholder")} /><small className="settings-url-preview">{t("provider.urlPreview", { url: preview || t("provider.waitingForInput") })}</small></label><label className="is-wide">{t("provider.logoUrl")}<input type="url" value={logoUrl} onChange={(event) => setLogoUrl(event.target.value)} placeholder={t("provider.logoUrlPlaceholder")} /><small className="settings-url-preview">{t("provider.logoUrlHint")}</small></label><label className="is-wide">{t("provider.apiKey")}<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t("provider.apiKeyPlaceholder")} /></label></div>
         <div className="settings-provider-actions"><button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchModels}>{fetching ? <><LoaderCircle size={15} className="settings-spin" />{t("provider.fetching")}</> : <><Globe2 size={15} />{t("provider.fetchModels")}</>}</button><span>{models.length ? t("provider.configuredModels", { count: models.length }) : t("provider.noModels")}</span></div>
         {status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}
         <div className="settings-subdialog-footer">{initial && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("provider.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("provider.saveConfiguration")}</button></div>
@@ -530,7 +532,7 @@ function ConfigurationSection() {
         onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openProvider(profile); } }}
       >
         <div className="settings-provider-edit">
-          <ProviderLogo name={profile.name} baseUrl={profile.baseUrl} />
+          <ProviderLogo name={profile.name} baseUrl={profile.baseUrl} logoUrl={profile.logoUrl} />
           <span className="settings-provider-copy"><strong>{profile.name}</strong><small>{t(providerApiLabelKeys[profile.apiType])} · {profile.models.length} {t("provider.models")}</small></span>
         </div>
         <button type="button" className="settings-provider-select" onClick={(event) => { event.stopPropagation(); selectProvider(profile.id); }} aria-label={`${t("model.selectProvider")}: ${profile.name}`} aria-pressed={selected}>
@@ -1299,19 +1301,46 @@ function SkillsSection() {
   const currentWorkspaceId = useStore((state) => state.currentWorkspaceId);
   const [query, setQuery] = useState("");
   const [cloudOpen, setCloudOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const q = query.trim().toLowerCase();
   const visibleSkills = skills.filter((skill) => !q || skill.name.toLowerCase().includes(q) || skill.path.toLowerCase().includes(q));
 
-  useEffect(() => {
+  const reloadSkills = () => {
     send({ type: "skills.list", requestId: crypto.randomUUID(), cwd: workspaces.find((workspace) => workspace.id === currentWorkspaceId)?.path });
+  };
+
+  useEffect(() => {
+    reloadSkills();
   }, [send, workspaces, currentWorkspaceId]);
+
+  const importSkill = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    setImportError("");
+    try {
+      const content = await file.text();
+      await requestSkillMutation({ type: "skills.import", content });
+      reloadSkills();
+    } catch (cause) {
+      setImportError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   return (
     <>
       <SectionHeader eyebrow={t("skills.eyebrow")} title={t("skills.title")} />
-      <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("skills.installed")}</strong><span>{visibleSkills.length} {t("skills.count")}</span></div><div className="settings-skill-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" className="settings-secondary-action" onClick={() => setCloudOpen(true)}><CloudDownload size={14} />{t("skills.cloud.button")}</button></div></div>
+      <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("skills.installed")}</strong><span>{visibleSkills.length} {t("skills.count")}</span></div><div className="settings-skill-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="settings-skill-action-buttons"><input ref={fileInputRef} className="settings-file-input" type="file" accept=".md,SKILL.md" onChange={(event) => void importSkill(event)} /><button type="button" className="settings-secondary-action" disabled={importing} onClick={() => { setImportError(""); fileInputRef.current?.click(); }}>{importing ? <LoaderCircle className="settings-spin" size={14} /> : <Upload size={14} />}{importing ? t("skills.importing") : t("skills.import")}</button><button type="button" className="settings-secondary-action" onClick={() => setCreateOpen(true)}><Plus size={14} />{t("skills.create.button")}</button><button type="button" className="settings-secondary-action" onClick={() => setCloudOpen(true)}><CloudDownload size={14} />{t("skills.cloud.button")}</button></div></div></div>
+      {importError && <p className="settings-skill-error" role="alert"><strong>{t("skills.importError")}:</strong> {importError}</p>}
       <div className="settings-skill-list">{visibleSkills.length === 0 ? <p className="settings-empty">{t("skills.none")}</p> : visibleSkills.map((skill) => <button type="button" className="settings-skill-card" key={skill.id} onClick={() => openPath(skill.path).catch((error) => console.error("open skill failed", error))}><span className="settings-provider-icon"><WandSparkles size={16} /></span><div><strong>{skill.name}</strong><small>{skill.path}</small></div><ChevronRight size={15} /></button>)}</div>
       {cloudOpen && <SkillCloudDialog onClose={() => setCloudOpen(false)} />}
+      {createOpen && <SkillCreateDialog onClose={() => { setCreateOpen(false); reloadSkills(); }} />}
     </>
   );
 }

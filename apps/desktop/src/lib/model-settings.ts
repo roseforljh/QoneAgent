@@ -27,7 +27,7 @@ export type ModelSettings = {
 };
 
 export type ProviderModel = { id: string; label: string; settings?: ModelSettings };
-export type ProviderProfile = { id: string; name: string; apiType: ProviderApiType; baseUrl: string; models: ProviderModel[]; updatedAt: number };
+export type ProviderProfile = { id: string; name: string; apiType: ProviderApiType; baseUrl: string; logoUrl?: string; models: ProviderModel[]; updatedAt: number };
 
 export const capabilities: Capability[] = ["text", "image", "video", "audio"];
 export function thinkingLevelsForApi(apiType: ProviderApiType = "openai-compatible"): ThinkingLevel[] {

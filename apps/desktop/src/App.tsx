@@ -15,6 +15,7 @@ import {
 import type { MessageAttachmentInfo, PluginInfo } from "@qone/protocol";
 import { assistantMessageContent } from "./lib/assistant-message-parts";
 import { serializeMessageAttachments } from "./lib/message-attachments";
+import { createQoneMessageQueue, getQoneMessageQueue, setQoneMessageQueue } from "./lib/qone-message-queue";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { WorkspaceDock } from "./components/assistant-ui/workspace-dock";
@@ -75,22 +76,86 @@ const extractText = (message: AppendMessage): string => {
   return partsText.trim();
 };
 
-function useQoneRuntime(pendingRun: { current: { text: string; attachments: MessageAttachmentInfo[] } | null }) {
+const extractComposerPrompt = (message: AppendMessage): { text: string; goal: boolean } => {
+  const raw = extractText(message);
+  const directive = /:qone-tool\[[^\]\n]*\]\{name=qone-goal\}\s*/giu;
+  const legacy = /^\s*@goal\b\s*/iu;
+  if (directive.test(raw)) return { text: raw.replace(directive, "").trim(), goal: true };
+  if (legacy.test(raw)) return { text: raw.replace(legacy, "").trim(), goal: true };
+  return { text: raw, goal: false };
+};
+
+function useQoneRuntime(pendingRun: { current: { text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null }) {
   const { t } = useLocale();
   const messages = useStore((s) => s.messages);
   const streaming = useStore((s) => s.streaming);
   const streamingParts = useStore((s) => s.streamingParts);
   const running = useStore((s) => s.running);
   const activeRunId = useStore((s) => s.activeRunId);
+  const queueItems = useStore((s) => s.queueItems);
+  const queueLoadedSessionId = useStore((s) => s.queueLoadedSessionId);
   const toolCalls = useStore((s) => s.toolCalls);
   const sessions = useStore((s) => s.sessions);
   const currentSessionId = useStore((s) => s.currentSessionId);
   const runAgent = useStore((s) => s.runAgent);
   const stopAgent = useStore((s) => s.stopAgent);
+  const steerAgent = useStore((s) => s.steerAgent);
   const newSession = useStore((s) => s.newSession);
   const selectSession = useStore((s) => s.selectSession);
   const send = useStore((s) => s.send);
   const sidebarPreferences = useSidebarPreferences();
+
+  const queue = useMemo(() => currentSessionId ? createQoneMessageQueue({
+    sessionId: currentSessionId,
+    isRunning: () => useStore.getState().running,
+    editPending: (message) => {
+      const state = useStore.getState();
+      if (!state.editingQueueItem || state.currentSessionId !== currentSessionId) return false;
+      const activeQueue = getQoneMessageQueue(currentSessionId);
+      const localId = activeQueue?.getLocalId(state.editingQueueItem.id);
+      if (!activeQueue || !localId) return false;
+      activeQueue.edit(localId, message, state.editingQueueItem.attachments);
+      useStore.setState({ editingQueueItem: undefined });
+      return true;
+    },
+    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal); },
+    steer: (message, queueItemId, attachments) => {
+      const state = useStore.getState();
+      if (!state.activeRunId) return Promise.resolve(false);
+      return steerAgent({ sessionId: currentSessionId, runId: state.activeRunId, queueItemId, message: extractText(message), attachments });
+    },
+    sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
+  }) : null, [currentSessionId, runAgent, steerAgent]);
+
+  const hydratedQueueSession = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!queue || !currentSessionId) return;
+    if (queueLoadedSessionId !== currentSessionId) {
+      if (queueLoadedSessionId === undefined && hydratedQueueSession.current === currentSessionId) {
+        queue.restore([]);
+        hydratedQueueSession.current = undefined;
+      }
+      return;
+    }
+    if (hydratedQueueSession.current === currentSessionId) return;
+    queue.restore(queueItems);
+    hydratedQueueSession.current = currentSessionId;
+  }, [queue, currentSessionId, queueLoadedSessionId, queueItems]);
+  useEffect(() => {
+    if (!queue || !currentSessionId) return;
+    setQoneMessageQueue(currentSessionId, queue);
+    return () => setQoneMessageQueue(currentSessionId, undefined);
+  }, [queue, currentSessionId]);
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (!queue) return;
+    if (running && !wasRunning.current) queue.controller.notifyBusy();
+    if (!running && wasRunning.current) {
+      queue.controller.notifyIdle();
+      queue.releaseIdle();
+    }
+    wasRunning.current = running;
+  }, [queue, running]);
 
   const hasStreamingAssistant = running;
   const runtimeMessages = useMemo(
@@ -169,14 +234,24 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       };
     },
     onNew: async (message) => {
-      const text = extractText(message);
+      const prompt = extractComposerPrompt(message);
+      const text = prompt.text;
       let attachments: MessageAttachmentInfo[];
       try { attachments = await serializeMessageAttachments(message); }
       catch (error) { useStore.setState({ lastError: String(error) }); throw error; }
-      if (!text && attachments.length === 0) return;
+       if (!text && attachments.length === 0) return;
+       if (prompt.goal && !text.trim()) return;
       const state = useStore.getState();
+      if (state.editingQueueItem && state.currentSessionId === currentSessionId && queue) {
+        const localId = queue.getLocalId(state.editingQueueItem.id);
+        if (localId) {
+          queue.edit(localId, message, state.editingQueueItem.attachments);
+          useStore.setState({ editingQueueItem: undefined });
+          return;
+        }
+      }
       if (!state.currentSessionId && state.draftWorkspaceId) {
-        runAgent(text, undefined, attachments);
+        runAgent(text, undefined, attachments, undefined, prompt.goal);
         return;
       }
       if (!state.currentSessionId) {
@@ -184,18 +259,19 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
           useStore.setState({ lastError: "请先导入项目，再发送消息。" });
           return;
         }
-        pendingRun.current = { text, attachments };
+        pendingRun.current = { text, attachments, goal: prompt.goal };
         newSession();
         return;
       }
-      runAgent(text, undefined, attachments);
+      runAgent(text, undefined, attachments, undefined, prompt.goal);
     },
     onReload: async (parentId) => {
       if (!parentId) return;
       const source = useStore.getState().messages.find((message) => message.id === parentId && message.role === "user");
-      if (source) runAgent(source.content, source.id, source.attachments);
+      if (source) runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId));
     },
     onCancel: async () => stopAgent(),
+    queue: queue?.adapter,
     adapters: { threadList, attachments: attachmentAdapter },
   });
 }
@@ -257,7 +333,7 @@ function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOp
 }
 
 function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme: Theme; onToggleTheme: () => void; initialSettingsOpen?: boolean }) {
-  const pendingRun = useRef<{ text: string; attachments: MessageAttachmentInfo[] } | null>(null);
+  const pendingRun = useRef<{ text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null>(null);
   const runtime = useQoneRuntime(pendingRun);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
@@ -276,9 +352,9 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
 
   useEffect(() => {
     if (currentSessionId && pendingRun.current) {
-      const { text, attachments } = pendingRun.current;
+      const { text, attachments, goal } = pendingRun.current;
       pendingRun.current = null;
-      runAgent(text, undefined, attachments);
+      runAgent(text, undefined, attachments, undefined, goal);
     }
   }, [currentSessionId, runAgent]);
 
