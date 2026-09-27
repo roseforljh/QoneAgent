@@ -5,14 +5,13 @@ import { ComposerToolChip, ComposerToolsPopover, type ComposerTool } from "./com
 import { ComposerTriggers } from "./composer-triggers";
 import { ComposerEditorBridge, type InsertComposerTool, type ToggleComposerMention } from "./composer-editor-bridge";
 import { LongPasteAttachmentPlugin } from "./long-paste-attachment";
-import { MarkdownText } from "./markdown-text";
+import { AssistantParts } from "./assistant-parts";
+import { SubagentCapsule } from "./subagent-view";
 import { MessagePair } from "./elements/message-pair";
 import { DaySeparatorMarker } from "./elements/day-separator";
 import { ErrorState } from "./elements/error-state";
 import { pairMessageIds } from "./message-pairing";
 import { messageDaySeparators } from "./message-day-separators";
-import { GenerativeUIPresentation, SessionTimeline } from "./session-timeline";
-import { assistantPartRanges } from "./assistant-part-ranges";
 import { MessageSourcesView } from "./message-sources-view";
 import { AssistantContext, AssistantMemoryChips } from "./assistant-context";
 import { TooltipIconButton } from "./tooltip-icon-button";
@@ -26,7 +25,8 @@ import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-
 import "./thread-viewport.css";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
-import { useNativeFileDrop } from "../../lib/native-file-drop";
+import { pickNativeAttachmentFiles, useNativeFileDrop } from "../../lib/native-file-drop";
+import { hasTauriBridge } from "../../store";
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -107,27 +107,29 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       <AuiIf condition={(s) => !s.thread.isEmpty}>
         <ThreadPrimitive.Viewport turnAnchor="top" autoScroll className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto">
           <ConversationMapAui />
-          <ThreadPrimitive.Messages>
-            {({ message }) => {
-              if (message.role === "user" && pairedUserIds.has(message.id)) return null;
-              const date = daySeparators.get(message.id);
-              return (
-                <div className="flex w-full flex-col gap-5" data-message-block>
-                  {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto max-w-2xl" />}
-                  {message.role === "user"
-                    ? <UserMessage messageId={message.id} />
-                    : <AssistantMessage
-                      userMessageId={pairedUserIdByAssistant.get(message.id)}
-                      showLatestExtras={message.id === latestAssistantId}
-                    />}
-                </div>
-              );
-            }}
-          </ThreadPrimitive.Messages>
+          <div className="q-message-list flex w-full min-w-0 flex-col gap-7">
+            <ThreadPrimitive.Messages>
+              {({ message }) => {
+                if (message.role === "user" && pairedUserIds.has(message.id)) return null;
+                const date = daySeparators.get(message.id);
+                return (
+                  <div className="q-message-block flex w-full flex-col gap-5" data-message-block>
+                    {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto max-w-2xl" />}
+                    {message.role === "user"
+                      ? <UserMessage messageId={message.id} />
+                      : <AssistantMessage
+                        userMessageId={pairedUserIdByAssistant.get(message.id)}
+                        showLatestExtras={message.id === latestAssistantId}
+                      />}
+                  </div>
+                );
+              }}
+            </ThreadPrimitive.Messages>
+          </div>
           <ChatRunErrorView />
           <div className="mx-auto w-full max-w-2xl empty:hidden">{children}</div>
 
-          <ThreadPrimitive.ViewportFooter className="q-chat-footer sticky bottom-0 mt-auto flex w-full flex-col overflow-visible pb-2">
+          <ThreadPrimitive.ViewportFooter className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-background pb-2">
             <ThreadScrollToBottom />
             <div className="relative z-1 mx-auto w-full max-w-2xl">
               {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
@@ -196,9 +198,14 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   useNativeFileDrop(shellRef, onNativeFiles);
   const onEditorReady = useCallback((insert: InsertComposerTool | null) => { insertToolRef.current = insert; }, []);
   const onToolSelect = useCallback((tool: ComposerTool) => {
-    if (tool.id === "attachment") shellRef.current?.querySelector<HTMLButtonElement>(".aui-composer-add-attachment")?.click();
+    if (tool.id === "attachment") {
+      if (hasTauriBridge()) void pickNativeAttachmentFiles().then(onNativeFiles).catch((error) => {
+        useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
+      });
+      else shellRef.current?.querySelector<HTMLButtonElement>(".aui-composer-add-attachment")?.click();
+    }
     else if (tool.id !== "image-generation") insertToolRef.current?.(tool);
-  }, []);
+  }, [onNativeFiles]);
   const onMentionStateChange = useCallback((open: boolean, close: () => void) => {
     closeMentionRef.current = close;
     setMentionOpen(open);
@@ -431,10 +438,11 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean }
         ) : undefined}
         assistantContent={
           <MessagePrimitive.Root className="q-message-root q-message-assistant relative flex w-full flex-col">
-            <AssistantParts />
+            <AssistantParts hideSubagentCalls />
             <MessageSourcesView />
             <AssistantMemoryChips visible={showLatestExtras} />
             <AgentPreparation />
+            {showLatestExtras && <SubagentCapsule />}
           </MessagePrimitive.Root>
         }
         actions={
@@ -521,20 +529,6 @@ const AgentPreparation: FC = () => {
       <EllipsisDots />
     </div>
   );
-};
-
-const AssistantParts: FC = () => {
-  const parts = useAuiState((state) => state.message.parts);
-  const ranges = useMemo(() => assistantPartRanges(parts), [parts]);
-  return <>{ranges.map((range) => {
-    if (range.type === "text") return (
-      <div className="q-assistant-text text-foreground" key={`text-${range.index}`}>
-        <MessagePrimitive.PartByIndex index={range.index} components={{ Text: MarkdownText }} />
-      </div>
-    );
-    if (range.type === "presentation") return <GenerativeUIPresentation key={`present-${range.index}`} index={range.index} />;
-    return <SessionTimeline key={`tools-${range.startIndex}`} startIndex={range.startIndex} endIndex={range.endIndex} />;
-  })}</>;
 };
 
 const ChatRunErrorView: FC = () => {

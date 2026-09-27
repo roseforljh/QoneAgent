@@ -1,4 +1,5 @@
 import { modelListUrl, modelNamesEqual, type ProviderApiType } from "@qone/protocol";
+import { NumberField } from "@base-ui/react/number-field";
 import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
 import { fetchProviderModelCatalog } from "../../lib/provider-model-catalog";
 import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings, type Capability, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
@@ -11,10 +12,12 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { hasTauriBridge, requestModelMetadata } from "../../store";
 import { MemoryChips, type MemoryChip } from "../assistant-ui/elements/memory-chips";
 import { QoneSelect } from "../ui/Select";
+import { Slider } from "../ui/Slider";
 import {
   Bot,
   BrainCircuit,
   BotMessageSquare,
+  ArrowLeft,
   Check,
   ChevronRight,
   CircleUserRound,
@@ -26,7 +29,6 @@ import {
   Mail,
   MonitorCog,
   Plus,
-  RotateCcw,
   Save,
   Search,
   Settings2,
@@ -62,11 +64,13 @@ import { ModelCard } from "./ModelCard";
 import { ProviderLogo } from "./ProviderLogo";
 import { SkillCloudDialog } from "./SkillCloudDialog";
 import { CapabilitySection, type CapabilityId } from "./CapabilitySection";
+import { SubagentRuntimeSettings } from "./SubagentRuntimeSettings";
+import { SubagentTemporarySettings } from "./SubagentTemporarySettings";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import "./model-layout.css";
 
 type Theme = "light" | "dark";
-type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents" | CapabilityId;
+type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents" | "compaction" | CapabilityId;
 
 type SettingsSection = {
   id: SettingsSectionId;
@@ -85,6 +89,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "mcp", labelKey: "nav.mcp", icon: Command },
   { id: "skills", labelKey: "nav.skills", icon: BrainCircuit },
   { id: "subagents", labelKey: "nav.subagents", icon: BotMessageSquare },
+  { id: "compaction", labelKey: "nav.compaction", icon: SlidersHorizontal },
   { id: "webSearch", labelKey: "nav.webSearch", icon: Globe2 },
   { id: "videoRecognition", labelKey: "nav.videoRecognition", icon: Video },
   { id: "stt", labelKey: "nav.stt", icon: Mic2 },
@@ -722,7 +727,7 @@ function ModelsSection() {
   </>;
 }
 
-type SubagentProfile = { id: string; name: string; instructions: string; modelId: string; enabled: boolean; updatedAt: number };
+type SubagentProfile = { id: string; name: string; instructions: string; modelId: string; enabled: boolean; tools?: string[]; permissionMode?: "ask" | "auto" | "full"; updatedAt: number };
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 
 function loadSubagents(): SubagentProfile[] {
@@ -739,17 +744,94 @@ function SubagentEditorDialog({ open, initial, modelOptions, onClose, onSaved }:
   const [name, setName] = useState(initial?.name ?? "");
   const [instructions, setInstructions] = useState(initial?.instructions ?? "");
   const [modelId, setModelId] = useState(initial?.modelId ?? modelOptions[0]?.id ?? "");
+  const [tools, setTools] = useState(initial?.tools?.join(", ") ?? "");
+  const [permissionMode, setPermissionMode] = useState<SubagentProfile["permissionMode"]>(initial?.permissionMode ?? "ask");
   useEffect(() => {
     if (!open) return;
-    setName(initial?.name ?? ""); setInstructions(initial?.instructions ?? ""); setModelId(initial?.modelId ?? modelOptions[0]?.id ?? "");
+    setName(initial?.name ?? ""); setInstructions(initial?.instructions ?? ""); setModelId(initial?.modelId ?? modelOptions[0]?.id ?? ""); setTools(initial?.tools?.join(", ") ?? ""); setPermissionMode(initial?.permissionMode ?? "ask");
   }, [open, initial?.id, modelOptions[0]?.id]);
   const save = () => {
     if (!name.trim() || !instructions.trim() || !modelId) return;
-    onSaved({ id: initial?.id ?? `subagent-${Date.now()}`, name: name.trim(), instructions: instructions.trim(), modelId, enabled: initial?.enabled ?? true, updatedAt: Date.now() });
+    onSaved({ id: initial?.id ?? `subagent-${Date.now()}`, name: name.trim(), instructions: instructions.trim(), modelId, tools: tools.split(",").map((item) => item.trim()).filter(Boolean), permissionMode, enabled: initial?.enabled ?? true, updatedAt: Date.now() });
     onClose();
   };
   if (!open) return null;
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("subagent.create")}><div className="settings-subdialog-header"><div><span>Sub-agent</span><h3>{initial ? t("subagent.edit") : t("subagent.create")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("subagent.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("subagent.namePlaceholder")} /></label><label className="is-wide">{t("subagent.driverModel")}<QoneSelect value={modelId} onChange={setModelId} placeholder={t("subagent.selectModel")} options={modelOptions.map((model) => ({ value: model.id, label: model.label }))} ariaLabel={t("subagent.driverModel")} /></label><label className="is-wide">{t("subagent.systemPrompt")}<textarea className="settings-subagent-prompt" rows={7} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder={t("subagent.promptPlaceholder")} /></label></div><div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!name.trim() || !instructions.trim() || !modelId} onClick={save}><Save size={15} />{t("subagent.save")}</button></div></div></div>;
+  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("subagent.create")}><div className="settings-subdialog-header"><div><span>Sub-agent</span><h3>{initial ? t("subagent.edit") : t("subagent.create")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("subagent.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("subagent.namePlaceholder")} /></label><label className="is-wide">{t("subagent.driverModel")}<QoneSelect value={modelId} onChange={setModelId} placeholder={t("subagent.selectModel")} options={modelOptions.map((model) => ({ value: model.id, label: model.label }))} ariaLabel={t("subagent.driverModel")} /></label><label>{t("subagent.permissionMode")}<QoneSelect value={permissionMode ?? "ask"} onChange={(value) => setPermissionMode(value as SubagentProfile["permissionMode"])} options={[{ value: "ask", label: t("composer.permissionAsk") }, { value: "auto", label: t("composer.permissionAuto") }, { value: "full", label: t("composer.permissionFull") }]} ariaLabel={t("subagent.permissionMode")} /></label><label className="is-wide">{t("subagent.toolAllowList")}<input value={tools} onChange={(event) => setTools(event.target.value)} placeholder={t("subagent.toolAllowListPlaceholder")} /><small>{t("subagent.toolAllowListDescription")}</small></label><label className="is-wide">{t("subagent.systemPrompt")}<textarea className="settings-subagent-prompt" rows={7} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder={t("subagent.promptPlaceholder")} /></label></div><div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!name.trim() || !instructions.trim() || !modelId} onClick={save}><Save size={15} />{t("subagent.save")}</button></div></div></div>;
+}
+
+function CompactionSection() {
+  const { t } = useLocale();
+  const enabled = useStore((state) => state.autoCompactionEnabled);
+  const threshold = useStore((state) => state.compactionThreshold);
+  const [draftThreshold, setDraftThreshold] = useState<number | null>(threshold);
+  const setCompactionSettings = useStore((state) => state.setCompactionSettings);
+  const update = (next: Partial<{ autoCompactionEnabled: boolean; compactionThreshold: number }>) => {
+    setCompactionSettings({ autoCompactionEnabled: next.autoCompactionEnabled ?? enabled, compactionThreshold: next.compactionThreshold ?? threshold });
+  };
+  useEffect(() => setDraftThreshold(threshold), [threshold]);
+  const commitThreshold = (value: number | null) => {
+    const next = value === null || !Number.isFinite(value) ? threshold : Math.min(95, Math.max(50, Math.round(value)));
+    setDraftThreshold(next);
+    if (next !== threshold) update({ compactionThreshold: next });
+  };
+
+  return (
+    <>
+      <SectionHeader eyebrow={t("compaction.eyebrow")} title={t("compaction.title")} />
+      <section className="settings-compaction-section">
+        <div className="settings-compaction-row">
+          <div>
+            <strong>{t("compaction.autoTitle")}</strong>
+            <p>{t("compaction.autoDescription")}</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-label={t("compaction.autoTitle")}
+            aria-checked={enabled}
+            className={cn("settings-switch", enabled && "is-on")}
+            onClick={() => {
+              setDraftThreshold(threshold);
+              update({ autoCompactionEnabled: !enabled });
+            }}
+          ><span /></button>
+        </div>
+        <div className={cn("settings-compaction-threshold", !enabled && "is-disabled")}>
+          <div className="settings-compaction-threshold-heading">
+            <strong>{t("compaction.thresholdTitle")}</strong>
+            <NumberField.Root
+              className="settings-compaction-value"
+              value={draftThreshold}
+              min={50}
+              max={95}
+              step={1}
+              allowOutOfRange
+              disabled={!enabled}
+              onValueChange={(value) => {
+                setDraftThreshold(value);
+                if (value !== null && Number.isInteger(value) && value >= 50 && value <= 95) {
+                  update({ compactionThreshold: value });
+                }
+              }}
+              onValueCommitted={commitThreshold}
+            >
+              <NumberField.Input className="settings-compaction-input" aria-label={t("compaction.thresholdTitle")} inputMode="numeric" />
+              <span aria-hidden="true">%</span>
+            </NumberField.Root>
+          </div>
+          <Slider
+            value={threshold}
+            min={50}
+            max={95}
+            ariaLabel={t("compaction.thresholdTitle")}
+            disabled={!enabled}
+            onValueChange={(value) => update({ compactionThreshold: value })}
+          />
+          <p>{t("compaction.thresholdDescription")}</p>
+        </div>
+      </section>
+    </>
+  );
 }
 
 function SubagentsSection() {
@@ -759,8 +841,10 @@ function SubagentsSection() {
   const send = useStore((state) => state.send);
   const [profiles, setProfiles] = useState<ProviderProfile[]>(loadProviderProfiles);
   const [agents, setAgents] = useState<SubagentProfile[]>(loadSubagents);
+  const [runtime, setRuntime] = useState(runtimeSubagentConfig.runtime);
   const [editing, setEditing] = useState<SubagentProfile | undefined>();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [view, setView] = useState<"overview" | "runtime" | "temporary">("overview");
   const modelOptions = Array.from(new Map([
     ...modelConfigs.map((model) => [`${model.provider}/${model.model}`, { id: model.id, label: `${model.provider} / ${model.model}` }] as const),
     ...profiles.flatMap((provider) => provider.models.map((model) => [`${provider.id}/${model.id}`, { id: `${provider.id}/${model.id}`, label: `${provider.name} / ${model.label}` }] as const)),
@@ -768,20 +852,59 @@ function SubagentsSection() {
   useEffect(() => {
     if (runtimeSubagentConfig.updatedAt <= 0) return;
     setAgents(runtimeSubagentConfig.profiles);
+    setRuntime(runtimeSubagentConfig.runtime);
     window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(runtimeSubagentConfig.profiles));
   }, [runtimeSubagentConfig.updatedAt]);
   const saveAgents = (next: SubagentProfile[]) => {
-    const config = { profiles: next, routing: runtimeSubagentConfig.routing, updatedAt: Date.now() };
+    const config = { profiles: next, routing: runtimeSubagentConfig.routing, runtime, updatedAt: Date.now() };
     setAgents(next);
     window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(next));
     void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config });
   };
   const saveAgent = (agent: SubagentProfile) => saveAgents([...agents.filter((item) => item.id !== agent.id), agent]);
+  const saveRuntime = (next: typeof runtime) => {
+    setRuntime(next);
+    const config = { profiles: agents, routing: runtimeSubagentConfig.routing, runtime: next, updatedAt: Date.now() };
+    void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config });
+  };
   const deleteAgent = async (agent: SubagentProfile) => { if (await confirmDestructiveAction(t("subagent.deleteConfirm", { name: agent.name }))) saveAgents(agents.filter((item) => item.id !== agent.id)); };
+  const temporaryModelLabel = runtime.temporaryModelId
+    ? modelOptions.find((model) => model.id === runtime.temporaryModelId)?.label ?? runtime.temporaryModelId
+    : t("subagent.followMainModel");
+  if (view === "temporary") return <>
+    <button type="button" className="settings-subagent-back" onClick={() => setView("overview")}>
+      <ArrowLeft size={14} aria-hidden="true" />
+      {t("subagent.temporaryBack")}
+    </button>
+    <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.temporaryTitle")}>
+      {t("subagent.temporaryDescription")}
+    </SectionHeader>
+    <SubagentTemporarySettings value={runtime.temporaryModelId} modelOptions={modelOptions} onChange={(temporaryModelId) => saveRuntime({ ...runtime, temporaryModelId })} />
+  </>;
+  if (view === "runtime") return <>
+    <button type="button" className="settings-subagent-back" onClick={() => setView("overview")}>
+      <ArrowLeft size={14} aria-hidden="true" />
+      {t("subagent.runtimeBack")}
+    </button>
+    <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.runtimeTitle")}>
+      {t("subagent.runtimeDescription")}
+    </SectionHeader>
+    <SubagentRuntimeSettings value={runtime} onChange={saveRuntime} />
+  </>;
   return <>
     <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.title")} />
     <div className="settings-section-toolbar"><div><strong>{t("subagent.mine")}</strong><span>{agents.length} {t("subagent.count")}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("subagent.new")}</button></div>
     <div className="settings-subagent-list">{agents.map((agent) => <div className={cn("settings-subagent-card", !agent.enabled && "is-disabled")} key={agent.id}><div className="settings-subagent-card-main"><span className="settings-provider-icon"><BotMessageSquare size={17} /></span><div><strong>{agent.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? agent.modelId} · {agent.enabled ? t("subagent.enabled") : t("subagent.disabled")}</small><p>{agent.instructions}</p></div></div><div className="settings-subagent-actions"><button type="button" onClick={() => saveAgents(agents.map((item) => item.id === agent.id ? { ...item, enabled: !item.enabled, updatedAt: Date.now() } : item))}>{agent.enabled ? t("subagent.disable") : t("subagent.enable")}</button><button type="button" onClick={() => { setEditing(agent); setDialogOpen(true); }}>{t("common.edit")}</button><button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={() => deleteAgent(agent)}><Trash2 size={14} /></button></div></div>)}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
+    <button type="button" className="settings-subagent-settings-card" onClick={() => setView("temporary")}>
+      <span className="settings-subagent-settings-icon"><BotMessageSquare size={17} aria-hidden="true" /></span>
+      <span className="settings-subagent-settings-copy"><strong>{t("subagent.temporaryTitle")}</strong><small>{temporaryModelLabel}</small></span>
+      <ChevronRight size={16} aria-hidden="true" />
+    </button>
+    <button type="button" className="settings-subagent-settings-card" onClick={() => setView("runtime")}>
+      <span className="settings-subagent-settings-icon"><SlidersHorizontal size={17} aria-hidden="true" /></span>
+      <span className="settings-subagent-settings-copy"><strong>{t("subagent.runtimeTitle")}</strong><small>{t("subagent.runtimeDescription")}</small></span>
+      <ChevronRight size={16} aria-hidden="true" />
+    </button>
     <SubagentEditorDialog open={dialogOpen} initial={editing} modelOptions={modelOptions} onClose={() => setDialogOpen(false)} onSaved={saveAgent} />
   </>;
 }
@@ -1202,6 +1325,7 @@ function SectionContent({ activeSection, theme, onToggleTheme }: { activeSection
     case "mcp": return <McpSection />;
     case "skills": return <SkillsSection />;
     case "subagents": return <SubagentsSection />;
+    case "compaction": return <CompactionSection />;
     case "webSearch":
     case "videoRecognition":
     case "stt":
@@ -1412,7 +1536,6 @@ export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: 
                   );
                 })}
               </nav>
-              <button className="settings-reset-order" type="button" onClick={() => setSectionOrder(DEFAULT_ORDER)}><RotateCcw size={13} />{t("nav.resetOrder")}</button>
             </aside>
             <main className="settings-dialog-content" aria-live="polite">
               <AnimatePresence mode="wait" initial={false}>

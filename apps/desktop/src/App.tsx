@@ -156,7 +156,10 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
 
       const isStreamingMessage = message.id === "streaming";
       const calls = !message.parts && message.runId ? (toolCallsByRun.get(message.runId) ?? []) : [];
-      const content = assistantMessageContent(message, calls, isStreamingMessage);
+      const converted = assistantMessageContent(message, calls, isStreamingMessage);
+      // The main conversation keeps delegation compact. Full child transcripts
+      // are rendered only inside the subagent dock via ReadonlyThreadProvider.
+      const content = converted;
       return {
         id: message.id,
         role,

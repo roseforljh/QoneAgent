@@ -121,7 +121,7 @@ const AttachmentUI: FC = () => {
 
   const isImage = useAuiState((s) => s.attachment.type === "image");
   const attachmentName = useAuiState((s) => s.attachment.name);
-  const attachmentSize = useAuiState((s) => s.attachment.file?.size);
+  const attachmentSize = useAuiState((s) => (s.attachment.file as (File & { qoneFileSize?: number }) | undefined)?.qoneFileSize ?? s.attachment.file?.size);
   const attachmentSizeLabel = formatAttachmentSize(attachmentSize);
   const typeLabel = useAuiState((s) => {
     const type = s.attachment.type;

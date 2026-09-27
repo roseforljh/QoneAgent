@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowLeftIcon,
+  BotMessageSquareIcon,
   ChevronRightIcon,
   FileIcon,
   FolderIcon,
@@ -40,8 +41,9 @@ import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { reportStartup } from "../../lib/startup-diagnostic";
 import { onOpenBrowserInDock } from "../../lib/browser-dock";
+import { SubagentPanel } from "./subagent-view";
 
-type DockView = "terminal" | "files" | "git" | "browser" | "mcp" | "skills";
+type DockView = "terminal" | "files" | "git" | "browser" | "mcp" | "skills" | "subagents";
 
 const rid = () => crypto.randomUUID();
 
@@ -575,6 +577,17 @@ export function WorkspaceDock() {
     setView("browser");
   }), []);
 
+  useEffect(() => {
+    const toggleSubagents = () => {
+      setMoreOpen(false);
+      setLauncherOpen(false);
+      setOpenViews((current) => current.includes("subagents") ? current : [...current, "subagents"]);
+      setView((current) => current === "subagents" ? undefined : "subagents");
+    };
+    window.addEventListener("qone-open-subagents", toggleSubagents);
+    return () => window.removeEventListener("qone-open-subagents", toggleSubagents);
+  }, []);
+
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const handle = event.currentTarget;
@@ -740,6 +753,7 @@ export function WorkspaceDock() {
     browser: { icon: GlobeIcon, label: t("dock.browser") },
     mcp: { icon: PlugIcon, label: t("dock.mcp") },
     skills: { icon: WandSparklesIcon, label: t("dock.skills") },
+    subagents: { icon: BotMessageSquareIcon, label: t("nav.subagents") },
   };
 
   return (
@@ -792,6 +806,7 @@ export function WorkspaceDock() {
                     { view: "browser", icon: GlobeIcon, label: t("dock.browser") },
                     { view: "mcp", icon: PlugIcon, label: t("dock.mcp") },
                     { view: "skills", icon: WandSparklesIcon, label: t("dock.skills") },
+                    { view: "subagents", icon: BotMessageSquareIcon, label: t("nav.subagents") },
                   ] as const).map(({ view: name, icon: Icon, label }) => (
                     <button
                       key={name}
@@ -907,6 +922,7 @@ export function WorkspaceDock() {
           </div>
           {view === "mcp" && <DockMcpView refreshNonce={refreshNonce} />}
           {view === "skills" && <DockSkillsView workspaceId={workspaceId} refreshNonce={refreshNonce} />}
+          {view === "subagents" && <SubagentPanel onClose={closePanel} />}
           {(view === "files" || view === "git" || view === "terminal") && !workspaceId ? (
             <p className="px-3 py-4 text-[13px] text-foreground/45">{t("dock.noWorkspace")}</p>
           ) : view === "files" ? (
@@ -926,7 +942,7 @@ export function WorkspaceDock() {
             exit={{ opacity: 0, y: -4, scale: 0.98 }}
             role="menu"
             onPointerDown={(event) => event.stopPropagation()}
-            className="pointer-events-auto fixed z-[1000] w-56 overflow-hidden rounded-xl border border-border/60 bg-popover p-1.5 shadow-2xl"
+            className="pointer-events-auto fixed z-[1000] max-h-[min(280px,calc(100dvh-24px))] w-56 overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-popover p-1.5 shadow-2xl"
             style={{ top: launcherPosition.top, right: launcherPosition.right, transformOrigin: "top right" }}
           >
             <p className="px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-foreground/40">{t("dock.openWindow")}</p>
@@ -937,6 +953,7 @@ export function WorkspaceDock() {
               { view: "git", icon: GitBranchIcon, label: t("dock.git"), detail: t("dock.gitDescription") },
               { view: "mcp", icon: PlugIcon, label: t("dock.mcp"), detail: t("dock.mcpDescription") },
               { view: "skills", icon: WandSparklesIcon, label: t("dock.skills"), detail: t("dock.skillsDescription") },
+              { view: "subagents", icon: BotMessageSquareIcon, label: t("nav.subagents"), detail: t("dock.subagentsDescription") },
             ] as const).map(({ view: name, icon: Icon, label, detail }) => (
               <button
                 key={name}

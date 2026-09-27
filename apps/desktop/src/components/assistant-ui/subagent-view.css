@@ -1,0 +1,38 @@
+.q-subagent-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in oklab, var(--border) 75%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted) 48%, var(--background));
+  color: var(--foreground);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+.q-subagent-capsule-anchor { display: flex; align-items: flex-start; }
+.q-subagent-capsule:hover { background: var(--muted); border-color: var(--border); transform: translateY(-1px); }
+.q-subagent-capsule:focus-visible, .q-subagent-row:focus-visible, .q-subagent-panel-header button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.q-subagent-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--muted-foreground); }
+.q-subagent-dot.is-running { background: #60a5fa; box-shadow: 0 0 0 3px color-mix(in oklab, #60a5fa 14%, transparent); animation: q-subagent-pulse 1.8s ease-in-out infinite; }
+.q-subagent-dot.is-done { background: #34d399; }
+.q-subagent-dot.is-failed { background: #fb7185; }
+@keyframes q-subagent-pulse { 50% { opacity: .55; box-shadow: 0 0 0 5px color-mix(in oklab, #60a5fa 8%, transparent); } }
+.q-subagent-elapsed { flex: 0 0 auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.q-subagent-panel { display: flex; flex: 1; min-height: 0; flex-direction: column; background: var(--background); }
+.q-subagent-panel-header { display: flex; align-items: center; gap: 8px; height: 42px; flex: 0 0 auto; padding: 0 12px; border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent); font-size: 13px; }
+.q-subagent-panel-header button { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 6px; color: var(--muted-foreground); cursor: pointer; }
+.q-subagent-panel-header button:hover { background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+.q-subagent-panel-scroll { min-height: 0; flex: 1; overflow-y: auto; padding: 12px; overscroll-behavior: contain; }
+.q-subagent-row { display: flex; width: 100%; min-height: 40px; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 8px; color: var(--foreground); font-size: 12px; cursor: pointer; }
+.q-subagent-row:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.q-subagent-empty { padding: 30px 6px; color: var(--muted-foreground); font-size: 13px; text-align: center; }
+.q-subagent-detail-title { margin: 5px 0 7px; font-size: 16px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.q-subagent-detail-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; color: var(--muted-foreground); font-size: 11px; }
+.q-subagent-task { margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.q-subagent-transcript { min-width: 0; overflow-wrap: anywhere; }
+.q-subagent-error { margin-top: 18px; padding: 9px; border-radius: 7px; background: color-mix(in oklab, #fb7185 9%, transparent); color: #fb7185; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .q-subagent-dot.is-running { animation: none; } .q-subagent-capsule { transition: none; } }

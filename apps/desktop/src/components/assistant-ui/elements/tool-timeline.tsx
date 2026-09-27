@@ -96,7 +96,7 @@ export function ToolTimeline({
             transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
             className="overflow-hidden outline-none"
           >
-            <FadeScroll className={regionViewport}>
+            <FadeScroll className={cn(regionViewport, "overflow-x-hidden")}>
             <div className="flex flex-col gap-2.5 ps-4 pt-2.5">
               {take(steps, visibleSteps).map((step, index, shown) => {
                 const Icon = step.icon;

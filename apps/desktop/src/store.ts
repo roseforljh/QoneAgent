@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, DEFAULT_SUBAGENT_RUNTIME, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate } from "./localization";
@@ -87,6 +87,7 @@ interface AgentState {
   plugins: PluginInfo[];
   mcpServers: McpServerInfo[];
   subagentConfig: SubagentConfigInfo;
+  subagents: SubagentRunInfo[];
   mcpConnectingIds: string[];
   browserStatus?: BrowserSyncStatus;
   reachChannels: ReachChannelInfo[];
@@ -117,6 +118,8 @@ interface AgentState {
   gitEntries: WorkspaceGitEntry[];
   gitLoaded: boolean;
   runtimeCapabilities: string[];
+  autoCompactionEnabled: boolean;
+  compactionThreshold: number;
   workspaceError?: string;
   openFile?: { workspaceId: string; path: string; content: string };
   gitDiffView?: { workspaceId: string; path: string; diff: string };
@@ -145,20 +148,24 @@ interface AgentState {
   setRunPermissionMode: (mode: RunPermissionMode) => void;
   setDefaultPermissionMode: (mode: RunPermissionMode) => void;
   setRunThinking: (modelId: string, level: RunThinkingLevel) => void;
+  setCompactionSettings: (settings: { autoCompactionEnabled: boolean; compactionThreshold: number }) => void;
 }
 
 const rid = () => crypto.randomUUID();
 const BROWSER_AUTO_RECONNECT_KEY = "qone-browser-auto-reconnect";
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 const CAPABILITY_ROUTING_STORAGE_KEY = "qone-capability-routing";
+const SUBAGENT_RUNTIME_STORAGE_KEY = "qone-subagent-runtime";
+const DEFAULT_COMPACTION_SETTINGS = { autoCompactionEnabled: true, compactionThreshold: 80 };
 
 function loadLocalSubagentConfig(): SubagentConfigInfo {
   try {
     const profiles = JSON.parse(window.localStorage.getItem(SUBAGENTS_STORAGE_KEY) ?? "[]");
     const routing = JSON.parse(window.localStorage.getItem(CAPABILITY_ROUTING_STORAGE_KEY) ?? "{}");
-    return { profiles: Array.isArray(profiles) ? profiles : [], routing: routing && typeof routing === "object" ? routing : {}, updatedAt: Date.now() };
+    const runtime = JSON.parse(window.localStorage.getItem(SUBAGENT_RUNTIME_STORAGE_KEY) ?? "{}");
+    return { profiles: Array.isArray(profiles) ? profiles : [], routing: routing && typeof routing === "object" ? routing : {}, runtime: { ...DEFAULT_SUBAGENT_RUNTIME, ...runtime }, updatedAt: Date.now() };
   } catch {
-    return { profiles: [], routing: {}, updatedAt: Date.now() };
+    return { profiles: [], routing: {}, runtime: DEFAULT_SUBAGENT_RUNTIME, updatedAt: Date.now() };
   }
 }
 
@@ -244,6 +251,7 @@ export const useStore = create<AgentState>((set, get) => ({
   plugins: [],
   mcpServers: [],
   subagentConfig: loadLocalSubagentConfig(),
+  subagents: [],
   mcpConnectingIds: [],
   browserStatus: undefined,
   reachChannels: [],
@@ -269,6 +277,7 @@ export const useStore = create<AgentState>((set, get) => ({
   gitEntries: [],
   gitLoaded: false,
   runtimeCapabilities: [],
+  ...DEFAULT_COMPACTION_SETTINGS,
   workspaceError: undefined,
   pinnedWorkspaceIds: (() => {
     try {
@@ -343,7 +352,7 @@ export const useStore = create<AgentState>((set, get) => ({
   newSessionInWorkspace: (workspaceId) => {
     if (get().running || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
     clearDelta();
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [], lastError: undefined, chatRunError: undefined });
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], lastError: undefined, chatRunError: undefined });
     get().refreshWorkspace(workspaceId);
   },
 
@@ -422,10 +431,11 @@ export const useStore = create<AgentState>((set, get) => ({
     pendingMessageReplacements.delete(id);
     const workspaceId = get().sessions.find((session) => session.id === id)?.workspaceId;
     const workspaceChanged = workspaceId !== undefined && workspaceId !== get().currentWorkspaceId;
-    set({ currentSessionId: id, messagesLoadingSessionId: id, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [], chatRunError: undefined });
+    set({ currentSessionId: id, messagesLoadingSessionId: id, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], chatRunError: undefined });
     get().send({ type: "session.messages", requestId: rid(), sessionId: id });
     get().send({ type: "session.toolCalls", requestId: rid(), sessionId: id });
     get().send({ type: "session.runs", requestId: rid(), sessionId: id });
+    get().send({ type: "session.subagents", requestId: rid(), sessionId: id });
     get().send({ type: "artifact.list", requestId: rid(), sessionId: id });
     if (workspaceId) get().refreshWorkspace(workspaceId);
   },
@@ -467,6 +477,7 @@ export const useStore = create<AgentState>((set, get) => ({
       chatRunError: undefined,
       toolCalls: replaceIndex >= 0 ? s.toolCalls.filter((call) => keptRunIds.has(call.runId)) : s.toolCalls,
       runs: replaceIndex >= 0 ? s.runs.filter((run) => keptRunIds.has(run.id)) : s.runs,
+      subagents: replaceIndex >= 0 ? s.subagents.filter((item) => keptRunIds.has(item.parentRunId)) : s.subagents,
       titleGeneratingSessionIds: s.messages.length === 0 && !s.titleGeneratingSessionIds.includes(sid)
         ? [...s.titleGeneratingSessionIds, sid]
         : s.titleGeneratingSessionIds,
@@ -502,6 +513,13 @@ export const useStore = create<AgentState>((set, get) => ({
   },
 
   setPermission: (rule) => get().send({ type: "permission.set", requestId: rid(), ...rule }),
+
+  setCompactionSettings: (settings) => {
+    const compactionThreshold = Math.min(95, Math.max(50, Math.round(settings.compactionThreshold)));
+    const next = { autoCompactionEnabled: settings.autoCompactionEnabled, compactionThreshold };
+    set(next);
+    void get().send({ type: "compaction.settings.set", requestId: rid(), ...next });
+  },
 
   refreshWorkspace: (id = get().currentWorkspaceId) => {
     if (!id) return;
@@ -666,17 +684,12 @@ export function initBridge() {
         }
         if (!handshakeRequests.delete(msg.requestId)) break;
         metadataLookupSupported = Boolean(msg.capabilities?.includes("model.resolve-metadata") && msg.capabilities?.includes("model.metadata-sources"));
-        useStore.setState({ connected: true, runtimeCapabilities: msg.capabilities ?? [] });
+        useStore.setState({ connected: true, runtimeCapabilities: msg.capabilities ?? [], ...(msg.compaction ?? {}) });
         s.send({ type: "session.list", requestId: rid() });
         s.send({ type: "workspace.list", requestId: rid() });
         s.send({ type: "model.list", requestId: rid() });
         s.send({ type: "mcp.list", requestId: rid() });
-        const localSubagents = loadLocalSubagentConfig();
-        if (localSubagents.profiles.length > 0 || Object.keys(localSubagents.routing).length > 0) {
-          s.send({ type: "subagent.sync", requestId: rid(), config: localSubagents });
-        } else {
-          s.send({ type: "subagent.list", requestId: rid() });
-        }
+        s.send({ type: "subagent.list", requestId: rid() });
         if (msg.capabilities?.includes("reach.channels")) s.send({ type: "reach.channels", requestId: rid() });
         if (msg.capabilities?.includes("browser.connect")) {
           s.send({ type: "browser.status", requestId: rid() });
@@ -712,6 +725,7 @@ export function initBridge() {
           preparedToolCallIds: [],
           toolCalls: [],
           runs: [],
+          subagents: [],
           artifacts: [],
         }));
         saveRunOptions(useStore.getState().runOptionsBySession);
@@ -745,6 +759,7 @@ export function initBridge() {
             preparedToolCallIds: [],
             toolCalls: [],
             runs: [],
+            subagents: [],
             artifacts: [],
           } : {}),
         });
@@ -752,6 +767,7 @@ export function initBridge() {
           s.send({ type: "session.messages", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.toolCalls", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.runs", requestId: rid(), sessionId: selected.id });
+          s.send({ type: "session.subagents", requestId: rid(), sessionId: selected.id });
           s.send({ type: "artifact.list", requestId: rid(), sessionId: selected.id });
           if (selected.workspaceId) useStore.getState().refreshWorkspace(selected.workspaceId);
         }
@@ -811,6 +827,32 @@ export function initBridge() {
           }));
         }
         break;
+      case "session.subagents":
+        if (msg.sessionId === useStore.getState().currentSessionId) {
+          useStore.setState((st) => {
+            // The initial list request can race with a live subagent.updated
+            // event. Merge the snapshot so a newly created run is not erased
+            // by a response that was produced just before it was created.
+            const byId = new Map(st.subagents.map((item) => [item.id, item]));
+            for (const item of msg.subagents) {
+              const live = byId.get(item.id);
+              byId.set(item.id, live?.streaming ? live : item);
+            }
+            return { subagents: [...byId.values()].sort((a, b) => a.startedAt - b.startedAt) };
+          });
+        }
+        break;
+      case "subagent.updated":
+        if (msg.subagent.parentSessionId === useStore.getState().currentSessionId) {
+          useStore.setState((st) => ({ subagents: [...st.subagents.filter((item) => item.id !== msg.subagent.id), msg.subagent].sort((a, b) => a.startedAt - b.startedAt) }));
+        }
+        break;
+      case "subagent.query":
+      case "subagent.controlled":
+        if (msg.subagent.parentSessionId === useStore.getState().currentSessionId) {
+          useStore.setState((st) => ({ subagents: [...st.subagents.filter((item) => item.id !== msg.subagent.id), msg.subagent].sort((a, b) => a.startedAt - b.startedAt) }));
+        }
+        break;
       case "artifact.list":
         if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ artifacts: msg.artifacts });
         break;
@@ -833,7 +875,7 @@ export function initBridge() {
           workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined,
         }));
         useStore.getState().refreshWorkspace(msg.workspace.id);
-        useStore.setState({ draftWorkspaceId: msg.workspace.id, currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [] });
+        useStore.setState({ draftWorkspaceId: msg.workspace.id, currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [] });
         break;
       case "workspace.renamed":
         useStore.setState((st) => ({ workspaces: st.workspaces.map((workspace) => workspace.id === msg.workspace.id ? msg.workspace : workspace) }));
@@ -847,7 +889,7 @@ export function initBridge() {
           return {
             workspaces,
             currentWorkspaceId: nextWorkspaceId,
-            ...(wasCurrent ? { currentSessionId: undefined, workspaceLoadingId: nextWorkspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], artifacts: [], approvals: [] } : {}),
+            ...(wasCurrent ? { currentSessionId: undefined, workspaceLoadingId: nextWorkspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [] } : {}),
           };
         });
         if (useStore.getState().currentWorkspaceId) useStore.getState().refreshWorkspace();
@@ -914,6 +956,7 @@ export function initBridge() {
         try {
           window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(msg.config.profiles));
           window.localStorage.setItem(CAPABILITY_ROUTING_STORAGE_KEY, JSON.stringify(msg.config.routing));
+          window.localStorage.setItem(SUBAGENT_RUNTIME_STORAGE_KEY, JSON.stringify(msg.config.runtime));
         } catch (error) {
           console.error("subagent configuration cache failed", error);
         }

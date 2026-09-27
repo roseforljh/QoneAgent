@@ -1,7 +1,7 @@
 .q-sidebar-menu {
   z-index: 80;
   min-width: 184px;
-  max-height: var(--radix-dropdown-menu-content-available-height);
+  max-height: min(280px, var(--radix-dropdown-menu-content-available-height, calc(100dvh - 24px)));
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 12px;

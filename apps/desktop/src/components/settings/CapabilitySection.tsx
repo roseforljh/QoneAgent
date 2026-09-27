@@ -79,7 +79,7 @@ export function CapabilitySection({ id }: { id: CapabilityId }) {
     const next = { ...routing, [id]: value };
     setRouting(next);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config: { profiles: subagentConfig.profiles, routing: next, updatedAt: Date.now() } });
+    void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config: { profiles: subagentConfig.profiles, routing: next, runtime: subagentConfig.runtime, updatedAt: Date.now() } });
   };
 
   return (

@@ -4,8 +4,10 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import { hasTauriBridge, useStore } from "../store";
 import { useCallback, useEffect, type RefObject } from "react";
+import { createNativeAttachmentFile, INLINE_ATTACHMENT_LIMIT_BYTES, isGeminiMedia } from "./native-attachment-file";
 
-type NativeFilePayload = { name: string; data: string };
+type NativeFilePayload = { name: string; data: string; path?: string; size: number };
+type NativeFileInfo = { name: string; path: string; size: number };
 type DropPosition = { x: number; y: number };
 
 const MIME_TYPES: Record<string, string> = {
@@ -63,7 +65,21 @@ const isInside = (element: HTMLElement | null, position: DropPosition) => {
   ].some(({ x, y }) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom);
 };
 
-const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+function fileFromPayload(payload: NativeFilePayload): File {
+  const mimeType = getMimeType(payload.name);
+  if (payload.path) {
+    if (!isGeminiMedia(mimeType)) throw new Error(`大型附件仅支持 Gemini 音频或视频：${payload.name}`);
+    return createNativeAttachmentFile(payload.name, mimeType, payload.path, payload.size);
+  }
+  return new File([decodeBase64(payload.data)], payload.name, { type: mimeType });
+}
+
+export async function pickNativeAttachmentFiles(): Promise<File[]> {
+  const files = await invoke<NativeFileInfo[]>("pick_attachment_files");
+  return Promise.all(files.map(async (file) => file.size > INLINE_ATTACHMENT_LIMIT_BYTES
+    ? fileFromPayload({ ...file, data: "" })
+    : fileFromPayload(await invoke<NativeFilePayload>("read_dropped_file", { path: file.path }))));
+}
 
 export function useNativeFileDrop(
   targetRef: RefObject<HTMLElement | null>,
@@ -73,11 +89,7 @@ export function useNativeFileDrop(
     const files = await Promise.all(paths.map(async (path) => {
       try {
         const payload = await invoke<NativeFilePayload>("read_dropped_file", { path });
-        if (payload.data.length * 0.75 > MAX_FILE_SIZE_BYTES) {
-          useStore.setState({ lastError: `文件 ${payload.name} 超过 50MB 限制，暂不支持拖拽上传` });
-          return null;
-        }
-        return new globalThis.File([decodeBase64(payload.data)], payload.name, { type: getMimeType(payload.name) });
+        return fileFromPayload(payload);
       } catch (error) {
         useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
         return null;

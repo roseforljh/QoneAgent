@@ -1,6 +1,6 @@
 import type { AppendMessage } from "@assistant-ui/react";
 import type { MessageAttachmentInfo } from "@qone/protocol";
-import { GEMINI_FILE_LIMIT_BYTES, isGeminiMedia, type NativeAttachmentFile } from "./native-attachment-file";
+import { GEMINI_FILE_LIMIT_BYTES, INLINE_ATTACHMENT_LIMIT_BYTES, isGeminiMedia, type NativeAttachmentFile } from "./native-attachment-file";
 
 const MAX_DATA_LENGTH = 70_000_000;
 const MAX_TOTAL_DATA_LENGTH = 140_000_000;
@@ -30,8 +30,9 @@ export async function serializeMessageAttachments(message: AppendMessage): Promi
     if (nativeFile?.qoneLocalPath) {
       if (!isGeminiMedia(mimeType)) throw new Error(`大型附件仅支持 Gemini 音频或视频：${attachment.name}`);
       if ((nativeFile.qoneFileSize ?? 0) > GEMINI_FILE_LIMIT_BYTES) throw new Error(`Gemini Files API 单文件不能超过 2 GB：${attachment.name}`);
-      return { type: "file", name: attachment.name, mimeType, data: "", localPath: nativeFile.qoneLocalPath };
+      return { type: "file", name: attachment.name, mimeType, data: "", localPath: nativeFile.qoneLocalPath } satisfies MessageAttachmentInfo;
     }
+    if (nativeFile && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) throw new Error("超过 50 MB 的音视频请通过附件菜单选择本地文件");
     const data = type === "image"
       ? attachment.content.find((part) => part.type === "image")?.image
       : attachment.file ? await readDataUrl(attachment.file) : undefined;

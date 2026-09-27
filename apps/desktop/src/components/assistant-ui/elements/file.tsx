@@ -221,7 +221,7 @@ function FileDownload({
   children,
   ...props
 }: FileDownloadProps) {
-  if (typeof data !== "string") return null;
+  if (!data) return null;
   const kind = getFileDataKind(data, sourceType);
   if (kind === "id") return null;
   if (kind === "url" && !/^(https?:\/\/|blob:)/i.test(data)) return null;
@@ -253,7 +253,7 @@ const FileImpl: FileMessagePartComponent = ({
 }) => {
   const kind = getFileDataKind(data, sourceType);
   const showSize =
-    typeof data === "string" && (kind === "base64" || kind === "data-uri");
+    Boolean(data) && (kind === "base64" || kind === "data-uri");
 
   return (
     <FileRoot>

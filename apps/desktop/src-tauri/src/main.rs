@@ -266,28 +266,58 @@ fn pick_workspace() -> Option<String> {
 struct DroppedFilePayload {
     name: String,
     data: String,
+    path: Option<String>,
+    size: u64,
 }
 
-#[tauri::command]
-fn read_dropped_file(path: String) -> Result<DroppedFilePayload, String> {
-    const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
-    let file_path = std::path::PathBuf::from(&path);
-    let metadata = std::fs::metadata(&file_path).map_err(|error| format!("无法读取附件：{error}"))?;
+const MAX_GEMINI_FILE_BYTES: u64 = 2_000_000_000;
+const MAX_INLINE_FILE_BYTES: u64 = 50 * 1024 * 1024;
+
+fn attachment_file_info(path: &std::path::Path) -> Result<(String, u64), String> {
+    let metadata = std::fs::metadata(path).map_err(|error| format!("无法读取附件：{error}"))?;
     if !metadata.is_file() {
         return Err("拖入的项目不是文件".into());
     }
-    if metadata.len() > MAX_FILE_BYTES {
-        return Err("附件过大，单个文件不能超过 50 MB".into());
+    if metadata.len() > MAX_GEMINI_FILE_BYTES {
+        return Err("Gemini Files API 单文件不能超过 2 GB".into());
     }
-    let name = file_path
+    let name = path
         .file_name()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
         .unwrap_or("attachment")
         .to_owned();
+    Ok((name, metadata.len()))
+}
+
+#[tauri::command]
+fn read_dropped_file(path: String) -> Result<DroppedFilePayload, String> {
+    let file_path = std::path::PathBuf::from(&path);
+    let (name, size) = attachment_file_info(&file_path)?;
+    if size > MAX_INLINE_FILE_BYTES {
+        return Ok(DroppedFilePayload { name, data: String::new(), path: Some(path), size });
+    }
     let data = std::fs::read(&file_path)
         .map_err(|error| format!("无法读取附件：{error}"))?;
-    Ok(DroppedFilePayload { name, data: BASE64.encode(data) })
+    Ok(DroppedFilePayload { name, data: BASE64.encode(data), path: None, size })
+}
+
+#[derive(serde::Serialize)]
+struct AttachmentFileInfo {
+    name: String,
+    path: String,
+    size: u64,
+}
+
+#[tauri::command]
+fn pick_attachment_files() -> Result<Vec<AttachmentFileInfo>, String> {
+    let Some(paths) = rfd::FileDialog::new().set_title("选择附件").pick_files() else {
+        return Ok(Vec::new());
+    };
+    paths.into_iter().map(|path| {
+        let (name, size) = attachment_file_info(&path)?;
+        Ok(AttachmentFileInfo { name, path: path.to_string_lossy().into_owned(), size })
+    }).collect()
 }
 
 // --- Windows Credential Manager ---
@@ -557,6 +587,7 @@ fn main() {
             runtime_restart,
             pick_workspace,
             read_dropped_file,
+            pick_attachment_files,
             secret_set,
             secret_get,
             secret_delete,
