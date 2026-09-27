@@ -1,4 +1,4 @@
-import type { CapabilityId, CapabilityRouting, MessageAttachmentInfo, SubagentConfigInfo, SubagentProfileInfo } from "@qone/protocol";
+import { DEFAULT_SUBAGENT_RUNTIME, type CapabilityId, type CapabilityRouting, type MessageAttachmentInfo, type SubagentConfigInfo, type SubagentProfileInfo, type SubagentRuntimeConfig, type RunPermissionMode } from "@qone/protocol";
 
 export interface ResolvedSubagent {
   id: string;
@@ -7,6 +7,8 @@ export interface ResolvedSubagent {
   modelId?: string;
   route?: string;
   mcpServerId?: string;
+  tools?: string[];
+  permissionMode?: RunPermissionMode;
 }
 
 const capabilityInstructions: Record<CapabilityId, string> = {
@@ -50,6 +52,8 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
     return [{
       id: profile.id.slice(0, 128), name: profile.name.trim().slice(0, 120),
       instructions: profile.instructions.trim().slice(0, 32_000), modelId: profile.modelId,
+      tools: Array.isArray(profile.tools) ? profile.tools.filter((tool): tool is string => typeof tool === "string").slice(0, 100) : undefined,
+      permissionMode: profile.permissionMode === "auto" || profile.permissionMode === "full" ? profile.permissionMode : "ask",
       enabled: profile.enabled !== false, updatedAt: typeof profile.updatedAt === "number" ? profile.updatedAt : Date.now(),
     } satisfies SubagentProfileInfo];
   }) : [];
@@ -60,7 +64,27 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
       if (typeof target === "string" && target.length <= 512) routing[capability] = target;
     }
   }
-  return { profiles, routing, updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now() };
+  const runtimeRecord = record.runtime && typeof record.runtime === "object" ? record.runtime as Record<string, unknown> : {};
+  const runtime: SubagentRuntimeConfig = {
+    temporaryModelId: typeof runtimeRecord.temporaryModelId === "string" ? runtimeRecord.temporaryModelId.trim().slice(0, 512) : DEFAULT_SUBAGENT_RUNTIME.temporaryModelId,
+    maxConcurrent: clampInteger(runtimeRecord.maxConcurrent, DEFAULT_SUBAGENT_RUNTIME.maxConcurrent, 1, 32),
+    timeoutMs: clampInteger(runtimeRecord.timeoutMs, DEFAULT_SUBAGENT_RUNTIME.timeoutMs, 10_000, 86_400_000),
+    tokenBudget: clampInteger(runtimeRecord.tokenBudget, DEFAULT_SUBAGENT_RUNTIME.tokenBudget, 0, 10_000_000),
+    maxRetries: clampInteger(runtimeRecord.maxRetries, DEFAULT_SUBAGENT_RUNTIME.maxRetries, 0, 10),
+    contextMode: runtimeRecord.contextMode === "task-only" ? "task-only" : "snapshot",
+    contextMessages: clampInteger(runtimeRecord.contextMessages, DEFAULT_SUBAGENT_RUNTIME.contextMessages, 0, 100),
+    allowNested: runtimeRecord.allowNested !== false,
+    maxDepth: clampInteger(runtimeRecord.maxDepth, DEFAULT_SUBAGENT_RUNTIME.maxDepth, 1, 8),
+    workflowMaxSteps: clampInteger(runtimeRecord.workflowMaxSteps, DEFAULT_SUBAGENT_RUNTIME.workflowMaxSteps, 1, 128),
+    backgroundEnabled: runtimeRecord.backgroundEnabled !== false,
+  };
+  return { profiles, routing, runtime, updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now() };
+}
+
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, Math.trunc(value)))
+    : fallback;
 }
 
 export function resolveSubagent(
@@ -70,12 +94,12 @@ export function resolveSubagent(
   requestedId?: string,
 ): ResolvedSubagent {
   const requested = requestedId ? config.profiles.find((profile) => profile.id === requestedId && profile.enabled) : undefined;
-  if (requested) return { id: requested.id, name: requested.name, instructions: requested.instructions, modelId: requested.modelId, route: `subagent:${requested.id}` };
+  if (requested) return { id: requested.id, name: requested.name, instructions: requested.instructions, modelId: requested.modelId, tools: requested.tools, permissionMode: requested.permissionMode, route: `subagent:${requested.id}` };
 
   const route = routeTarget(config.routing, capability);
   if (route?.startsWith("subagent:")) {
     const profile = config.profiles.find((item) => item.id === route.slice("subagent:".length) && item.enabled);
-    if (profile) return { id: profile.id, name: profile.name, instructions: profile.instructions, modelId: profile.modelId, route };
+    if (profile) return { id: profile.id, name: profile.name, instructions: profile.instructions, modelId: profile.modelId, tools: profile.tools, permissionMode: profile.permissionMode, route };
   }
 
   const modelId = route?.startsWith("model:") ? route.slice("model:".length) : fallbackModel;
@@ -90,6 +114,7 @@ export function resolveSubagent(
   };
 }
 
-export function buildSubagentPrompt(subagent: ResolvedSubagent, message: string): string {
-  return `<subagent-task name="${subagent.name.replace(/[<>\"]+/g, "")}">\n${subagent.instructions}\n</subagent-task>\n\n${message.trim()}`;
+export function buildSubagentPrompt(subagent: ResolvedSubagent, message: string, context = ""): string {
+  const inherited = context.trim() ? `\n<parent-context>\n${context.trim()}\n</parent-context>\n` : "";
+  return `<subagent-task name="${subagent.name.replace(/[<>\"]+/g, "")}">\n${subagent.instructions}\n</subagent-task>${inherited}\n${message.trim()}`;
 }

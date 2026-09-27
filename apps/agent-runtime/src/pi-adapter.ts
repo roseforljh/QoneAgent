@@ -8,6 +8,7 @@ import {
   createFindTool,
   createLsTool,
   SessionManager,
+  SettingsManager,
   type AgentSession,
   type FileEntry,
   type ToolDefinition,
@@ -16,15 +17,45 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type MessageAttachmentInfo, type ModelConfigInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
-import { googleMediaContent, googleStreamSimple } from "./google-media.js";
+import { googleMediaContent, googleStreamSimple, localMediaMarker } from "./google-media.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
 
 const log = createLogger("pi-adapter");
 const MODEL_TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
+const MIN_COMPACTION_THRESHOLD = 50;
+const MAX_COMPACTION_THRESHOLD = 95;
+
+export interface PiCompactionPreferences {
+  autoCompactionEnabled: boolean;
+  compactionThreshold: number;
+}
+
+export const DEFAULT_PI_COMPACTION_PREFERENCES: PiCompactionPreferences = {
+  autoCompactionEnabled: true,
+  compactionThreshold: 80,
+};
+
+export function normalizePiCompactionPreferences(value: unknown): PiCompactionPreferences {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const threshold = typeof record.compactionThreshold === "number" && Number.isInteger(record.compactionThreshold)
+    ? Math.min(MAX_COMPACTION_THRESHOLD, Math.max(MIN_COMPACTION_THRESHOLD, record.compactionThreshold))
+    : DEFAULT_PI_COMPACTION_PREFERENCES.compactionThreshold;
+  return {
+    autoCompactionEnabled: typeof record.autoCompactionEnabled === "boolean"
+      ? record.autoCompactionEnabled
+      : DEFAULT_PI_COMPACTION_PREFERENCES.autoCompactionEnabled,
+    compactionThreshold: threshold,
+  };
+}
+
+export function compactionReserveTokens(contextWindow: number, threshold: number): number {
+  return Math.max(1, Math.ceil(contextWindow * (1 - threshold / 100)));
+}
 
 function assertModelToolNames(names: Iterable<string>): void {
   const seen = new Set<string>();
@@ -37,12 +68,25 @@ function assertModelToolNames(names: Iterable<string>): void {
 
 type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
+type DelegateSubagent = (input: { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; subagentId?: string; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
+type WorkflowStep = { id: string; title: string; task: string; subagentId?: string; dependsOn?: string[] };
+type SubagentController = import("./subagent-runner.js").SubagentController;
 
 export interface PersistedPiMessage {
   role: string;
   content: string;
   attachments?: MessageAttachmentInfo[];
   createdAt: number;
+  rawMessage?: unknown;
+}
+
+function isPiTranscriptMessage(value: unknown): value is { role: string; [key: string]: unknown } {
+  if (!value || typeof value !== "object") return false;
+  const role = (value as { role?: unknown }).role;
+  return typeof role === "string" && [
+    "user", "assistant", "toolResult", "bashExecution", "custom",
+    "branchSummary", "compactionSummary",
+  ].includes(role);
 }
 
 export function imageContent(attachments: readonly MessageAttachmentInfo[] = []): ImageContent[] {
@@ -57,6 +101,9 @@ export function promptWithAttachments(message: string, attachments: readonly Mes
   const escapeName = (name: string) => name.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
   const files = attachments.flatMap((attachment) => {
     if (attachment.type !== "file") return [];
+    if (attachment.localPath) return [nativeMedia
+      ? localMediaMarker(attachment.localPath, attachment.mimeType)
+      : `[本地媒体附件 ${escapeName(attachment.name)} 需要 Gemini 原生模型]`];
     if (nativeMedia && /^(?:audio|video)\//i.test(attachment.mimeType)) return [];
     const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
     if (!match) return [];
@@ -86,6 +133,12 @@ export function createPiSessionEntries(
   let parentId: string | null = null;
   const entries: FileEntry[] = [header];
   for (const message of messages) {
+    if (isPiTranscriptMessage(message.rawMessage)) {
+      const id = crypto.randomUUID();
+      entries.push({ type: "message", id, parentId, timestamp: new Date(message.createdAt).toISOString(), message: message.rawMessage } as FileEntry);
+      parentId = id;
+      continue;
+    }
     if (message.role !== "user" && message.role !== "assistant") continue;
     // Assistant messages require provider metadata in Pi's transcript format.
     // When no model is configured yet, keep the user side of the conversation;
@@ -169,6 +222,9 @@ export class PiAdapter {
   private staleSessions = new Set<string>();
   private approvals = new ApprovalQueue();
   private hooks: PiAdapterHooks;
+  private delegateSubagent?: DelegateSubagent;
+  private subagentController?: SubagentController;
+  private subagentPolicy?: () => { allowNested: boolean; maxDepth: number; maxConcurrent: number };
   private resourceLoaders = new Map<string, ResourceLoader>();
   private modelRuntime?: ModelRuntime;
   private thinkingLevels = new Map<string, ThinkingLevel>();
@@ -176,6 +232,8 @@ export class PiAdapter {
   private modelApiKeys = new Map<string, string>();
   private configuredModelConfigs: ModelConfigInfo[] = [];
   private modelConfigurationQueue: Promise<void> = Promise.resolve();
+  private readonly settingsManager = SettingsManager.inMemory();
+  private compactionPreferences: PiCompactionPreferences;
   private modelMetadataResolver = new ModelMetadataResolver({
     providerModelsFetcher: async ({ provider, apiType, piApi, baseUrl, catalogBaseUrl, apiKey }) => {
       // Use the catalog URL for `/models`; the runtime URL is intentionally
@@ -210,9 +268,42 @@ export class PiAdapter {
     hooks: PiAdapterHooks = {},
     private permissionRules?: PermissionRuleStore,
     private restoreMessages?: (sessionId: string, currentRunId?: string) => PersistedPiMessage[],
+    compactionPreferences: PiCompactionPreferences = DEFAULT_PI_COMPACTION_PREFERENCES,
   ) {
     this.emit = emit;
     this.hooks = hooks;
+    this.compactionPreferences = normalizePiCompactionPreferences(compactionPreferences);
+    this.applyCompactionSettings();
+  }
+
+  private applyCompactionSettings(): void {
+    const modelOverrides = Object.fromEntries(
+      (this.modelRuntime?.getModels() ?? [])
+        .filter((model) => Number.isSafeInteger(model.contextWindow) && model.contextWindow > 0)
+        .map((model) => [model.provider + "/" + model.id, {
+          // Pi triggers when contextTokens > contextWindow - reserveTokens.
+          // Mapping the user percentage here keeps the UI independent of the
+          // model's actual context window while retaining Pi's own compaction.
+          reserveTokens: compactionReserveTokens(model.contextWindow, this.compactionPreferences.compactionThreshold),
+        }]),
+    );
+    this.settingsManager.applyOverrides({
+      compaction: {
+        enabled: this.compactionPreferences.autoCompactionEnabled,
+        modelOverrides,
+      },
+    });
+  }
+
+  setCompactionPreferences(value: PiCompactionPreferences): PiCompactionPreferences {
+    this.compactionPreferences = normalizePiCompactionPreferences(value);
+    this.applyCompactionSettings();
+    for (const session of this.sessions.values()) session.setAutoCompactionEnabled(this.compactionPreferences.autoCompactionEnabled);
+    return this.compactionPreferences;
+  }
+
+  getCompactionPreferences(): PiCompactionPreferences {
+    return { ...this.compactionPreferences };
   }
 
   // Called once at boot after MCP manager finishes loading.
@@ -237,6 +328,18 @@ export class PiAdapter {
     const operation = this.modelConfigurationQueue.then(() => this.applyModelConfiguration(snapshot));
     this.modelConfigurationQueue = operation.catch(() => undefined);
     return operation;
+  }
+
+  setSubagentDispatcher(dispatcher: DelegateSubagent) {
+    this.delegateSubagent = dispatcher;
+  }
+
+  setSubagentController(controller: SubagentController) {
+    this.subagentController = controller;
+  }
+
+  setSubagentPolicy(policy: () => { allowNested: boolean; maxDepth: number; maxConcurrent: number }) {
+    this.subagentPolicy = policy;
   }
 
   async refreshSkills(): Promise<void> {
@@ -295,6 +398,7 @@ export class PiAdapter {
         }),
       });
     }
+    this.applyCompactionSettings();
   }
 
   private thinkingLevelForModel(modelName: string): ThinkingLevel | undefined {
@@ -380,7 +484,7 @@ export class PiAdapter {
     });
   }
 
-  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string): Promise<AgentSession> {
+  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, toolAllowList?: string[]): Promise<AgentSession> {
     const modelKey = modelName ? splitModelName(modelName).join("/") : undefined;
     const apiType = modelKey ? this.modelApiTypes.get(modelKey) : undefined;
     const override = thinkingOverride ? normalizeThinkingLevelForApi(thinkingOverride, apiType) : undefined;
@@ -421,7 +525,111 @@ export class PiAdapter {
     const customTools = mcpServerId
       ? this.customTools.filter((tool) => (tool as ToolDefinition & { qoneToolName?: string }).qoneToolName?.startsWith(`mcp:${mcpServerId}:`))
       : this.customTools;
-    const wrapped = [...builtinTools, ...customTools].map((t) =>
+    const policy = this.subagentPolicy?.();
+    const canDelegate = this.delegateSubagent && (!subagentRunId || (policy?.allowNested ?? true)) && subagentDepth < (policy?.maxDepth ?? 3);
+    const checkChild = (id: string) => {
+      const target = this.subagentController!.query(id);
+      const owner = subagentRunId ? this.subagentController!.query(subagentRunId) : undefined;
+      if (!target || target.parentSessionId !== (owner?.parentSessionId ?? eventSessionId)) throw new Error("Subagent is outside this conversation");
+      if (subagentRunId) {
+        let ancestor = target.parentSubagentId;
+        while (ancestor && ancestor !== subagentRunId) ancestor = this.subagentController!.query(ancestor)?.parentSubagentId;
+        if (ancestor !== subagentRunId) throw new Error("Only descendant subagents can be inspected or controlled");
+      }
+    };
+    const inspectTools: ToolDefinition[] = this.subagentController ? [{
+      name: "inspect_subagent",
+      label: "Inspect subagent",
+      description: "Read the current status, transcript parts, streaming output and child IDs of a subagent by run ID.",
+      promptSnippet: "Use inspect_subagent when you need to check a delegated task before it finishes.",
+      parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }) }),
+      execute: async (_toolCallId, params) => {
+        const runId = (params as { runId: string }).runId;
+        checkChild(runId);
+        const result = this.subagentController!.query(runId);
+        if (!result) throw new Error(`Unknown subagent ${runId}`);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      },
+    }, {
+      name: "run_subagent_workflow",
+      label: "Run subagent workflow",
+      description: "Run dependent or independent subagent steps. Independent steps run in parallel; dependent steps wait for their prerequisites.",
+      promptSnippet: "Use run_subagent_workflow for multi-step delegation such as scout → implement → review.",
+      parameters: Type.Object({
+        steps: Type.Array(Type.Object({
+          id: Type.String({ minLength: 1, maxLength: 64 }),
+          title: Type.String({ minLength: 1, maxLength: 120 }),
+          task: Type.String({ minLength: 1, maxLength: 32_000 }),
+          subagentId: Type.Optional(Type.String({ maxLength: 128 })),
+          dependsOn: Type.Optional(Type.Array(Type.String({ maxLength: 64 }), { maxItems: 32 })),
+        }), { minItems: 1, maxItems: 128 }),
+      }),
+      executionMode: "sequential",
+      execute: async (_toolCallId, params, signal) => {
+        const input = params as { steps: WorkflowStep[] };
+        const parentRunId = this.activeRunIds.get(sessionId);
+        if (!parentRunId) throw new Error("No active parent run");
+        const result = await this.subagentController!.workflow(eventSessionId, parentRunId, input.steps, {
+          model: modelName, permissionMode: this.runModes.get(sessionId) ?? "ask", signal,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      },
+    }, {
+      name: "wait_subagent",
+      label: "Wait for subagent",
+      description: "Wait for a subagent to finish and return its current result.",
+      promptSnippet: "Use wait_subagent after starting a background subagent when you need its final result.",
+      parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }), timeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86_400_000 })) }),
+      executionMode: "sequential",
+      execute: async (_toolCallId, params, signal) => {
+        const input = params as { runId: string; timeoutMs?: number };
+        checkChild(input.runId);
+        const result = await this.subagentController!.wait(input.runId, input.timeoutMs, signal, subagentRunId);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      },
+    }, {
+      name: "control_subagent",
+      label: "Control subagent",
+      description: "Stop, resume, retry, steer or send a follow-up to an existing subagent session.",
+      promptSnippet: "Use control_subagent to continue, correct, retry or stop a delegated task.",
+      parameters: Type.Object({
+        runId: Type.String({ minLength: 1, maxLength: 128 }),
+        action: Type.Union([Type.Literal("stop"), Type.Literal("resume"), Type.Literal("retry"), Type.Literal("steer"), Type.Literal("follow_up")]),
+        message: Type.Optional(Type.String({ maxLength: 32_000 })),
+      }),
+      executionMode: "sequential",
+      execute: async (_toolCallId, params) => {
+        const input = params as { runId: string; action: "stop" | "resume" | "retry" | "steer" | "follow_up"; message?: string };
+        checkChild(input.runId);
+        const result = await this.subagentController!.control(input.runId, input.action, input.message);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      },
+    }] : [];
+    const delegateTool: ToolDefinition[] = canDelegate ? [{
+      name: "dispatch_subagent",
+      label: "Delegate to subagent",
+      description: `Run one independent task with a temporary subagent unless a saved subagent profile is selected. The temporary subagent's model is configured in Settings > Subagents > Temporary agent. When the user asks for N tasks or asks to start another subagent, call this tool once for each task, including in a later turn; do not stop at three. Multiple calls in one turn execute in parallel. The configured maximum of ${policy?.maxConcurrent ?? "the current"} is a simultaneous running limit, not a total task limit: completed tasks release capacity and extra tasks wait in the FIFO queue. Returns the subagent's final result. The full transcript is available in the side panel.`,
+      promptSnippet: "Use dispatch_subagent once per requested task. Unless a saved subagent profile is selected, the temporary agent uses the model configured in Settings > Subagents > Temporary agent. If the user asks to start another subagent after earlier tasks, dispatch it too. Do not assume a total limit of three; maxConcurrent limits simultaneous execution only, and overflow is queued.",
+      parameters: Type.Object({
+        title: Type.String({ minLength: 1, maxLength: 120 }),
+        task: Type.String({ minLength: 1, maxLength: 32_000 }),
+        subagentId: Type.Optional(Type.String({ maxLength: 128 })),
+        background: Type.Optional(Type.Boolean()),
+      }),
+      executionMode: "parallel",
+      execute: async (toolCallId, params, signal) => {
+        const input = params as { title: string; task: string; subagentId?: string; background?: boolean };
+        const parentRunId = this.activeRunIds.get(sessionId);
+        if (!parentRunId || !this.delegateSubagent) throw new Error("No active parent run");
+        const result = await this.delegateSubagent({
+          parentSessionId: eventSessionId, parentRunId, parentSubagentId: subagentRunId, depth: subagentDepth + 1, toolCallId,
+          title: input.title.trim(), task: input.task.trim(), subagentId: input.subagentId,
+          fallbackModel: modelName, permissionMode: this.runModes.get(sessionId) ?? "ask", background: input.background, signal,
+        });
+        return { content: [{ type: "text", text: result }], details: {} };
+      },
+    }] : [];
+    const wrapped = [...builtinTools, ...customTools, ...inspectTools, ...delegateTool].map((t) =>
       withPermission(t, {
         queue: this.approvals,
         workspacePath,
@@ -431,7 +639,10 @@ export class PiAdapter {
           this.push("approval.requested", { approvalId, toolName, args, toolCallId }, eventSessionId, this.activeRunIds.get(sessionId)),
       })
     );
-    assertModelToolNames(wrapped.map((tool) => tool.name));
+    const allowed = toolAllowList
+      ? wrapped.filter((tool) => toolAllowList.includes(tool.name) || toolAllowList.includes((tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? ""))
+      : wrapped;
+    assertModelToolNames(allowed.map((tool) => tool.name));
 
     const toolNameByModelName = new Map(wrapped.map((tool) => [
       tool.name,
@@ -458,10 +669,11 @@ export class PiAdapter {
       sessionManager,
       // Built-ins are supplied as wrapped definitions so every tool goes through
       // the same permission boundary. Bash is intentionally omitted on Windows.
-      tools: wrapped.map((tool) => tool.name),
-      customTools: wrapped,
+      tools: allowed.map((tool) => tool.name),
+      customTools: allowed,
       resourceLoader,
       modelRuntime,
+      settingsManager: this.settingsManager,
       model,
       thinkingLevel: thinking,
     });
@@ -575,7 +787,7 @@ export class PiAdapter {
   async run(
     sessionId: string,
     message: string,
-    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string },
+    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; toolAllowList?: string[] },
     runEmit: RunEmitFn
   ): Promise<void> {
     if (this.activeRunIds.has(sessionId)) throw new Error(`session ${sessionId} already has an active run`);
@@ -584,7 +796,7 @@ export class PiAdapter {
     this.runModes.set(sessionId, opts.permissionMode ?? "ask");
     let session: AgentSession | undefined;
     try {
-      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId);
+      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.toolAllowList);
       if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
       this.runs.set(runId, session);
       const previousLength = session.messages.length;
@@ -592,6 +804,9 @@ export class PiAdapter {
         ? this.modelRuntime?.getModel(...splitModelName(opts.model))
         : session.agent.state.model;
       const isGoogle = selectedModel?.api === "google-generative-ai";
+      if (!isGoogle && opts.attachments?.some((attachment) => attachment.localPath)) {
+        throw new Error("超过 50 MB 的本地音视频附件需要选择 Gemini 原生接口模型");
+      }
       await session.prompt(promptWithAttachments(message, opts.attachments, isGoogle), {
         images: isGoogle ? googleMediaContent(opts.attachments) : imageContent(opts.attachments),
       });
@@ -629,6 +844,26 @@ export class PiAdapter {
     this.stoppedRuns.add(runId);
     if (session) void session.abort();
     log.info("run aborted", { runId });
+    return true;
+  }
+
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
+  async waitForRun(runId: string, timeoutMs = 10_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while ([...this.activeRunIds.values()].includes(runId) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return ![...this.activeRunIds.values()].includes(runId);
+  }
+
+  async sendToSession(sessionId: string, message: string, mode: "steer" | "follow_up"): Promise<boolean> {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.isStreaming) return false;
+    if (mode === "steer") await session.steer(message);
+    else await session.followUp(message);
     return true;
   }
 }

@@ -1,9 +1,9 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi } from "@qone/protocol";
-import { openDb, SessionRepo, MessageRepo, RunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
+import { openDb, SessionRepo, MessageRepo, RunRepo, SubagentRunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
-import { PiAdapter } from "./pi-adapter.js";
+import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
 import { existsSync, mkdirSync, statSync } from "node:fs";
@@ -18,6 +18,7 @@ import { configurePodcast, podcastConfigured } from "./reach-podcast.js";
 import { createPodcastTools } from "./reach-podcast-tools.js";
 import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } from "./workspace.js";
 import { buildSubagentPrompt, inferCapability, normalizeSubagentConfig, resolveSubagent } from "./subagents.js";
+import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
 
 const log = createLogger("runtime");
 
@@ -44,6 +45,7 @@ const db = openDb(dbPath);
 const sessionRepo = new SessionRepo(db);
 const messageRepo = new MessageRepo(db);
 const runRepo = new RunRepo(db);
+const subagentRunRepo = new SubagentRunRepo(db);
 const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
 const toolCallRepo = new ToolCallRepo(db);
@@ -52,6 +54,9 @@ const modelConfigRepo = new ModelConfigRepo(db);
 const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
+const compactionPreferences: PiCompactionPreferences = normalizePiCompactionPreferences(
+  settingsRepo.get("compaction.settings") ?? DEFAULT_PI_COMPACTION_PREFERENCES,
+);
 let subagentConfig: SubagentConfigInfo = normalizeSubagentConfig(settingsRepo.get("subagents.config"));
 const eventRepo = new EventRepo(db);
 const artifactRepo = new ArtifactRepo(db);
@@ -60,6 +65,31 @@ const skillRepo = new SkillRepo(db);
 const eventJournal = new SequencedEventJournal<AgentEvent>(settingsRepo.get<number>("event.sequence") ?? 0);
 eventJournal.restore(eventRepo.list());
 const pendingEvents: AgentEvent[] = [];
+const subagentStreams = new Map<string, string>();
+const activeSubagents = new Set<string>();
+const subagentPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let subagentController: ReturnType<typeof registerSubagentDispatcher>;
+function readTokenUsage(value: unknown) {
+  const usage = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const cost = usage.cost && typeof usage.cost === "object" ? usage.cost as Record<string, unknown> : {};
+  const input = Number(usage.input ?? usage.inputTokens ?? 0) || 0;
+  const output = Number(usage.output ?? usage.outputTokens ?? 0) || 0;
+  const cacheRead = Number(usage.cacheRead ?? usage.cacheReadTokens ?? 0) || 0;
+  const cacheWrite = Number(usage.cacheWrite ?? usage.cacheWriteTokens ?? 0) || 0;
+  const reportedTotal = Number(usage.total ?? usage.totalTokens ?? 0) || 0;
+  return { input, output, cacheRead, cacheWrite, total: input + output + cacheRead + cacheWrite || reportedTotal, cost: Number(usage.totalCost ?? cost.total ?? usage.cost ?? 0) || 0 };
+}
+function publishSubagent(runId: string) {
+  const timer = subagentPublishTimers.get(runId);
+  if (timer) clearTimeout(timer);
+  subagentPublishTimers.delete(runId);
+  const subagent = subagentInfo(runId, subagentRunRepo, runRepo, subagentStreams);
+  if (subagent) send({ type: "subagent.updated", subagent });
+}
+function scheduleSubagentPublish(runId: string) {
+  if (subagentPublishTimers.has(runId)) return;
+  subagentPublishTimers.set(runId, setTimeout(() => publishSubagent(runId), 32));
+}
 let eventFlushTimer: ReturnType<typeof setTimeout> | undefined;
 const flushEvents = () => {
   if (eventFlushTimer) clearTimeout(eventFlushTimer);
@@ -91,12 +121,14 @@ eventBus.subscribe((busEvent) => {
       }
     }
   }
+  const approvalParent = busEvent.runId && busEvent.type === "approval.requested" ? subagentRunRepo.get(busEvent.runId)?.parentSessionId : undefined;
   const agentEvent = eventJournal.record((sequence) => ({
     eventId: crypto.randomUUID(), sequence, type: busEvent.type,
-    sessionId: busEvent.sessionId, runId: busEvent.runId,
+    sessionId: approvalParent ?? busEvent.sessionId, runId: busEvent.runId,
     timestamp: Date.now(), payload: busEvent.payload,
   } satisfies AgentEvent));
   if (agentEvent.runId) {
+    const completedMessageSequence = assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence;
     const parts = assistantPartsByRun.get(agentEvent.runId);
     if (parts) {
       const messageRole = (agentEvent.payload as { message?: { role?: unknown } } | undefined)?.message?.role;
@@ -109,6 +141,29 @@ eventBus.subscribe((busEvent) => {
       } else if (agentEvent.type === "tool.started" || agentEvent.type === "tool.completed" || agentEvent.type === "tool.failed") {
         assistantPartsByRun.set(agentEvent.runId, applyAssistantToolEvent(parts, agentEvent.type, agentEvent.payload));
       }
+    }
+    if (activeSubagents.has(agentEvent.runId)) {
+      if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string; usage?: unknown } }).message?.role === "assistant") {
+        const usage = subagentRunRepo.updateUsage(agentEvent.runId, readTokenUsage((agentEvent.payload as { message?: { usage?: unknown } }).message?.usage));
+        const budget = subagentConfig.runtime.tokenBudget;
+        if (budget > 0 && usage.total >= budget) {
+          subagentController.fail(agentEvent.runId, "Subagent token budget exceeded");
+          emit("subagent.budget_exceeded", { budget, usage }, agentEvent.sessionId, agentEvent.runId);
+        }
+      }
+      if (agentEvent.type === "message.delta" && typeof (agentEvent.payload as { delta?: unknown }).delta === "string") {
+        subagentStreams.set(agentEvent.runId, (subagentStreams.get(agentEvent.runId) ?? "") + (agentEvent.payload as { delta: string }).delta);
+      }
+      if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string } }).message?.role === "assistant") {
+        subagentStreams.delete(agentEvent.runId);
+      }
+      const parts = assistantPartsByRun.get(agentEvent.runId) ?? [];
+      if (["message.completed", "tool.completed", "tool.failed"].includes(agentEvent.type)) {
+        subagentRunRepo.save(agentEvent.runId, assistantBuffers.get(agentEvent.runId) ?? "", parts);
+      }
+      subagentController?.recordEvent(agentEvent.runId, agentEvent.type, agentEvent.payload, completedMessageSequence);
+      if (agentEvent.type === "message.delta") scheduleSubagentPublish(agentEvent.runId);
+      else publishSubagent(agentEvent.runId);
     }
   }
   queueEventPersistence(agentEvent);
@@ -167,14 +222,35 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       }
     }
   },
-}, permissionRepo, (sessionId, currentRunId) => messageRepo.listBySession(sessionId).filter((message) => message.runId !== currentRunId).map((message) => ({
-  role: message.role,
-  content: message.content,
-  attachments: message.attachments ? JSON.parse(message.attachments) : undefined,
-  createdAt: message.createdAt,
-})));
+}, permissionRepo, (sessionId, currentRunId) => {
+  const subagent = subagentRunRepo.getByExecutionSession(sessionId);
+  if (subagent) {
+    return subagentRunRepo.listMessages(subagent.runId).map((message) => ({
+      role: message.role, content: message.content, createdAt: message.createdAt,
+      rawMessage: message.rawMessage ? JSON.parse(message.rawMessage) : undefined,
+    }));
+  }
+  return messageRepo.listBySession(sessionId).filter((message) => message.runId !== currentRunId).map((message) => ({
+    role: message.role,
+    content: message.content,
+    attachments: message.attachments ? JSON.parse(message.attachments) : undefined,
+    createdAt: message.createdAt,
+  }));
+}, compactionPreferences);
+subagentController = registerSubagentDispatcher({
+  adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo,
+  config: () => subagentConfig,
+  partsByRun: assistantPartsByRun, messageSequenceByRun: assistantMessageSequenceByRun,
+  assistantBuffers, streamBuffers: assistantStreamBuffers, subagentStreams, activeSubagents,
+  contextProvider: (sessionId, limit) => messageRepo.listBySession(sessionId).slice(-limit).map((message) => `${message.role}: ${message.content}`).join("\n\n"),
+  subagentContextProvider: (runId, limit) => subagentRunRepo.listMessages(runId).slice(-limit).map((message) => `${message.role}: ${message.content}`).join("\n\n"),
+  runtime: () => subagentConfig.runtime,
+  publish: publishSubagent, emit: (type, payload, sessionId, runId) => eventBus.emit({ type, payload, sessionId, runId }),
+});
+adapter.setSubagentController(subagentController);
 await adapter.configureModels(modelConfigRepo.list());
 for (const [permission, decision] of [
+  ["agent.delegate", "allow"],
   ["filesystem.write", "ask"],
   ["shell.execute", "ask"],
   ["network", "ask"],
@@ -315,6 +391,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       send({
         type: "pong",
         requestId: cmd.requestId,
+        compaction: adapter.getCompactionPreferences(),
         capabilities: [
           "model.resolve-metadata",
           "model.metadata-sources",
@@ -373,6 +450,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     }
 
     case "session.delete":
+      await subagentController.dispose(cmd.sessionId);
       await adapter.disposeSession(cmd.sessionId);
       sessionRepo.delete(cmd.sessionId);
       send({ type: "pong", requestId: cmd.requestId });
@@ -400,7 +478,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       send({
         type: "session.runs",
         sessionId: cmd.sessionId,
-        runs: runRepo.listBySession(cmd.sessionId).map((r) => ({
+        runs: runRepo.listBySession(cmd.sessionId).filter((run) => !subagentRunRepo.get(run.id)).map((r) => ({
           id: r.id,
           sessionId: r.sessionId,
           status: r.status as never,
@@ -412,11 +490,18 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
 
     case "session.toolCalls":
-      send({ type: "session.toolCalls", sessionId: cmd.sessionId, toolCalls: toolCallRepo.listBySession(cmd.sessionId).map((t) => ({
+      send({ type: "session.toolCalls", sessionId: cmd.sessionId, toolCalls: toolCallRepo.listBySession(cmd.sessionId).filter((call) => !subagentRunRepo.get(call.runId)).map((t) => ({
         id: t.id, runId: t.runId, toolName: t.toolName,
         arguments: t.arguments ?? undefined, resultSummary: t.resultSummary ?? undefined,
         status: t.status, startedAt: t.startedAt ?? undefined, completedAt: t.completedAt ?? undefined,
       })) });
+      return;
+
+    case "session.subagents":
+      send({ type: "session.subagents", sessionId: cmd.sessionId, subagents: subagentRunRepo.listBySession(cmd.sessionId).flatMap((row) => {
+        const info = subagentInfo(row.runId, subagentRunRepo, runRepo, subagentStreams);
+        return info ? [info] : [];
+      }) });
       return;
 
     case "artifact.list":
@@ -528,6 +613,26 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       settingsRepo.set("subagents.config", subagentConfig);
       sendSubagentConfig(cmd.requestId);
       return;
+
+    case "subagent.query": {
+      const subagent = subagentController.query(cmd.runId);
+      if (!subagent) {
+        send({ type: "error", requestId: cmd.requestId, message: `unknown subagent ${cmd.runId}` });
+        return;
+      }
+      send({ type: "subagent.query", requestId: cmd.requestId, subagent });
+      return;
+    }
+
+    case "subagent.control": {
+      try {
+        const subagent = await subagentController.control(cmd.runId, cmd.action, cmd.message);
+        send({ type: "subagent.controlled", requestId: cmd.requestId, subagent });
+      } catch (error) {
+        send({ type: "error", requestId: cmd.requestId, message: String(error) });
+      }
+      return;
+    }
 
     case "browser.connect":
       try {
@@ -651,6 +756,13 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
     }
 
+    case "compaction.settings.set": {
+      const preferences = adapter.setCompactionPreferences(cmd);
+      settingsRepo.set("compaction.settings", preferences);
+      send({ type: "pong", requestId: cmd.requestId, compaction: preferences });
+      return;
+    }
+
     case "model.list":
       await adapter.configureModels(modelConfigRepo.list());
       send({ type: "model.list", configs: modelConfigRepo.list() });
@@ -765,13 +877,17 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         return;
       }
       if (startingRunSessions.has(cmd.sessionId) || adapter.isRunning(cmd.sessionId) ||
-          runRepo.listBySession(cmd.sessionId).some((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
+          runRepo.listBySession(cmd.sessionId).some((run) => !subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
         send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
         return;
       }
       if (cmd.replaceFromMessageId) {
         startingRunSessions.add(cmd.sessionId);
         try {
+          const history = messageRepo.listBySession(cmd.sessionId);
+          const index = history.findIndex(message => message.id === cmd.replaceFromMessageId && message.role === "user");
+          if (index < 0) throw new Error("user message not found in session");
+          await subagentController.dispose(cmd.sessionId, history.slice(index).flatMap(message => message.runId ? [message.runId] : []));
           // Pi keeps an in-memory conversation; it must be rebuilt from the trimmed DB history.
           await adapter.disposeSession(cmd.sessionId);
           flushEvents();
@@ -808,7 +924,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       if (subagent) log.info("dispatching capability task to subagent", { capability, subagentId: subagent.id, model: executionModel, route: subagent.route });
 
       Promise.resolve()
-        .then(() => adapter.run(executionSessionId, executionMessage, { model: executionModel, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, mcpServerId: subagent?.mcpServerId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments }, (type, payload) =>
+        .then(() => adapter.run(executionSessionId, executionMessage, { model: executionModel, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, mcpServerId: subagent?.mcpServerId, permissionMode: subagent?.permissionMode ?? cmd.permissionMode, toolAllowList: subagent?.tools?.length ? subagent.tools : undefined, thinking: cmd.thinking, attachments: cmd.attachments }, (type, payload) =>
           emit(type, payload, cmd.sessionId, run.id)
         ))
         .then(async () => {

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { unlinkSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { closeDb, MessageRepo, openDb, SessionRepo } from "@qone/database";
 import { decodeCommand, type MessageAttachmentInfo } from "@qone/protocol";
 import { createPiSessionEntries, imageContent, promptWithAttachments } from "../src/pi-adapter";
@@ -84,5 +84,38 @@ test("Gemini uploads large video data through the Files API", async () => {
     });
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("local Gemini media is referenced without base64 and uploaded from disk", async () => {
+  const path = join(tmpdir(), `qone-media-${crypto.randomUUID()}.mp4`);
+  writeFileSync(path, Buffer.from([0, 1, 2, 3]));
+  const media: MessageAttachmentInfo = { type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "", localPath: path };
+  const command = decodeCommand(JSON.stringify({ type: "agent.run", requestId: "r", sessionId: "s", message: "分析", attachments: [media] }));
+  expect(command?.type).toBe("agent.run");
+  expect(googleMediaContent([media])).toEqual([]);
+  const prompt = promptWithAttachments("分析", [media], true);
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  globalThis.fetch = (async (input, init) => {
+    requests.push(String(input));
+    if (String(input).includes("/upload/")) {
+      expect(init?.headers).toMatchObject({ "X-Goog-Upload-Header-Content-Length": "4" });
+      return new Response(null, { status: 200, headers: { "x-goog-upload-url": "https://upload.test/local" } });
+    }
+    expect(init?.body).toBeInstanceOf(Blob);
+    expect(Buffer.from(await (init!.body as Blob).arrayBuffer())).toEqual(Buffer.from([0, 1, 2, 3]));
+    return new Response(JSON.stringify({ file: { name: "files/local", uri: "https://generativelanguage.googleapis.com/v1beta/files/local", state: "ACTIVE" } }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const payload = await prepareGooglePayload({ contents: [{ role: "user", parts: [{ text: prompt }] }] }, { baseUrl: "https://generativelanguage.googleapis.com/v1beta" } as never, "test-key");
+    expect(requests).toHaveLength(2);
+    expect(payload.contents?.[0]?.parts).toEqual([
+      { text: "分析\n\n" },
+      { fileData: { mimeType: "video/mp4", fileUri: "https://generativelanguage.googleapis.com/v1beta/files/local" } },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    unlinkSync(path);
   }
 });
