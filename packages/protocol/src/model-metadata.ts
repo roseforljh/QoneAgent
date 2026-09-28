@@ -1,3 +1,5 @@
+import type { ImageApiFormat } from "./image-model";
+
 export type ProviderApiType = "openai-compatible" | "codex" | "claude" | "google";
 
 export type ModelCapability = "text" | "image" | "video" | "audio" | "pdf";
@@ -23,6 +25,8 @@ export interface ModelMetadata {
   input?: ModelCapability[];
   output?: ModelCapability[];
   supportedParameters?: string[];
+  supportedMethods?: string[];
+  imageApiFormat?: ImageApiFormat;
   toolCall?: boolean;
   structuredOutput?: boolean;
   temperature?: boolean;
@@ -41,6 +45,18 @@ export interface ParsedProviderModel {
 }
 
 const CAPABILITIES = new Set<ModelCapability>(["text", "image", "video", "audio", "pdf"]);
+
+/** Wire-level reasoning controls Pi knows how to send; a provider declaring one of these supports reasoning. */
+const REASONING_PARAMETERS = new Set([
+  "reasoning", "include_reasoning", "reasoning_effort",
+  "thinking", "enable_thinking",
+  "thinking_budget", "thinking_budget_tokens", "thinking_token_budget",
+]);
+
+/** `reasoningEffort` / `reasoning-effort` / `Reasoning.Effort` → `reasoning_effort`. */
+export function normalizeParameterName(value: string): string {
+  return value.trim().replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase().replace(/[.-]/g, "_");
+}
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -155,11 +171,18 @@ export function parseModelMetadata(value: unknown, fallbackId?: string): ModelMe
     modalities?.input ?? modalities?.input_modalities ?? source.input_modalities ?? source.input
       ?? nested?.input_modalities ?? nested?.input,
   );
-  const output = capabilityArray(
+  const declaredOutput = capabilityArray(
     modalities?.output ?? modalities?.output_modalities ?? source.output_modalities ?? source.output
       ?? nested?.output_modalities ?? nested?.output,
   );
+  const capabilityNames = stringArray(source.capabilities ?? nested?.capabilities);
   const supportedParameters = stringArray(source.supported_parameters ?? source.supportedParameters ?? nested?.supported_parameters ?? nested?.supportedParameters);
+  const supportedMethods = stringArray(source.supported_methods ?? source.supportedMethods ?? source.methods ?? nested?.supported_methods ?? nested?.supportedMethods ?? nested?.methods)
+    ?? capabilityNames;
+  const output = declaredOutput ?? (supportedMethods?.some((item) => /(?:image|images\.(?:generations|edits)|generate[_-]?image)/i.test(item)) ? ["image"] : undefined);
+  const imageApiFormat = typeof (source.image_api_format ?? source.imageApiFormat ?? nested?.image_api_format ?? nested?.imageApiFormat) === "string"
+    ? String(source.image_api_format ?? source.imageApiFormat ?? nested?.image_api_format ?? nested?.imageApiFormat) as ImageApiFormat
+    : undefined;
   const parsedReasoningOptions = reasoningOptions(source.reasoning_options ?? source.reasoningOptions ?? nested?.reasoning_options ?? nested?.reasoningOptions);
   const reasoning = booleanValue(source.reasoning)
     ?? booleanValue(source.supports_reasoning)
@@ -176,7 +199,7 @@ export function parseModelMetadata(value: unknown, fallbackId?: string): ModelMe
     ?? (record(nested?.thinking) ? true : undefined)
     ?? (record(nested?.thinkingConfig) ? true : undefined)
     ?? (parsedReasoningOptions ? true : undefined)
-    ?? (supportedParameters?.some((item) => /reason|thinking/i.test(item)) ? true : undefined);
+    ?? (supportedParameters?.some((item) => REASONING_PARAMETERS.has(normalizeParameterName(item))) ? true : undefined);
   const cost = firstRecord(source.cost, source.pricing, nested?.cost, nested?.pricing);
   const metadata: ModelMetadata = {
     id: normalizeId(source.id ?? source.model_id ?? source.model ?? nested?.id ?? nested?.model_id ?? nested?.model ?? source.name ?? fallbackId),
@@ -262,6 +285,8 @@ export function parseModelMetadata(value: unknown, fallbackId?: string): ModelMe
     input,
     output,
     supportedParameters,
+    supportedMethods,
+    imageApiFormat,
     toolCall: booleanValue(source.tool_call ?? source.toolCall ?? source.tool_calls),
     structuredOutput: booleanValue(source.structured_output ?? source.structuredOutput),
     temperature: booleanValue(source.temperature),
@@ -321,7 +346,7 @@ export function mergeModelMetadata(...sources: Array<ModelMetadata | undefined>)
   const result: ModelMetadata = {};
   for (const source of sources) {
     if (!source) continue;
-    for (const key of ["id", "label", "contextWindow", "maxTokens", "reasoning", "reasoningOptions", "input", "output", "supportedParameters", "toolCall", "structuredOutput", "temperature", "cost"] as const) {
+    for (const key of ["id", "label", "contextWindow", "maxTokens", "reasoning", "reasoningOptions", "input", "output", "supportedParameters", "supportedMethods", "imageApiFormat", "toolCall", "structuredOutput", "temperature", "cost"] as const) {
       const value = source[key];
       if (result[key] === undefined && value !== undefined && (!(Array.isArray(value)) || value.length > 0)) {
         result[key] = value as never;

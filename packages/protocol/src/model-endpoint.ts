@@ -39,7 +39,7 @@ export function modelBaseUrl(apiType: string, value: string): string {
   // `.../models/{id}:generateContent`, while OpenAI/Anthropic use the shorter
   // `/chat/completions`, `/responses`, and `/messages` suffixes.
   url.pathname = url.pathname.replace(
-    /\/(?:chat\/completions|responses|codex\/responses|messages|models(?:\/[^/]+)?)\/?$/i,
+    /\/(?:chat\/completions|responses|codex\/responses|messages|interactions|models(?:\/[^/]+)?)\/?$/i,
     "",
   );
   // The Anthropic SDK always appends `/v1/messages` to its base URL. Keep the

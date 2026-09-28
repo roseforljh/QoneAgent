@@ -1,6 +1,7 @@
 /** Visible Pi assistant content, in event and content-block order. */
 export type AssistantMessagePart =
   | { type: "text"; text: string; messageSequence: number }
+  | { type: "image"; image: string; filename?: string; messageSequence: number }
   | {
       type: "tool-call";
       toolCallId: string;
@@ -25,6 +26,9 @@ export function assistantPartsFromPiMessage(payload: unknown, messageSequence: n
     const block = asRecord(value);
     if (block?.type === "text" && typeof block.text === "string" && block.text) {
       return [{ type: "text", text: block.text, messageSequence }];
+    }
+    if (block?.type === "image" && typeof block.image === "string" && block.image) {
+      return [{ type: "image", image: block.image, filename: typeof block.filename === "string" ? block.filename : undefined, messageSequence }];
     }
     if (block?.type === "toolCall") {
       return [{

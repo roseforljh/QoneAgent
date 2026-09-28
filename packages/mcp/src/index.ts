@@ -1,11 +1,13 @@
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { Client, StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSecureServiceUrl } from "@qone/protocol";
 import { HostedMcpOAuth, type HostedOAuthAuthorization, type HostedOAuthCredential } from "./hosted-oauth";
 import { resolveStdioLaunch } from "./stdio-launch";
+import { McpAccountLoginRequiredError } from "./auth-error";
 export { resolveStdioLaunch } from "./stdio-launch";
+export { McpAccountLoginRequiredError } from "./auth-error";
 
 export interface McpServerConfig {
   id: string;
@@ -96,6 +98,7 @@ export class McpManager {
   private pendingOAuth = new Map<string, PendingOAuth>();
   private pendingHostedOAuth = new Map<string, { config: McpServerConfig; createdAt: number }>();
   private deviceAuthGenerations = new Map<string, string>();
+  private deviceAuthSessions = new Map<string, { userCode: string; verificationUri: string; expiresAt: number; completion: Promise<void> }>();
   private oauthCallbackServers = new Map<string, BunHttpServer>();
 
   constructor(
@@ -104,6 +107,7 @@ export class McpManager {
     private readonly onOAuthAuthorization?: (serverId: string, authorization: HostedOAuthAuthorization) => void,
     private readonly onOAuthFailure?: (serverId: string, error: Error) => void,
     private readonly resolveSecret: (key: string) => string | undefined = () => undefined,
+    private readonly onAccessTokenInvalidated?: (config: McpServerConfig) => void | Promise<void>,
   ) {}
 
   private validateConfig(config: McpServerConfig) {
@@ -145,6 +149,7 @@ export class McpManager {
   hasAccessToken(serverId: string) { return this.accessTokens.has(serverId); }
   clearCredentials(serverId: string) {
     this.deviceAuthGenerations.delete(serverId);
+    this.deviceAuthSessions.delete(serverId);
     this.accessTokens.delete(serverId);
     this.hostedOAuth.get(serverId)?.clear();
     this.hostedOAuth.delete(serverId);
@@ -152,9 +157,37 @@ export class McpManager {
     for (const [state, pending] of this.pendingOAuth) if (pending.serverId === serverId) this.pendingOAuth.delete(state);
   }
 
+  /** Only a user-requested connection may start interactive device authorization. */
+  async connectGitHub(config: McpServerConfig) {
+    this.validateConfig(config);
+    if (config.authMode !== "github-device") throw new Error("GitHub device login is not configured");
+    // This method is called only from an explicit user action. Always start
+    // the interactive login first; connecting with an existing token belongs
+    // to the normal connection path after authorization completes.
+    return { device: await this.beginGitHubDeviceAuth(config) };
+  }
+
+  private async authenticated<T>(config: McpServerConfig, operation: () => Promise<T>): Promise<T> {
+    const token = this.accessTokens.get(config.id);
+    try {
+      return await operation();
+    } catch (error) {
+      // Network errors and permission failures must not discard valid credentials.
+      if (config.authMode === "oauth" || !(error instanceof UnauthorizedError)) throw error;
+      if (token && this.accessTokens.get(config.id) === token) {
+        this.accessTokens.delete(config.id);
+        await this.disconnect(config.id).catch(() => {});
+        await this.onAccessTokenInvalidated?.(config);
+      }
+      throw new McpAccountLoginRequiredError(config.name);
+    }
+  }
+
   /** GitHub's remote MCP does not support DCR; a user-provided OAuth App ID uses device login. */
   async beginGitHubDeviceAuth(config: McpServerConfig): Promise<{ userCode: string; verificationUri: string; expiresAt: number; completion: Promise<void> }> {
     if (config.authMode !== "github-device" || !config.oauthClientId) throw new Error("GitHub OAuth App Client ID is required");
+    const active = this.deviceAuthSessions.get(config.id);
+    if (active) return active;
     const response = await fetch("https://github.com/login/device/code", {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
@@ -170,8 +203,13 @@ export class McpManager {
     const generation = crypto.randomUUID();
     this.deviceAuthGenerations.set(config.id, generation);
     const completion = this.pollGitHubDevice(config, device.device_code, Math.max(5, device.interval ?? 5), expiresAt, generation)
-      .finally(() => { if (this.deviceAuthGenerations.get(config.id) === generation) this.deviceAuthGenerations.delete(config.id); });
-    return { userCode: device.user_code, verificationUri: device.verification_uri, expiresAt, completion };
+      .finally(() => {
+        if (this.deviceAuthGenerations.get(config.id) === generation) this.deviceAuthGenerations.delete(config.id);
+        if (this.deviceAuthSessions.get(config.id)?.completion === completion) this.deviceAuthSessions.delete(config.id);
+      });
+    const session = { userCode: device.user_code, verificationUri: device.verification_uri, expiresAt, completion };
+    this.deviceAuthSessions.set(config.id, session);
+    return session;
   }
 
   private async pollGitHubDevice(config: McpServerConfig, deviceCode: string, interval: number, expiresAt: number, generation: string) {
@@ -323,9 +361,11 @@ export class McpManager {
         env: resolvedEnv ? { ...getDefaultEnvironment(), ...resolvedEnv } : undefined, cwd: config.cwd });
     const client = new Client({ name: "qone-agent", version: "0.0.1" }, { capabilities: {} });
     try {
-      await client.connect(transport);
-      const { tools } = await client.listTools();
-      const defs = tools.map((t) => this.adaptTool(config.id, client, t));
+      const { tools } = await this.authenticated(config, async () => {
+        await client.connect(transport);
+        return client.listTools();
+      });
+      const defs = tools.map((t) => this.adaptTool(config, client, t));
       this.conns.set(config.id, { config, client, tools: defs });
       return defs;
     } catch (error) {
@@ -335,10 +375,11 @@ export class McpManager {
   }
 
   private adaptTool(
-    serverId: string,
+    config: McpServerConfig,
     client: Client,
     t: { name: string; description?: string; inputSchema?: unknown }
   ): ToolDefinition {
+    const serverId = config.id;
     const fullName = `mcp:${serverId}:${t.name}`;
     const usedNames = new Set(this.exposedToolNames.values());
     const exposedName = this.exposedToolNames.get(fullName) ?? safeToolName(fullName, usedNames);
@@ -354,10 +395,10 @@ export class McpManager {
         ? t.inputSchema as Record<string, unknown>
         : { type: "object", additionalProperties: true }),
       execute: async (_id, params) => {
-        const res = await client.callTool({
+        const res = await this.authenticated(config, () => client.callTool({
           name: t.name,
           arguments: params as Record<string, unknown>,
-        });
+        }));
         const text = Array.isArray(res.content)
           ? res.content
               .map((c: { type: string; text?: string }) => (c.type === "text" ? c.text ?? "" : `[${c.type}]`))
@@ -388,7 +429,7 @@ export class McpManager {
   async callTool(id: string, name: string, args: Record<string, unknown>): Promise<void> {
     const connection = this.conns.get(id);
     if (!connection) throw new Error(`MCP server ${id} is not connected`);
-    const result = await connection.client.callTool({ name, arguments: args });
+    const result = await this.authenticated(connection.config, () => connection.client.callTool({ name, arguments: args }));
     if (result.isError) {
       const detail = Array.isArray(result.content)
         ? result.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n")

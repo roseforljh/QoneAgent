@@ -3,6 +3,17 @@ import type { ModelMetadata, ProviderApiType } from "./model-metadata";
 import type { AssistantMessagePart } from "./assistant-parts";
 
 export { assistantPartsFromPiMessage, applyAssistantToolEvent } from "./assistant-parts";
+export {
+  detectImageModel,
+  imageApiFormatForModelName,
+  isImageApiFormat,
+  isGeminiImageModelName,
+  isGptImageModelName,
+  isQwenImageModelName,
+  isSeedreamModelName,
+  supportsExtendedImageQuality,
+} from "./image-model";
+export type { ImageApiFormat, ImageModelDetection, ImageModelDetectionInput, ImageModelDetectionSource } from "./image-model";
 export type { AssistantMessagePart } from "./assistant-parts";
 
 export const GENERATIVE_UI_COMPONENTS = [
@@ -16,6 +27,7 @@ export {
   modelNameCandidates,
   modelNamesEqual,
   normalizeModelName,
+  normalizeParameterName,
   parseModelMetadata,
   parseModelMetadataResponse,
 } from "./model-metadata";
@@ -66,6 +78,8 @@ export type RuntimeCommand =
   | { type: "workspace.git"; requestId: string; workspaceId: string }
   | { type: "workspace.gitDiff"; requestId: string; workspaceId: string; path: string; scope?: "staged" | "unstaged" }
   | { type: "file.read"; requestId: string; workspaceId: string; path: string }
+  | { type: "global-prompt.get"; requestId: string }
+  | { type: "global-prompt.set"; requestId: string; content: string }
   | { type: "skills.list"; requestId: string; cwd?: string }
   | { type: "skills.cloud.list"; requestId: string; collection: "popular" | "trending" | "official"; page: number; query?: string }
   | { type: "skills.cloud.install"; requestId: string; source: string; skillId: string }
@@ -106,8 +120,6 @@ export type RuntimeCommand =
       model?: string;
       permissionMode?: RunPermissionMode;
       thinking?: RunThinkingLevel;
-      capability?: CapabilityId;
-      subagentId?: string;
       queueItemId?: string;
     }
   | { type: "agent.steer"; requestId: string; sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }
@@ -179,6 +191,7 @@ export type RuntimeEvent =
   | { type: "mcp.oauth.authorization"; requestId: string; serverId: string; url: string; state: string }
   | { type: "mcp.oauth.token"; requestId: string; serverId: string; key: string; accessToken: string }
   | { type: "mcp.oauth.saved"; serverId: string; key: string }
+  | { type: "mcp.oauth.invalidated"; serverId: string; key: string }
   | { type: "mcp.oauth.credential"; serverId: string; key: string; value: string }
   | { type: "mcp.github.device"; serverId: string; userCode: string; verificationUri: string; expiresAt: number }
   | { type: "permission.list"; rules: PermissionRuleInfo[] }
@@ -191,6 +204,7 @@ export type RuntimeEvent =
   | { type: "agent.event"; event: AgentEvent }
   | { type: "workspace.gitDiff"; requestId?: string; workspaceId: string; path: string; diff: string; truncated?: boolean }
   | { type: "file.read"; requestId?: string; workspaceId: string; path: string; content: string; binary?: boolean; truncated?: boolean }
+  | { type: "global-prompt"; requestId: string; content: string; path: string; directory?: string }
   | { type: "terminal.data"; terminalId: string; data: string }
   | { type: "terminal.exit"; terminalId: string }
   | { type: "error"; requestId?: string; message: string };
@@ -407,16 +421,54 @@ export interface BrowserSyncStatus {
   historyCount?: number;
   libraryError?: string;
   lastError?: string;
+  /** Machine-readable cause of the last connection failure; lastError stays human-readable. */
+  errorCode?: "bridge-unavailable" | "npx-unavailable";
 }
 
-export const CAPABILITY_IDS = ["webSearch", "videoRecognition", "stt", "tts"] as const;
+/** Error message code for a cloud skill catalog request that ran out of time. */
+export const SKILL_CATALOG_TIMEOUT = "SKILL_CATALOG_TIMEOUT";
+
+export const CAPABILITY_IDS = ["webSearch", "videoRecognition", "imageGeneration", "stt", "tts"] as const;
 export type CapabilityId = (typeof CAPABILITY_IDS)[number];
+export const builtinSubagentId = (capability: CapabilityId) => `builtin:${capability}`;
+export const isBuiltinSubagentId = (id: string) => CAPABILITY_IDS.some((capability) => builtinSubagentId(capability) === id);
+export const SUBAGENT_LOGO_IDS = [
+  "search", "video", "photo", "microphone", "volume", "sparkles", "robot", "code",
+  "database", "brain", "chart-bar", "shield", "rocket", "palette", "cpu", "cloud",
+  "git-branch", "terminal", "book", "bulb", "flame", "heart", "star", "target",
+  "puzzle", "world", "bolt", "camera", "music", "leaf", "fingerprint", "antenna",
+  "atom", "adjustments", "command", "bug", "cube", "key", "lock", "map",
+  "messages", "moon", "sun", "trophy", "wand", "wind", "zoom", "abacus",
+  "accessible", "acorn", "activity", "address-book", "affiliate", "air-balloon", "album", "alien",
+  "anchor", "aperture", "api", "archive", "armchair", "award", "badge", "balloon",
+  "ban", "basket", "battery", "bell", "bike", "blocks", "bookmark", "bottle",
+  "box", "building", "calculator", "calendar", "car", "cat", "certificate", "chair-director",
+  "chess", "circle-key", "clipboard", "clock", "coffee", "compass", "cookie", "crown",
+  "device-desktop", "diamond", "dog", "door", "droplet", "eye", "feather", "file",
+  "flag", "flower", "folder", "galaxy", "gift", "globe", "hammer", "headphones",
+  "home", "hourglass", "ice-cream", "inbox", "infinity", "lamp", "lego", "lifebuoy",
+  "live-photo", "mail", "man", "medal", "message", "meteor", "mouse", "news",
+  "notebook", "package", "paperclip", "paw", "phone", "plant", "plug", "printer",
+  "radio", "receipt", "recycle", "route", "school", "scissors", "settings", "ship",
+  "shopping-bag", "speakerphone", "stairs", "stethoscope", "sunset", "tag", "tool", "tree",
+  "umbrella", "user", "users", "wifi", "writing", "yoga",
+] as const;
+export type SubagentLogoId = (typeof SUBAGENT_LOGO_IDS)[number];
+const builtinSubagentLogos: Record<CapabilityId, SubagentLogoId> = {
+  webSearch: "search",
+  videoRecognition: "video",
+  imageGeneration: "photo",
+  stt: "microphone",
+  tts: "volume",
+};
+export const builtinSubagentLogo = (capability: CapabilityId) => builtinSubagentLogos[capability];
 
 export interface SubagentProfileInfo {
   id: string;
   name: string;
   instructions: string;
   modelId: string;
+  logo?: string;
   enabled: boolean;
   tools?: string[];
   permissionMode?: RunPermissionMode;
@@ -438,7 +490,6 @@ export interface SubagentRuntimeConfig {
   maxConcurrent: number;
   timeoutMs: number;
   tokenBudget: number;
-  maxRetries: number;
   contextMode: SubagentContextMode;
   contextMessages: number;
   allowNested: boolean;
@@ -452,7 +503,6 @@ export const DEFAULT_SUBAGENT_RUNTIME: SubagentRuntimeConfig = {
   maxConcurrent: 4,
   timeoutMs: 30 * 60_000,
   tokenBudget: 0,
-  maxRetries: 2,
   contextMode: "snapshot",
   contextMessages: 20,
   allowNested: true,
@@ -585,13 +635,12 @@ const messageAttachment = z.object({
   : /^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i.test(attachment.data) &&
     attachment.data.toLowerCase().startsWith(`data:${attachment.mimeType.toLowerCase()}`) &&
     (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType)));
-const capabilityId = z.enum(["webSearch", "videoRecognition", "stt", "tts"]);
 const subagentProfile = z.object({
   id: id.max(128), name: z.string().trim().min(1).max(120),
-  instructions: z.string().trim().min(1).max(32_000), modelId: id.max(512),
+  instructions: z.string().trim().min(1).max(32_000), modelId: z.string().max(512), logo: z.string().trim().min(1).max(64).optional(),
   enabled: z.boolean(), tools: z.array(z.string().regex(/^[a-zA-Z0-9_:-]+$/).max(64)).max(100).optional(),
   permissionMode: z.enum(["ask", "auto", "full"]).optional(), updatedAt: z.number().int().nonnegative(),
-});
+}).refine((profile) => Boolean(profile.modelId) || isBuiltinSubagentId(profile.id), "A custom subagent needs a model");
 const subagentConfig = z.object({
   profiles: z.array(subagentProfile).max(100),
   routing: z.record(z.string(), z.string().max(512)).optional().default({}),
@@ -600,7 +649,6 @@ const subagentConfig = z.object({
     maxConcurrent: z.number().int().min(1).max(32).optional(),
     timeoutMs: z.number().int().min(10_000).max(86_400_000).optional(),
     tokenBudget: z.number().int().min(0).max(10_000_000).optional(),
-    maxRetries: z.number().int().min(0).max(10).optional(),
     contextMode: z.enum(["task-only", "snapshot"]).optional(),
     contextMessages: z.number().int().min(0).max(100).optional(),
     allowNested: z.boolean().optional(),
@@ -660,7 +708,9 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
-  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(), capability: capabilityId.optional(), subagentId: id.max(128).optional(), queueItemId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && (run.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 140_000_000, "Message or valid attachments required"),
+  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(), queueItemId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && (run.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 140_000_000, "Message or valid attachments required"),
+  "global-prompt.get": z.object({ type: z.literal("global-prompt.get"), ...request }),
+  "global-prompt.set": z.object({ type: z.literal("global-prompt.set"), ...request, content: z.string().max(200_000) }),
   "agent.steer": z.object({ type: z.literal("agent.steer"), ...request, sessionId: id, runId: id, queueItemId: id, message: z.string(), attachments: z.array(messageAttachment).max(8).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length), "Message or valid attachments required"),
   "queue.upsert": z.object({ type: z.literal("queue.upsert"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).max(8).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
   "queue.edit": z.object({ type: z.literal("queue.edit"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).max(8).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
