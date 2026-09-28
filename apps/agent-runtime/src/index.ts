@@ -1,5 +1,5 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, SessionSearchResult } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
@@ -495,6 +495,29 @@ function sendMessages(sessionId: string) {
   });
 }
 
+function searchSessions(query: string): SessionSearchResult[] {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return [];
+  const workspaceIds = new Set(workspaceRepo.list().map((workspace) => workspace.id));
+  const results: SessionSearchResult[] = [];
+  for (const session of sessionRepo.list()) {
+    if (!session.workspaceId || !workspaceIds.has(session.workspaceId)) continue;
+    if (session.title.toLocaleLowerCase().includes(needle)) {
+      results.push({ session: toInfo(session), match: "title" });
+    } else {
+      const message = messageRepo.listBySession(session.id).find((item) => item.content.toLocaleLowerCase().includes(needle));
+      if (!message) continue;
+      const content = message.content.replace(/\s+/g, " ").trim();
+      const matchIndex = content.toLocaleLowerCase().indexOf(needle);
+      const start = Math.max(0, matchIndex - 48);
+      const end = Math.min(content.length, matchIndex + needle.length + 96);
+      results.push({ session: toInfo(session), match: "content", snippet: `${start > 0 ? "…" : ""}${content.slice(start, end)}${end < content.length ? "…" : ""}` });
+    }
+    if (results.length >= 50) break;
+  }
+  return results;
+}
+
 async function authorizeCommand(subjectId: string, permission: string, toolName: string, args: unknown) {
   const decision = permissionRepo.get(subjectId, permission) ?? "ask";
   if (decision === "deny") throw new Error(`${toolName} denied by permission policy`);
@@ -589,6 +612,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       });
       return;
     }
+
+    case "session.search":
+      send({ type: "session.search", requestId: cmd.requestId, query: cmd.query, results: searchSessions(cmd.query) });
+      return;
 
     case "session.rename": {
       try {
