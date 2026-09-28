@@ -57,6 +57,7 @@ export type RuntimeCommand =
   | { type: "session.create"; requestId: string; title?: string; workspaceId: string }
   | { type: "session.generate-title"; requestId: string; sessionId: string; prompt: string; model?: string }
   | { type: "session.list"; requestId: string }
+  | { type: "session.search"; requestId: string; query: string }
   | { type: "session.rename"; requestId: string; sessionId: string; title: string }
   | { type: "session.delete"; requestId: string; sessionId: string }
   | { type: "session.messages"; requestId: string; sessionId: string }
@@ -158,6 +159,7 @@ export type RuntimeEvent =
   | { type: "pong"; requestId: string; capabilities?: string[]; compaction?: CompactionSettingsInfo }
   | { type: "session.created"; session: SessionInfo }
   | { type: "session.list"; sessions: SessionInfo[] }
+  | { type: "session.search"; requestId: string; query: string; results: SessionSearchResult[] }
   | { type: "session.renamed"; session: SessionInfo }
   | { type: "session.messages"; sessionId: string; messages: MessageInfo[] }
   | { type: "session.queue"; sessionId: string; items: QueueItemInfo[] }
@@ -217,6 +219,12 @@ export interface SessionInfo {
   workspaceId?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface SessionSearchResult {
+  session: SessionInfo;
+  match: "title" | "content";
+  snippet?: string;
 }
 
 export interface MessageInfo {
@@ -663,6 +671,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id }),
   "session.generate-title": z.object({ type: z.literal("session.generate-title"), ...request, sessionId: id, prompt: z.string().min(1), model: z.string().optional() }),
   "session.list": z.object({ type: z.literal("session.list"), ...request }),
+  "session.search": z.object({ type: z.literal("session.search"), ...request, query: z.string().trim().min(1).max(200) }),
   "session.rename": z.object({ type: z.literal("session.rename"), ...request, sessionId: id, title: id }),
   "session.delete": z.object({ type: z.literal("session.delete"), ...request, sessionId: id }),
   "session.messages": z.object({ type: z.literal("session.messages"), ...request, sessionId: id }),
