@@ -103,6 +103,8 @@ export type RuntimeCommand =
   | { type: "permission.list"; requestId: string }
   | { type: "permission.set"; requestId: string; subjectId: string; permission: string; decision: PermissionDecision }
   | { type: "compaction.settings.set"; requestId: string; autoCompactionEnabled: boolean; compactionThreshold: number }
+  | { type: "session.compact"; requestId: string; sessionId: string; model: string }
+  | { type: "session.context.get"; requestId: string; sessionId: string; model: string }
   | { type: "model.list"; requestId: string }
   | { type: "model.resolve-metadata"; requestId: string; provider: string; apiType: ProviderApiType; baseUrl: string; models: { id: string; metadata?: ModelMetadata }[] }
   | { type: "model.upsert"; requestId: string; config: ModelConfigInfo }
@@ -157,6 +159,8 @@ export interface CompactionSettingsInfo {
 
 export type RuntimeEvent =
   | { type: "pong"; requestId: string; capabilities?: string[]; compaction?: CompactionSettingsInfo }
+  | { type: "session.compacted"; requestId: string; sessionId: string }
+  | { type: "session.context"; requestId: string; sessionId: string; model: string; tokens: number; contextWindow: number }
   | { type: "session.created"; session: SessionInfo }
   | { type: "session.list"; sessions: SessionInfo[] }
   | { type: "session.search"; requestId: string; query: string; results: SessionSearchResult[] }
@@ -731,6 +735,8 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "permission.list": z.object({ type: z.literal("permission.list"), ...request }),
   "permission.set": z.object({ type: z.literal("permission.set"), ...request, subjectId: id, permission: id, decision }),
   "compaction.settings.set": z.object({ type: z.literal("compaction.settings.set"), ...request, autoCompactionEnabled: z.boolean(), compactionThreshold: z.number().int().min(50).max(95) }),
+  "session.compact": z.object({ type: z.literal("session.compact"), ...request, sessionId: id, model: id }),
+  "session.context.get": z.object({ type: z.literal("session.context.get"), ...request, sessionId: id, model: id }),
   "secret.set": z.object({ type: z.literal("secret.set"), ...request, key: secretKey, value: z.string().max(65_536) }),
   "secret.delete": z.object({ type: z.literal("secret.delete"), ...request, key: secretKey }),
 };
