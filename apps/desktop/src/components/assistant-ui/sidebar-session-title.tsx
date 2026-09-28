@@ -40,8 +40,10 @@ export const SidebarSessionTitle: FC<SidebarSessionTitleProps> = ({ children, ti
 
   return (
     <span ref={viewportRef} className="q-sidebar-session-title" data-overflowing={overflow.distance >= 1 || undefined} style={style}>
-      <span className="q-sidebar-session-title-track">
-        <span ref={contentRef} className="q-sidebar-session-title-content" dir="auto">{children}</span>
+      <span className="q-sidebar-session-title-clip">
+        <span className="q-sidebar-session-title-track">
+          <span ref={contentRef} className="q-sidebar-session-title-content" dir="auto">{children}</span>
+        </span>
       </span>
     </span>
   );

@@ -192,20 +192,31 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
   min-width: 0;
   flex: 1 1 auto;
   width: 100%;
-  overflow: hidden;
+  overflow: visible;
   white-space: nowrap;
 }
-.q-sidebar-session-title[data-overflowing] {
+.q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-clip {
   --q-sidebar-title-left-fade: .571429em;
   --q-sidebar-title-right-fade: 1.14286em;
   -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--q-sidebar-title-left-fade), #000 calc(100% - var(--q-sidebar-title-right-fade)), transparent);
   mask-image: linear-gradient(to right, transparent, #000 var(--q-sidebar-title-left-fade), #000 calc(100% - var(--q-sidebar-title-right-fade)), transparent);
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
+}
+.q-sidebar-session-title-clip {
+  display: block;
+  min-width: 0;
+  width: calc(100% + var(--q-sidebar-title-left-fade, 0px));
+  margin-inline-start: calc(-1 * var(--q-sidebar-title-left-fade, 0px));
+  overflow: hidden;
 }
 .q-sidebar-session-title-track {
   display: inline-flex;
   min-width: max-content;
+  padding-inline-start: var(--q-sidebar-title-left-fade, 0px);
+  will-change: transform;
 }
 .q-sidebar-session-title-content {
   display: inline-block;
@@ -213,17 +224,18 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
 }
 .q-sidebar-session-row:hover .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-track,
 .q-sidebar-session-row:has(:focus-visible) .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-track {
-  animation: q-sidebar-title-scroll var(--q-sidebar-title-duration) cubic-bezier(.49, .6, .7, 1) .35s forwards;
+  animation: q-sidebar-title-scroll calc(var(--q-sidebar-title-duration) + .35s) cubic-bezier(.49, .6, .7, 1) forwards;
 }
-.q-sidebar-session-row:hover .q-sidebar-session-title[data-overflowing],
-.q-sidebar-session-row:has(:focus-visible) .q-sidebar-session-title[data-overflowing] {
-  animation: q-sidebar-title-fade-end var(--q-sidebar-title-duration) linear .35s forwards;
+.q-sidebar-session-row:hover .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-clip,
+.q-sidebar-session-row:has(:focus-visible) .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-clip {
+  animation: q-sidebar-title-fade-right calc(var(--q-sidebar-title-duration) + .35s) linear forwards;
 }
 @keyframes q-sidebar-title-scroll {
+  0%, 35% { transform: translateX(0); }
   to { transform: translateX(calc(-1 * var(--q-sidebar-title-distance))); }
 }
-@keyframes q-sidebar-title-fade-end {
-  75% { -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
+@keyframes q-sidebar-title-fade-right {
+  0%, 75% { -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
   to { -webkit-mask-size: calc(100% + var(--q-sidebar-title-right-fade)) 100%; mask-size: calc(100% + var(--q-sidebar-title-right-fade)) 100%; }
 }
 .q-sidebar .q-sidebar-session-row:hover,
@@ -246,7 +258,7 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
-  transition: width .16s ease, opacity .16s ease;
+  transition: none;
 }
 .q-sidebar-project-row:hover .q-sidebar-project-actions,
 .q-sidebar-project-row:has(:focus-visible) .q-sidebar-project-actions,
@@ -322,7 +334,7 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
-  transition: width .16s ease, opacity .16s ease;
+  transition: none;
 }
 .q-sidebar-session-row:hover .q-sidebar-session-actions,
 .q-sidebar-session-row:has(:focus-visible) .q-sidebar-session-actions,
@@ -340,6 +352,7 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
 }
 @media (prefers-reduced-motion: reduce) {
   .q-sidebar-session-row .q-sidebar-session-title[data-overflowing],
+  .q-sidebar-session-row .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-clip,
   .q-sidebar-session-row .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-track {
     animation: none;
   }
@@ -403,8 +416,8 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
 ::-webkit-scrollbar-thumb:hover { background: color-mix(in oklab, var(--muted-foreground) 55%, transparent); }
 ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 ::-webkit-scrollbar-corner { background: transparent; }
-/* Pointer controls use a surface change for keyboard focus. Avoid stacking the
-   old global outline with component and Tailwind focus rings. */
+/* Interactive controls use a subtle brightness change for keyboard focus.
+   Avoid stacking global outlines with component and Tailwind focus rings. */
 :is(button, a, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"]):focus-visible {
   outline: none !important;
   box-shadow: none !important;
@@ -412,7 +425,10 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
   --tw-ring-offset-shadow: 0 0 #0000 !important;
   filter: brightness(1.12);
 }
-input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none !important;
+  border-color: var(--ring);
+}
 a { text-decoration: none; }
 
 /* ---- tw-animate-style utilities used by the ported assistant-ui components ---- */
@@ -554,8 +570,6 @@ a { text-decoration: none; }
 .qone-select-trigger-compact { width: auto; min-height: 30px; padding: 0 8px; border-radius: 7px; font-size: var(--q-text-xs); }
 .settings-form-grid .qone-select, .settings-model-toolbar .qone-select { width: 100%; }
 .q-model-picker { display: inline-flex; width: auto; }
-.q-model-picker-trigger { width: auto; max-width: 200px; min-height: 28px; padding: 0 8px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: inherit; font-weight: inherit; }
-.q-model-picker-trigger:hover, .q-model-picker.is-open .q-model-picker-trigger { border-color: transparent; background: color-mix(in srgb, var(--muted-foreground) 15%, transparent); color: var(--foreground); }
 .q-model-picker .qone-select-menu { min-width: 190px; }
 
 /* ---- Settings dialog ---- */

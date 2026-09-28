@@ -7,8 +7,8 @@ export interface BrowserBounds {
   h: number;
 }
 
-// The native child is shared across React mounts. Serialize its entire lifetime,
-// including StrictMode cleanup, so an old close can never destroy a new child.
+// Webview creation and destruction must stay serialized because Tauri mutates
+// the parent window's child list. Each session still owns its own native child.
 let nativeQueue: Promise<unknown> = Promise.resolve();
 
 function enqueue(operation: () => Promise<unknown>) {
@@ -19,6 +19,7 @@ function enqueue(operation: () => Promise<unknown>) {
 
 export function createDockBrowserSession(
   invoke: BrowserInvoke,
+  browserId: string,
   url: string,
   onError: (error: unknown) => void,
   initialHtml?: string,
@@ -41,32 +42,32 @@ export function createDockBrowserSession(
     try {
       if (!opened) {
         // browser_open creates a hidden child. Only this owner may reveal it.
-        await invoke("browser_open", { url, ...desired.bounds });
+        await invoke("browser_open", { browserId, url, ...desired.bounds });
         opened = true;
-        if (initialHtml !== undefined) await invoke("browser_preview", { html: initialHtml });
+        if (initialHtml !== undefined) await invoke("browser_preview", { browserId, html: initialHtml });
       }
       if (disposed) return;
       const next = desired;
       if (!next.visible) {
-        if (visible) await invoke("browser_visible", { visible: false });
+        if (visible) await invoke("browser_visible", { browserId, visible: false });
         visible = false;
         appliedBounds = ""; // Hiding parks the native child offscreen.
         return;
       }
       const key = JSON.stringify(next.bounds);
       if (key !== appliedBounds) {
-        await invoke("browser_bounds", { ...next.bounds });
+        await invoke("browser_bounds", { browserId, ...next.bounds });
         appliedBounds = key;
       }
       if (!visible && !disposed && desired.visible) {
-        await invoke("browser_visible", { visible: true });
+        await invoke("browser_visible", { browserId, visible: true });
         visible = true;
       }
     } catch (error) {
       failed = true;
       report(error);
       // Even a partially initialized child must stop intercepting input.
-      await invoke("browser_close").catch(report);
+      await invoke("browser_close", { browserId }).catch(report);
     }
   };
 
@@ -85,13 +86,13 @@ export function createDockBrowserSession(
     },
     command(command: "browser_navigate" | "browser_eval" | "browser_preview", args: Record<string, unknown>) {
       return enqueue(async () => {
-        if (!disposed && opened && !failed) await invoke(command, args);
+        if (!disposed && opened && !failed) await invoke(command, { browserId, ...args });
       }).catch(report);
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      void enqueue(() => invoke("browser_close")).catch(report);
+      void enqueue(() => invoke("browser_close", { browserId })).catch(report);
     },
   };
 }

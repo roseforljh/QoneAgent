@@ -41,7 +41,7 @@ function toUrl(input: string): string | undefined {
 
 // The page area is a real WebView2 child of the main window (src-tauri
 // browser.rs); this view only owns the toolbar and reports its rect.
-export function DockBrowserView({ active, initialUrl, previewHtml, previewId }: { active: boolean; initialUrl: string; previewHtml?: string; previewId?: string }) {
+export function DockBrowserView({ browserId, active, initialUrl, previewHtml, previewId }: { browserId: string; active: boolean; initialUrl: string; previewHtml?: string; previewId?: string }) {
   const { t } = useLocale();
   const hostRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
@@ -61,7 +61,7 @@ export function DockBrowserView({ active, initialUrl, previewHtml, previewId }: 
     const host = hostRef.current;
     if (!host) return undefined;
     let alive = true;
-    const session = createDockBrowserSession(invoke, initialUrl, (error) => setFailed(String(error)), previewHtml);
+    const session = createDockBrowserSession(invoke, browserId, initialUrl, (error) => setFailed(String(error)), previewHtml);
     sessionRef.current = session;
     const sync = () => {
       if (!alive) return;
@@ -69,8 +69,8 @@ export function DockBrowserView({ active, initialUrl, previewHtml, previewId }: 
       session.update(bounds, activeRef.current);
     };
     sync();
-    const unNav = listen<{ url: string }>("browser:navigated", (event) => {
-      if (!alive || (previewHtmlRef.current !== undefined && event.payload.url === "about:blank")) return;
+    const unNav = listen<{ browserId: string; url: string }>("browser:navigated", (event) => {
+      if (!alive || event.payload.browserId !== browserId || (previewHtmlRef.current !== undefined && event.payload.url === "about:blank")) return;
       previewHtmlRef.current = undefined;
       setAddress(event.payload.url);
       setCurrentPageUrl(externalBrowserUrl(event.payload.url));
@@ -91,7 +91,7 @@ export function DockBrowserView({ active, initialUrl, previewHtml, previewId }: 
       session.dispose();
       sessionRef.current = undefined;
     };
-  }, []);
+  }, [browserId]);
 
   useEffect(() => {
     if (browserUrlRef.current === initialUrl && previewHtmlRef.current === previewHtml && previewIdRef.current === previewId) return;

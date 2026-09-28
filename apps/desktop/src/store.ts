@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, DEFAULT_SUBAGENT_RUNTIME, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, DEFAULT_SUBAGENT_RUNTIME, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageInfo, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate } from "./localization";
@@ -79,6 +79,9 @@ interface AgentState {
   lastError?: string;
   chatRunError?: ChatRunError;
   sessions: SessionInfo[];
+  searchResults: SessionSearchResult[];
+  searchLoading: boolean;
+  activeSearchQuery: string;
   workspaces: WorkspaceInfo[];
   modelConfigs: ModelConfigInfo[];
   selectedModelId?: string;
@@ -149,6 +152,7 @@ interface AgentState {
   togglePinWorkspace: (id: string) => void;
   selectWorkspace: (id: string) => void;
   selectSession: (id: string) => void;
+  searchSessions: (query: string) => void;
   runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean) => void;
   pauseGoal: () => void;
   resumeGoal: () => void;
@@ -276,6 +280,9 @@ export const useStore = create<AgentState>((set, get) => ({
   lastError: undefined,
   chatRunError: undefined,
   sessions: [],
+  searchResults: [],
+  searchLoading: false,
+  activeSearchQuery: "",
   workspaces: [],
   modelConfigs: [],
   selectedModelId: undefined,
@@ -482,6 +489,18 @@ export const useStore = create<AgentState>((set, get) => ({
     get().send({ type: "session.subagents", requestId: rid(), sessionId: id });
     get().send({ type: "artifact.list", requestId: rid(), sessionId: id });
     if (workspaceId) get().refreshWorkspace(workspaceId);
+  },
+
+  searchSessions: (query) => {
+    const normalized = query.trim();
+    if (!normalized) {
+      set({ searchResults: [], searchLoading: false, activeSearchQuery: "" });
+      return;
+    }
+    set({ searchLoading: true, activeSearchQuery: normalized });
+    void get().send({ type: "session.search", requestId: rid(), query: normalized }).then((sent) => {
+      if (!sent) set({ searchLoading: false });
+    });
   },
 
   runAgent: (message, replaceFromMessageId, attachments, queueItemId, goal) => {
@@ -853,6 +872,9 @@ export function initBridge() {
         }
         break;
       }
+      case "session.search":
+        if (msg.query === useStore.getState().activeSearchQuery) useStore.setState({ searchResults: msg.results, searchLoading: false });
+        break;
       case "session.renamed":
         useStore.setState((st) => ({
           sessions: st.sessions.map((session) => session.id === msg.session.id ? msg.session : session),

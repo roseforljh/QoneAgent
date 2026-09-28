@@ -507,10 +507,10 @@ fn terminal_kill(terminal_id: String) -> Result<(), String> {
 // --- embedded browser commands ---
 
 #[tauri::command]
-async fn browser_open(app: AppHandle, url: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+async fn browser_open(app: AppHandle, browser_id: String, url: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
     #[cfg(desktop)]
     // WebView2 creation must not run in the synchronous IPC/main-thread handler.
-    return tauri::async_runtime::spawn_blocking(move || browser::open(&app, &url, x, y, w, h))
+    return tauri::async_runtime::spawn_blocking(move || browser::open(&app, &browser_id, &url, x, y, w, h))
         .await
         .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
@@ -518,17 +518,17 @@ async fn browser_open(app: AppHandle, url: String, x: f64, y: f64, w: f64, h: f6
 }
 
 #[tauri::command]
-async fn browser_navigate(url: String) -> Result<(), String> {
+async fn browser_navigate(browser_id: String, url: String) -> Result<(), String> {
     #[cfg(desktop)]
-    return browser::navigate(&url);
+    return browser::navigate(&browser_id, &url);
     #[allow(unreachable_code)]
     Err("browser only supported on desktop".into())
 }
 
 #[tauri::command]
-async fn browser_preview(html: String) -> Result<(), String> {
+async fn browser_preview(browser_id: String, html: String) -> Result<(), String> {
     #[cfg(desktop)]
-    return tauri::async_runtime::spawn_blocking(move || browser::preview(html))
+    return tauri::async_runtime::spawn_blocking(move || browser::preview(&browser_id, html))
         .await
         .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
@@ -546,33 +546,33 @@ async fn browser_open_preview_external(app: AppHandle, html: String) -> Result<(
 }
 
 #[tauri::command]
-async fn browser_bounds(x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+async fn browser_bounds(browser_id: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
     #[cfg(desktop)]
-    return browser::bounds(x, y, w, h);
+    return browser::bounds(&browser_id, x, y, w, h);
     #[allow(unreachable_code)]
     Err("browser only supported on desktop".into())
 }
 
 #[tauri::command]
-async fn browser_visible(visible: bool) -> Result<(), String> {
+async fn browser_visible(browser_id: String, visible: bool) -> Result<(), String> {
     #[cfg(desktop)]
-    return browser::set_visible(visible);
+    return browser::set_visible(&browser_id, visible);
     #[allow(unreachable_code)]
     Err("browser only supported on desktop".into())
 }
 
 #[tauri::command]
-async fn browser_eval(script: String) -> Result<(), String> {
+async fn browser_eval(browser_id: String, script: String) -> Result<(), String> {
     #[cfg(desktop)]
-    return browser::eval(&script);
+    return browser::eval(&browser_id, &script);
     #[allow(unreachable_code)]
     Err("browser only supported on desktop".into())
 }
 
 #[tauri::command]
-async fn browser_close() -> Result<(), String> {
+async fn browser_close(browser_id: String) -> Result<(), String> {
     #[cfg(desktop)]
-    return browser::close();
+    return browser::close(&browser_id);
     #[allow(unreachable_code)]
     Ok(())
 }

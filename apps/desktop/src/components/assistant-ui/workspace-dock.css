@@ -1,0 +1,81 @@
+.q-workspace-dock {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  box-shadow: -8px 0 16px -8px rgb(0 0 0 / 0.12);
+}
+
+.q-workspace-dock-frame {
+  border-inline-start: 1px solid var(--border);
+}
+
+.q-workspace-dock-tabbar {
+  height: var(--q-thread-header-height, 46px);
+  min-height: var(--q-thread-header-height, 46px);
+  padding-inline: 8px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.q-workspace-dock-tabs { gap: 1px; }
+.q-workspace-dock-tab {
+  position: relative;
+  isolation: isolate;
+  min-width: min(90px, 100%);
+  max-width: 240px;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.q-workspace-dock-tab::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  content: "";
+  pointer-events: none;
+}
+.q-workspace-dock-tab:hover::before,
+.q-workspace-dock-tab:focus-within::before { background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.q-workspace-dock-tab.is-active::before {
+  border-color: color-mix(in srgb, var(--foreground) 9%, transparent);
+  background: color-mix(in srgb, var(--foreground) 5%, var(--background));
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
+}
+.q-workspace-dock-tab-close { opacity: 0; pointer-events: none; transition: opacity 150ms ease; }
+.q-workspace-dock-tab:hover .q-workspace-dock-tab-close,
+.q-workspace-dock-tab:focus-within .q-workspace-dock-tab-close { opacity: 1; pointer-events: auto; }
+.q-workspace-dock-actions { border-inline-start: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+
+.q-workspace-dock-resizer {
+  position: absolute;
+  z-index: 30;
+  inset-block: 0;
+  inset-inline-start: -8px;
+  display: flex;
+  width: 16px;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+.q-workspace-dock-resizer > span {
+  width: 1px;
+  height: 100%;
+  opacity: 0;
+  background: var(--foreground);
+  transition: opacity 150ms ease;
+}
+.q-workspace-dock-resizer:hover > span,
+.q-workspace-dock-resizer:active > span,
+.q-workspace-dock-resizer:focus-visible > span { opacity: .25; }
+.q-workspace-dock-resizer:focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
+
+@media (hover: none) {
+  .q-workspace-dock-tab-close { opacity: 1; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-workspace-dock-tab,
+  .q-workspace-dock-tab-close,
+  .q-workspace-dock-resizer > span { transition: none; }
+}

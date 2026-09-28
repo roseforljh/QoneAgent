@@ -1,10 +1,11 @@
-// Embedded browser: a single child Webview ("dock-browser") attached to the
-// main window, positioned over the dock panel area by the frontend.
+// Embedded browsers are child Webviews attached to the main window, each
+// owned by one right-panel tab and positioned by the frontend.
 // Navigations are reported back via "browser:navigated" events.
 
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewBuilder,
@@ -13,7 +14,7 @@ use tauri::{
 #[cfg(target_os = "windows")]
 use webview2_com::CoTaskMemPWSTR;
 
-static BROWSER: LazyLock<Mutex<Option<Webview<Wry>>>> = LazyLock::new(|| Mutex::new(None));
+static BROWSERS: LazyLock<Mutex<HashMap<String, Webview<Wry>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static PREVIEW_FILES: LazyLock<Mutex<Vec<PathBuf>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 static PREVIEW_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -54,9 +55,9 @@ pub fn cleanup_external_previews() {
     }
 }
 
-fn with<R>(f: impl FnOnce(&Webview<Wry>) -> Result<R, String>) -> Result<R, String> {
-    let guard = BROWSER.lock().map_err(|e| e.to_string())?;
-    f(guard.as_ref().ok_or("browser not open")?)
+fn with<R>(browser_id: &str, f: impl FnOnce(&Webview<Wry>) -> Result<R, String>) -> Result<R, String> {
+    let guard = BROWSERS.lock().map_err(|e| e.to_string())?;
+    f(guard.get(browser_id).ok_or("browser not open")?)
 }
 
 fn place(webview: &Webview<Wry>, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
@@ -66,11 +67,11 @@ fn place(webview: &Webview<Wry>, x: f64, y: f64, w: f64, h: f64) -> Result<(), S
         .map_err(|e| e.to_string())
 }
 
-pub fn open(app: &AppHandle, url: &str, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+pub fn open(app: &AppHandle, browser_id: &str, url: &str, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
     let target = Url::parse(url).map_err(|e| e.to_string())?;
     {
-        let guard = BROWSER.lock().map_err(|e| e.to_string())?;
-        if let Some(webview) = guard.as_ref() {
+        let guard = BROWSERS.lock().map_err(|e| e.to_string())?;
+        if let Some(webview) = guard.get(browser_id) {
             webview.navigate(target).map_err(|e| e.to_string())?;
             webview.hide().map_err(|e| e.to_string())?;
             return place(webview, x, y, w, h);
@@ -78,11 +79,13 @@ pub fn open(app: &AppHandle, url: &str, x: f64, y: f64, w: f64, h: f64) -> Resul
     }
     let window = app.get_window("main").ok_or("no main window")?;
     let app2 = app.clone();
-    let builder = WebviewBuilder::new("dock-browser", WebviewUrl::External(target)).on_navigation(
+    let navigation_id = browser_id.to_owned();
+    let label = format!("dock-browser-{browser_id}");
+    let builder = WebviewBuilder::new(label, WebviewUrl::External(target)).on_navigation(
         move |next| {
             let _ = app2.emit(
                 "browser:navigated",
-                serde_json::json!({ "url": next.as_str() }),
+                serde_json::json!({ "browserId": navigation_id.clone(), "url": next.as_str() }),
             );
             true
         },
@@ -96,22 +99,25 @@ pub fn open(app: &AppHandle, url: &str, x: f64, y: f64, w: f64, h: f64) -> Resul
             LogicalSize::new(1.0, 1.0),
         )
         .map_err(|e| e.to_string())?;
-    *BROWSER.lock().map_err(|e| e.to_string())? = Some(webview.clone());
+    BROWSERS
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(browser_id.to_owned(), webview.clone());
     webview.hide().map_err(|e| e.to_string())?;
     place(&webview, x, y, w, h)?;
     Ok(())
 }
 
-pub fn navigate(url: &str) -> Result<(), String> {
+pub fn navigate(browser_id: &str, url: &str) -> Result<(), String> {
     let target = Url::parse(url).map_err(|e| e.to_string())?;
-    with(|webview| webview.navigate(target.clone()).map_err(|e| e.to_string()))
+    with(browser_id, |webview| webview.navigate(target.clone()).map_err(|e| e.to_string()))
 }
 
 #[cfg(target_os = "windows")]
 // Tauri rejects top-level data URLs by default; load generated previews into
 // the existing child WebView2 instead of navigating to a data URL.
-pub fn preview(html: String) -> Result<(), String> {
-    with(|webview| {
+pub fn preview(browser_id: &str, html: String) -> Result<(), String> {
+    with(browser_id, |webview| {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         webview
             .with_webview(move |platform| {
@@ -132,16 +138,16 @@ pub fn preview(html: String) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn preview(_html: String) -> Result<(), String> {
+pub fn preview(_browser_id: &str, _html: String) -> Result<(), String> {
     Err("code preview requires WebView2".into())
 }
 
-pub fn bounds(x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
-    with(|webview| place(webview, x, y, w, h))
+pub fn bounds(browser_id: &str, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+    with(browser_id, |webview| place(webview, x, y, w, h))
 }
 
-pub fn set_visible(visible: bool) -> Result<(), String> {
-    with(|webview| {
+pub fn set_visible(browser_id: &str, visible: bool) -> Result<(), String> {
+    with(browser_id, |webview| {
         if visible {
             webview.show().map_err(|e| e.to_string())
         } else {
@@ -155,12 +161,12 @@ pub fn set_visible(visible: bool) -> Result<(), String> {
     })
 }
 
-pub fn eval(script: &str) -> Result<(), String> {
-    with(|webview| webview.eval(script).map_err(|e| e.to_string()))
+pub fn eval(browser_id: &str, script: &str) -> Result<(), String> {
+    with(browser_id, |webview| webview.eval(script).map_err(|e| e.to_string()))
 }
 
-pub fn close() -> Result<(), String> {
-    let webview = BROWSER.lock().map_err(|e| e.to_string())?.take();
+pub fn close(browser_id: &str) -> Result<(), String> {
+    let webview = BROWSERS.lock().map_err(|e| e.to_string())?.remove(browser_id);
     if let Some(webview) = webview {
         // Use the same complete shutdown sequence as browser_visible(false).
         // Hiding alone can leave the child HWND's old hit rectangle alive

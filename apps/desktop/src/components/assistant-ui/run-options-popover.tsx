@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type FC, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FC, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AssistantModalPrimitive } from "@assistant-ui/react";
 import { CheckIcon, HandIcon, ShieldCheckIcon, ShieldIcon, SnowflakeIcon } from "lucide-react";
-import type { ProviderApiType, RunPermissionMode } from "@qone/protocol";
-import { normalizeThinkingLevel, thinkingLevelOptionsForApi, type ThinkingLevel } from "../../lib/model-settings";
+import type { RunPermissionMode } from "@qone/protocol";
 import { useLocale, type MessageKey } from "../../localization";
 import { useStore } from "../../store";
 import { PermissionGrant, type GrantScope } from "./elements/permission-grant";
+import { Dialog, DialogContent } from "../ui/dialog";
 import penguinUrl from "../../assets/qone-penguin.png";
 import "./run-options-popover.css";
 
@@ -17,12 +17,13 @@ const permissionModes = [
 
 // Shockwave picker: a capsule track with a filled segment + knob and evenly
 // spaced dots that bulge as the knob passes them. Drag or wheel to change.
-const ThinkingWave: FC<{
+export const ThinkingWave: FC<{
   options: readonly { value: string; labelKey: MessageKey }[];
   index: number;
   disabled: boolean;
   onSelect: (index: number) => void;
-}> = ({ options, index, disabled, onSelect }) => {
+  showLabel?: boolean;
+}> = ({ options, index, disabled, onSelect, showLabel = true }) => {
   const { t } = useLocale();
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -163,30 +164,25 @@ const ThinkingWave: FC<{
           />
         </span>
       </div>
-      <span className="q-think-wave-label">{t(options[index]?.labelKey ?? "")}</span>
+      {showLabel && <span className="q-think-wave-label">{t(options[index]?.labelKey ?? "")}</span>}
     </div>
   );
 };
 
-export const RunOptionsPopover: FC<{ anchorRef: RefObject<HTMLDivElement | null> }> = ({ anchorRef }) => {
+export const RunOptionsPopover: FC = () => {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const sessionId = useStore((state) => state.currentSessionId);
-  const selectedModelId = useStore((state) => state.selectedModelId);
-  const model = useStore((state) => state.modelConfigs.find((item) => item.id === state.selectedModelId));
   const options = useStore((state) => sessionId ? state.runOptionsBySession[sessionId] : state.draftRunOptions);
   const setPermission = useStore((state) => state.setRunPermissionMode);
   const defaultPermissionMode = useStore((state) => state.defaultPermissionMode);
   const setDefaultPermissionMode = useStore((state) => state.setDefaultPermissionMode);
-  const setThinking = useStore((state) => state.setRunThinking);
   const [grantScope, setGrantScope] = useState<GrantScope | "pending" | null>(null);
+  const [grantDialogOpen, setGrantDialogOpen] = useState(false);
   const [modeBeforeGrant, setModeBeforeGrant] = useState<RunPermissionMode>("ask");
   const permissionMode = options?.permissionMode ?? defaultPermissionMode;
-  const configuredThinking = model?.config.thinking;
-  const apiType = (model?.config.apiType as ProviderApiType | undefined) ?? "openai-compatible";
-  const thinkingOptions = thinkingLevelOptionsForApi(apiType);
-  const thinking = normalizeThinkingLevel((selectedModelId && options?.thinkingByModel?.[selectedModelId]) || configuredThinking, apiType);
   const modeLabel = t(permissionModes.find((mode) => mode.value === permissionMode)?.labelKey ?? "composer.permissionAsk");
+  const ModeIcon = permissionModes.find((mode) => mode.value === permissionMode)?.icon ?? HandIcon;
 
   const choosePermissionMode = (mode: RunPermissionMode) => {
     if (mode !== "full") {
@@ -196,10 +192,13 @@ export const RunOptionsPopover: FC<{ anchorRef: RefObject<HTMLDivElement | null>
     }
     setModeBeforeGrant(permissionMode);
     setGrantScope("pending");
+    setOpen(false);
+    setGrantDialogOpen(true);
   };
 
   const resolvePermissionGrant = (scope: GrantScope) => {
-    setGrantScope(scope);
+    setGrantScope(null);
+    setGrantDialogOpen(false);
     if (scope === "denied") {
       setPermission(modeBeforeGrant);
       return;
@@ -209,15 +208,15 @@ export const RunOptionsPopover: FC<{ anchorRef: RefObject<HTMLDivElement | null>
   };
 
   return <AssistantModalPrimitive.Root unstable_openOnRunStart={false} open={open} onOpenChange={setOpen}>
-    <AssistantModalPrimitive.Anchor virtualRef={anchorRef} />
     <span className="q-reveal-zone -m-1 inline-flex p-1">
       <AssistantModalPrimitive.Trigger asChild>
-        <button type="button" className="q-reveal q-run-options-trigger" data-state={open ? "open" : "closed"} data-open={open} data-permission-mode={permissionMode} aria-label={`${t("composer.runOptions")}：${modeLabel}`} title={`${t("composer.runOptions")}：${modeLabel}`}>
-          <img src={penguinUrl} alt="" aria-hidden="true" draggable={false} className="q-run-options-penguin" />
+        <button type="button" className="q-run-options-trigger" data-state={open ? "open" : "closed"} data-open={open} data-permission-mode={permissionMode} aria-label={`${t("composer.permissions")}：${modeLabel}`} aria-expanded={open}>
+          <ModeIcon size={15} aria-hidden="true" />
+          <span>{modeLabel}</span>
         </button>
       </AssistantModalPrimitive.Trigger>
     </span>
-    <AssistantModalPrimitive.Content side="top" align="end" sideOffset={10} collisionPadding={12} dissmissOnInteractOutside className="q-run-options-card" aria-label={t("composer.runOptions")}
+    <AssistantModalPrimitive.Content side="top" align="start" sideOffset={10} collisionPadding={12} dissmissOnInteractOutside className="q-run-options-card" aria-label={t("composer.permissions")}
       onOpenAutoFocus={(event) => {
         event.preventDefault();
         (event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>("button[aria-pressed='true']")?.focus();
@@ -234,42 +233,36 @@ export const RunOptionsPopover: FC<{ anchorRef: RefObject<HTMLDivElement | null>
             </button>;
           })}
         </div>
-        {grantScope && (
-          <PermissionGrant
-            capability={t("composer.permissionGrantCapability")}
-            requester="Qone"
-            reach={[
-              t("composer.permissionGrantWorkspace"),
-              t("composer.permissionGrantTools"),
-              t("composer.permissionGrantBoundary"),
-            ]}
-            scope={grantScope}
-            onGrant={resolvePermissionGrant}
-            labels={{
-              requestedBy: t("composer.permissionGrantRequestedBy"),
-              thisGrants: t("composer.permissionGrantThisGrants"),
-              deny: t("composer.permissionGrantDeny"),
-              session: t("composer.permissionGrantSession"),
-              always: t("composer.permissionGrantAlways"),
-              pending: t("composer.permissionGrantPending"),
-              denied: t("composer.permissionGrantDenied"),
-              granted: t("composer.permissionGrantGranted"),
-            }}
-            className="q-permission-grant"
-          />
-        )}
-      </section>
-      <section className="q-run-options-section q-run-options-thinking" aria-label={t("model.thinking")}>
-        <ThinkingWave
-          options={thinkingOptions}
-          index={Math.max(0, thinkingOptions.findIndex((level) => level.value === thinking))}
-          disabled={!selectedModelId}
-          onSelect={(i) => {
-            const level = thinkingOptions[i];
-            if (selectedModelId && level) setThinking(selectedModelId, level.value as ThinkingLevel);
-          }}
-        />
       </section>
     </AssistantModalPrimitive.Content>
+    <Dialog open={grantDialogOpen} onOpenChange={(nextOpen) => {
+      setGrantDialogOpen(nextOpen);
+      if (!nextOpen) setGrantScope(null);
+    }}>
+      <DialogContent className="q-permission-dialog" showCloseButton={false}>
+        <PermissionGrant
+          capability={t("composer.permissionGrantCapability")}
+          requester="Qone"
+          reach={[
+            t("composer.permissionGrantWorkspace"),
+            t("composer.permissionGrantTools"),
+            t("composer.permissionGrantBoundary"),
+          ]}
+          scope={grantScope ?? "pending"}
+          onGrant={resolvePermissionGrant}
+          labels={{
+            requestedBy: t("composer.permissionGrantRequestedBy"),
+            thisGrants: t("composer.permissionGrantThisGrants"),
+            deny: t("composer.permissionGrantDeny"),
+            session: t("composer.permissionGrantSession"),
+            always: t("composer.permissionGrantAlways"),
+            pending: t("composer.permissionGrantPending"),
+            denied: t("composer.permissionGrantDenied"),
+            granted: t("composer.permissionGrantGranted"),
+          }}
+          className="q-permission-grant-dialog-card"
+        />
+      </DialogContent>
+    </Dialog>
   </AssistantModalPrimitive.Root>;
 };

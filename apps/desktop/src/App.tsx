@@ -27,7 +27,7 @@ import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSke
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
 import { Link, useLocation } from "@tanstack/react-router";
 import { ApprovalCard } from "./components/tool-ui/ToolCard";
-import { ArrowLeft, Moon, PanelLeftIcon, PuzzleIcon, Settings, Sun, X } from "lucide-react";
+import { ArrowLeft, Moon, PanelLeftIcon, PuzzleIcon, SearchIcon, Settings, Sun, X } from "lucide-react";
 import { cn } from "./lib/utils";
 import { ConfirmationDialogHost } from "./components/ui/ConfirmationDialog";
 import { confirmDestructiveAction } from "./lib/confirm-action";
@@ -37,6 +37,7 @@ import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-prefer
 import qonePenguinUrl from "./assets/qone-penguin.png";
 import { BrowserIntegration } from "./components/browser/BrowserIntegration";
 import { ReachChannels } from "./components/reach/ReachChannels";
+import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
 
 type Theme = "light" | "dark";
 
@@ -362,16 +363,28 @@ function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOp
 }
 
 function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme: Theme; onToggleTheme: () => void; initialSettingsOpen?: boolean }) {
+  const { t } = useLocale();
   const pendingRun = useRef<{ text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null>(null);
   const runtime = useQoneRuntime(pendingRun);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dockView, setDockView] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
+  const [searchOpen, setSearchOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   useEffect(() => {
     const openSettings = () => setSettingsOpen(true);
     window.addEventListener("qone-open-settings", openSettings);
     return () => window.removeEventListener("qone-open-settings", openSettings);
+  }, []);
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onShortcut);
+    return () => window.removeEventListener("keydown", onShortcut);
   }, []);
   const lastError = useStore((s) => s.lastError);
   const currentSessionId = useStore((s) => s.currentSessionId);
@@ -409,6 +422,16 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               <PanelLeftIcon className="size-4" />
             </TooltipIconButton>
             <Logo collapsed={sidebarCollapsed} />
+            <TooltipIconButton
+              variant="ghost"
+              size="icon"
+              tooltip={t("sidebar.searchChats")}
+              side="right"
+              onClick={() => setSearchOpen(true)}
+              className="q-sidebar-search-trigger ml-auto size-8 shrink-0"
+            >
+              <SearchIcon className="size-4" />
+            </TooltipIconButton>
           </div>
           <ThreadListRoot className="relative min-h-0 w-full flex-1 gap-0 overflow-hidden">
             <div className="flex shrink-0 flex-col gap-0.5 px-2 pb-2">
@@ -469,6 +492,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
         {settingsOpen && <Suspense fallback={null}>
           <SettingsDialog open={settingsOpen} onClose={closeSettings} theme={theme} onToggleTheme={onToggleTheme} />
         </Suspense>}
+        <ChatSearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
         <ConfirmationDialogHost />
       </div>
     </AssistantRuntimeProvider>

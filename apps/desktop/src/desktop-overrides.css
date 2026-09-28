@@ -40,6 +40,8 @@ body {
   min-width: 0;
   margin-inline: -1rem;
   padding-inline: 1rem;
+  /* Keep navigated turns clear of the content fade and give them reading room. */
+  scroll-padding-top: 2rem;
   scrollbar-gutter: stable;
 }
 /* Keep the bubble below the viewport edge while preserving assistant-ui's layout anchor. */
@@ -473,3 +475,29 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .q-reveal { transition: none; }
 }
+
+.q-sidebar-search-trigger { margin-inline-start: auto; }
+.q-chat-search-dialog {
+  width: min(620px, calc(100vw - 32px));
+  max-width: none;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  border-color: color-mix(in srgb, var(--foreground) 12%, var(--border));
+  box-shadow: 0 24px 70px rgb(0 0 0 / 24%);
+}
+.q-chat-search-input-wrap { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 0 18px; border-bottom: 1px solid var(--border); }
+.q-chat-search-input-wrap input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--foreground); font-size: 15px; }
+.q-chat-search-input-wrap input::-webkit-search-cancel-button { display: none; }
+.q-chat-search-input-wrap kbd { border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; color: var(--muted-foreground); font-size: 11px; line-height: 1.2; }
+.q-chat-search-results { max-height: min(420px, 60vh); overflow-y: auto; padding: 8px; }
+.q-chat-search-section-label { margin: 5px 10px 4px; color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.q-chat-search-hint { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 116px; margin: 0; color: var(--muted-foreground); font-size: 13px; }
+.q-chat-search-result { display: flex; width: 100%; align-items: center; gap: 11px; padding: 10px; border: 0; border-radius: 9px; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; transition: background .14s ease; }
+.q-chat-search-result:hover, .q-chat-search-result:focus-visible { background: color-mix(in srgb, var(--foreground) 7%, transparent); outline: none; }
+.q-chat-search-result-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--foreground) 7%, transparent); color: var(--muted-foreground); }
+.q-chat-search-result-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.q-chat-search-result-copy strong { overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.q-chat-search-result-copy span { overflow: hidden; color: var(--muted-foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.q-chat-search-result-arrow { color: var(--muted-foreground); opacity: 0; transition: opacity .14s ease, transform .14s ease; }
+.q-chat-search-result:hover .q-chat-search-result-arrow, .q-chat-search-result:focus-visible .q-chat-search-result-arrow { opacity: 1; transform: translateX(2px); }

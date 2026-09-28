@@ -9,13 +9,11 @@ import { ConversationMap, type ConversationMapEntry } from "./conversation-map";
 
 const TOP_TOLERANCE = 1;
 
-/** The header's fading edge covers the first part of the scroll viewport. */
+/** Use the viewport's own top inset for both navigation and the active tick. */
 const visibleTop = (viewport: HTMLElement) => {
   const view = viewport.getBoundingClientRect();
-  const header = viewport.closest(".q-chat-shell")?.querySelector<HTMLElement>(".q-thread-header");
-  if (!header) return view.top;
-  const fadeHeight = Number.parseFloat(getComputedStyle(header, "::after").height) || 0;
-  return Math.min(view.bottom, Math.max(view.top, header.getBoundingClientRect().bottom + fadeHeight));
+  const inset = Number.parseFloat(getComputedStyle(viewport).scrollPaddingTop) || 0;
+  return Math.min(view.bottom, view.top + inset);
 };
 
 const sameIds = (a: readonly string[], b: readonly string[]): boolean => {

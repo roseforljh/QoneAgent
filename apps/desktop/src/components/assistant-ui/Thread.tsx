@@ -339,7 +339,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
             <ComposerQueueEnterPlugin />
           </LexicalComposerInput>
           <ComposerTriggers onToolSelect={onToolSelect} onMentionStateChange={onMentionStateChange} />
-          <ComposerAction anchorRef={shellRef} mentionOpen={mentionOpen} onToggleMention={toggleMention} />
+          <ComposerAction mentionOpen={mentionOpen} onToggleMention={toggleMention} />
         </div>
       </ComposerPrimitive.AttachmentDropzone>
       </ComposerPrimitive.Unstable_TriggerPopoverRoot>
@@ -363,15 +363,18 @@ const GoalStatusBar: FC = () => {
   </div>;
 };
 
-const ComposerAction: FC<{ anchorRef: RefObject<HTMLDivElement | null>; mentionOpen: boolean; onToggleMention: () => void }> = ({ anchorRef, mentionOpen, onToggleMention }) => {
+const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> = ({ mentionOpen, onToggleMention }) => {
+  const { t } = useLocale();
+  const isRunning = useAuiState((state) => state.thread.isRunning);
+  const sendLabel = t(isRunning ? "chat.queueSend" : "chat.sendMessage");
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <div className="flex items-center gap-1">
         <ComposerToolsPopover open={mentionOpen} onToggle={onToggleMention} />
-        <ModelPicker />
+        <RunOptionsPopover />
       </div>
       <div className="flex items-center gap-1.5">
-        <RunOptionsPopover anchorRef={anchorRef} />
+        <ModelPicker />
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>
             <ComposerPrimitive.Dictate asChild>
@@ -391,13 +394,13 @@ const ComposerAction: FC<{ anchorRef: RefObject<HTMLDivElement | null>; mentionO
         <AuiIf condition={(s) => !s.thread.isRunning || (s.thread.capabilities.queue && s.composer.canSend)}>
           <ComposerPrimitive.Send asChild>
             <TooltipIconButton
-              tooltip="Send message"
+              tooltip={sendLabel}
               side="bottom"
               type="button"
               variant="default"
               size="icon"
               className="aui-composer-send size-7 rounded-full dark:text-black disabled:bg-muted-foreground disabled:text-black disabled:opacity-100"
-              aria-label="Send message"
+              aria-label={sendLabel}
             >
               <ArrowUpIcon className="aui-composer-send-icon size-4" />
             </TooltipIconButton>
@@ -405,7 +408,7 @@ const ComposerAction: FC<{ anchorRef: RefObject<HTMLDivElement | null>; mentionO
         </AuiIf>
         <AuiIf condition={(s) => s.thread.isRunning && !(s.thread.capabilities.queue && s.composer.canSend)}>
           <ComposerPrimitive.Cancel asChild>
-            <Button type="button" variant="default" size="icon" className="aui-composer-cancel size-7 rounded-full" aria-label="Stop generating">
+            <Button type="button" variant="default" size="icon" className="aui-composer-cancel size-7 rounded-full" aria-label={t("chat.stopGenerating")} title={t("chat.stopGenerating")}>
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
             </Button>
           </ComposerPrimitive.Cancel>

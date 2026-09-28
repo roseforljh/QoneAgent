@@ -4,12 +4,11 @@
   min-width: 0;
   flex-direction: column;
   margin-inline: 1rem;
-  padding-bottom: var(--composer-radius);
-  margin-bottom: calc((var(--composer-radius) + var(--spacing)) * -1);
+  margin-bottom: 8px;
+  padding: 4px 8px;
   overflow: clip;
   border: 1px solid color-mix(in oklab, var(--color-foreground) 10%, transparent);
-  border-bottom: 0;
-  border-radius: var(--composer-radius) var(--composer-radius) 0 0;
+  border-radius: 999px;
   background: color-mix(in oklab, var(--composer-bg) 75%, var(--color-background));
   box-shadow: 0 -2px 10px rgb(0 0 0 / 5%);
 }
@@ -22,7 +21,7 @@
   display: flex;
   max-height: 30dvh;
   flex-direction: column;
-  padding-bottom: var(--spacing);
+  padding-bottom: 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
