@@ -126,4 +126,32 @@ describe("MCP OAuth", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("rotates an expiring GitHub token once and persists the new pair", async () => {
+    const originalFetch = globalThis.fetch;
+    const bodies: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      bodies.push(String(init?.body));
+      const spent = bodies.length > 1;
+      return new Response(JSON.stringify(spent ? { error: "bad_refresh_token" } : { access_token: "gho_new", refresh_token: "ghr_new" }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const saved: string[] = [];
+      const manager = new McpManager(undefined, undefined, undefined, undefined, undefined, undefined, (_config, credential) => { saved.push(credential); });
+      const config = { id: "mcp-github", name: "GitHub", url: "https://api.githubcopilot.com/mcp/", authMode: "github-device" as const, oauthClientId: "github-client" };
+      manager.setAccessToken(config.id, JSON.stringify({ accessToken: "gho_old", refreshToken: "ghr_old" }));
+      const refresh = () => (manager as unknown as { refreshGitHubToken(value: typeof config): Promise<void> }).refreshGitHubToken(config);
+      await Promise.all([refresh(), refresh()]);
+      expect(bodies).toHaveLength(1);
+      expect(new URLSearchParams(bodies[0]).get("refresh_token")).toBe("ghr_old");
+      expect(saved).toEqual([JSON.stringify({ accessToken: "gho_new", refreshToken: "ghr_new" })]);
+      await expect(refresh()).rejects.toThrow("bad_refresh_token");
+      manager.setAccessToken(config.id, "gho_plain");
+      bodies.length = 0;
+      await expect(refresh()).rejects.toThrow("GitHub access token expired");
+      expect(bodies).toHaveLength(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

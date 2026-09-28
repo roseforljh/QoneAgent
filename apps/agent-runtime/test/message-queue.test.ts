@@ -21,6 +21,20 @@ test("queued messages persist their order and attachments without entering histo
   closeDb(db);
 });
 
+test("a stale snapshot cannot bring back a consumed queue item", () => {
+  const db = openDb(":memory:");
+  const session = new SessionRepo(db).create();
+  const repo = new QueueRepo(new SettingsRepo(db));
+  const steered = item(session.id, "q-steer", "steer", 0);
+  const next = item(session.id, "q-next", "next", 1);
+  repo.replace(session.id, [steered, next]);
+  repo.remove(session.id, steered.id);
+  repo.replace(session.id, [steered, next]);
+  repo.upsert(steered);
+  expect(repo.list(session.id).map((entry) => entry.id)).toEqual(["q-next"]);
+  closeDb(db);
+});
+
 test("queue protocol accepts sync and steer commands", () => {
   const queued = item("s", "q", "continue", 0);
   expect(decodeCommand(JSON.stringify({ type: "queue.sync", requestId: "r", sessionId: "s", items: [queued] }))?.type).toBe("queue.sync");

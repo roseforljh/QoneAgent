@@ -67,9 +67,6 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
     workflowMaxSteps: clampInteger(runtimeRecord.workflowMaxSteps, DEFAULT_SUBAGENT_RUNTIME.workflowMaxSteps, 1, 128),
     backgroundEnabled: runtimeRecord.backgroundEnabled !== false,
   };
-  const userProfiles = profiles.filter((profile, index) =>
-    !isBuiltinSubagentId(profile.id) && profiles.findIndex((candidate) => candidate.id === profile.id) === index,
-  );
   const builtins = CAPABILITY_IDS.map((capability) => {
     const id = builtinSubagentId(capability);
     const current = profiles.find((profile) => profile.id === id);
@@ -95,7 +92,15 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
   });
   const usedLogos = new Set<string>();
   const builtinLogos = new Set(CAPABILITY_IDS.map((capability) => builtinSubagentLogo(capability)));
-  const normalizedProfiles = [...userProfiles, ...builtins].map((profile, index) => {
+  const seenProfileIds = new Set<string>();
+  const orderedProfiles = profiles.flatMap((profile) => {
+    if (seenProfileIds.has(profile.id)) return [];
+    seenProfileIds.add(profile.id);
+    return [isBuiltinSubagentId(profile.id)
+      ? builtins.find((builtin) => builtin.id === profile.id)!
+      : profile];
+  });
+  const normalizedProfiles = [...orderedProfiles, ...builtins.filter((builtin) => !seenProfileIds.has(builtin.id))].map((profile, index) => {
     const builtin = isBuiltinSubagentId(profile.id);
     const requested = profile.logo && SUBAGENT_LOGO_IDS.includes(profile.logo as typeof SUBAGENT_LOGO_IDS[number])
       && (builtin || !builtinLogos.has(profile.logo as typeof SUBAGENT_LOGO_IDS[number])) ? profile.logo : undefined;

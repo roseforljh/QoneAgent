@@ -391,6 +391,11 @@ const mcp = new McpManager(async (serverId, token) => {
   send({ type: "mcp.oauth.invalidated", serverId: config.id, key });
   await refreshCustomTools();
   send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
+}, (config, credential) => {
+  // Rotated tokens replace the persisted pair; the old refresh token is already spent.
+  const key = config.oauth?.tokenSecretKey ?? `mcp.oauth:${config.id}`;
+  runtimeSecrets.set(key, credential);
+  send({ type: "mcp.oauth.token", requestId: "oauth-refresh", serverId: config.id, key, accessToken: credential });
 });
 for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()] as McpServerConfig[]) {
   // Playwright remains available as a manually enabled fallback. OpenCLI is

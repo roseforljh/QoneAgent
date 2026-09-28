@@ -46,6 +46,15 @@ describe("capability subagent routing", () => {
     expect(new Set(recovered.profiles.map((profile) => profile.id)).size).toBe(recovered.profiles.length);
   });
 
+  test("keeps saved profile positions when configuration is synchronized", () => {
+    const initial = normalizeSubagentConfig({});
+    const custom = { id: "researcher", name: "研究员", instructions: "执行任务", modelId: "provider/research", enabled: true, updatedAt: 1 };
+    const saved = { ...initial, profiles: [initial.profiles[0], custom, ...initial.profiles.slice(1)] };
+    const normalized = normalizeSubagentConfig(saved);
+    expect(normalized.profiles.map((profile) => profile.id)).toEqual(saved.profiles.map((profile) => profile.id));
+    expect(normalizeSubagentConfig(normalized).profiles.map((profile) => profile.id)).toEqual(saved.profiles.map((profile) => profile.id));
+  });
+
   test("resolves only what the user configured and reports the rest as unavailable", () => {
     expect(resolveSubagent(config, "webSearch")?.modelId).toBe("provider/research");
     expect(resolveSubagent(config, "stt")?.modelId).toBe("provider/audio");
