@@ -18,6 +18,7 @@ import { configurePodcast, podcastConfigured } from "./reach-podcast.js";
 import { createPodcastTools } from "./reach-podcast-tools.js";
 import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } from "./workspace.js";
 import { normalizeSubagentConfig } from "./subagents.js";
+import { restoreCompactedContext, type SessionCompactionCheckpoint } from "./session-compaction.js";
 import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
 import { ensureGlobalInstructions, globalInstructionsDirectory, globalInstructionsPath, readGlobalInstructions, writeGlobalInstructions } from "./global-instructions.js";
 
@@ -282,12 +283,14 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       rawMessage: message.rawMessage ? JSON.parse(message.rawMessage) : undefined,
     }));
   }
-  return messageRepo.listBySession(sessionId).filter((message) => message.runId !== currentRunId).map((message) => ({
+  const history = messageRepo.listBySession(sessionId).filter((message) => message.runId !== currentRunId).map((message) => ({
+    id: message.id,
     role: message.role,
     content: message.content,
     attachments: message.attachments ? JSON.parse(message.attachments) : undefined,
     createdAt: message.createdAt,
   }));
+  return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
 }, compactionPreferences);
 subagentController = registerSubagentDispatcher({
   adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo,
@@ -1092,6 +1095,56 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       const preferences = adapter.setCompactionPreferences(cmd);
       settingsRepo.set("compaction.settings", preferences);
       send({ type: "pong", requestId: cmd.requestId, compaction: preferences });
+      return;
+    }
+
+    case "session.compact": {
+      const session = sessionRepo.get(cmd.sessionId);
+      const cwd = session?.workspaceId ? workspaceRepo.get(session.workspaceId)?.path : undefined;
+      if (!session || !cwd) {
+        send({ type: "error", requestId: cmd.requestId, message: "session workspace not found" });
+        return;
+      }
+      if (startingRunSessions.has(cmd.sessionId) || adapter.isRunning(cmd.sessionId) ||
+          runRepo.listBySession(cmd.sessionId).some((run) => !subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
+        send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
+        return;
+      }
+      const history = messageRepo.listBySession(cmd.sessionId);
+      if (!history.length) {
+        send({ type: "error", requestId: cmd.requestId, message: "没有可压缩的会话内容" });
+        return;
+      }
+      try {
+        const context = await adapter.compactSession(cmd.sessionId, cwd, cmd.model);
+        try {
+          settingsRepo.set(`compaction:${cmd.sessionId}`, { throughMessageId: history.at(-1)!.id, context } satisfies SessionCompactionCheckpoint);
+        } catch (error) {
+          // The SQLite transcript is still intact; discard the unsaved Pi state.
+          await adapter.disposeSession(cmd.sessionId);
+          throw error;
+        }
+        sessionRepo.touch(cmd.sessionId);
+        send({ type: "session.compacted", requestId: cmd.requestId, sessionId: cmd.sessionId });
+      } catch (error) {
+        send({ type: "error", requestId: cmd.requestId, message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+
+    case "session.context.get": {
+      const session = sessionRepo.get(cmd.sessionId);
+      const cwd = session?.workspaceId ? workspaceRepo.get(session.workspaceId)?.path : undefined;
+      if (!session || !cwd) {
+        send({ type: "error", requestId: cmd.requestId, message: "session workspace not found" });
+        return;
+      }
+      try {
+        const usage = await adapter.getContextUsage(cmd.sessionId, cwd, cmd.model);
+        send({ type: "session.context", requestId: cmd.requestId, sessionId: cmd.sessionId, model: cmd.model, ...usage });
+      } catch (error) {
+        send({ type: "error", requestId: cmd.requestId, message: error instanceof Error ? error.message : String(error) });
+      }
       return;
     }
 

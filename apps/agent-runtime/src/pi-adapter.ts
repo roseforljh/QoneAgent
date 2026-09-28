@@ -9,6 +9,7 @@ import {
   createLsTool,
   SessionManager,
   SettingsManager,
+  estimateTokens,
   type AgentSession,
   type FileEntry,
   type ToolDefinition,
@@ -244,7 +245,8 @@ export class PiAdapter {
   private imageRunControllers = new Map<string, AbortController>();
   private goalBridge?: GoalRuntimeBridge;
   private modelConfigurationQueue: Promise<void> = Promise.resolve();
-  private readonly settingsManager = SettingsManager.inMemory();
+  private readonly sessionSettingsManagers = new Map<string, SettingsManager>();
+  private readonly compactingSessions = new Set<string>();
   private compactionPreferences: PiCompactionPreferences;
   private modelMetadataResolver = new ModelMetadataResolver({
     providerModelsFetcher: async ({ provider, apiType, piApi, baseUrl, catalogBaseUrl, apiKey }) => {
@@ -288,7 +290,7 @@ export class PiAdapter {
     this.applyCompactionSettings();
   }
 
-  private applyCompactionSettings(): void {
+  private compactionOverrides() {
     const modelOverrides = Object.fromEntries(
       (this.modelRuntime?.getModels() ?? [])
         .filter((model) => Number.isSafeInteger(model.contextWindow) && model.contextWindow > 0)
@@ -299,12 +301,17 @@ export class PiAdapter {
           reserveTokens: compactionReserveTokens(model.contextWindow, this.compactionPreferences.compactionThreshold),
         }]),
     );
-    this.settingsManager.applyOverrides({
+    return {
       compaction: {
         enabled: this.compactionPreferences.autoCompactionEnabled,
         modelOverrides,
       },
-    });
+    };
+  }
+
+  private applyCompactionSettings(): void {
+    const overrides = this.compactionOverrides();
+    for (const manager of this.sessionSettingsManagers.values()) manager.applyOverrides(overrides);
   }
 
   setCompactionPreferences(value: PiCompactionPreferences): PiCompactionPreferences {
@@ -325,6 +332,7 @@ export class PiAdapter {
       if (session.isIdle) {
         await session.dispose();
         this.sessions.delete(sessionId);
+        this.sessionSettingsManagers.delete(sessionId);
       } else {
         // Do not interrupt an active run. It will be recreated after settling.
         this.staleSessions.add(sessionId);
@@ -364,6 +372,7 @@ export class PiAdapter {
       if (session.isIdle) {
         await session.dispose();
         this.sessions.delete(sessionId);
+        this.sessionSettingsManagers.delete(sessionId);
       } else {
         this.staleSessions.add(sessionId);
       }
@@ -451,6 +460,7 @@ export class PiAdapter {
       await session.dispose();
       this.sessions.delete(sessionId);
     }
+    this.sessionSettingsManagers.delete(sessionId);
     this.staleSessions.delete(sessionId);
   }
 
@@ -475,7 +485,46 @@ export class PiAdapter {
   }
 
   isRunning(sessionId: string): boolean {
-    return this.executionSessionFor(sessionId) !== undefined;
+    return this.compactingSessions.has(sessionId) || this.executionSessionFor(sessionId) !== undefined;
+  }
+
+  async compactSession(sessionId: string, cwd: string, modelName: string): Promise<unknown[]> {
+    if (this.isRunning(sessionId)) throw new Error("session already has an active run or compaction");
+    this.compactingSessions.add(sessionId);
+    try {
+      const session = await this.getSession(sessionId, cwd, modelName);
+      if (!session.isIdle) throw new Error("session is busy");
+      const settings = this.sessionSettingsManagers.get(sessionId)!;
+      const keepRecentTokens = settings.getCompactionKeepRecentTokens(session.model);
+      // Pi's manual entry point still uses keepRecentTokens. Zero makes the
+      // action independent of the automatic threshold and short-chat budget.
+      settings.applyOverrides({ compaction: { keepRecentTokens: 0 } });
+      try {
+        await session.compact();
+        return [...session.agent.state.messages];
+      } finally {
+        settings.applyOverrides({ compaction: { keepRecentTokens } });
+      }
+    } finally {
+      this.compactingSessions.delete(sessionId);
+    }
+  }
+
+  async getContextUsage(sessionId: string, cwd: string, modelName: string): Promise<{ tokens: number; contextWindow: number }> {
+    const [provider, modelId] = splitModelName(modelName);
+    this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+    const model = this.modelRuntime.getModel(provider, modelId);
+    if (!model) throw new Error(`configured model not found: ${modelName}`);
+    const existing = this.sessions.get(sessionId);
+    if (!existing && this.isRunning(sessionId)) throw new Error("session context is not ready yet");
+    const session = existing && !(this.staleSessions.has(sessionId) && existing.isIdle)
+      ? existing
+      : await this.getSession(sessionId, cwd, modelName);
+    const reported = session.getContextUsage()?.tokens;
+    return {
+      tokens: reported ?? session.messages.reduce((total, message) => total + estimateTokens(message), 0),
+      contextWindow: model.contextWindow,
+    };
   }
 
   private executionSessionFor(sessionId: string): string | undefined {
@@ -536,6 +585,7 @@ export class PiAdapter {
       if (this.staleSessions.has(sessionId) && existing.isIdle) {
         await existing.dispose();
         this.sessions.delete(sessionId);
+        this.sessionSettingsManagers.delete(sessionId);
         this.staleSessions.delete(sessionId);
       } else {
       if (modelName) {
@@ -740,6 +790,8 @@ export class PiAdapter {
       undefined,
       createPiSessionEntries(workspacePath, this.restoreMessages?.(sessionId, this.activeRunIds.get(sessionId)) ?? [], model),
     );
+    const sessionSettings = SettingsManager.inMemory();
+    sessionSettings.applyOverrides(this.compactionOverrides());
     const { session } = await createAgentSession({
       cwd: workspacePath,
       sessionManager,
@@ -749,7 +801,7 @@ export class PiAdapter {
       customTools: allowed,
       resourceLoader,
       modelRuntime,
-      settingsManager: this.settingsManager,
+      settingsManager: sessionSettings,
       model,
       thinkingLevel: thinking,
     });
@@ -849,6 +901,7 @@ export class PiAdapter {
     });
 
     this.sessions.set(sessionId, session);
+    this.sessionSettingsManagers.set(sessionId, sessionSettings);
     return session;
   }
 
@@ -866,7 +919,7 @@ export class PiAdapter {
     opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; toolAllowList?: string[]; goalId?: string; goalEpoch?: number },
     runEmit: RunEmitFn
   ): Promise<void> {
-    if (this.activeRunIds.has(sessionId)) throw new Error(`session ${sessionId} already has an active run`);
+    if (this.activeRunIds.has(sessionId) || this.compactingSessions.has(sessionId)) throw new Error(`session ${sessionId} already has an active run or compaction`);
     const runId = opts.runId ?? crypto.randomUUID();
     this.activeRunIds.set(sessionId, runId);
     this.runModes.set(sessionId, opts.permissionMode ?? "ask");
@@ -911,6 +964,7 @@ export class PiAdapter {
       if (session && this.staleSessions.has(sessionId) && session.isIdle) {
         await session.dispose();
         this.sessions.delete(sessionId);
+        this.sessionSettingsManagers.delete(sessionId);
         this.staleSessions.delete(sessionId);
       }
     }
