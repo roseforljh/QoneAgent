@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
+import { SKILL_CATALOG_TIMEOUT } from "@qone/protocol";
 import { qoneAgentDir, type SkillInfo } from "./skills.js";
 
 export interface CloudSkill {
@@ -30,6 +31,12 @@ const MAX_BYTES = 100 * 1024 * 1024;
 const CATALOG_CACHE_MAX_AGE = 10 * 60 * 1_000;
 const CATALOG_REQUEST_TIMEOUT = 20_000;
 
+/** AbortSignal.timeout rejects with a DOMException named TimeoutError; report it as a code the UI can translate. */
+function catalogError(error: unknown): Error {
+  if ((error as { name?: unknown } | undefined)?.name === "TimeoutError") return new Error(SKILL_CATALOG_TIMEOUT);
+  return error instanceof Error ? error : new Error("云库请求失败");
+}
+
 async function getJson(url: string, fetcher: typeof fetch): Promise<unknown> {
   const canCache = fetcher === fetch;
   const cachePath = canCache ? path.join(qoneAgentDir(), "skill-catalog", `${createHash("sha256").update(url).digest("hex")}.json`) : undefined;
@@ -47,10 +54,8 @@ async function getJson(url: string, fetcher: typeof fetch): Promise<unknown> {
 
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), CATALOG_REQUEST_TIMEOUT);
     try {
-      const response = await fetcher(url, { headers: { Accept: "application/json", "User-Agent": "QoneAgent-Skills" }, signal: controller.signal });
+      const response = await fetcher(url, { headers: { Accept: "application/json", "User-Agent": "QoneAgent-Skills" }, signal: AbortSignal.timeout(CATALOG_REQUEST_TIMEOUT) });
       if (!response.ok) throw new Error(`云库请求失败：HTTP ${response.status}`);
       const body = await response.json() as unknown;
       if (cachePath) {
@@ -61,12 +66,10 @@ async function getJson(url: string, fetcher: typeof fetch): Promise<unknown> {
     } catch (error) {
       lastError = error;
       if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 250));
-    } finally {
-      clearTimeout(timeout);
     }
   }
   if (cached) return cached.body;
-  throw lastError instanceof Error ? lastError : new Error("云库请求失败");
+  throw catalogError(lastError);
 }
 
 export async function listCloudSkills(collection: "popular" | "trending" | "official", page: number, query = "", fetcher: typeof fetch = fetch): Promise<CloudSkillPage> {
@@ -164,7 +167,7 @@ export async function installCloudSkill(source: string, skillId: string, fetcher
         const target = path.join(staging, ...relative.split("/"));
         await mkdir(path.dirname(target), { recursive: true });
         await writeFile(target, bytes);
-      }));
+      })).catch((error) => { throw catalogError(error); });
     }
     const loaded = loadSkillsFromDir({ dir: staging, source: "path" }).skills;
     if (loaded.length !== 1 || loaded[0]!.filePath !== path.join(staging, "SKILL.md")) throw new Error("下载的 Skill 格式无效");

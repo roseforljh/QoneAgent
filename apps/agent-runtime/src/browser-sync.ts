@@ -15,6 +15,13 @@ const BROWSER_START_DELAY = 800;
 
 type CommandResult = { stdout: string; stderr: string };
 
+/** OpenCLI follows sysexits.h; 69 (EX_UNAVAILABLE) means the Browser Bridge extension is not connected. */
+const OPENCLI_EXIT_BRIDGE_UNAVAILABLE = 69;
+
+export class OpenCliError extends Error {
+  constructor(message: string, readonly exitCode: number | null) { super(message); }
+}
+
 type OpenCliArgument = {
   name: string;
   type?: string;
@@ -58,7 +65,7 @@ export function runOpenCli(args: string[], timeout = COMMAND_TIMEOUT): Promise<C
     child.once("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
-      else reject(new Error((stderr || stdout || `OpenCLI 退出码 ${code}`).trim()));
+      else reject(new OpenCliError((stderr || stdout || `OpenCLI 退出码 ${code}`).trim(), code));
     });
   });
 }
@@ -376,12 +383,12 @@ export class BrowserSyncService {
       try { await runOpenCli(["browser", SESSION, "unbind"]); }
       catch { /* Chrome may already have been closed. The local state still needs releasing. */ }
       this.startedBrowser = false;
-      this.update({ phase: "ready", targetConnected: false, lastError: undefined });
+      this.update({ phase: "ready", targetConnected: false, lastError: undefined, errorCode: undefined });
     });
   }
 
   private async connectInner(): Promise<BrowserSyncStatus> {
-    this.update({ phase: "connecting", lastError: undefined });
+    this.update({ phase: "connecting", lastError: undefined, errorCode: undefined });
     try {
       if (!await processRunning()) {
         await launchChrome();
@@ -389,11 +396,14 @@ export class BrowserSyncService {
       }
       await runOpenCli(["browser", SESSION, "bind"]);
       this.refreshLibrary();
-      this.update({ phase: "ready", targetConnected: true, lastError: undefined });
+      this.update({ phase: "ready", targetConnected: true, lastError: undefined, errorCode: undefined });
       await this.toolsChanged();
       return this.status();
     } catch (error) {
-      this.update({ phase: "error", targetConnected: false, lastError: String(error) });
+      const errorCode = error instanceof OpenCliError && error.exitCode === OPENCLI_EXIT_BRIDGE_UNAVAILABLE ? "bridge-unavailable" as const
+        : error instanceof Error && error.message === "MCP_NPX_UNAVAILABLE" ? "npx-unavailable" as const
+          : undefined;
+      this.update({ phase: "error", targetConnected: false, lastError: String(error), errorCode });
       throw error;
     }
   }

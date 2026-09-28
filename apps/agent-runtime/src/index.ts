@@ -1,8 +1,8 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
-import { McpManager } from "@qone/mcp";
+import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
@@ -17,8 +17,9 @@ import { listReachChannels, ytDlpExecutable } from "./reach-channels.js";
 import { configurePodcast, podcastConfigured } from "./reach-podcast.js";
 import { createPodcastTools } from "./reach-podcast-tools.js";
 import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } from "./workspace.js";
-import { buildSubagentPrompt, inferCapability, normalizeSubagentConfig, resolveSubagent } from "./subagents.js";
+import { normalizeSubagentConfig } from "./subagents.js";
 import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
+import { ensureGlobalInstructions, globalInstructionsDirectory, globalInstructionsPath, readGlobalInstructions, writeGlobalInstructions } from "./global-instructions.js";
 
 const log = createLogger("runtime");
 
@@ -34,6 +35,9 @@ const eventBus = new EventBus<RuntimeBusEvent>();
 // NDJSON over stdio: one JSON object per line on stdout.
 // stderr is reserved for logs.
 const send = (msg: RuntimeEvent) => process.stdout.write(encode(msg));
+
+// Keep the user file and its directory available before the settings UI opens.
+ensureGlobalInstructions();
 
 // --- persistence ---
 const dbPath =
@@ -170,12 +174,19 @@ eventBus.subscribe((busEvent) => {
   }
   queueEventPersistence(agentEvent);
   send({ type: "agent.event", event: agentEvent });
+  if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string } }).message?.role === "user" && agentEvent.sessionId && agentEvent.runId && !subagentRunRepo.get(agentEvent.runId)) {
+    if (initialUserMessageSeen.has(agentEvent.runId)) deliverSteer(agentEvent.sessionId, agentEvent.runId);
+    else initialUserMessageSeen.add(agentEvent.runId);
+  }
 });
 const assistantBuffers = new Map<string, string>();
 // Raw streamed deltas per run; survives aborts so partial answers can be saved.
 const assistantStreamBuffers = new Map<string, string>();
 const assistantPartsByRun = new Map<string, AssistantMessagePart[]>();
 const assistantMessageSequenceByRun = new Map<string, number>();
+const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }>>();
+const persistedAssistantRuns = new Set<string>();
+const initialUserMessageSeen = new Set<string>();
 const toolCallIds = new Map<string, string>();
 const cancelledRuns = new Set<string>();
 const startingRunSessions = new Set<string>();
@@ -193,6 +204,44 @@ function persistPartialAssistant(sessionId: string, runId: string, model?: strin
   const content = streamText || assistantBuffers.get(runId)?.trim() || partsText;
   if (!content && !parts.length) return undefined;
   return messageRepo.addAssistant(sessionId, content, runId, model, parts);
+}
+
+function deliverSteer(sessionId: string, runId: string) {
+  const pending = pendingSteers.get(sessionId);
+  if (!pending?.length || pending[0]?.runId !== runId) return;
+  const steer = pending.shift()!;
+  if (!pending.length) pendingSteers.delete(sessionId);
+  const assistant = persistPartialAssistant(sessionId, runId);
+  if (assistant) persistedAssistantRuns.add(runId);
+  assistantBuffers.delete(runId);
+  assistantStreamBuffers.delete(runId);
+  assistantPartsByRun.set(runId, []);
+  assistantMessageSequenceByRun.delete(runId);
+  messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments);
+  queueRepo.remove(sessionId, steer.queueItemId);
+  emit("agent.steer.delivered", { queueItemId: steer.queueItemId }, sessionId, runId);
+  sendQueue(sessionId);
+  sendMessages(sessionId);
+}
+
+function releaseUndeliveredSteers(sessionId: string, runId: string) {
+  const pending = pendingSteers.get(sessionId);
+  if (!pending) return;
+  const undelivered = pending.filter((steer) => steer.runId === runId);
+  const remaining = pending.filter((steer) => steer.runId !== runId);
+  if (remaining.length) pendingSteers.set(sessionId, remaining);
+  else pendingSteers.delete(sessionId);
+  if (undelivered.length) adapter.clearSessionQueue(sessionId);
+  for (const steer of undelivered) {
+    const items = queueRepo.list(sessionId);
+    if (items.some((candidate) => candidate.id === steer.queueItemId)) {
+      queueRepo.replace(sessionId, items.map((item) => item.id === steer.queueItemId
+        ? { ...item, lane: "queue", status: "queued", updatedAt: Date.now() }
+        : item));
+    }
+    emit("agent.steer.undelivered", { queueItemId: steer.queueItemId }, sessionId, runId);
+  }
+  if (undelivered.length) sendQueue(sessionId);
 }
 const approvalRuns = new Map<string, string>();
 const approvalToolCalls = new Map<string, string>();
@@ -247,6 +296,8 @@ subagentController = registerSubagentDispatcher({
   assistantBuffers, streamBuffers: assistantStreamBuffers, subagentStreams, activeSubagents,
   contextProvider: (sessionId, limit) => messageRepo.listBySession(sessionId).slice(-limit).map((message) => `${message.role}: ${message.content}`).join("\n\n"),
   subagentContextProvider: (runId, limit) => subagentRunRepo.listMessages(runId).slice(-limit).map((message) => `${message.role}: ${message.content}`).join("\n\n"),
+  attachmentsProvider: (sessionId, runId) => messageRepo.listBySession(sessionId).flatMap((message) =>
+    message.runId === runId && message.role === "user" && message.attachments ? JSON.parse(message.attachments) as MessageAttachmentInfo[] : []),
   runtime: () => subagentConfig.runtime,
   publish: publishSubagent, emit: (type, payload, sessionId, runId) => eventBus.emit({ type, payload, sessionId, runId }),
 });
@@ -303,6 +354,7 @@ for (const [permission, decision] of [
   ["tool.execute", "ask"],
 ] as const) permissionRepo.ensure("builtin", permission, decision);
 const pendingMcpAuthRequests = new Map<string, string>();
+
 const mcp = new McpManager(async (serverId, token) => {
   const config = mcpServerRepo.list().find((server) => server.id === serverId);
   if (token) {
@@ -333,8 +385,14 @@ const mcp = new McpManager(async (serverId, token) => {
   const requestId = pendingMcpAuthRequests.get(serverId);
   pendingMcpAuthRequests.delete(serverId);
   if (requestId) send({ type: "error", requestId, message: error.message });
-}, (key) => runtimeSecrets.get(key));
-for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()]) {
+}, (key) => runtimeSecrets.get(key), async (config) => {
+  const key = config.oauth?.tokenSecretKey ?? `mcp.oauth:${config.id}`;
+  runtimeSecrets.delete(key);
+  send({ type: "mcp.oauth.invalidated", serverId: config.id, key });
+  await refreshCustomTools();
+  send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
+});
+for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()] as McpServerConfig[]) {
   // Playwright remains available as a manually enabled fallback. OpenCLI is
   // the default browser channel, so starting Playwright here would launch a
   // second browser and compete with the current Chrome connection.
@@ -417,6 +475,19 @@ const emit = (type: string, payload: unknown, sessionId?: string, runId?: string
 
 function sendQueue(sessionId: string) {
   send({ type: "session.queue", sessionId, items: queueRepo.list(sessionId) });
+}
+
+function sendMessages(sessionId: string) {
+  send({
+    type: "session.messages", sessionId,
+    messages: messageRepo.listBySession(sessionId).map((m) => ({
+      id: m.id, sessionId: m.sessionId, runId: m.runId ?? undefined,
+      role: m.role, content: m.content,
+      parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
+      attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
+      model: m.model ?? undefined, goalId: m.goalId ?? undefined, createdAt: m.createdAt,
+    })),
+  });
 }
 
 async function authorizeCommand(subjectId: string, permission: string, toolName: string, args: unknown) {
@@ -533,22 +604,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
 
     case "session.messages":
-      send({
-        type: "session.messages",
-        sessionId: cmd.sessionId,
-        messages: messageRepo.listBySession(cmd.sessionId).map((m) => ({
-          id: m.id,
-          sessionId: m.sessionId,
-          runId: m.runId ?? undefined,
-          role: m.role,
-          content: m.content,
-          parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
-          attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
-          model: m.model ?? undefined,
-          goalId: m.goalId ?? undefined,
-          createdAt: m.createdAt,
-        })),
-      });
+      sendMessages(cmd.sessionId);
       return;
 
     case "goal.get": {
@@ -783,6 +839,20 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
     }
 
+    case "global-prompt.get":
+      send({ type: "global-prompt", requestId: cmd.requestId, content: readGlobalInstructions(), path: globalInstructionsPath(), directory: globalInstructionsDirectory() });
+      return;
+
+    case "global-prompt.set":
+      try {
+        writeGlobalInstructions(cmd.content);
+        await adapter.refreshSkills();
+        send({ type: "global-prompt", requestId: cmd.requestId, content: cmd.content, path: globalInstructionsPath(), directory: globalInstructionsDirectory() });
+      } catch (error) {
+        send({ type: "error", requestId: cmd.requestId, message: `保存 Qone.md 失败：${String(error)}` });
+      }
+      return;
+
     case "skills.cloud.list": {
       const page = await listCloudSkills(cmd.collection, cmd.page, cmd.query);
       send({ type: "skills.cloud.list", requestId: cmd.requestId, ...page });
@@ -898,16 +968,22 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           }
           pendingMcpAuthRequests.delete(cmd.config.id);
         }
-        if (cmd.config.authMode === "github-device" && !mcp.hasAccessToken(cmd.config.id)) {
+        if (cmd.config.authMode === "github-device") {
           pendingMcpAuthRequests.set(cmd.config.id, cmd.requestId);
-          const device = await mcp.beginGitHubDeviceAuth(cmd.config);
-          send({ type: "mcp.github.device", serverId: cmd.config.id, userCode: device.userCode, verificationUri: device.verificationUri, expiresAt: device.expiresAt });
-          void device.completion.catch((error) => {
-            if (pendingMcpAuthRequests.get(cmd.config.id) !== cmd.requestId) return;
-            pendingMcpAuthRequests.delete(cmd.config.id);
-            send({ type: "error", requestId: cmd.requestId, message: String(error) });
-          });
-          return;
+          const result = await mcp.connectGitHub(cmd.config);
+          if (result.device) {
+            // connectGitHub starts the device flow internally. Reuse the
+            // shared callback wiring for the completion and error lifecycle.
+            const device = result.device;
+            send({ type: "mcp.github.device", serverId: cmd.config.id, userCode: device.userCode, verificationUri: device.verificationUri, expiresAt: device.expiresAt });
+            void device.completion.catch((error) => {
+              if (pendingMcpAuthRequests.get(cmd.config.id) !== cmd.requestId) return;
+              pendingMcpAuthRequests.delete(cmd.config.id);
+              send({ type: "error", requestId: cmd.requestId, message: String(error) });
+            });
+            return;
+          }
+          pendingMcpAuthRequests.delete(cmd.config.id);
         }
         const tools = await mcp.connect(cmd.config);
         await refreshCustomTools();
@@ -1163,22 +1239,18 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         return;
       }
 
-      const capability = cmd.capability ?? inferCapability(cmd.message, cmd.attachments);
-      const subagent = capability ? resolveSubagent(subagentConfig, capability, cmd.model, cmd.subagentId) : undefined;
-      const executionSessionId = subagent ? `${cmd.sessionId}::subagent::${run.id}` : cmd.sessionId;
-      const executionModel = subagent?.modelId ?? cmd.model;
-      const executionMessage = subagent ? buildSubagentPrompt(subagent, cmd.message) : cmd.message;
-      if (subagent) log.info("dispatching capability task to subagent", { capability, subagentId: subagent.id, model: executionModel, route: subagent.route });
-
       Promise.resolve()
-        .then(() => adapter.run(executionSessionId, executionMessage, { model: executionModel, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, mcpServerId: subagent?.mcpServerId, permissionMode: subagent?.permissionMode ?? cmd.permissionMode, toolAllowList: subagent?.tools?.length ? subagent.tools : undefined, thinking: cmd.thinking, attachments: cmd.attachments, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
+        .then(() => adapter.run(cmd.sessionId, cmd.message, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
           emit(type, payload, cmd.sessionId, run.id)
         ))
         .then(async () => {
           const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
-          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, executionModel);
-          if (!assistantMessage && !cancelled) throw new Error("AI returned an empty response");
+          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
+          if (!assistantMessage && !cancelled && !persistedAssistantRuns.has(run.id)) throw new Error("AI returned an empty response");
+          releaseUndeliveredSteers(cmd.sessionId, run.id);
+          persistedAssistantRuns.delete(run.id);
+          initialUserMessageSeen.delete(run.id);
           assistantBuffers.delete(run.id);
           assistantStreamBuffers.delete(run.id);
           assistantPartsByRun.delete(run.id);
@@ -1188,7 +1260,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status);
           sessionRepo.touch(cmd.sessionId);
-          if (goal) await adapter.disposeSession(executionSessionId);
+          if (goal) await adapter.disposeSession(cmd.sessionId);
           await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.completed", assistantMessage ? {
             message: {
@@ -1211,7 +1283,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         .catch(async (err) => {
           const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
-          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, executionModel);
+          const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
+          releaseUndeliveredSteers(cmd.sessionId, run.id);
+          persistedAssistantRuns.delete(run.id);
+          initialUserMessageSeen.delete(run.id);
           assistantBuffers.delete(run.id);
           assistantStreamBuffers.delete(run.id);
           assistantPartsByRun.delete(run.id);
@@ -1220,7 +1295,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           const status = cancelled ? "cancelled" : "failed";
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status, cancelled ? undefined : String(err));
-          if (goal) await adapter.disposeSession(executionSessionId);
+          if (goal) await adapter.disposeSession(cmd.sessionId);
           await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled
             ? (assistantMessage ? { message: { id: assistantMessage.id, role: assistantMessage.role, content: assistantMessage.content, parts, runId: assistantMessage.runId, createdAt: assistantMessage.createdAt } } : {})
@@ -1233,9 +1308,6 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
               publishGoal(updated);
             }
           }
-        })
-        .finally(() => {
-          if (subagent) void adapter.disposeSession(executionSessionId);
         });
 
       send({ type: "pong", requestId: cmd.requestId });
@@ -1253,32 +1325,25 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         send({ type: "error", requestId: cmd.requestId, message: "目标 Agent run 已结束" });
         return;
       }
-      const accepted = await adapter.sendToSession(cmd.sessionId, cmd.message, "steer", cmd.attachments);
+      const pending = { runId: cmd.runId, queueItemId: cmd.queueItemId, message: cmd.message, attachments: cmd.attachments };
+      const steers = pendingSteers.get(cmd.sessionId) ?? [];
+      steers.push(pending);
+      pendingSteers.set(cmd.sessionId, steers);
+      let accepted = false;
+      try {
+        accepted = await adapter.sendToSession(cmd.sessionId, cmd.message, "steer", cmd.attachments);
+      } catch (error) {
+        log.warn("steer rejected", { error: String(error), runId: cmd.runId });
+      }
       if (!accepted) {
+        const remaining = (pendingSteers.get(cmd.sessionId) ?? []).filter((item) => item !== pending);
+        if (remaining.length) pendingSteers.set(cmd.sessionId, remaining);
+        else pendingSteers.delete(cmd.sessionId);
         send({ type: "error", requestId: cmd.requestId, message: "Pi 当前不接受引导消息" });
         return;
       }
-      // Pi has accepted the message into the live run. Persist it with that
-      // run so a restart cannot lose a successful steer from the transcript.
-      messageRepo.add(cmd.sessionId, "user", cmd.message, cmd.runId, undefined, undefined, cmd.attachments);
-      queueRepo.remove(cmd.sessionId, cmd.queueItemId);
-      sendQueue(cmd.sessionId);
-      send({
-        type: "session.messages",
-        sessionId: cmd.sessionId,
-        messages: messageRepo.listBySession(cmd.sessionId).map((m) => ({
-          id: m.id,
-          sessionId: m.sessionId,
-          runId: m.runId ?? undefined,
-          role: m.role,
-          content: m.content,
-          parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
-          attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
-          model: m.model ?? undefined,
-          goalId: m.goalId ?? undefined,
-          createdAt: m.createdAt,
-        })),
-      });
+      // Acceptance only queues the steer inside Pi. The user turn enters the
+      // transcript when Pi emits its message_end event.
       send({ type: "pong", requestId: cmd.requestId });
       return;
     }
@@ -1373,7 +1438,8 @@ while (true) {
     }
     handle(cmd).catch((err) => {
       log.error("command failed", { err: String(err) });
-      send({ type: "error", requestId: cmd.requestId, message: String(err) });
+      // Send the bare message so error codes such as SKILL_CATALOG_TIMEOUT arrive without an "Error: " prefix.
+      send({ type: "error", requestId: cmd.requestId, message: err instanceof Error ? err.message : String(err) });
     });
   }
 }

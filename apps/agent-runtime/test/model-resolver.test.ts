@@ -94,6 +94,15 @@ describe("model metadata resolver", () => {
     });
   });
 
+  test("infers reasoning only from exact reasoning parameter names", () => {
+    const reasoningOf = (supported_parameters: string[]) => parseModelMetadataResponse({ data: [{ id: "m", supported_parameters }] })[0]?.metadata?.reasoning;
+    expect(reasoningOf(["reasoningEffort"])).toBe(true);
+    expect(reasoningOf(["enable_thinking", "max_tokens"])).toBe(true);
+    expect(reasoningOf(["include_reasoning"])).toBe(true);
+    expect(reasoningOf(["reasoning_summary_style", "thinking_style_hint"])).toBeUndefined();
+    expect(reasoningOf(["max_tokens", "temperature"])).toBeUndefined();
+  });
+
   test("uses provider metadata per field, then Pi, then models.dev", async () => {
     let providerCalls = 0;
     let modelsDevCalls = 0;
@@ -249,12 +258,13 @@ describe("model metadata resolver", () => {
     const resolver = new ModelMetadataResolver({ disableModelsDev: true });
     const openai = await resolver.resolve({ provider: "proxy", model: "gpt-5.5", config: baseConfig("openai-compatible") });
     expect(openai.thinkingLevelMap?.low).toBe("low");
-    expect(openai.compat?.supportsReasoningEffort).toBe(true);
     expect(openai.compat?.thinkingFormat).toBeUndefined();
 
+    // No provider declaration and no matching endpoint: the model name alone
+    // must not switch the wire format; Pi's endpoint detection decides.
     const deepseek = await resolver.resolve({ provider: "proxy", model: "deepseek-flash", config: baseConfig("openai-compatible") });
-    expect(deepseek.compat?.thinkingFormat).toBe("deepseek");
-    expect(deepseek.compat?.supportsReasoningEffort).toBe(false);
+    expect(deepseek.compat?.thinkingFormat).toBeUndefined();
+    expect(deepseek.compat?.supportsDeveloperRole).toBeUndefined();
 
     const claude = await resolver.resolve({ provider: "proxy", model: "claude-fable-5", config: baseConfig("claude") });
     expect(claude.compat?.forceAdaptiveThinking).toBe(true);
@@ -270,21 +280,20 @@ describe("model metadata resolver", () => {
       model: "glm-5",
       config: baseConfig("openai-compatible", { baseUrl: "https://gateway.example.test/v1" }),
     });
-    // GLM is inferred as z.ai by model family, while the Qwen-token-plan
-    // catalog entry that happens to share the name must not be copied in.
-    expect(glm.compat?.thinkingFormat).toBe("zai");
-    expect(glm.compat?.thinkingFormat).not.toBe("qwen");
-    expect(glm.compat?.supportsReasoningEffort).toBe(false);
+    // The Qwen-token-plan catalog entry that happens to share the name must
+    // not be copied in, and the model name alone must not pick a format.
+    expect(glm.compat?.thinkingFormat).toBeUndefined();
   });
 
-  test("lets a confirmed endpoint override a conflicting model-family hint", async () => {
+  test("leaves known endpoints to Pi instead of overriding them from the model name", async () => {
     const resolver = new ModelMetadataResolver({ disableModelsDev: true });
     const model = await resolver.resolve({
       provider: "zai",
       model: "deepseek-chat",
       config: baseConfig("openai-compatible", { baseUrl: "https://api.z.ai/v1" }),
     });
-    expect(model.compat?.thinkingFormat).toBe("zai");
+    // Pi's detectCompat recognizes api.z.ai itself; a "deepseek" format here would override it.
+    expect(model.compat?.thinkingFormat).not.toBe("deepseek");
   });
 
   test("selects the subscription Responses catalog entry for ChatGPT backend URLs", async () => {
@@ -314,10 +323,10 @@ describe("model metadata resolver", () => {
         },
       }),
     });
-    expect(qwen.compat?.thinkingFormat).toBe("qwen");
-    // Qwen's wire format uses enable_thinking rather than reasoning_effort.
-    // Keep an explicit false override so Pi's URL auto-detection cannot add
-    // an unsupported reasoning_effort field for a generic gateway URL.
+    // Nothing declares enable_thinking, so the "qwen" in the name is ignored.
+    expect(qwen.compat?.thinkingFormat).toBeUndefined();
+    // The provider listed its parameters without reasoning_effort, so Pi's
+    // generic-endpoint default must not add that field.
     expect(qwen.compat?.supportsReasoningEffort).toBe(false);
     expect(qwen.compat?.maxTokensField).toBe("max_tokens");
 
@@ -333,7 +342,7 @@ describe("model metadata resolver", () => {
         },
       }),
     });
-    expect(deepseek.compat?.thinkingFormat).toBe("deepseek");
+    expect(deepseek.compat?.thinkingFormat).toBeUndefined();
     expect(deepseek.compat?.supportsReasoningEffort).toBe(true);
 
     const genericEffort = await resolver.resolve({
@@ -437,7 +446,8 @@ describe("model metadata resolver", () => {
         modelMetadata: { id: "glm-5", reasoning: true, supported_parameters: ["thinking"] },
       }),
     });
-    expect(zai.compat?.thinkingFormat).toBe("zai");
+    // api.z.ai is recognized by Pi at request time; Qone must not override it.
+    expect(zai.compat?.thinkingFormat).toBeUndefined();
   });
 
   test("retries a provider catalog after a transient failure", async () => {
@@ -462,6 +472,7 @@ describe("model metadata resolver", () => {
     expect(modelBaseUrl("claude", "api.anthropic.com")).toBe("https://api.anthropic.com");
     expect(modelBaseUrl("claude", "https://proxy.example.test/anthropic/v1/messages")).toBe("https://proxy.example.test/anthropic");
     expect(modelBaseUrl("google", "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent")).toBe("https://generativelanguage.googleapis.com/v1beta");
+    expect(modelBaseUrl("google", "https://generativelanguage.googleapis.com/v1beta/interactions")).toBe("https://generativelanguage.googleapis.com/v1beta");
     expect(modelListUrl("openai-compatible", "https://api.example.test/v1?tenant=demo")).toBe("https://api.example.test/v1/models?tenant=demo");
     expect(modelListUrl("claude", "https://api.anthropic.com")).toBe("https://api.anthropic.com/v1/models");
   });

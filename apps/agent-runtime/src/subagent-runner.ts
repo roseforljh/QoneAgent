@@ -1,11 +1,12 @@
-import type { AssistantMessagePart, SubagentConfigInfo, SubagentRunInfo } from "@qone/protocol";
+import { detectImageModel, type AssistantMessagePart, type MessageAttachmentInfo, type SubagentConfigInfo, type SubagentRunInfo } from "@qone/protocol";
 import type { RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
 import type { PiAdapter } from "./pi-adapter.js";
-import { buildSubagentPrompt } from "./subagents.js";
+import { buildSubagentPrompt, resolveSubagent, subagentCatalog } from "./subagents.js";
 import { SubagentScheduler } from "./subagent-scheduler.js";
 
 export interface SubagentController {
   query(runId: string): SubagentRunInfo | undefined;
+  catalog(): ReturnType<typeof subagentCatalog>;
   control(runId: string, action: "stop" | "resume" | "retry" | "steer" | "follow_up", message?: string): Promise<SubagentRunInfo>;
   wait(runId: string, timeoutMs?: number, signal?: AbortSignal, callerId?: string): Promise<SubagentRunInfo>;
   recordEvent(id: string, type: string, payload: unknown, sequence: number): void;
@@ -64,6 +65,8 @@ export function registerSubagentDispatcher(options: {
   activeSubagents: Set<string>;
   contextProvider?: (sessionId: string, limit: number) => string;
   subagentContextProvider?: (runId: string, limit: number) => string;
+  /** Attachments the user sent with a parent run, so a capability subagent can read the media the main model cannot. */
+  attachmentsProvider?: (sessionId: string, runId: string) => MessageAttachmentInfo[];
   runtime?: () => SubagentConfigInfo["runtime"];
   publish: (runId: string) => void;
   emit: (type: string, payload: unknown, sessionId?: string, runId?: string) => void;
@@ -110,7 +113,7 @@ export function registerSubagentDispatcher(options: {
     }
   };
 
-  const start = (id: string, prompt: string, newTurn: boolean, persistUserMessage: boolean, signal?: AbortSignal): Job => {
+  const start = (id: string, prompt: string, newTurn: boolean, persistUserMessage: boolean, signal?: AbortSignal, attachments?: MessageAttachmentInfo[]): Job => {
     if (jobs.has(id)) throw new Error("Subagent already has an active turn");
     const row = repo.get(id)!;
     const parent = sessionRepo.get(row.parentSessionId);
@@ -140,36 +143,27 @@ export function registerSubagentDispatcher(options: {
         runRepo.setStatus(id, "running");
         publish(id);
         timer = setTimeout(() => interrupt(id, new Error("Subagent timed out")), policy().timeoutMs);
-        let attempt = 0;
-        while (true) {
-          const messagesBefore = repo.listMessages(id).length;
-          const partCount = (partsByRun.get(id) ?? []).length;
-          assistantBuffers.delete(id);
-          streamBuffers.delete(id);
-          subagentStreams.delete(id);
-          try {
-            await adapter.run(executionSessionId, prompt, {
-              runId: id, model: row.model ?? undefined, cwd, eventSessionId: executionSessionId,
-              permissionMode: (row.permissionMode as "ask" | "auto" | "full" | null) ?? "ask",
-              subagentDepth: row.depth, subagentRunId: id,
-              toolAllowList: row.tools ? JSON.parse(row.tools) : undefined,
-            }, (type, payload) => emit(type, payload, executionSessionId, id));
-            if (job.abort.signal.aborted) throw job.abort.signal.reason;
-            break;
-          } catch (error) {
-            // Pi run() settles only after its finally cleanup. Never retry a live session.
-            if (job.abort.signal.aborted || attempt >= policy().maxRetries ||
-                !/429|rate.limit|503|502|504|timeout|timed out|network|fetch failed|overloaded|ECONN/i.test(String(error))) throw error;
-            repo.incrementRetry(id);
-            attempt++;
-            publish(id);
-          } finally {
-            // Real Pi messages are persisted by recordEvent; test/legacy adapters may only expose parts.
-            if (repo.listMessages(id).length === messagesBefore) {
-              const parts = (partsByRun.get(id) ?? []).slice(partCount);
-              const text = assistantBuffers.get(id) ?? parts.filter(p => p.type === "text").map(p => p.text).join("\n");
-              if (parts.length || text) repo.appendMessage(id, "assistant", text, parts);
-            }
+        const messagesBefore = repo.listMessages(id).length;
+        const partCount = (partsByRun.get(id) ?? []).length;
+        assistantBuffers.delete(id);
+        streamBuffers.delete(id);
+        subagentStreams.delete(id);
+        // No automatic retry: a failure is returned to the parent model with its
+        // error, and the parent decides whether to retry via control_subagent.
+        try {
+          await adapter.run(executionSessionId, prompt, {
+            runId: id, model: row.model ?? undefined, cwd, eventSessionId: executionSessionId,
+            permissionMode: (row.permissionMode as "ask" | "auto" | "full" | null) ?? "ask",
+            subagentDepth: row.depth, subagentRunId: id,
+            toolAllowList: row.tools ? JSON.parse(row.tools) : undefined, attachments,
+          }, (type, payload) => emit(type, payload, executionSessionId, id));
+          if (job.abort.signal.aborted) throw job.abort.signal.reason;
+        } finally {
+          // Real Pi messages are persisted by recordEvent; test/legacy adapters may only expose parts.
+          if (repo.listMessages(id).length === messagesBefore) {
+            const parts = (partsByRun.get(id) ?? []).slice(partCount);
+            const text = assistantBuffers.get(id) ?? parts.filter(p => p.type === "text").map(p => p.text).join("\n");
+            if (parts.length || text) repo.appendMessage(id, "assistant", text, parts);
           }
         }
         runRepo.finish(id, "completed");
@@ -210,28 +204,35 @@ export function registerSubagentDispatcher(options: {
     if (input.background && !policy().backgroundEnabled) throw new Error("Background subagents are disabled in settings");
     const profile = input.subagentId ? options.config().profiles.find(p => p.id === input.subagentId && p.enabled) : undefined;
     if (input.subagentId && !profile) throw new Error(`Subagent profile unavailable: ${input.subagentId}`);
+    const capabilityAgent = !profile && input.capability ? resolveSubagent(options.config(), input.capability) : undefined;
+    if (input.capability && !profile && !capabilityAgent) {
+      throw new Error(`No subagent is configured for ${input.capability}. Tell the user this task cannot be done until one is configured in Settings.`);
+    }
+    const agent = profile ?? capabilityAgent;
     const count = policy().contextMode === "snapshot" ? policy().contextMessages : 0;
     const context = count ? inherited
       ? options.subagentContextProvider?.(inherited.runId, count) ?? ""
       : options.contextProvider?.(parentSessionId, count) ?? "" : "";
-    const prompt = buildSubagentPrompt(profile
-      ? { id: profile.id, name: profile.name, instructions: profile.instructions }
+    const prompt = buildSubagentPrompt(agent
+      ? { id: agent.id, name: agent.name, instructions: agent.instructions }
       : { id: "delegate", name: input.title, instructions: "完成委派任务；父级上下文仅供参考。" }, input.task, context);
+    const attachments = capabilityAgent && !inherited ? options.attachmentsProvider?.(parentSessionId, input.parentRunId) : undefined;
     const child = runRepo.create(parentSessionId);
     const rank = { ask: 0, auto: 1, full: 2 };
     const ceiling = (inherited?.permissionMode as "ask" | "auto" | "full" | null) ?? input.permissionMode;
-    const requested = profile?.permissionMode ?? ceiling;
+    const requested = agent?.permissionMode ?? ceiling;
     const permissionMode = rank[requested] > rank[ceiling] ? ceiling : requested;
     const inheritedTools: string[] | undefined = inherited?.tools ? JSON.parse(inherited.tools) : undefined;
-    const tools = inheritedTools ? (profile?.tools?.length ? profile.tools.filter(t => inheritedTools.includes(t)) : inheritedTools) : profile?.tools?.length ? profile.tools : undefined;
+    const tools = inheritedTools ? (agent?.tools?.length ? agent.tools.filter(t => inheritedTools.includes(t)) : inheritedTools) : agent?.tools?.length ? agent.tools : undefined;
+    const model = agent?.modelId || policy().temporaryModelId || input.fallbackModel || inherited?.model || undefined;
     repo.create({
       ...input, runId: child.id, parentSessionId, parentSubagentId: inherited?.runId, depth,
       executionSessionId: `${parentSessionId}::subagent::${child.id}`,
-      profileId: profile?.id, model: profile?.modelId || policy().temporaryModelId || input.fallbackModel || inherited?.model || undefined,
+      profileId: profile?.id ?? capabilityAgent?.id, model,
       permissionMode, tools, contextMode: policy().contextMode, contextMessageCount: count,
     });
     const work = async () => {
-      const job = start(child.id, prompt, true, true, input.signal);
+      const job = start(child.id, model && detectImageModel({ model }).isImageModel ? input.task : prompt, true, true, input.signal, attachments);
       if (input.background) return `Subagent started in background. runId=${child.id}`;
       await job.done;
       const info = requireInfo(child.id);
@@ -248,6 +249,7 @@ export function registerSubagentDispatcher(options: {
 
   const controller: SubagentController = {
     query,
+    catalog: () => subagentCatalog(options.config()),
     recordEvent: (id, type, payload, sequence) => {
       if (!jobs.has(id)) return;
       const raw = (payload as { message?: { role?: string; content?: unknown; usage?: unknown } })?.message;

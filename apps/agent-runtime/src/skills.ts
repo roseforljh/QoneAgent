@@ -8,6 +8,7 @@ import {
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 import { QONE_SYSTEM_PROMPT } from "./system-prompt.js";
+import { qoneDataDir, readGlobalInstructions } from "./global-instructions.js";
 
 export interface SkillInfo {
   id: string;
@@ -88,7 +89,14 @@ export async function createResourceLoader(cwd: string): Promise<{
     noSkills: true,
     additionalSkillPaths: existsSync(ownSkills) ? [ownSkills] : [],
     noExtensions: true,
-    appendSystemPromptOverride: (base) => [...base, QONE_SYSTEM_PROMPT],
+    // Qone.md is user-level global guidance. It stays separate from Qone's
+    // built-in rules so updating the file never replaces product behavior.
+    appendSystemPromptOverride: (base) => {
+      const instructions = readGlobalInstructions().trim();
+      return instructions
+        ? [...base, QONE_SYSTEM_PROMPT, `## Qone.md\n\n${instructions}`]
+        : [...base, QONE_SYSTEM_PROMPT];
+    },
   });
   await loader.reload();
   return { loader, skills: loader.getSkills().skills.map(toInfo) };

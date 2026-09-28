@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { decodeCommand, type SubagentConfigInfo } from "@qone/protocol";
-import { buildSubagentPrompt, inferCapability, normalizeSubagentConfig, resolveSubagent } from "../src/subagents";
+import { buildSubagentPrompt, normalizeSubagentConfig, resolveSubagent, subagentCatalog } from "../src/subagents";
 import { Database } from "bun:sqlite";
 import { closeDb, MessageRepo, openDb, RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
 import { evaluatePermission } from "../src/permissions";
@@ -12,7 +12,7 @@ const config: SubagentConfigInfo = {
   profiles: [{ id: "researcher", name: "研究员", instructions: "只输出有来源的结论。", modelId: "provider/research", enabled: true, updatedAt: 1 }],
   routing: { webSearch: "subagent:researcher", stt: "model:provider/audio", videoRecognition: "mcp:search" },
   runtime: {
-    temporaryModelId: "", maxConcurrent: 4, timeoutMs: 1800000, tokenBudget: 0, maxRetries: 2,
+    temporaryModelId: "", maxConcurrent: 4, timeoutMs: 1800000, tokenBudget: 0,
     contextMode: "snapshot", contextMessages: 20, allowNested: true,
     maxDepth: 3, workflowMaxSteps: 32, backgroundEnabled: true,
   },
@@ -20,17 +20,42 @@ const config: SubagentConfigInfo = {
 };
 
 describe("capability subagent routing", () => {
-  test("infers media and search capabilities from attachments and intent", () => {
-    expect(inferCapability("请分析", [{ type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "data:video/mp4;base64,AA==" }])).toBe("videoRecognition");
-    expect(inferCapability("请转成文字", [{ type: "file", name: "voice.mp3", mimeType: "audio/mpeg", data: "data:audio/mpeg;base64,AA==" }])).toBe("stt");
-    expect(inferCapability("帮我搜索今天的新闻")).toBe("webSearch");
-    expect(inferCapability("把这段文字朗读出来")).toBe("tts");
+  test("normalizes the five capability agents as built-in profiles", () => {
+    const normalized = normalizeSubagentConfig({});
+    const logos = normalized.profiles.map((profile) => profile.logo).filter(Boolean);
+    expect(new Set(logos).size).toBe(logos.length);
+    expect(normalized.profiles.map((profile) => profile.id).filter((id) => id.startsWith("builtin:"))).toEqual([
+      "builtin:webSearch",
+      "builtin:videoRecognition",
+      "builtin:imageGeneration",
+      "builtin:stt",
+      "builtin:tts",
+    ]);
+    expect(resolveSubagent(normalized, "webSearch")?.name).toBe("联网搜索");
+    expect(resolveSubagent(normalized, "imageGeneration")?.instructions).toContain("图像生成");
   });
 
-  test("prefers enabled profile and otherwise uses capability model route", () => {
-    expect(resolveSubagent(config, "webSearch", "provider/main").modelId).toBe("provider/research");
-    expect(resolveSubagent(config, "stt", "provider/main").modelId).toBe("provider/audio");
-    expect(resolveSubagent(config, "videoRecognition", "provider/main").mcpServerId).toBe("search");
+  test("keeps normalization idempotent and does not duplicate built-ins", () => {
+    const first = normalizeSubagentConfig({ profiles: [{ id: "researcher", name: "研究员", instructions: "执行任务", modelId: "provider/research", enabled: true, updatedAt: 1 }] });
+    const second = normalizeSubagentConfig(first);
+    const recovered = normalizeSubagentConfig({ ...first, profiles: [...first.profiles, ...first.profiles] });
+    expect(second.profiles).toHaveLength(6);
+    expect(new Set(second.profiles.map((profile) => profile.id)).size).toBe(second.profiles.length);
+    expect(new Set(second.profiles.map((profile) => profile.logo).filter(Boolean)).size).toBe(second.profiles.length);
+    expect(recovered.profiles).toHaveLength(6);
+    expect(new Set(recovered.profiles.map((profile) => profile.id)).size).toBe(recovered.profiles.length);
+  });
+
+  test("resolves only what the user configured and reports the rest as unavailable", () => {
+    expect(resolveSubagent(config, "webSearch")?.modelId).toBe("provider/research");
+    expect(resolveSubagent(config, "stt")?.modelId).toBe("provider/audio");
+    expect(resolveSubagent(config, "videoRecognition")?.mcpServerId).toBe("search");
+    expect(resolveSubagent(config, "imageGeneration")).toBeUndefined();
+    expect(resolveSubagent({ ...config, routing: { tts: "auto" } }, "tts")).toBeUndefined();
+    const catalog = subagentCatalog(config);
+    expect(catalog.capabilities.map((item) => item.capability)).toEqual(["webSearch", "videoRecognition", "stt"]);
+    expect(catalog.unconfiguredCapabilities).toEqual(["imageGeneration", "tts"]);
+    expect(catalog.profiles.map((item) => item.id)).toEqual(["researcher"]);
   });
 
   test("normalizes malformed persisted values and keeps instructions in prompt", () => {
@@ -38,13 +63,10 @@ describe("capability subagent routing", () => {
     expect(normalized.profiles[0]).toMatchObject({ name: "X", instructions: "do", enabled: false });
     expect(normalized.runtime.temporaryModelId).toBe("");
     expect(normalizeSubagentConfig({ runtime: { temporaryModelId: " provider/temp " } }).runtime.temporaryModelId).toBe("provider/temp");
-    expect(buildSubagentPrompt(resolveSubagent(config, "webSearch", "provider/main"), "查资料")).toContain("<subagent-task");
+    expect(buildSubagentPrompt(resolveSubagent(config, "webSearch")!, "查资料")).toContain("<subagent-task");
   });
 
-  test("accepts capability dispatch and atomic settings synchronization over the protocol", () => {
-    const run = decodeCommand(JSON.stringify({ type: "agent.run", requestId: "r1", sessionId: "s1", message: "分析", capability: "videoRecognition", subagentId: "researcher" }));
-    expect(run?.type).toBe("agent.run");
-    expect(run && run.type === "agent.run" ? run.capability : undefined).toBe("videoRecognition");
+  test("accepts atomic settings synchronization over the protocol", () => {
     const sync = decodeCommand(JSON.stringify({ type: "subagent.sync", requestId: "r2", config }));
     expect(sync?.type).toBe("subagent.sync");
   });
@@ -166,6 +188,45 @@ test("persists the initial child turn exactly once", async () => {
     await controller.control(row.runId, "follow_up", "补充检查");
     expect(repo.listMessages(row.runId).map((message) => message.role)).toEqual(["user", "assistant", "assistant", "user", "assistant"]);
     expect(child).toContain(row.runId);
+  } finally {
+    closeDb(db);
+  }
+});
+
+test("capability dispatch uses the configured model with the parent's attachments and refuses unconfigured capabilities", async () => {
+  const db = openDb(":memory:");
+  try {
+    const workspace = new WorkspaceRepo(db).upsert("test", process.cwd());
+    const sessionRepo = new SessionRepo(db);
+    const session = sessionRepo.create("capability", workspace.id);
+    const runRepo = new RunRepo(db);
+    const parent = runRepo.create(session.id);
+    const audio = { type: "file" as const, name: "voice.mp3", mimeType: "audio/mpeg", data: "data:audio/mpeg;base64,AA==" };
+    const repo = new SubagentRunRepo(db);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    const calls: { model?: string; attachments?: unknown[] }[] = [];
+    const assistantBuffers = new Map<string, string>();
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async (_sessionId: string, _prompt: string, opts: { runId?: string; model?: string; attachments?: unknown[] }) => {
+        calls.push({ model: opts.model, attachments: opts.attachments });
+        if (opts.runId) assistantBuffers.set(opts.runId, "转写完成");
+      },
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo: new WorkspaceRepo(db), runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(),
+      assistantBuffers, streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(),
+      attachmentsProvider: (sessionId, runId) => sessionId === session.id && runId === parent.id ? [audio] : [],
+      publish: () => undefined, emit: () => undefined,
+    });
+    const input = { parentSessionId: session.id, parentRunId: parent.id, task: "转写", title: "转写", toolCallId: "call", fallbackModel: "provider/main", permissionMode: "ask" as const };
+    await dispatch({ ...input, capability: "stt" });
+    expect(calls).toEqual([{ model: "provider/audio", attachments: [audio] }]);
+    await expect(dispatch({ ...input, toolCallId: "call-2", capability: "imageGeneration" })).rejects.toThrow("No subagent is configured for imageGeneration");
+    expect(calls).toHaveLength(1);
   } finally {
     closeDb(db);
   }

@@ -18,10 +18,12 @@ import {
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type MessageAttachmentInfo, type ModelConfigInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { CAPABILITY_IDS, detectImageModel, modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type CapabilityId, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ModelMetadata, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
+import { generateImage } from "./image-generation.js";
+import { subagentResultForModel, subagentWorkflowResultForModel } from "./subagent-result.js";
 import { googleMediaContent, googleStreamSimple, localMediaMarker } from "./google-media.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
 
@@ -68,7 +70,7 @@ function assertModelToolNames(names: Iterable<string>): void {
 
 type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
-type DelegateSubagent = (input: { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; subagentId?: string; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
+type DelegateSubagent = (input: { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; subagentId?: string; capability?: CapabilityId; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
 type WorkflowStep = { id: string; title: string; task: string; subagentId?: string; dependsOn?: string[] };
 type SubagentController = import("./subagent-runner.js").SubagentController;
 
@@ -108,10 +110,10 @@ export function promptWithAttachments(message: string, attachments: readonly Mes
   const escapeName = (name: string) => name.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
   const files = attachments.flatMap((attachment) => {
     if (attachment.type !== "file") return [];
-    if (attachment.localPath) return [nativeMedia
-      ? localMediaMarker(attachment.localPath, attachment.mimeType)
-      : `[本地媒体附件 ${escapeName(attachment.name)} 需要 Gemini 原生模型]`];
-    if (nativeMedia && /^(?:audio|video)\//i.test(attachment.mimeType)) return [];
+    if (nativeMedia && attachment.localPath) return [localMediaMarker(attachment.localPath, attachment.mimeType)];
+    if (/^(?:audio|video)\//i.test(attachment.mimeType)) return nativeMedia
+      ? []
+      : [`[媒体附件 ${escapeName(attachment.name)}（${escapeName(attachment.mimeType)}）：当前模型无法直接读取，需要交给能处理该媒体的子代理]`];
     const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
     if (!match) return [];
     const body = Buffer.from(match[1]!, "base64").toString("utf8");
@@ -238,6 +240,8 @@ export class PiAdapter {
   private modelApiTypes = new Map<string, ProviderApiType>();
   private modelApiKeys = new Map<string, string>();
   private configuredModelConfigs: ModelConfigInfo[] = [];
+  private imageModelConfigs = new Map<string, ModelConfigInfo>();
+  private imageRunControllers = new Map<string, AbortController>();
   private goalBridge?: GoalRuntimeBridge;
   private modelConfigurationQueue: Promise<void> = Promise.resolve();
   private readonly settingsManager = SettingsManager.inMemory();
@@ -369,6 +373,7 @@ export class PiAdapter {
   private async applyModelConfiguration(configs: ModelConfigInfo[]): Promise<void> {
     this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
     this.configuredModelConfigs = configs;
+    this.imageModelConfigs = new Map();
     const grouped = new Map<string, ModelConfigInfo[]>();
     this.modelApiTypes = new Map(configs.filter((item) => item.enabled).map((item) => [`${item.provider}/${item.model}`, item.config.apiType as ProviderApiType]));
     this.thinkingLevels = new Map(configs.filter((item) => item.enabled).map((item) => {
@@ -385,6 +390,26 @@ export class PiAdapter {
         config: { ...item.config, apiType: String(item.config.apiType ?? "openai-compatible") },
         apiKey: this.modelApiKeys.get(provider),
       })));
+      for (const [index, item] of models.entries()) {
+        const raw = item.config;
+        const metadata = resolved[index]!.metadata;
+        const detected = detectImageModel({
+          model: item.model,
+          provider: item.provider,
+          apiType: typeof raw.apiType === "string" ? raw.apiType : undefined,
+          imageApiFormat: typeof raw.imageApiFormat === "string" ? raw.imageApiFormat as ImageApiFormat : undefined,
+          input: Array.isArray(raw.input) ? raw.input as string[] : undefined,
+          output: Array.isArray(raw.output) ? raw.output as string[] : undefined,
+          manualInput: Boolean(raw.metadataOverrides && typeof raw.metadataOverrides === "object" && (raw.metadataOverrides as Record<string, unknown>).input === true),
+          manualOutput: Boolean(raw.metadataOverrides && typeof raw.metadataOverrides === "object" && (raw.metadataOverrides as Record<string, unknown>).output === true),
+          metadata,
+        });
+        if (detected.isImageModel) {
+          // Keep the resolved provider capability in the transient config so
+          // the run path uses the same detection result before the UI saves it.
+          this.imageModelConfigs.set(item.id, { ...item, config: { ...raw, modelMetadata: metadata } });
+        }
+      }
       const firstResolved = resolved[0];
       this.modelRuntime.registerProvider(provider, {
         name: provider,
@@ -557,7 +582,7 @@ export class PiAdapter {
     const inspectTools: ToolDefinition[] = this.subagentController ? [{
       name: "inspect_subagent",
       label: "Inspect subagent",
-      description: "Read the current status, transcript parts, streaming output and child IDs of a subagent by run ID.",
+      description: "Read a subagent's status, text result, generated images, streaming output and child IDs by run ID. The full transcript remains in the side panel.",
       promptSnippet: "Use inspect_subagent when you need to check a delegated task before it finishes.",
       parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }) }),
       execute: async (_toolCallId, params) => {
@@ -565,7 +590,7 @@ export class PiAdapter {
         checkChild(runId);
         const result = this.subagentController!.query(runId);
         if (!result) throw new Error(`Unknown subagent ${runId}`);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+        return subagentResultForModel(result);
       },
     }, {
       name: "run_subagent_workflow",
@@ -589,7 +614,7 @@ export class PiAdapter {
         const result = await this.subagentController!.workflow(eventSessionId, parentRunId, input.steps, {
           model: modelName, permissionMode: this.runModes.get(sessionId) ?? "ask", signal,
         });
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+        return subagentWorkflowResultForModel(result);
       },
     }, {
       name: "wait_subagent",
@@ -602,7 +627,7 @@ export class PiAdapter {
         const input = params as { runId: string; timeoutMs?: number };
         checkChild(input.runId);
         const result = await this.subagentController!.wait(input.runId, input.timeoutMs, signal, subagentRunId);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+        return subagentResultForModel(result);
       },
     }, {
       name: "control_subagent",
@@ -619,31 +644,46 @@ export class PiAdapter {
         const input = params as { runId: string; action: "stop" | "resume" | "retry" | "steer" | "follow_up"; message?: string };
         checkChild(input.runId);
         const result = await this.subagentController!.control(input.runId, input.action, input.message);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+        return subagentResultForModel(result);
       },
     }] : [];
     const delegateTool: ToolDefinition[] = canDelegate ? [{
+      name: "list_subagents",
+      label: "List subagents",
+      description: "List the subagents the user has configured: capability subagents (image generation, speech-to-text, text-to-speech, video recognition, web search) and saved subagent profiles. Call this when the task needs an ability you do not have yourself, before telling the user you cannot do it.",
+      promptSnippet: "If a task needs something you cannot do yourself (for example producing an image or audio, or reading audio/video you cannot perceive), call list_subagents, then dispatch_subagent with the matching capability or subagentId. If nothing suitable is configured, tell the user plainly that it cannot be done and which setting is missing; never pretend to have done it.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const result = this.subagentController!.catalog();
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      },
+    }, {
       name: "dispatch_subagent",
       label: "Delegate to subagent",
-      description: `Run one independent task with a temporary subagent unless a saved subagent profile is selected. The temporary subagent's model is configured in Settings > Subagents > Temporary agent. When the user asks for N tasks or asks to start another subagent, call this tool once for each task, including in a later turn; do not stop at three. Multiple calls in one turn execute in parallel. The configured maximum of ${policy?.maxConcurrent ?? "the current"} is a simultaneous running limit, not a total task limit: completed tasks release capacity and extra tasks wait in the FIFO queue. Returns the subagent's final result. The full transcript is available in the side panel.`,
-      promptSnippet: "Use dispatch_subagent once per requested task. Unless a saved subagent profile is selected, the temporary agent uses the model configured in Settings > Subagents > Temporary agent. If the user asks to start another subagent after earlier tasks, dispatch it too. Do not assume a total limit of three; maxConcurrent limits simultaneous execution only, and overflow is queued.",
+      description: `Run one independent task with a subagent. Set capability to hand the task to the subagent the user configured for that capability (the user's current attachments are forwarded to it); set subagentId to use a saved profile; set neither for a temporary subagent whose model is configured in Settings > Subagents > Temporary agent. When the user asks for N tasks or asks to start another subagent, call this tool once for each task, including in a later turn; do not stop at three. Multiple calls in one turn execute in parallel. The configured maximum of ${policy?.maxConcurrent ?? "the current"} is a simultaneous running limit, not a total task limit: completed tasks release capacity and extra tasks wait in the FIFO queue. Returns the subagent's final result, or its status and error when it fails; the runtime never retries on its own, so read the error and decide yourself whether a retry via control_subagent makes sense. The full transcript is available in the side panel.`,
+      promptSnippet: "Use dispatch_subagent once per requested task. Unless a capability or saved subagent profile is selected, the temporary agent uses the model configured in Settings > Subagents > Temporary agent. If the user asks to start another subagent after earlier tasks, dispatch it too. Do not assume a total limit of three; maxConcurrent limits simultaneous execution only, and overflow is queued.",
       parameters: Type.Object({
         title: Type.String({ minLength: 1, maxLength: 120 }),
         task: Type.String({ minLength: 1, maxLength: 32_000 }),
+        capability: Type.Optional(Type.Union(CAPABILITY_IDS.map((id) => Type.Literal(id)))),
         subagentId: Type.Optional(Type.String({ maxLength: 128 })),
         background: Type.Optional(Type.Boolean()),
       }),
       executionMode: "parallel",
       execute: async (toolCallId, params, signal) => {
-        const input = params as { title: string; task: string; subagentId?: string; background?: boolean };
+        const input = params as { title: string; task: string; capability?: CapabilityId; subagentId?: string; background?: boolean };
         const parentRunId = this.activeRunIds.get(sessionId);
         if (!parentRunId || !this.delegateSubagent) throw new Error("No active parent run");
         const result = await this.delegateSubagent({
           parentSessionId: eventSessionId, parentRunId, parentSubagentId: subagentRunId, depth: subagentDepth + 1, toolCallId,
-          title: input.title.trim(), task: input.task.trim(), subagentId: input.subagentId,
+          title: input.title.trim(), task: input.task.trim(), subagentId: input.subagentId, capability: input.capability,
           fallbackModel: modelName, permissionMode: this.runModes.get(sessionId) ?? "ask", background: input.background, signal,
         });
-        return { content: [{ type: "text", text: result }], details: {} };
+        const completed = (() => {
+          try { return JSON.parse(result) as { runId?: string }; } catch { return undefined; }
+        })();
+        const info = completed?.runId ? this.subagentController?.query(completed.runId) : undefined;
+        return info ? subagentResultForModel(info) : { content: [{ type: "text", text: result }], details: {} };
       },
     }] : [];
     const goalTools: ToolDefinition[] = goalId && goalEpoch !== undefined && goalRunId && this.goalBridge ? [{
@@ -830,8 +870,14 @@ export class PiAdapter {
     const runId = opts.runId ?? crypto.randomUUID();
     this.activeRunIds.set(sessionId, runId);
     this.runModes.set(sessionId, opts.permissionMode ?? "ask");
+    const configuredImageModel = opts.model ? this.imageModelConfigs.get(opts.model) : undefined;
     let session: AgentSession | undefined;
     try {
+      if (configuredImageModel) {
+        await this.runImageGeneration(sessionId, runId, message, opts.attachments, configuredImageModel);
+        runEmit("agent.prompt_done", { runId });
+        return;
+      }
       session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.toolAllowList, opts.goalId, opts.goalEpoch, runId);
       if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
       this.runs.set(runId, session);
@@ -840,9 +886,6 @@ export class PiAdapter {
         ? this.modelRuntime?.getModel(...splitModelName(opts.model))
         : session.agent.state.model;
       const isGoogle = selectedModel?.api === "google-generative-ai";
-      if (!isGoogle && opts.attachments?.some((attachment) => attachment.localPath)) {
-        throw new Error("超过 50 MB 的本地音视频附件需要选择 Gemini 原生接口模型");
-      }
       await session.prompt(promptWithAttachments(message, opts.attachments, isGoogle), {
         images: isGoogle ? googleMediaContent(opts.attachments) : imageContent(opts.attachments),
       });
@@ -855,6 +898,11 @@ export class PiAdapter {
         throw new Error("AI returned an empty response");
       }
       runEmit("agent.prompt_done", { runId });
+    } catch (error) {
+      // Pi cannot resume this in-memory transcript after its compaction continuation
+      // lands on an assistant message. Rebuild from persisted messages on the next run.
+      if (String(error).includes("Cannot continue from message role: assistant")) this.staleSessions.add(sessionId);
+      throw error;
     } finally {
       this.runs.delete(runId);
       this.runModes.delete(sessionId);
@@ -868,6 +916,33 @@ export class PiAdapter {
     }
   }
 
+  private async runImageGeneration(sessionId: string, runId: string, prompt: string, attachments: MessageAttachmentInfo[] | undefined, config: ModelConfigInfo): Promise<void> {
+    const rawConfig = config.config && typeof config.config === "object" ? config.config : {};
+    const detected = detectImageModel({
+      model: config.model,
+      provider: config.provider,
+      apiType: typeof rawConfig.apiType === "string" ? rawConfig.apiType : undefined,
+      imageApiFormat: typeof rawConfig.imageApiFormat === "string" ? rawConfig.imageApiFormat as ImageApiFormat : undefined,
+      input: Array.isArray(rawConfig.input) ? rawConfig.input as string[] : undefined,
+      output: Array.isArray(rawConfig.output) ? rawConfig.output as string[] : undefined,
+      manualInput: Boolean(rawConfig.metadataOverrides && typeof rawConfig.metadataOverrides === "object" && (rawConfig.metadataOverrides as Record<string, unknown>).input === true),
+      manualOutput: Boolean(rawConfig.metadataOverrides && typeof rawConfig.metadataOverrides === "object" && (rawConfig.metadataOverrides as Record<string, unknown>).output === true),
+      metadata: rawConfig.modelMetadata && typeof rawConfig.modelMetadata === "object" ? rawConfig.modelMetadata as ModelMetadata : undefined,
+    });
+    if (!detected.isImageModel || !detected.format) throw new Error("Image model format could not be determined");
+    const apiKey = this.modelApiKeys.get(config.provider);
+    if (!apiKey) throw new Error(`No API key configured for image provider ${config.provider}`);
+    const controller = new AbortController();
+    this.imageRunControllers.set(runId, controller);
+    this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
+    try {
+      const parts = await generateImage({ config, format: detected.format, prompt, attachments, apiKey, signal: controller.signal });
+      this.push("message.completed", { message: { role: "assistant", content: parts } }, sessionId, runId);
+    } finally {
+      this.imageRunControllers.delete(runId);
+    }
+  }
+
   stopAll(): string[] {
     const runIds = [...this.activeRunIds.values()];
     for (const runId of runIds) this.stop(runId);
@@ -878,6 +953,7 @@ export class PiAdapter {
     const session = this.runs.get(runId);
     if (!session && ![...this.activeRunIds.values()].includes(runId)) return false;
     this.stoppedRuns.add(runId);
+    this.imageRunControllers.get(runId)?.abort();
     if (session) void session.abort();
     log.info("run aborted", { runId });
     return true;
@@ -906,5 +982,9 @@ export class PiAdapter {
     if (mode === "steer") await session.steer(prompt, images);
     else await session.followUp(prompt, images);
     return true;
+  }
+
+  clearSessionQueue(sessionId: string): void {
+    this.sessions.get(sessionId)?.clearQueue();
   }
 }

@@ -5,7 +5,7 @@ import {
   modelBaseUrl,
   mergeModelMetadata,
   modelNameCandidates,
-  normalizeModelName,
+  normalizeParameterName,
   parseModelMetadata,
   parseModelMetadataResponse,
   type ModelMetadata,
@@ -163,22 +163,9 @@ function builtinModelScore(item: { provider: string; model: Model<Api> }, modelI
   const itemCandidates = modelNameCandidates(item.model.id);
   const exactName = itemCandidates[0] === requestedCandidates[0];
   const basenameName = itemCandidates.some((candidate) => requestedCandidates.includes(candidate));
-  const lower = (requestedCandidates.at(-1) ?? normalizeModelName(modelId)).toLowerCase();
-  const canonicalProvider = lower.startsWith("gpt-") || /^o[134](?:[-.]|$)/.test(lower)
-    ? item.provider === "openai"
-    : lower.includes("claude")
-      ? item.provider === "anthropic"
-      : lower.includes("gemini") || lower.includes("gemma")
-        ? item.provider === "google"
-        : lower.includes("deepseek")
-          ? item.provider === "deepseek"
-          : lower.includes("grok")
-            ? item.provider === "xai"
-            : false;
   const mapQuality = Object.values(item.model.thinkingLevelMap ?? {}).filter((value) => value !== null).length;
   return (exactName ? 100_000 : basenameName ? 50_000 : 0)
     + (apiMatches(api, item.model.api) ? 10_000 : 0)
-    + (canonicalProvider ? 1_000 : 0)
     + mapQuality;
 }
 
@@ -255,10 +242,6 @@ function normalizeOptionType(value: string): string {
   return normalized === "budget" || normalized === "budget_token" ? "budget_tokens" : normalized;
 }
 
-function normalizeParameterName(value: string): string {
-  return value.trim().replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase().replace(/[.-]/g, "_");
-}
-
 function normalizeConfiguredThinking(value: unknown): ModelThinkingLevel {
   const normalized = normalizeReasoningValue(String(value ?? "none"));
   if (normalized === "none") return "off";
@@ -305,59 +288,15 @@ function urlHost(value: string): string | undefined {
   }
 }
 
-function normalizedProviderId(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
 /**
  * Pi's catalog contains gateway-specific entries for the same model. Their
  * limits are useful as model-name metadata, but their compat flags describe
- * the catalog provider's wire protocol and must not silently leak into an
- * unrelated user endpoint.
+ * the catalog provider's wire protocol. Only reuse them when the user's
+ * endpoint is that same service (same API and host); names prove nothing.
  */
-function canInheritBuiltinCompat(
-  provider: string,
-  baseUrl: string,
-  api: PiApi,
-  builtin: { provider: string; model: Model<Api> },
-): boolean {
-  if (builtin.model.api !== api) return false;
-  const providerId = normalizedProviderId(provider);
-  const genericProviderId = /(?:compatible|proxy|gateway|custom|merchant)/.test(providerId);
-  const providerAliases: Record<string, string[]> = {
-    openai: ["openai", "chatgpt"],
-    "openai-codex": ["openaicodex", "chatgpt", "codex"],
-    anthropic: ["anthropic", "claude"],
-    google: ["google", "gemini"],
-    openrouter: ["openrouter"],
-    deepseek: ["deepseek"],
-    zai: ["zai", "bigmodel"],
-    "zai-coding-cn": ["zaicodingcn", "zai", "bigmodel"],
-    "qwen-token-plan": ["qwen", "dashscope"],
-    "qwen-token-plan-cn": ["qwentokenplancn", "qwen", "dashscope"],
-    together: ["together"],
-  };
-  const aliases = providerAliases[builtin.provider] ?? [builtin.provider];
-  const providerMatches = !genericProviderId && aliases.some((alias) => providerId === normalizedProviderId(alias));
-  if (providerMatches) return true;
+function canInheritBuiltinCompat(baseUrl: string, api: PiApi, builtin: { model: Model<Api> }): boolean {
   const endpointHost = urlHost(baseUrl);
-  const catalogHost = urlHost(builtin.model.baseUrl);
-  if (endpointHost && catalogHost && endpointHost === catalogHost) return true;
-  // The provider id can be a user-defined slug while the endpoint is still a
-  // well-known service. Keep this list deliberately narrow; unknown gateways
-  // should use URL/model inference below instead.
-  const knownEndpointByProvider: Record<string, RegExp> = {
-    openai: /(?:^|\.)api\.openai\.com$/,
-    "openai-codex": /(?:^|\.)chatgpt\.com$/,
-    anthropic: /(?:^|\.)anthropic\.com$/,
-    google: /(?:^|\.)googleapis\.com$/,
-    openrouter: /(?:^|\.)openrouter\.ai$/,
-    deepseek: /(?:^|\.)deepseek\.com$/,
-    zai: /(?:^|\.)z\.ai$/,
-    "zai-coding-cn": /(?:^|\.)z\.ai$/,
-    together: /(?:^|\.)together\.ai$/,
-  };
-  return Boolean(endpointHost && knownEndpointByProvider[builtin.provider]?.test(endpointHost));
+  return builtin.model.api === api && Boolean(endpointHost) && endpointHost === urlHost(builtin.model.baseUrl);
 }
 
 function builtinCompatForModel(
@@ -377,10 +316,14 @@ function builtinCompatForModel(
   return undefined;
 }
 
+/**
+ * Compat flags come only from evidence: explicit user config, the provider's
+ * own declared parameters, or a Pi catalog entry on the same endpoint.
+ * Anything else is left to Pi's own endpoint detection; never guess from
+ * provider, URL, or model names.
+ */
 function inferredCompat(
   api: PiApi,
-  modelId: string,
-  provider: string,
   baseUrl: string,
   metadata: ModelMetadata,
   builtinCompat: Record<string, unknown> | undefined,
@@ -388,16 +331,8 @@ function inferredCompat(
 ): Record<string, unknown> | undefined {
   const configured = asRecord(config.compat);
   const compat: Record<string, unknown> = { ...(builtinCompat ?? {}) };
-  const endpointLower = `${provider}/${baseUrl}`.toLowerCase();
-  const modelLower = modelId.toLowerCase();
-  const configuredValue = (key: string) => configured?.[key] !== undefined;
   const infer = (key: string, value: unknown) => {
-    // A confirmed Pi/provider compat value is stronger than a name-based
-    // inference. Explicit user config is stronger than both.
-    if (!configuredValue(key) && compat[key] === undefined) compat[key] = value;
-  };
-  const inferThinkingFormat = (value: string, force = false) => {
-    if (!configuredValue("thinkingFormat") && (force || compat.thinkingFormat === undefined)) compat.thinkingFormat = value;
+    if (configured?.[key] === undefined && compat[key] === undefined) compat[key] = value;
   };
   const parameters = new Set((metadata.supportedParameters ?? []).map(normalizeParameterName));
   if (api === "openai-completions") {
@@ -406,70 +341,13 @@ function inferredCompat(
     const budgetParameter = [...parameters]
       .find((parameter) => ["thinking_token_budget", "thinking_budget", "thinking_budget_tokens"].includes(parameter));
     if (budgetParameter) compat.thinkingTokenBudgetField = budgetParameter;
-    const hasReasoningEffortParameter = parameters.has("reasoning_effort")
-      || (metadata.reasoningOptions?.some((option) => normalizeOptionType(option.type) === "effort") ?? false);
-    const endpointIsOpenRouter = /openrouter/.test(endpointLower);
-    const endpointIsDeepSeek = /deepseek/.test(endpointLower);
-    const endpointIsQwen = /dashscope|qwen/.test(endpointLower);
-    const endpointIsZai = /api\.z\.ai|open\.bigmodel\.cn|bigmodel|(?:^|[^a-z])z[-_.]?ai(?:[^a-z]|$)/.test(endpointLower);
-    const endpointIsTogether = /together/.test(endpointLower);
-    const metadataFormat = parameters.has("enable_thinking")
-      ? "qwen"
-      : parameters.has("chat_template_kwargs")
-        ? "qwen-chat-template"
-        : undefined;
-    // An endpoint's protocol wins over a model-family guess. A gateway can
-    // expose DeepSeek/Qwen/GLM through a different normalized wire format.
-    const endpointFormat = endpointIsOpenRouter ? "openrouter"
-      : endpointIsDeepSeek ? "deepseek"
-        : endpointIsQwen ? "qwen"
-          : endpointIsZai ? "zai"
-            : endpointIsTogether ? "together"
-              : undefined;
-    const modelFormat = /deepseek/.test(modelLower) ? "deepseek"
-      : /(?:^|[^a-z])qwen(?:\d+(?:\.\d+)?|[-_]|$)|dashscope/.test(modelLower) ? "qwen"
-        : /(?:^|[^a-z])(?:z[-_.]?ai|bigmodel)(?:[^a-z]|$)|(?:^|[^a-z])glm(?:[-_.]?\d)/.test(modelLower) ? "zai"
-          : /(?:^|[^a-z])together(?:[^a-z]|$)/.test(modelLower) ? "together"
-            : undefined;
-    const thinkingFormat = endpointFormat ?? metadataFormat ?? modelFormat;
-    const modelBasename = modelLower.slice(modelLower.lastIndexOf("/") + 1);
-    if (!thinkingFormat && hasReasoningEffortParameter) {
-      // A provider-declared effort option is enough to use the standard
-      // OpenAI field even when the model name is not an OpenAI name.
-      infer("supportsReasoningEffort", true);
-    }
-    if (!thinkingFormat && metadata.reasoning && /^(?:gpt-|o[134](?:[-.]|$))/.test(modelBasename)) {
-      // OpenAI reasoning models use the standard field on an otherwise
-      // generic completions endpoint. This is a model/API inference, not a
-      // copy of a gateway-specific compat record.
-      infer("supportsReasoningEffort", true);
-    }
-    if (thinkingFormat) {
-      inferThinkingFormat(thinkingFormat, Boolean(endpointFormat));
-      if (thinkingFormat === "deepseek") {
-        infer("supportsStore", false);
-        infer("supportsDeveloperRole", false);
-        if (!parameters.has("max_completion_tokens")) infer("maxTokensField", "max_tokens");
-        infer("requiresReasoningContentOnAssistantMessages", true);
-        // DeepSeek's `thinking` object is not evidence that the endpoint
-        // accepts OpenAI's separate `reasoning_effort` field.
-        // DeepSeek's native thinking object is not evidence that the endpoint
-        // also accepts OpenAI's separate `reasoning_effort` field. Only add it
-        // when the live/model metadata explicitly advertises that parameter.
-        infer("supportsReasoningEffort", hasReasoningEffortParameter);
-      } else if (thinkingFormat === "qwen") {
-        infer("supportsDeveloperRole", false);
-        if (!parameters.has("max_completion_tokens")) infer("maxTokensField", "max_tokens");
-        infer("supportsReasoningEffort", hasReasoningEffortParameter);
-      } else if (thinkingFormat === "zai") {
-        infer("supportsStore", false);
-        infer("supportsDeveloperRole", false);
-        if (!parameters.has("max_completion_tokens")) infer("maxTokensField", "max_tokens");
-        infer("supportsReasoningEffort", hasReasoningEffortParameter);
-      } else if (thinkingFormat === "together") {
-        infer("supportsReasoningEffort", hasReasoningEffortParameter);
-      }
-    }
+    if (parameters.has("enable_thinking")) infer("thinkingFormat", "qwen");
+    else if (parameters.has("chat_template_kwargs")) infer("thinkingFormat", "qwen-chat-template");
+    // A provider that lists its parameters without reasoning_effort has said it
+    // does not accept it; otherwise Pi's endpoint default would still send it.
+    const declaresEffort = parameters.has("reasoning_effort") || metadata.reasoningOptions?.some((option) => normalizeOptionType(option.type) === "effort");
+    if (declaresEffort) infer("supportsReasoningEffort", true);
+    else if (parameters.size || metadata.reasoningOptions?.length) infer("supportsReasoningEffort", false);
   } else if (api === "openai-responses" || api === "openai-codex-responses") {
     // ChatGPT's private `/backend-api/codex/responses` endpoint currently
     // rejects this otherwise-standard Responses field. Ordinary public
@@ -646,7 +524,7 @@ export class ModelMetadataResolver {
     const catalogBaseUrl = catalogBaseUrlFor(apiType, api, String(config.baseUrl ?? ""));
     const baseUrl = runtimeBaseUrl(catalogBaseUrl, api);
     const builtin = findBuiltinModel(modelId, api);
-    const transportMatchesBuiltin = Boolean(builtin && canInheritBuiltinCompat(provider, baseUrl, api, builtin));
+    const transportMatchesBuiltin = Boolean(builtin && canInheritBuiltinCompat(baseUrl, api, builtin));
     const builtinCompat = builtinCompatForModel(api, builtin?.model, transportMatchesBuiltin);
     const providerCatalog = await this.getProviderCatalog({ provider, apiType, piApi: api, baseUrl, catalogBaseUrl, apiKey: input.apiKey });
     const liveProviderInfo = lookupIndexedMetadata(providerCatalog, modelId);
@@ -668,7 +546,7 @@ export class ModelMetadataResolver {
         ? cloneMap(builtin.model.thinkingLevelMap)
         : thinkingMapFromMetadata(devInfo ?? metadata, api);
     if (!reasoning) thinkingLevelMap = { off: "none", minimal: null, low: null, medium: null, high: null, xhigh: null, max: null };
-    const compat = inferredCompat(api, modelId, provider, baseUrl, metadata, builtinCompat, config);
+    const compat = inferredCompat(api, baseUrl, metadata, builtinCompat, config);
     const cost = metadata.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     return {
       api,

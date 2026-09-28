@@ -95,4 +95,35 @@ describe("MCP OAuth", () => {
     expect(url.searchParams.get("code_challenge")).toBeString();
     await manager.disconnectAll();
   });
+
+  test("starts GitHub re-login before probing the MCP endpoint", async () => {
+    const originalFetch = globalThis.fetch;
+    const urls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({
+        device_code: "device-code",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://github.com/login/device",
+        expires_in: 0,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const manager = new McpManager();
+      const config = {
+        id: "mcp-github",
+        name: "GitHub",
+        url: "https://api.githubcopilot.com/mcp/",
+        authMode: "github-device" as const,
+        oauthClientId: "github-client",
+      };
+      manager.setAccessToken(config.id, "expired-token");
+      const result = await manager.connectGitHub(config);
+      expect(result.device?.verificationUri).toBe("https://github.com/login/device");
+      expect(urls).toEqual(["https://github.com/login/device/code"]);
+      await expect(result.device!.completion).rejects.toThrow("GitHub login timed out");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

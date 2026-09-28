@@ -123,9 +123,8 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       parameters: Type.Object({ url: Type.String() }),
       execute: async (_id, { url }: { url: string }) => {
         const target = publicUrl(url);
-        const body = await boundedFetch(new URL(`https://r.jina.ai/${target.href}`), { Accept: "text/plain" });
-        if (/requiring captcha|## performing security verification|title: just a moment/i.test(body.slice(0, 4096))) throw new Error("网页返回了验证页，未取得正文");
-        return output(body);
+        // Return whatever the page yielded; the model can tell a verification page from real content itself.
+        return output(await boundedFetch(new URL(`https://r.jina.ai/${target.href}`), { Accept: "text/plain" }));
       },
     },
     {

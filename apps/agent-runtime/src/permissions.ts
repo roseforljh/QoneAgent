@@ -60,6 +60,7 @@ const TOOL_PERMISSIONS: Record<string, PermissionDecision> = {
   ls: "allow",
   present: "allow",
   dispatch_subagent: "allow",
+  list_subagents: "allow",
   inspect_subagent: "allow",
   control_subagent: "allow",
   run_subagent_workflow: "allow",
@@ -203,7 +204,7 @@ export function toolSource(name: string): "builtin" | "plugin" | "mcp" {
 
 export function permissionNames(toolName: string): string[] {
   if (["dispatch_subagent", "run_subagent_workflow", "control_subagent"].includes(toolName)) return ["agent.delegate"];
-  if (["inspect_subagent", "wait_subagent"].includes(toolName)) return ["agent.inspect"];
+  if (["inspect_subagent", "wait_subagent", "list_subagents"].includes(toolName)) return ["agent.inspect"];
   if (toolName === "read" || toolName === "grep" || toolName === "find" || toolName === "ls") return ["filesystem.read"];
   if (toolName === "write" || toolName === "edit") return ["filesystem.write"];
   if (toolName === "bash" || toolName === "powershell") return ["shell.execute"];
