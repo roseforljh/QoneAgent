@@ -94,6 +94,8 @@ export class McpManager {
   private conns = new Map<string, Conn>();
   private exposedToolNames = new Map<string, string>();
   private accessTokens = new Map<string, string>();
+  private refreshTokens = new Map<string, string>();
+  private tokenRefreshes = new Map<string, Promise<void>>();
   private hostedOAuth = new Map<string, HostedMcpOAuth>();
   private pendingOAuth = new Map<string, PendingOAuth>();
   private pendingHostedOAuth = new Map<string, { config: McpServerConfig; createdAt: number }>();
@@ -108,6 +110,7 @@ export class McpManager {
     private readonly onOAuthFailure?: (serverId: string, error: Error) => void,
     private readonly resolveSecret: (key: string) => string | undefined = () => undefined,
     private readonly onAccessTokenInvalidated?: (config: McpServerConfig) => void | Promise<void>,
+    private readonly onAccessTokenRefreshed?: (config: McpServerConfig, credential: string) => void | Promise<void>,
   ) {}
 
   private validateConfig(config: McpServerConfig) {
@@ -121,8 +124,12 @@ export class McpManager {
     }
   }
 
-  setAccessToken(serverId: string, token: string) {
-    this.accessTokens.set(serverId, token);
+  /** Accepts a plain access token or a persisted `{ accessToken, refreshToken }` credential. */
+  setAccessToken(serverId: string, credential: string) {
+    const { accessToken, refreshToken } = parseCredential(credential);
+    this.accessTokens.set(serverId, accessToken);
+    if (refreshToken) this.refreshTokens.set(serverId, refreshToken);
+    else this.refreshTokens.delete(serverId);
   }
 
   private hosted(config: McpServerConfig) {
@@ -151,6 +158,8 @@ export class McpManager {
     this.deviceAuthGenerations.delete(serverId);
     this.deviceAuthSessions.delete(serverId);
     this.accessTokens.delete(serverId);
+    this.refreshTokens.delete(serverId);
+    this.tokenRefreshes.delete(serverId);
     this.hostedOAuth.get(serverId)?.clear();
     this.hostedOAuth.delete(serverId);
     for (const [state, pending] of this.pendingHostedOAuth) if (pending.config.id === serverId) this.pendingHostedOAuth.delete(state);
@@ -176,6 +185,7 @@ export class McpManager {
       if (config.authMode === "oauth" || !(error instanceof UnauthorizedError)) throw error;
       if (token && this.accessTokens.get(config.id) === token) {
         this.accessTokens.delete(config.id);
+        this.refreshTokens.delete(config.id);
         await this.disconnect(config.id).catch(() => {});
         await this.onAccessTokenInvalidated?.(config);
       }
@@ -225,10 +235,11 @@ export class McpManager {
         const detail = await response.text().catch(() => "");
         throw new Error(`GitHub login failed: HTTP ${response.status}${detail ? ` · ${detail}` : ""}`);
       }
-      const result = await response.json() as { access_token?: string; error?: string; interval?: number };
+      const result = await response.json() as { access_token?: string; refresh_token?: string; error?: string; interval?: number };
       if (result.access_token) {
-        this.setAccessToken(config.id, result.access_token);
-        await this.onOAuthComplete?.(config.id, result.access_token);
+        const credential = serializeCredential(result.access_token, result.refresh_token);
+        this.setAccessToken(config.id, credential);
+        await this.onOAuthComplete?.(config.id, credential);
         return;
       }
       if (result.error === "authorization_pending") continue;
@@ -236,6 +247,37 @@ export class McpManager {
       throw new Error(`GitHub login failed: ${result.error ?? "invalid token response"}`);
     }
     if (this.deviceAuthGenerations.get(config.id) === generation) throw new Error("GitHub login timed out");
+  }
+
+  /** GitHub OAuth apps may issue 8-hour tokens; rotate them with the refresh token on 401. */
+  private refreshGitHubToken(config: McpServerConfig): Promise<void> {
+    // A refresh token is single-use, so concurrent 401s must share one rotation.
+    let pending = this.tokenRefreshes.get(config.id);
+    if (!pending) {
+      pending = this.rotateGitHubToken(config).finally(() => {
+        if (this.tokenRefreshes.get(config.id) === pending) this.tokenRefreshes.delete(config.id);
+      });
+      this.tokenRefreshes.set(config.id, pending);
+    }
+    return pending;
+  }
+
+  private async rotateGitHubToken(config: McpServerConfig) {
+    const refreshToken = this.refreshTokens.get(config.id);
+    if (!refreshToken || !config.oauthClientId) throw new UnauthorizedError("GitHub access token expired");
+    const response = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: config.oauthClientId, grant_type: "refresh_token", refresh_token: refreshToken }),
+    });
+    if (!response.ok) throw new Error(`GitHub token refresh failed: HTTP ${response.status}`);
+    const result = await response.json() as { access_token?: string; refresh_token?: string; error?: string };
+    // Only a rejected refresh token means the login is gone; network/HTTP errors keep credentials.
+    if (!result.access_token) throw new UnauthorizedError(`GitHub token refresh failed: ${result.error ?? "invalid response"}`);
+    if (this.refreshTokens.get(config.id) !== refreshToken) return;
+    const credential = serializeCredential(result.access_token, result.refresh_token);
+    this.setAccessToken(config.id, credential);
+    await this.onAccessTokenRefreshed?.(config, credential);
   }
 
   /** Start an OAuth 2.1 authorization-code + PKCE flow for an HTTP MCP server. */
@@ -353,7 +395,10 @@ export class McpManager {
     if (config.authMode === "github-device" && !token) throw new Error("GitHub account login is required");
     const authProvider = config.authMode === "oauth"
       ? this.hosted(config).bearerProvider()
-      : token ? { token: async () => this.accessTokens.get(config.id) ?? (config.tokenEnv ? process.env[config.tokenEnv] : undefined) } : undefined;
+      : token ? {
+        token: async () => this.accessTokens.get(config.id) ?? (config.tokenEnv ? process.env[config.tokenEnv] : undefined),
+        ...(config.authMode === "github-device" ? { onUnauthorized: () => this.refreshGitHubToken(config) } : {}),
+      } : undefined;
     const launch = config.command ? resolveStdioLaunch(config.command, config.args ?? []) : undefined;
     const transport = config.url
       ? new StreamableHTTPClientTransport(new URL(config.url), authProvider ? { authProvider } : undefined)
@@ -454,6 +499,18 @@ export class McpManager {
     this.pendingOAuth.clear();
     this.pendingHostedOAuth.clear();
   }
+}
+
+function serializeCredential(accessToken: string, refreshToken?: string): string {
+  return refreshToken ? JSON.stringify({ accessToken, refreshToken }) : accessToken;
+}
+
+function parseCredential(credential: string): { accessToken: string; refreshToken?: string } {
+  // Plain tokens (legacy or non-expiring) never start with "{".
+  if (!credential.startsWith("{")) return { accessToken: credential };
+  const parsed = JSON.parse(credential) as { accessToken?: unknown; refreshToken?: unknown };
+  if (typeof parsed.accessToken !== "string" || !parsed.accessToken) throw new Error("Invalid MCP credential");
+  return { accessToken: parsed.accessToken, refreshToken: typeof parsed.refreshToken === "string" ? parsed.refreshToken : undefined };
 }
 
 function base64Url(bytes: Uint8Array): string {

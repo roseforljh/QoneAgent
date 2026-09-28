@@ -450,6 +450,12 @@ export class SettingsRepo {
 /** Queue state uses the existing settings store so it follows the runtime's
  * single SQLite persistence path and survives process restarts. */
 export class QueueRepo {
+  // Removal is terminal (sent, steered in or deleted). A client snapshot taken
+  // before it saw the removal must not bring the item back and send it twice.
+  // ponytail: in-memory for the runtime lifetime; ids are tiny and stale
+  // snapshots only exist for the IPC round-trip.
+  private consumed = new Set<string>();
+
   constructor(private settingsRepo: SettingsRepo) {}
 
   list(sessionId: string): QueueItemInfo[] {
@@ -461,6 +467,7 @@ export class QueueRepo {
 
   upsert(item: QueueItemInfo): QueueItemInfo[] {
     const items = this.list(item.sessionId).filter((candidate) => candidate.id !== item.id);
+    if (this.consumed.has(item.id)) return items;
     items.push({ ...item, updatedAt: Date.now() });
     const normalized = items.map((candidate, position) => ({ ...candidate, position }));
     this.settingsRepo.set(`queue:${item.sessionId}`, normalized);
@@ -469,7 +476,7 @@ export class QueueRepo {
 
   replace(sessionId: string, next: QueueItemInfo[]): QueueItemInfo[] {
     const normalized = next
-      .filter((item) => item.sessionId === sessionId)
+      .filter((item) => item.sessionId === sessionId && !this.consumed.has(item.id))
       .sort((a, b) => a.position - b.position)
       .map((item, position) => ({ ...item, position }));
     this.settingsRepo.set(`queue:${sessionId}`, normalized);
@@ -477,6 +484,7 @@ export class QueueRepo {
   }
 
   remove(sessionId: string, itemId: string): QueueItemInfo[] {
+    this.consumed.add(itemId);
     const items = this.list(sessionId).filter((item) => item.id !== itemId).map((item, position) => ({ ...item, position }));
     this.settingsRepo.set(`queue:${sessionId}`, items);
     return items;
