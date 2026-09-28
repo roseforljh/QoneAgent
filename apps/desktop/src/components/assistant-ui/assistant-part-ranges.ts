@@ -8,6 +8,45 @@ export type AssistantPartRange =
   | { type: "tools"; startIndex: number; endIndex: number }
   | { type: "presentation"; index: number };
 
+export interface AssistantRangeSections {
+  leading: AssistantPartRange[];
+  activity: AssistantPartRange[];
+  persistent: AssistantPartRange[];
+  answer: AssistantPartRange[];
+}
+
+/** Keep final answer content outside the execution disclosure. */
+export function assistantRangeSections(ranges: readonly AssistantPartRange[]): AssistantRangeSections {
+  let lastToolIndex = -1;
+  for (let index = ranges.length - 1; index >= 0; index--) {
+    if (ranges[index]?.type === "tools") {
+      lastToolIndex = index;
+      break;
+    }
+  }
+  if (lastToolIndex < 0) return { leading: [], activity: [], persistent: [], answer: [...ranges] };
+
+  const firstActivityIndex = ranges.findIndex((range) => range.type === "text" || range.type === "tools");
+  const leading = ranges.slice(0, firstActivityIndex);
+  const activity: AssistantPartRange[] = [];
+  const persistent: AssistantPartRange[] = [];
+  for (const range of ranges.slice(firstActivityIndex, lastToolIndex + 1)) {
+    if (range.type === "text" || range.type === "tools") activity.push(range);
+    else persistent.push(range);
+  }
+  return { leading, activity, persistent, answer: ranges.slice(lastToolIndex + 1) };
+}
+
+export function hasVisibleAnswer(parts: readonly PartState[], ranges: readonly AssistantPartRange[]): boolean {
+  return ranges.some((range) => {
+    if (range.type === "text") {
+      const part = parts[range.index];
+      return part?.type === "text" && part.text.trim().length > 0;
+    }
+    return range.type === "image" || range.type === "images" || range.type === "presentation";
+  });
+}
+
 function isPresentation(part: PartState): boolean {
   return part.type === "tool-call" && part.toolName === "present" && !part.isError;
 }

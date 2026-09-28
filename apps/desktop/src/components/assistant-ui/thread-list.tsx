@@ -15,6 +15,8 @@ import { useSidebarPreferences } from "../../lib/sidebar-preferences";
 import { useLocale, type MessageKey } from "../../localization";
 import "./sidebar-menu.css";
 import { MorphingSpinner } from "./morphing-spinner";
+import { SidebarSessionTitle } from "./sidebar-session-title";
+import { SidebarSessionActions } from "./sidebar-session-pin-action";
 
 export const ThreadListRoot: FC<ComponentPropsWithoutRef<typeof ThreadListPrimitive.Root>> = ({ className, ...props }) => {
   return <ThreadListPrimitive.Root data-slot="aui_thread-list-root" className={cn("flex flex-col gap-0.5", className)} {...props} />;
@@ -41,17 +43,26 @@ const ThreadListItemGroups: FC = () => {
   const threadIds = useAuiState((s) => s.threads.threadIds);
   const threadItems = useAuiState((s) => s.threads.threadItems);
   const sort = useSidebarPreferences((state) => state.sort);
+  const priorityIds = useSidebarPreferences((state) => state.priorityIds);
+
+  const { pinnedIndices, regularIndices } = useMemo(() => {
+    const pinned = new Set(priorityIds);
+    const pinnedIndices: number[] = [];
+    const regularIndices: number[] = [];
+    threadIds.forEach((id, index) => (pinned.has(id) ? pinnedIndices : regularIndices).push(index));
+    return { pinnedIndices, regularIndices };
+  }, [threadIds, priorityIds]);
 
   const groups = useMemo(() => {
     const itemsById = new Map(threadItems.map((item) => [item.id, item]));
     const dates = threadIds.map((id) => itemsById.get(id)?.lastMessageAt);
-    if (!dates.some(Boolean)) return null;
+    if (!regularIndices.some((index) => dates[index])) return null;
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const time = (index: number) => dates[index]?.getTime() ?? Number.MAX_SAFE_INTEGER;
     const sorted = sort === "recent"
-      ? threadIds.map((_, index) => index).sort((a, b) => time(b) - time(a))
-      : threadIds.map((_, index) => index);
+      ? [...regularIndices].sort((a, b) => time(b) - time(a))
+      : regularIndices;
     const result: { label: MessageKey; indices: number[] }[] = [];
     for (const index of sorted) {
       const label = dateGroupLabel(dates[index], startOfToday);
@@ -60,24 +71,24 @@ const ThreadListItemGroups: FC = () => {
       else result.push({ label, indices: [index] });
     }
     return result;
-  }, [threadIds, threadItems, sort]);
+  }, [threadIds, threadItems, sort, regularIndices]);
 
-  if (!groups) {
-    return threadIds.map((id, index) => (
-      <ThreadListPrimitive.ItemByIndex key={id} index={index} components={{ ThreadListItem }} />
-    ));
-  }
-
-  return groups.map((group) => (
-    <Fragment key={`${group.label}:${threadIds[group.indices[0]]}`}>
-      <div data-slot="aui_thread-list-group-label" className="text-muted-foreground px-2.5 pt-3 pb-1 text-xs font-medium">
-        {t(group.label)}
-      </div>
-      {group.indices.map((index) => (
-        <ThreadListPrimitive.ItemByIndex key={threadIds[index]} index={index} components={{ ThreadListItem }} />
-      ))}
-    </Fragment>
-  ));
+  return <>
+    {pinnedIndices.length > 0 && <div className="q-sidebar-section-label px-1.5 pt-2 pb-1 text-sm font-semibold">{t("sidebar.pinnedProjects")}</div>}
+    {pinnedIndices.map((index) => <ThreadListPrimitive.ItemByIndex key={threadIds[index]} index={index} components={{ ThreadListItem }} />)}
+    {groups ? groups.map((group) => (
+      <Fragment key={`${group.label}:${threadIds[group.indices[0]]}`}>
+        <div data-slot="aui_thread-list-group-label" className="text-muted-foreground px-2.5 pt-3 pb-1 text-xs font-medium">
+          {t(group.label)}
+        </div>
+        {group.indices.map((index) => (
+          <ThreadListPrimitive.ItemByIndex key={threadIds[index]} index={index} components={{ ThreadListItem }} />
+        ))}
+      </Fragment>
+    )) : regularIndices.map((index) => (
+      <ThreadListPrimitive.ItemByIndex key={threadIds[index]} index={index} components={{ ThreadListItem }} />
+    ))}
+  </>;
 };
 
 export const ThreadListNew = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<typeof Button> & { labelClassName?: string }>(
@@ -126,7 +137,7 @@ export const ThreadListItem: FC = () => {
   return (
     <ThreadListItemPrimitive.Root
       data-slot="aui_thread-list-item"
-      className="group hover:bg-muted focus-visible:bg-muted data-active:bg-muted has-focus-visible:bg-muted has-data-[state=open]:bg-muted relative flex h-8 items-center rounded-md transition-colors focus-visible:outline-none"
+      className="q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px] transition-colors"
       draggable={sort === "manual"}
       data-drop-edge={dropEdge}
       onDragStart={(event) => event.dataTransfer.setData("text/plain", id)}
@@ -146,14 +157,16 @@ export const ThreadListItem: FC = () => {
     >
       {renaming ? <input ref={inputRef} value={title} onChange={(event) => setTitle(event.target.value)} onBlur={submitRename} onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setTitle(session?.title ?? ""); setRenaming(false); } }} className="border-input bg-background focus:border-ring mx-1 h-6 min-w-0 flex-1 rounded-md border px-2 text-xs outline-none" aria-label={t("sidebar.renameSession")} /> : <ThreadListItemPrimitive.Trigger
         data-slot="aui_thread-list-item-trigger"
-        className="focus-visible:ring-ring/50 text-foreground/95 group-hover:text-foreground group-data-active:text-foreground flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 pe-9 text-start outline-none transition-colors focus-visible:ring-1"
+        className="q-sidebar-session-trigger text-foreground/95 group-hover:text-foreground group-data-active:text-foreground flex h-full min-w-0 flex-1 items-center rounded-[10px] px-2 text-start outline-none"
       >
-        <span data-slot="aui_thread-list-item-title" className="q-sidebar-session-title">
-          <ThreadListItemPrimitive.Title fallback="New Chat" />
+        <span data-slot="aui_thread-list-item-title" className="flex min-w-0 flex-1">
+          <SidebarSessionTitle title={session?.title || t("sidebar.newChat")}>
+            <ThreadListItemPrimitive.Title fallback={t("sidebar.newChat")} />
+          </SidebarSessionTitle>
         </span>
         {isRunning && <span className="sr-only">Running</span>}
       </ThreadListItemPrimitive.Trigger>}
-      <ThreadListItemMore isRunning={isRunning} onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session?.title ?? t("sidebar.newChat") }))) deleteSession(id); }} />
+      {!renaming && <ThreadListItemMore isRunning={isRunning} onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session?.title ?? t("sidebar.newChat") }))) deleteSession(id); }} />}
     </ThreadListItemPrimitive.Root>
   );
 };
@@ -164,44 +177,45 @@ const ThreadListItemMore: FC<{ isRunning: boolean; onRename: () => void; onDelet
   const priority = useSidebarPreferences((s) => s.priorityIds.includes(id));
   const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   return (
-    <ThreadListItemMorePrimitive.Root sharedFocusGroup>
-      {isRunning && <MorphingSpinner data-slot="aui_thread-list-item-running" className="text-muted-foreground pointer-events-none absolute end-1.5 top-1/2 size-3.5 -translate-y-1/2 transition-opacity group-hover:opacity-0" />}
-      <ThreadListItemMorePrimitive.Trigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          data-slot="aui_thread-list-item-more"
-          className="data-[state=open]:bg-accent absolute end-1.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 group-hover:opacity-100 focus-visible:ring-0"
+    <SidebarSessionActions pinned={priority} onTogglePinned={() => togglePriority(id)} status={isRunning ? <MorphingSpinner data-slot="aui_thread-list-item-running" className="size-3.5" /> : undefined}>
+      <ThreadListItemMorePrimitive.Root sharedFocusGroup>
+        <ThreadListItemMorePrimitive.Trigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            data-slot="aui_thread-list-item-more"
+            className="data-[state=open]:bg-accent size-6 shrink-0 p-0 focus-visible:ring-0"
+          >
+            <MoreHorizontalIcon className="size-3.5" />
+            <span className="sr-only">{t("sidebar.chatOptions")}</span>
+          </Button>
+        </ThreadListItemMorePrimitive.Trigger>
+        <ThreadListItemMorePrimitive.Content
+          side="right"
+          align="start"
+          sideOffset={6}
+          collisionPadding={8}
+          data-slot="aui_thread-list-item-more-content"
+          className="q-sidebar-menu"
         >
-          <MoreHorizontalIcon className="size-3.5" />
-          <span className="sr-only">{t("sidebar.chatOptions")}</span>
-        </Button>
-      </ThreadListItemMorePrimitive.Trigger>
-      <ThreadListItemMorePrimitive.Content
-        side="right"
-        align="start"
-        sideOffset={6}
-        collisionPadding={8}
-        data-slot="aui_thread-list-item-more-content"
-        className="q-sidebar-menu"
-      >
-        <ThreadListItemMorePrimitive.Item
-          data-slot="aui_thread-list-item-more-item"
-          onSelect={() => togglePriority(id)}
-          className="q-sidebar-menu-item"
-        >
-          <PinIcon className="size-4" />
-          <span>{t(priority ? "sidebar.unpin" : "sidebar.pin")}</span>
-        </ThreadListItemMorePrimitive.Item>
-        <ThreadListItemMorePrimitive.Item data-slot="aui_thread-list-item-more-item" onSelect={onRename} className="q-sidebar-menu-item">
-          <PencilIcon className="size-4" />
-          <span>{t("sidebar.rename")}</span>
-        </ThreadListItemMorePrimitive.Item>
-        <ThreadListItemMorePrimitive.Item data-slot="aui_thread-list-item-more-item" onSelect={onDelete} className="q-sidebar-menu-item q-sidebar-menu-item-danger">
-          <TrashIcon className="size-4" />
-          <span>{t("common.delete")}</span>
-        </ThreadListItemMorePrimitive.Item>
-      </ThreadListItemMorePrimitive.Content>
-    </ThreadListItemMorePrimitive.Root>
+          <ThreadListItemMorePrimitive.Item
+            data-slot="aui_thread-list-item-more-item"
+            onSelect={() => togglePriority(id)}
+            className="q-sidebar-menu-item"
+          >
+            <PinIcon className="size-4" />
+            <span>{t(priority ? "sidebar.unpin" : "sidebar.pin")}</span>
+          </ThreadListItemMorePrimitive.Item>
+          <ThreadListItemMorePrimitive.Item data-slot="aui_thread-list-item-more-item" onSelect={onRename} className="q-sidebar-menu-item">
+            <PencilIcon className="size-4" />
+            <span>{t("sidebar.rename")}</span>
+          </ThreadListItemMorePrimitive.Item>
+          <ThreadListItemMorePrimitive.Item data-slot="aui_thread-list-item-more-item" onSelect={onDelete} className="q-sidebar-menu-item q-sidebar-menu-item-danger">
+            <TrashIcon className="size-4" />
+            <span>{t("common.delete")}</span>
+          </ThreadListItemMorePrimitive.Item>
+        </ThreadListItemMorePrimitive.Content>
+      </ThreadListItemMorePrimitive.Root>
+    </SidebarSessionActions>
   );
 };

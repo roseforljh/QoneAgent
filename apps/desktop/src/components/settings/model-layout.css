@@ -67,9 +67,9 @@
 .settings-model-fetch { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
 .settings-model-fetch .settings-inline-status { margin: 0; }
 .settings-model-sources { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 18px; }
-.settings-model-sources span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted-foreground); font-size: 11px; }
+.settings-model-sources span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted-foreground); font-size: var(--q-text-xs); }
 .settings-model-sources strong { color: var(--foreground); font-weight: var(--q-weight-medium); }
-.settings-image-field-hint { color: var(--muted-foreground); font-size: 11px; line-height: 1.45; }
+.settings-image-field-hint { color: var(--muted-foreground); font-size: var(--q-text-xs); line-height: 1.45; }
 
 /* Outside the provider dialog: only the list scrolls, never the surrounding form. */
 .settings-sync-layer {

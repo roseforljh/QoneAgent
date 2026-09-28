@@ -22,6 +22,7 @@ import { EllipsisDots, ShimmerLabel } from "./elements/surfaces";
 import { ConversationMapAui } from "./elements/conversation-map.aui";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
 import "./thread-viewport.css";
+import "./composer-queue.css";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { pickNativeAttachmentFiles, useNativeFileDrop } from "../../lib/native-file-drop";
@@ -45,13 +46,16 @@ import {
   ArrowUpIcon,
   CheckIcon,
   ChevronDownIcon,
+  CornerDownRightIcon,
   CopyIcon,
   MicIcon,
   RefreshCwIcon,
   SquareIcon,
   FolderPlusIcon,
   Loader2Icon,
+  PencilIcon,
   TargetIcon,
+  Trash2Icon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FC, type RefObject } from "react";
 
@@ -106,7 +110,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       {conversationLoading ? (
         <>
           <ConversationLoadingSkeleton />
-          <div className="mx-auto w-full max-w-2xl px-4 pb-2">
+          <div className="mx-auto w-full q-composer-content px-4 pb-2">
             {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ComposerLoadingSkeleton />}
           </div>
         </>
@@ -124,25 +128,30 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
                 if (message.role === "user" && pairedUserIds.has(message.id)) return null;
                 const date = daySeparators.get(message.id);
                 return (
-                  <div className="q-message-block flex w-full flex-col gap-5" data-message-block>
+                  <div
+                    className="q-message-block flex w-full flex-col gap-5"
+                    data-message-block
+                    data-turn-id={message.role === "user" ? message.id : pairedUserIdByAssistant.get(message.id)}
+                    data-static-turn={message.id !== latestAssistantId && message.id !== threadMessages.at(-1)?.id ? "" : undefined}
+                  >
                     {message.role === "user"
                       ? <UserMessage messageId={message.id} />
                       : <AssistantMessage
                         userMessageId={pairedUserIdByAssistant.get(message.id)}
                         showLatestExtras={message.id === latestAssistantId}
                       />}
-                    {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto max-w-2xl" />}
+                    {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto q-thread-content" />}
                   </div>
                 );
               }}
             </ThreadPrimitive.Messages>
           </div>
           <ChatRunErrorView />
-          <div className="mx-auto w-full max-w-2xl empty:hidden">{children}</div>
+          <div className="mx-auto w-full q-thread-content empty:hidden">{children}</div>
 
           <ThreadPrimitive.ViewportFooter className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-background pb-2">
             <ThreadScrollToBottom />
-            <div className="relative z-1 mx-auto w-full max-w-2xl">
+            <div className="relative z-1 mx-auto w-full q-composer-content">
               {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
             </div>
           </ThreadPrimitive.ViewportFooter>
@@ -177,7 +186,7 @@ const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canCha
   if (creatingSession) return <SessionCreatingState />;
   return (
     <div className="flex grow flex-col items-center justify-center px-4 pb-[16vh]">
-      <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch gap-5">
+      <div className="mx-auto flex w-full q-composer-content flex-col items-stretch gap-5">
         {canChat ? <>
           <p className="text-center text-xl leading-7 font-normal text-foreground">{t("chat.welcome")}</p>
           <Composer placeholder={t("chat.placeholder")} />
@@ -190,26 +199,42 @@ const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canCha
 const composerInputClass =
   "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-9 w-full resize-none bg-transparent px-2.5 py-1 text-sm leading-6 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1";
 
+const QueueIcon: FC = () => (
+  <svg className="size-4 shrink-0 text-muted-foreground/70" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M3 3v8c0 2.2 1.3 3.5 3.5 3.5H16m-3-3 3 3-3 3M7.5 5h6.5M7.5 9.5h4" />
+  </svg>
+);
+
 const QueueItemRow: FC<{ queueItem: QueueItemState; steering: boolean; onEdit: () => void }> = ({ queueItem, steering, onEdit }) => {
   const { t } = useLocale();
   return (
-    <div className="q-composer-queue-item flex min-w-0 items-center gap-2 border-b border-foreground/5 px-2.5 py-1.5 text-xs last:border-b-0">
-      <span className="shrink-0 text-muted-foreground/60" aria-hidden>↳</span>
-      <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate" title={queueItem.prompt} />
-      {steering ? <span className="shrink-0 text-muted-foreground">{t("chat.steerPending")}</span> : <>
-        <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={onEdit}>编辑</button>
-        <QueueItemPrimitive.Steer className="shrink-0 text-muted-foreground hover:text-foreground">引导</QueueItemPrimitive.Steer>
-        <QueueItemPrimitive.Remove className="shrink-0 px-1 text-muted-foreground hover:text-foreground" aria-label="删除待发送消息">×</QueueItemPrimitive.Remove>
-      </>}
+    <div role="listitem" className="q-composer-queue-item flex min-h-12 min-w-0 items-center gap-2 px-3 py-1 text-sm transition-colors hover:bg-foreground/[0.03]">
+      <QueueIcon />
+      <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate text-foreground/85" title={queueItem.prompt} />
+      {steering ? <span className="shrink-0 text-muted-foreground">{t("chat.steerPending")}</span> : <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground">
+        <QueueItemPrimitive.Steer asChild>
+          <Button variant="ghost" size="icon-sm" title={t("chat.queueSteer")} aria-label={t("chat.queueSteer")} className="h-7 w-auto gap-1 rounded-md px-1.5 text-xs text-muted-foreground hover:text-foreground">
+            <CornerDownRightIcon className="size-3.5" aria-hidden />{t("chat.queueSteer")}
+          </Button>
+        </QueueItemPrimitive.Steer>
+        <QueueItemPrimitive.Remove asChild>
+          <TooltipIconButton tooltip={t("chat.queueRemove")} className="size-7 rounded-md text-muted-foreground hover:text-foreground">
+            <Trash2Icon className="size-3.5" aria-hidden />
+          </TooltipIconButton>
+        </QueueItemPrimitive.Remove>
+        <TooltipIconButton tooltip={t("chat.queueEdit")} className="size-7 rounded-md text-muted-foreground hover:text-foreground" onClick={onEdit}>
+          <PencilIcon className="size-3.5" aria-hidden />
+        </TooltipIconButton>
+      </div>}
     </div>
   );
 };
 
 const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const aui = useAui();
+  const { t } = useLocale();
   const sessionId = useStore((state) => state.currentSessionId);
   const editingQueueItem = useStore((state) => state.editingQueueItem);
-  const queueItems = useStore((state) => state.queueItems);
   const insertToolRef = useRef<InsertComposerTool | null>(null);
   const toggleMentionRef = useRef<ToggleComposerMention | null>(null);
   const closeMentionRef = useRef<(() => void) | null>(null);
@@ -249,47 +274,57 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
     <>
     <GoalStatusBar />
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
+      <div className="q-composer-rail">
+        <div className="q-composer-queue" role="list" aria-label={t("chat.queueLabel")}>
+          <ComposerPrimitive.Queue>
+          {({ queueItem }) => {
+            const activeQueue = sessionId ? getQoneMessageQueue(sessionId) : undefined;
+            const persistentId = activeQueue?.getPersistentId(queueItem.id);
+            if (persistentId && editingQueueItem?.id === persistentId) return null;
+            // The local steer lane changes the moment steering starts, before
+            // the runtime snapshot catches up.
+            const steering = Boolean(activeQueue?.adapter.steerItems.some((item) => item.id === queueItem.id));
+            return <QueueItemRow queueItem={queueItem} steering={steering} onEdit={() => {
+              if (!activeQueue || !persistentId) return;
+              const item = activeQueue.getItem(persistentId);
+              if (!item) return;
+              // Loading the queued message replaces the composer; never discard an unsent draft.
+              if (!aui.composer().getState().isEmpty) {
+                useStore.setState({ lastError: t("chat.queueEditDraftBlocked") });
+                return;
+              }
+              if (!activeQueue.beginEdit(queueItem.id)) return;
+              useStore.setState({ editingQueueItem: item });
+              aui.composer().setText(item.text);
+              void aui.composer().clearAttachments().then(async () => {
+                for (const attachment of item.attachments ?? []) {
+                  if (attachment.localPath) {
+                    await aui.composer().addAttachment(createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0));
+                  } else {
+                    await aui.composer().addAttachment({
+                      id: crypto.randomUUID(),
+                      type: attachment.type,
+                      name: attachment.name,
+                      contentType: attachment.mimeType,
+                      content: attachment.type === "image"
+                        ? [{ type: "image", image: attachment.data, filename: attachment.name }]
+                        : [{ type: "file", data: attachment.data, filename: attachment.name, mimeType: attachment.mimeType }],
+                    });
+                  }
+                }
+              }).catch(() => undefined);
+            }} />;
+          }}
+          </ComposerPrimitive.Queue>
+        </div>
+      </div>
       <ComposerPrimitive.Unstable_TriggerPopoverRoot>
       <ComposerPrimitive.AttachmentDropzone asChild>
         <div
           ref={shellRef}
           data-slot="aui_composer-shell"
-          className="border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
+          className="relative z-10 border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
         >
-          <div className="max-h-32 overflow-y-auto">
-            <ComposerPrimitive.Queue>
-              {({ queueItem }) => {
-              const persistentId = sessionId ? getQoneMessageQueue(sessionId)?.getPersistentId(queueItem.id) : undefined;
-              if (persistentId && editingQueueItem?.id === persistentId) return null;
-              return <QueueItemRow queueItem={queueItem} steering={queueItems.some((item) => item.id === persistentId && item.lane === "steer")} onEdit={() => {
-                if (!sessionId || !persistentId) return;
-                const item = useStore.getState().queueItems.find((candidate) => candidate.id === persistentId);
-                if (!item) return;
-                const localId = getQoneMessageQueue(sessionId)?.getLocalId(item.id);
-                if (!localId || !getQoneMessageQueue(sessionId)?.beginEdit(localId)) return;
-                useStore.setState({ editingQueueItem: item });
-                aui.composer().setText(item.text);
-                void aui.composer().clearAttachments().then(async () => {
-                  for (const attachment of item.attachments ?? []) {
-                    if (attachment.localPath) {
-                      await aui.composer().addAttachment(createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0));
-                    } else {
-                      await aui.composer().addAttachment({
-                        id: crypto.randomUUID(),
-                        type: attachment.type,
-                        name: attachment.name,
-                        contentType: attachment.mimeType,
-                        content: attachment.type === "image"
-                          ? [{ type: "image", image: attachment.data, filename: attachment.name }]
-                          : [{ type: "file", data: attachment.data, filename: attachment.name, mimeType: attachment.mimeType }],
-                      });
-                    }
-                  }
-                }).catch(() => undefined);
-              }} />;
-              }}
-            </ComposerPrimitive.Queue>
-          </div>
           {editingQueueItem && (
             <div className="flex items-center justify-between px-2.5 py-1 text-xs text-muted-foreground" role="status">
               <span>正在编辑待发送消息</span>
@@ -320,7 +355,7 @@ const GoalStatusBar: FC = () => {
   const clear = useStore((state) => state.clearGoal);
   if (!goal) return null;
   const status = goal.waitingReason ? "等待外部事件" : goal.status === "active" ? "执行中" : goal.status === "paused" ? "已暂停" : goal.status === "blocked" ? "已阻塞" : "已完成";
-  return <div className="mx-auto mb-2 flex w-full max-w-2xl items-center gap-2 rounded-xl border border-foreground/10 bg-muted/30 px-3 py-2 text-xs" role="status">
+  return <div className="mx-auto mb-2 flex w-full q-composer-content items-center gap-2 rounded-xl border border-foreground/10 bg-muted/30 px-3 py-2 text-xs" role="status">
     <span className="flex min-w-0 flex-1 items-center gap-1.5"><TargetIcon className="size-3.5 shrink-0 text-primary" /><strong className="shrink-0">Goal · {status}</strong><span className="truncate text-muted-foreground" title={goal.objective}>{goal.objective}</span></span>
     {goal.status === "active" && !goal.waitingReason && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={pause}>暂停</button>}
     {(goal.status === "paused" || goal.status === "blocked" || Boolean(goal.waitingReason)) && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={resume}>恢复</button>}
@@ -409,7 +444,7 @@ const UserMessageText: FC<{ paired?: boolean }> = ({ paired = false }) => {
   if (!hasText) return null;
 
   return (
-    <div className={cn("w-fit min-w-0 break-words rounded-[18px] bg-primary text-primary-foreground px-3.5 py-2 text-start text-sm leading-[1.5]", paired ? "max-w-full" : "max-w-[85%]")}>
+    <div className={cn("w-fit min-w-0 break-words rounded-[18px] bg-primary text-primary-foreground px-3.5 py-2 text-start text-sm leading-[calc(1em+4px)] tracking-[-0.01em]", paired ? "max-w-full" : "max-w-[85%]")}>
       <MessagePrimitive.Parts>
         {({ part }) => part.type === "text" ? <span className="whitespace-pre-wrap">{part.text}</span> : null}
       </MessagePrimitive.Parts>
@@ -420,7 +455,7 @@ const UserMessageText: FC<{ paired?: boolean }> = ({ paired = false }) => {
 const UserMessage: FC<{ messageId: string }> = ({ messageId }) => {
   const { t } = useLocale();
   return (
-    <MessagePrimitive.Root className="q-message-root q-message-user relative mx-auto flex w-full max-w-2xl flex-col items-end gap-0.5">
+    <MessagePrimitive.Root className="q-message-root q-message-user relative mx-auto flex w-full q-thread-content flex-col items-end gap-0.5">
       <PairUserAttachments />
       <UserMessageText />
 
@@ -504,7 +539,7 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean }
         visibleWords={0}
         streaming={false}
         showUser={Boolean(userMessageId)}
-        className="aui-message-pair mx-auto w-full max-w-2xl gap-5"
+        className="aui-message-pair mx-auto w-full q-thread-content gap-5"
         userContent={userMessageId ? (
           <ThreadPrimitive.Unstable_MessageById
             messageId={userMessageId}
@@ -628,7 +663,7 @@ const ChatRunErrorView: FC = () => {
   if (!error || error.sessionId !== sessionId || !userMessage) return null;
 
   return (
-    <div className="mx-auto w-full max-w-2xl">
+    <div className="mx-auto w-full q-thread-content">
       <ErrorState
         className="max-w-none"
         title={t("chat.runFailed")}

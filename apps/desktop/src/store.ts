@@ -914,7 +914,9 @@ export function initBridge() {
             runs: msg.runs,
             ...(activeRun && !st.running
               ? { running: true, activeRunId: activeRun.id }
-              : !activeRun && st.running && st.activeRunId === undefined
+              // A snapshot requested before a queued agent.run reached the
+              // runtime cannot see that run yet; only clear a run nobody started.
+              : !activeRun && st.running && st.activeRunId === undefined && pendingAgentRun?.sessionId !== msg.sessionId
                 ? { running: false }
                 : {}),
           }));
@@ -1171,7 +1173,7 @@ export function initBridge() {
           lastError: displayRuntimeError(msg.message),
           ...(workspaceRequest ? { workspaceError: msg.message } : {}),
           ...(st.creatingSession ? { creatingSession: false, pendingMessage: undefined } : {}),
-          ...(st.running && !st.activeRunId ? { running: false } : {}),
+          ...(st.running && !st.activeRunId && !pendingAgentRun ? { running: false } : {}),
         }));
         break;
       case "agent.event": {

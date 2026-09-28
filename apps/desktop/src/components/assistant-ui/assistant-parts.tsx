@@ -2,7 +2,7 @@ import { useMemo, type FC } from "react";
 import { MessagePrimitive, useAuiState, type PartState } from "@assistant-ui/react";
 import { MarkdownText } from "./markdown-text";
 import { GenerativeUIPresentation, SessionTimeline } from "./session-timeline";
-import { visibleAssistantPartRanges, type AssistantPartRange } from "./assistant-part-ranges";
+import { assistantRangeSections, hasVisibleAnswer, visibleAssistantPartRanges, type AssistantPartRange } from "./assistant-part-ranges";
 import { AssistantExecution } from "./assistant-execution";
 import { Image } from "./elements/image";
 import { ImageGallery } from "./elements/image-gallery";
@@ -45,21 +45,8 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
   const hasImage = parts.some((part) => part.type === "image");
   const hasDispatch = parts.some((part) => part.type === "tool-call" && part.toolName === "dispatch_subagent");
   const ranges = useMemo(() => visibleAssistantPartRanges(parts, hideSubagentCalls, showSubagentCapsule), [hideSubagentCalls, parts, showSubagentCapsule]);
-
-  const firstToolRange = ranges.findIndex((range) => range.type === "tools");
-  let lastToolRange = -1;
-  for (let index = ranges.length - 1; index >= 0; index--) {
-    if (ranges[index]?.type === "tools") {
-      lastToolRange = index;
-      break;
-    }
-  }
-  const beforeExecutionRanges = firstToolRange >= 0 ? ranges.slice(0, firstToolRange) : ranges;
-  const executionRanges = firstToolRange >= 0
-    ? ranges.slice(firstToolRange, lastToolRange + 1)
-    : [];
-  const summaryRanges = firstToolRange >= 0 ? ranges.slice(lastToolRange + 1) : [];
-  const capsuleInExecution = executionRanges.some((range) => range.type === "subagents");
+  const sections = useMemo(() => assistantRangeSections(ranges), [ranges]);
+  const finalAnswerStarted = hasVisibleAnswer(parts, sections.answer);
 
   const renderRange = (range: AssistantPartRange) => {
     if (range.type === "text") return (
@@ -80,13 +67,13 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
   return <>
     {!hasImage && <PendingImageGeneration />}
     {showSubagentCapsule && !hasDispatch && <SubagentCapsule />}
-    {beforeExecutionRanges.map(renderRange)}
-    {executionRanges.length > 0 && (
-      <AssistantExecution ranges={executionRanges}>
-        {executionRanges.filter((range) => range.type !== "subagents").map(renderRange)}
+    {sections.leading.map(renderRange)}
+    {sections.activity.length > 0 && (
+      <AssistantExecution ranges={sections.activity} finalAnswerStarted={finalAnswerStarted}>
+        {sections.activity.map(renderRange)}
       </AssistantExecution>
     )}
-    {capsuleInExecution && <SubagentCapsule />}
-    {summaryRanges.map(renderRange)}
+    {sections.persistent.map(renderRange)}
+    {sections.answer.map(renderRange)}
   </>;
 };

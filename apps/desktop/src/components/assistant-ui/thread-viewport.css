@@ -1,5 +1,11 @@
 .q-chat-footer { isolation: isolate; }
 
+/* Keep assistant-ui's turn anchoring while skipping paint and layout for old turns. */
+.q-message-block[data-static-turn] {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+}
+
 .q-chat-footer::before {
   content: "";
   position: absolute;

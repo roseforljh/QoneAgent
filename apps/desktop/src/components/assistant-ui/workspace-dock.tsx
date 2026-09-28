@@ -12,9 +12,8 @@ import {
   FolderTreeIcon,
   GitBranchIcon,
   GlobeIcon,
-  MoreHorizontalIcon,
+  ListTodoIcon,
   PanelRightCloseIcon,
-  PanelRightOpenIcon,
   PlugIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -39,11 +38,13 @@ import { DockBrowserView, DockMcpView, DockSkillsView } from "./dock-extra-views
 import { FadeScroll, mono } from "./elements/surfaces";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
-import { reportStartup } from "../../lib/startup-diagnostic";
 import { onOpenBrowserInDock } from "../../lib/browser-dock";
 import { SubagentPanel } from "./subagent-view";
 
-type DockView = "terminal" | "files" | "git" | "browser" | "mcp" | "skills" | "subagents";
+type DockView = "session" | "terminal" | "files" | "git" | "browser" | "mcp" | "skills" | "subagents";
+const DOCK_VIEWS: readonly DockView[] = ["session", "terminal", "files", "git", "browser", "mcp", "skills", "subagents"];
+const isDockView = (value: unknown): value is DockView =>
+  typeof value === "string" && DOCK_VIEWS.some((view) => view === value);
 
 const rid = () => crypto.randomUUID();
 
@@ -305,7 +306,7 @@ function TreeRows({
           <button
             type="button"
             onClick={() => (node.dir ? onToggle(node.path) : onOpen(node.path))}
-            className="text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground flex w-full min-w-0 items-center gap-1.5 py-1 pe-2 text-start text-[13px] transition-colors"
+            className="text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground flex w-full min-w-0 items-center gap-1.5 py-1 pe-2 text-start text-sm transition-colors"
             style={{ paddingInlineStart: `${10 + depth * 14}px` }}
           >
             {node.dir ? (
@@ -386,7 +387,7 @@ function FilesView({ workspaceId, refreshNonce }: { workspaceId: string; refresh
     }
   };
 
-  if (unsupported) return <p className="px-3 py-4 text-[13px] text-foreground/55">{t("dock.runtimeOutdated")}</p>;
+  if (unsupported) return <p className="px-3 py-4 text-sm text-foreground/55">{t("dock.runtimeOutdated")}</p>;
 
   if (selected) {
     const content = openFile?.workspaceId === workspaceId && openFile.path === selected ? openFile.content : undefined;
@@ -401,13 +402,13 @@ function FilesView({ workspaceId, refreshNonce }: { workspaceId: string; refresh
           <span className={cn(mono, "truncate")}>{selected}</span>
         </button>
         <FadeScroll className="min-h-0 flex-1">
-          {workspaceError ? <p className="px-3 py-3 text-[13px] text-red-500/80">{workspaceError}</p> : content === undefined ? (
-            <p className="px-3 py-3 text-[13px] text-foreground/50">{t("dock.fileLoading")}</p>
+          {workspaceError ? <p className="px-3 py-3 text-sm text-red-500/80">{workspaceError}</p> : content === undefined ? (
+            <p className="px-3 py-3 text-sm text-foreground/50">{t("dock.fileLoading")}</p>
           ) : (
             <SyntaxHighlighter
               code={content}
               language={languageForPath(selected)}
-              className="min-h-full [&_pre]:m-0! [&_pre]:rounded-none! [&_pre]:border-0! [&_pre]:bg-transparent! [&_pre]:px-3! [&_pre]:py-2.5! [&_pre]:text-[12px]! [&_pre]:leading-relaxed"
+              className="min-h-full [&_pre]:m-0! [&_pre]:rounded-none! [&_pre]:border-0! [&_pre]:bg-transparent! [&_pre]:px-3! [&_pre]:py-2.5! [&_pre]:text-xs! [&_pre]:leading-relaxed"
             />
           )}
         </FadeScroll>
@@ -415,8 +416,8 @@ function FilesView({ workspaceId, refreshNonce }: { workspaceId: string; refresh
     );
   }
 
-  if (workspaceError) return <p className="px-3 py-4 text-[13px] text-red-500/80">{workspaceError}</p>;
-  if (!files.length) return <p className="px-3 py-4 text-[13px] text-foreground/45">{t("dock.filesEmpty")}</p>;
+  if (workspaceError) return <p className="px-3 py-4 text-sm text-red-500/80">{workspaceError}</p>;
+  if (!files.length) return <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.filesEmpty")}</p>;
 
   return (
     <FadeScroll className="min-h-0 flex-1 py-1.5">
@@ -477,7 +478,7 @@ function GitView({ workspaceId, refreshNonce }: { workspaceId: string; refreshNo
     }
   };
 
-  if (unsupported) return <p className="px-3 py-4 text-[13px] text-foreground/55">{t("dock.runtimeOutdated")}</p>;
+  if (unsupported) return <p className="px-3 py-4 text-sm text-foreground/55">{t("dock.runtimeOutdated")}</p>;
 
   if (selected) {
     const diff = diffView?.workspaceId === workspaceId && diffView.path === selected ? diffView.diff : undefined;
@@ -492,7 +493,7 @@ function GitView({ workspaceId, refreshNonce }: { workspaceId: string; refreshNo
           <span className={cn(mono, "truncate")}>{selected}</span>
         </button>
         <FadeScroll className="min-h-0 flex-1 px-2 py-2">
-          {workspaceError ? <p className="px-1 py-1 text-[13px] text-red-500/80">{workspaceError}</p> : diff === undefined ? (
+          {workspaceError ? <p className="px-1 py-1 text-sm text-red-500/80">{workspaceError}</p> : diff === undefined ? (
             <p className="px-1 py-1 text-xs text-foreground/50">{t("dock.fileLoading")}</p>
           ) : diff.trim() ? (
             <DiffViewer patch={diff} language={languageForPath(selected)} showIcon showStats size="default" className="min-w-full" />
@@ -504,10 +505,10 @@ function GitView({ workspaceId, refreshNonce }: { workspaceId: string; refreshNo
     );
   }
 
-  if (workspaceError) return <p className="px-3 py-4 text-[13px] text-red-500/80">{workspaceError}</p>;
-  if (!gitLoaded) return <p className="px-3 py-4 text-[13px] text-foreground/45">{t("dock.gitLoading")}</p>;
+  if (workspaceError) return <p className="px-3 py-4 text-sm text-red-500/80">{workspaceError}</p>;
+  if (!gitLoaded) return <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.gitLoading")}</p>;
   if (!entries.length) {
-    return <p className="px-3 py-3 text-[13px] text-foreground/45">{t("dock.gitClean")}</p>;
+    return <p className="px-3 py-3 text-sm text-foreground/45">{t("dock.gitClean")}</p>;
   }
 
   return (
@@ -517,7 +518,7 @@ function GitView({ workspaceId, refreshNonce }: { workspaceId: string; refreshNo
           key={`${entry.code}:${entry.path}`}
           type="button"
           onClick={() => open(entry.path)}
-          className="text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground flex w-full min-w-0 items-center gap-2 px-3 py-1 text-start text-[13px] transition-colors"
+          className="text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground flex w-full min-w-0 items-center gap-2 px-3 py-1 text-start text-sm transition-colors"
         >
           <span className={cn(mono, "w-5 shrink-0 text-center", GIT_STATUS_COLORS[entry.code] ?? "text-foreground/45")}>
             {entry.code === "??" ? "U" : entry.code}
@@ -533,11 +534,36 @@ const PANEL_TRANSITION = "width 0.25s cubic-bezier(0.32,0.72,0,1), right 0.25s c
 const MIN_PANEL_W = 288;
 const MAX_PANEL_RATIO = 0.6;
 
-export function WorkspaceDock() {
+function SessionDetails() {
+  const { locale, t } = useLocale();
+  const session = useStore((state) => state.sessions.find((item) => item.id === state.currentSessionId));
+  const workspace = useStore((state) => state.workspaces.find((item) => item.id === session?.workspaceId));
+  const messageCount = useStore((state) => state.messages.length);
+  if (!session) return <p className="px-4 py-5 text-sm text-muted-foreground">{t("dock.sessionEmpty")}</p>;
+
+  const formatDate = (timestamp: number) => new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+  return (
+    <section className="min-h-0 flex-1 overflow-y-auto px-4 py-5" aria-label={t("dock.session")}>
+      <h2 className="break-words text-base font-semibold text-foreground">{session.title}</h2>
+      <dl className="mt-6 grid gap-4 text-sm">
+        {workspace && <div><dt className="text-muted-foreground">{t("sidebar.projects")}</dt><dd className="mt-1 break-words text-foreground">{workspace.name}</dd></div>}
+        <div><dt className="text-muted-foreground">{t("dock.sessionMessages")}</dt><dd className="mt-1 text-foreground">{messageCount}</dd></div>
+        <div><dt className="text-muted-foreground">{t("dock.sessionCreated")}</dt><dd className="mt-1 text-foreground">{formatDate(session.createdAt)}</dd></div>
+        <div><dt className="text-muted-foreground">{t("dock.sessionUpdated")}</dt><dd className="mt-1 text-foreground">{formatDate(session.updatedAt)}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
+export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView | undefined) => void }) {
   const { t } = useLocale();
   const workspaceId = useStore((s) => s.currentWorkspaceId);
   const workspacePath = useStore((s) => s.workspaces.find((w) => w.id === s.currentWorkspaceId)?.path);
   const [view, setView] = useState<DockView>();
+  useEffect(() => onViewChange?.(view), [view, onViewChange]);
   const [browserTarget, setBrowserTarget] = useState({ url: "https://www.bing.com", html: undefined as string | undefined, requestId: undefined as string | undefined });
   const viewRef = useRef(view);
   const browserTargetRef = useRef(browserTarget);
@@ -549,7 +575,6 @@ export function WorkspaceDock() {
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [terminalStatus, setTerminalStatus] = useState<"starting" | "ready" | "exited" | "error">("starting");
   const [terminalDetail, setTerminalDetail] = useState<string>();
-  const [moreOpen, setMoreOpen] = useState(false);
   const [panelW, setPanelW] = useState(416);
   const [dragging, setDragging] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
@@ -559,13 +584,8 @@ export function WorkspaceDock() {
     window.addEventListener("resize", checkWidth);
     return () => window.removeEventListener("resize", checkWidth);
   }, []);
-  const moreRef = useRef<HTMLDivElement>(null);
   const launcherRef = useRef<HTMLDivElement>(null);
-  const expandRef = useRef<HTMLDivElement>(null);
   const launcherMenuRef = useRef<HTMLDivElement>(null);
-  const dockZoneRef = useRef<HTMLDivElement>(null);
-  const dockRevealRef = useRef<HTMLDivElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
   const [launcherPosition, setLauncherPosition] = useState<{ top: number; right: number }>();
   const terminalApiRef = useRef<TerminalApi | undefined>(undefined);
   const onTerminalStatus = useCallback((status: "starting" | "ready" | "exited" | "error", detail?: string) => {
@@ -574,7 +594,6 @@ export function WorkspaceDock() {
   }, []);
 
   useEffect(() => onOpenBrowserInDock((target) => {
-    setMoreOpen(false);
     setLauncherOpen(false);
     if (target.requestId && viewRef.current === "browser" && browserTargetRef.current.requestId === target.requestId) {
       viewRef.current = undefined;
@@ -591,7 +610,6 @@ export function WorkspaceDock() {
 
   useEffect(() => {
     const toggleSubagents = () => {
-      setMoreOpen(false);
       setLauncherOpen(false);
       setOpenViews((current) => current.includes("subagents") ? current : [...current, "subagents"]);
       setView((current) => current === "subagents" ? undefined : "subagents");
@@ -620,19 +638,18 @@ export function WorkspaceDock() {
   };
 
   useEffect(() => {
-    if (!moreOpen && !launcherOpen) return undefined;
+    if (!launcherOpen) return undefined;
     const close = (event: PointerEvent) => {
       const target = event.target as Node | null;
       const path = event.composedPath();
       const inside = (element: HTMLElement | null) => Boolean(
         element && (path.includes(element) || (target && element.contains(target))),
       );
-      if (!inside(moreRef.current)) setMoreOpen(false);
-      if (!inside(launcherRef.current) && !inside(launcherMenuRef.current) && !inside(expandRef.current)) setLauncherOpen(false);
+      if (!inside(launcherRef.current) && !inside(launcherMenuRef.current)) setLauncherOpen(false);
     };
     window.addEventListener("pointerdown", close);
     return () => window.removeEventListener("pointerdown", close);
-  }, [moreOpen, launcherOpen]);
+  }, [launcherOpen]);
 
   useEffect(() => {
     if (!launcherOpen) {
@@ -640,13 +657,9 @@ export function WorkspaceDock() {
       return undefined;
     }
     const update = () => {
-      // The "+" button only exists while the panel is open; when the chooser is
-      // triggered from the capsule's expand button, anchor to it instead.
-      const rect = (launcherRef.current ?? expandRef.current)?.getBoundingClientRect();
+      const rect = launcherRef.current?.getBoundingClientRect();
       if (!rect) return;
-      setLauncherPosition(launcherRef.current
-        ? { top: rect.bottom + 8, right: 12 }
-        : { top: rect.top, right: window.innerWidth - rect.left + 8 });
+      setLauncherPosition({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
     };
     update();
     window.addEventListener("resize", update);
@@ -659,70 +672,18 @@ export function WorkspaceDock() {
 
   useEffect(() => {
     if (view) return;
-    setMoreOpen(false);
     setLauncherOpen(false);
   }, [view]);
 
-  useEffect(() => {
-    if (view) return undefined;
-    const timer = window.setTimeout(() => {
-      const x = Math.max(0, window.innerWidth - 30);
-      const label = (node: Element | undefined) => {
-        if (!node) return "null";
-        const classes = typeof node.className === "string"
-          ? node.className.split(/\s+/).filter(Boolean).slice(0, 3).join(".")
-          : "";
-        return `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ""}${classes ? `.${classes}` : ""}`;
-      };
-      const rect = (node: Element | null) => {
-        if (!(node instanceof HTMLElement)) return "none";
-        const box = node.getBoundingClientRect();
-        return `${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)},${Math.round(box.height)}`;
-      };
-      const reveal = dockRevealRef.current;
-      const revealStyle = reveal ? getComputedStyle(reveal) : undefined;
-      const buttons = reveal
-        ? [...reveal.querySelectorAll<HTMLButtonElement>("button")].map((button, index) => {
-          const box = button.getBoundingClientRect();
-          const x = Math.round(box.left + box.width / 2);
-          const y = Math.round(box.top + box.height / 2);
-          return `${index}:${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)},${Math.round(box.height)}@${label(document.elementFromPoint(x, y) ?? undefined)}`;
-        }).join(";")
-        : "none";
-      const points = [30, 60, 90, 120].map((y) => {
-        const hits = document.elementsFromPoint(x, y).slice(0, 4).map(label).join(">");
-        return `${y}:${hits || "null"}`;
-      }).join("|");
-      reportStartup(
-        `dock closed hit-test x=${x} zone=${rect(dockZoneRef.current)} reveal=${rect(reveal)} panel=${rect(panelRef.current)} `
-        + `visibility=${revealStyle?.visibility ?? "none"} pointerEvents=${revealStyle?.pointerEvents ?? "none"} `
-        + `buttons=${buttons} points=${points}`,
-      );
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [view]);
-
   const activate = (next: DockView) => {
-    setMoreOpen(false);
     setLauncherOpen(false);
     if (next === "terminal") setTerminalOpened(true);
     setOpenViews((current) => current.includes(next) ? current : [...current, next]);
     setView(next);
   };
 
-  const toggle = (next: DockView) => {
-    if (view === next) {
-      setMoreOpen(false);
-      setLauncherOpen(false);
-      setView(undefined);
-      return;
-    }
-    activate(next);
-  };
-
   const closeTab = (closing: DockView) => {
     const remaining = openViews.filter((item) => item !== closing);
-    setMoreOpen(false);
     setLauncherOpen(false);
     setOpenViews(remaining);
     if (closing === "terminal") setTerminalOpened(false);
@@ -733,32 +694,25 @@ export function WorkspaceDock() {
   };
 
   const closePanel = () => {
-    setMoreOpen(false);
     setLauncherOpen(false);
     setView(undefined);
   };
 
-  const togglePanel = () => {
-    if (view) {
-      closePanel();
-      return;
-    }
-    const last = openViews.at(-1);
-    if (last) {
-      activate(last);
-      return;
-    }
-    setMoreOpen(false);
-    setLauncherOpen((open) => !open);
-  };
-
-  const buttons: { view: DockView; icon: typeof SquareTerminalIcon; tip: string }[] = [
-    { view: "terminal", icon: SquareTerminalIcon, tip: t("dock.terminal") },
-    { view: "files", icon: FolderTreeIcon, tip: t("dock.files") },
-    { view: "git", icon: GitBranchIcon, tip: t("dock.git") },
-  ];
+  useEffect(() => {
+    const toggleDockView = (event: Event) => {
+      const requestedView = (event as CustomEvent<unknown>).detail;
+      if (!isDockView(requestedView)) return;
+      setLauncherOpen(false);
+      if (requestedView === "terminal") setTerminalOpened(true);
+      setOpenViews((current) => current.includes(requestedView) ? current : [...current, requestedView]);
+      setView((current) => current === requestedView ? undefined : requestedView);
+    };
+    window.addEventListener("qone-toggle-dock-view", toggleDockView);
+    return () => window.removeEventListener("qone-toggle-dock-view", toggleDockView);
+  }, []);
 
   const tabMeta: Record<DockView, { icon: LucideIcon; label: string }> = {
+    session: { icon: ListTodoIcon, label: t("dock.session") },
     terminal: { icon: SquareTerminalIcon, label: t("dock.terminal") },
     files: { icon: FolderTreeIcon, label: t("dock.files") },
     git: { icon: GitBranchIcon, label: t("dock.git") },
@@ -770,72 +724,6 @@ export function WorkspaceDock() {
 
   return (
     <>
-      {!view && <div
-        ref={dockZoneRef}
-        data-qone-dock-zone="true"
-        className="q-dock-reveal-zone absolute top-0 z-30 p-3"
-        style={{ right: 0, transition: dragging ? "none" : PANEL_TRANSITION }}
-      >
-        <div
-          ref={dockRevealRef}
-          className="q-dock-reveal flex flex-col items-center gap-0.5 rounded-full border border-border/60 bg-background/85 p-1 shadow-lg backdrop-blur"
-          data-open={(moreOpen || launcherOpen) || undefined}
-        >
-          <div ref={expandRef}>
-            <TooltipIconButton
-              tooltip={view ? t("dock.collapsePanel") : t("dock.expandPanel")}
-              onClick={togglePanel}
-              className={cn("size-7 rounded-full", launcherOpen && "bg-foreground/10 text-foreground")}
-            >
-              {view ? <PanelRightCloseIcon className="size-4" /> : <PanelRightOpenIcon className="size-4" />}
-            </TooltipIconButton>
-          </div>
-          {buttons.map(({ view: name, icon: Icon, tip }) => (
-            <TooltipIconButton
-              key={name}
-              data-qone-dock-action={name}
-              tooltip={tip}
-              onClick={() => toggle(name)}
-              className={cn("size-7 rounded-full", view === name && "bg-foreground/10 text-foreground")}
-            >
-              <Icon className="size-4" />
-            </TooltipIconButton>
-          ))}
-          <div ref={moreRef} className="relative">
-            <TooltipIconButton tooltip={t("dock.more")} onClick={() => setMoreOpen((open) => !open)} className="size-7 rounded-full">
-              <MoreHorizontalIcon className="size-4" />
-            </TooltipIconButton>
-            <AnimatePresence>
-              {moreOpen && (
-                <motion.div
-                  initial={{ opacity: 0, x: 4, scale: 0.97 }}
-                  animate={{ opacity: 1, x: 0, scale: 1 }}
-                  exit={{ opacity: 0, x: 4, scale: 0.97 }}
-                  transition={{ duration: 0.15, ease: "easeOut" }}
-                  className="bg-popover absolute end-9 top-0 z-40 w-40 overflow-hidden rounded-xl border border-border/60 p-1 shadow-xl"
-                >
-                  {([
-                    { view: "browser", icon: GlobeIcon, label: t("dock.browser") },
-                    { view: "mcp", icon: PlugIcon, label: t("dock.mcp") },
-                    { view: "skills", icon: WandSparklesIcon, label: t("dock.skills") },
-                    { view: "subagents", icon: BotMessageSquareIcon, label: t("nav.subagents") },
-                  ] as const).map(({ view: name, icon: Icon, label }) => (
-                    <button
-                      key={name}
-                      type="button"
-                      onClick={() => toggle(name)}
-                      className="text-foreground/75 hover:bg-foreground/[0.06] hover:text-foreground flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-start text-[13px] transition-colors"
-                    >
-                      <Icon className="size-3.5 shrink-0 text-foreground/50" />
-                      {label}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-      </div>}
       {view && isNarrowScreen && (
         <div
           role="presentation"
@@ -844,7 +732,6 @@ export function WorkspaceDock() {
         />
       )}
       <div
-        ref={panelRef}
         className={cn(
           "flex h-full shrink-0 justify-end overflow-hidden bg-background",
           isNarrowScreen
@@ -886,8 +773,8 @@ export function WorkspaceDock() {
                     >
                       {name === "terminal" ? <span className={cn("size-1.5 shrink-0 rounded-full", terminalStatus === "ready" ? "bg-emerald-500" : terminalStatus === "error" ? "bg-red-500" : "bg-amber-500")} title={terminalDetail} /> : null}
                       <Icon className="size-3.5 shrink-0 text-foreground/55" />
-                      <span className="truncate text-[12px] font-medium text-foreground/80">{label}</span>
-                      {name === "terminal" && workspacePath ? <span className={cn(mono, "min-w-0 truncate text-[11px] text-foreground/45")} title={workspacePath}>{workspacePath}</span> : null}
+                      <span className="truncate text-xs font-medium text-foreground/80">{label}</span>
+                      {name === "terminal" && workspacePath ? <span className={cn(mono, "min-w-0 truncate text-xs text-foreground/45")} title={workspacePath}>{workspacePath}</span> : null}
                     </button>
                     <button type="button" aria-label={`Close ${label}`} onClick={() => closeTab(name)} className="me-0.5 flex size-5 shrink-0 items-center justify-center rounded-md text-foreground/35 opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground group-hover:opacity-100 focus:opacity-100">
                       <XIcon className="size-3.5" />
@@ -930,13 +817,14 @@ export function WorkspaceDock() {
             {terminalOpened && workspaceId && <TerminalView workspaceId={workspaceId} active={view === "terminal"} apiRef={terminalApiRef} onStatus={onTerminalStatus} />}
           </div>
           <div className={cn("min-h-0 flex-1", view === "browser" ? "flex flex-col" : "hidden")}>
-            {view === "browser" && <DockBrowserView active={!launcherOpen && !moreOpen && !dragging} initialUrl={browserTarget.url} previewHtml={browserTarget.html} previewId={browserTarget.requestId} />}
+            {view === "browser" && <DockBrowserView active={!launcherOpen && !dragging} initialUrl={browserTarget.url} previewHtml={browserTarget.html} previewId={browserTarget.requestId} />}
           </div>
           {view === "mcp" && <DockMcpView refreshNonce={refreshNonce} />}
           {view === "skills" && <DockSkillsView workspaceId={workspaceId} refreshNonce={refreshNonce} />}
           {view === "subagents" && <SubagentPanel onClose={closePanel} />}
+          {view === "session" && <SessionDetails />}
           {(view === "files" || view === "git" || view === "terminal") && !workspaceId ? (
-            <p className="px-3 py-4 text-[13px] text-foreground/45">{t("dock.noWorkspace")}</p>
+            <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.noWorkspace")}</p>
           ) : view === "files" ? (
             <FilesView workspaceId={workspaceId!} refreshNonce={refreshNonce} />
           ) : view === "git" ? (
@@ -957,7 +845,7 @@ export function WorkspaceDock() {
             className="pointer-events-auto fixed z-[1000] max-h-[min(280px,calc(100dvh-24px))] w-56 overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-popover p-1.5 shadow-2xl"
             style={{ top: launcherPosition.top, right: launcherPosition.right, transformOrigin: "top right" }}
           >
-            <p className="px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-foreground/40">{t("dock.openWindow")}</p>
+            <p className="px-2.5 pb-1.5 pt-1 text-xs font-medium text-foreground/40">{t("dock.openWindow")}</p>
             {([
               { view: "terminal", icon: SquareTerminalIcon, label: t("dock.terminal"), detail: t("dock.terminalDescription") },
               { view: "browser", icon: GlobeIcon, label: t("dock.browser"), detail: t("dock.browserDescription") },

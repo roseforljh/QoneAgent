@@ -202,7 +202,7 @@ export function ComposerCommandItem({
         {command.description}
       </span>
       {active && (
-        <kbd className="bg-foreground/[0.06] text-foreground/45 rounded px-1 font-mono text-[10px]">
+        <kbd className="bg-foreground/[0.06] text-foreground/45 rounded px-1 font-mono text-xs">
           ↵
         </kbd>
       )}
@@ -272,7 +272,7 @@ export function ComposerAttachmentChip({
         </span>
         <span
           className={cn(
-            "text-[11px]",
+            "text-xs",
             attachment.state === "error"
               ? "text-red-600/80 dark:text-red-400/80"
               : "text-foreground/40",
@@ -371,7 +371,7 @@ export function ComposerVoice({
           0:{String(seconds).padStart(2, "0")}
         </span>
       ) : (
-        <ShimmerLabel className="text-foreground/55 relative text-[13px]">
+        <ShimmerLabel className="text-foreground/55 relative text-sm">
           Transcribing
         </ShimmerLabel>
       )}
@@ -538,7 +538,7 @@ export function ComposerContext({
           {segments.map((segment) => (
             <div
               key={segment.label}
-              className="text-foreground/55 flex items-center gap-2.5 text-[13px]"
+              className="text-foreground/55 flex items-center gap-2.5 text-sm"
             >
               <span
                 aria-hidden
@@ -552,13 +552,13 @@ export function ComposerContext({
           ))}
         </div>
         <div className="bg-foreground/[0.06] h-px" />
-        <div className="text-foreground/55 flex items-center justify-between text-[13px]">
+        <div className="text-foreground/55 flex items-center justify-between text-sm">
           <span>Total</span>
           <span className={cn(mono, "text-foreground/40 tabular-nums")}>
             {used.toFixed(1)}k / {usage.total.toFixed(1)}k
           </span>
         </div>
-        {note && <p className="text-foreground/40 text-[11px] leading-snug">{note}</p>}
+        {note && <p className="text-foreground/40 text-xs leading-snug">{note}</p>}
       </div>
       <button
         type="button"

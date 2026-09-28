@@ -1,0 +1,144 @@
+.q-conversation-nav {
+  display: flex;
+  width: 36px;
+  height: 100%;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.q-conversation-list {
+  display: flex;
+  max-height: min(70dvh, 40rem);
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.q-conversation-list[data-scrollable] {
+  mask-image: linear-gradient(to bottom, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent);
+}
+
+.q-conversation-list::-webkit-scrollbar { display: none; }
+
+.q-conversation-tick {
+  display: flex;
+  width: 36px;
+  height: 10px;
+  min-height: 10px;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.q-conversation-marker {
+  --marker-progress: 0;
+  position: relative;
+  display: flex;
+  width: 26px;
+  height: 2px;
+  color: var(--color-foreground);
+  opacity: .4;
+}
+
+.q-conversation-marker-line,
+.q-conversation-bookmark-dot {
+  background: currentColor;
+  transition: transform 160ms linear(0, .398 10%, .682 20%, .843 30%, .925 40%, .972 50%, 1.004 60%, 1.008 70%, 1.003 80%, 1);
+}
+
+.q-conversation-marker-line {
+  width: 100%;
+  height: 100%;
+  transform: scaleX(calc(.2308 + .7692 * var(--marker-progress)));
+  transform-origin: left;
+}
+
+.q-conversation-bookmark-dot {
+  position: absolute;
+  left: 2px;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  transform: translateX(calc(26px * (.2308 + .7692 * var(--marker-progress))));
+}
+
+.q-conversation-tick:has(.q-conversation-bookmark-dot) .q-conversation-marker { opacity: 1; }
+.q-conversation-tick[data-in-view] .q-conversation-marker { opacity: .55; }
+.q-conversation-tick[data-active] .q-conversation-marker { opacity: .7; }
+.q-conversation-tick:is(:hover, :focus-visible, [data-scrub-target]) .q-conversation-marker {
+  --marker-progress: 1;
+  opacity: 1;
+}
+
+.q-conversation-list :is(.q-conversation-tick:has(+ .q-conversation-tick:hover), .q-conversation-tick:hover + .q-conversation-tick) .q-conversation-marker,
+.q-conversation-tick[data-neighbor-distance="1"] .q-conversation-marker { --marker-progress: .7; }
+.q-conversation-list :is(.q-conversation-tick:has(+ .q-conversation-tick + .q-conversation-tick:hover), .q-conversation-tick:hover + .q-conversation-tick + .q-conversation-tick) .q-conversation-marker,
+.q-conversation-tick[data-neighbor-distance="2"] .q-conversation-marker { --marker-progress: .4; }
+.q-conversation-list :is(.q-conversation-tick:has(+ .q-conversation-tick + .q-conversation-tick + .q-conversation-tick:hover), .q-conversation-tick:hover + .q-conversation-tick + .q-conversation-tick + .q-conversation-tick) .q-conversation-marker,
+.q-conversation-tick[data-neighbor-distance="3"] .q-conversation-marker { --marker-progress: .2; }
+
+.q-conversation-list[data-scrubbing] .q-conversation-marker-line,
+.q-conversation-list[data-scrubbing] .q-conversation-bookmark-dot { transition-duration: 0s; }
+
+.q-conversation-preview {
+  z-index: 50;
+  width: 20rem;
+  max-width: calc(100vw - 1rem);
+  padding: .5rem;
+  border: 1px solid color-mix(in oklab, var(--color-foreground) 7%, transparent);
+  border-radius: .75rem;
+  background: color-mix(in oklab, var(--color-background) 91%, var(--color-foreground));
+  color: var(--color-foreground);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 25%);
+  backdrop-filter: blur(6px);
+  font-size: .875rem;
+  line-height: 1.25rem;
+  outline: none;
+  transform-origin: var(--transform-origin);
+  transition: opacity 180ms, scale 180ms;
+}
+
+.q-conversation-preview[data-starting-style],
+.q-conversation-preview[data-ending-style] { opacity: 0; scale: .97; }
+
+.q-conversation-preview-heading { display: flex; min-width: 0; align-items: center; gap: .375rem; font-weight: 600; }
+.q-conversation-preview-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-conversation-bookmark-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  place-items: center;
+  border: 0;
+  border-radius: .375rem;
+  background: transparent;
+  color: var(--color-muted-foreground);
+  cursor: pointer;
+}
+.q-conversation-bookmark-button:hover,
+.q-conversation-bookmark-button:focus-visible,
+.q-conversation-bookmark-button[aria-pressed="true"] { background: color-mix(in oklab, var(--color-foreground) 8%, transparent); color: var(--color-foreground); }
+.q-conversation-preview-body {
+  display: -webkit-box;
+  max-height: 4.5rem;
+  margin-top: .25rem;
+  overflow: hidden;
+  color: var(--color-muted-foreground);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.q-conversation-preview-body :is(p, blockquote) { margin: 0; }
+.q-conversation-preview-body :is(pre, table) { max-width: 100%; overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .q-conversation-marker-line,
+  .q-conversation-bookmark-dot,
+  .q-conversation-preview { transition: none; }
+}

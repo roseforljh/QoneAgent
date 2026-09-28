@@ -28,7 +28,7 @@ function Citation({ index, source, open, onOpenChange, onOpenSource }: CitationP
         delay={0}
         render={<button type="button" aria-label={`Citation ${source.label ?? index + 1}: ${source.domain}`} />}
         className={cn(
-          "mx-0.5 inline-flex h-4 min-w-4 translate-y-[-2px] cursor-default items-center justify-center rounded-[5px] px-1 align-middle font-mono text-[10px] font-medium tabular-nums transition-colors",
+          "mx-0.5 inline-flex h-4 min-w-4 translate-y-[-2px] cursor-default items-center justify-center rounded-[5px] px-1 align-middle font-mono text-xs font-medium tabular-nums transition-colors",
           open
             ? "bg-foreground text-background"
             : "bg-foreground/[0.06] text-foreground/45 hover:text-foreground/90",
@@ -55,14 +55,14 @@ function Citation({ index, source, open, onOpenChange, onOpenSource }: CitationP
                 {source.domain}
               </span>
             </div>
-            {source.title && <p className="mt-2 text-[13px] leading-snug font-medium">{source.title}</p>}
-            {source.snippet && <p className="text-foreground/50 mt-1 text-[13px] leading-relaxed">{source.snippet}</p>}
+            {source.title && <p className="mt-2 text-sm leading-snug font-medium">{source.title}</p>}
+            {source.snippet && <p className="text-foreground/50 mt-1 text-sm leading-relaxed">{source.snippet}</p>}
             {source.url && <a
               href={source.url}
               target="_blank"
               rel="noopener noreferrer"
               onClick={onOpenSource ? (event) => { event.preventDefault(); onOpenSource(source.url!); } : undefined}
-              className="text-foreground/65 hover:text-foreground mt-2 block truncate text-[11px] underline underline-offset-2"
+              className="text-foreground/65 hover:text-foreground mt-2 block truncate text-xs underline underline-offset-2"
             >{source.url}</a>}
           </PreviewCard.Popup>
         </PreviewCard.Positioner>

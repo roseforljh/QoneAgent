@@ -11,7 +11,7 @@ export function ImageGeneration({ prompt, generating, error, onRegenerate, class
   return (
     <div data-slot="image-generation" className={cn("flex w-64 flex-col gap-2.5", className)} {...props}>
       <div className="relative aspect-square w-full overflow-hidden rounded-2xl border border-foreground/10 bg-foreground/[0.04]">
-        {error && <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/90 p-6 text-center text-foreground/60"><ImageOffIcon className="size-8" /><span className="text-xs">图像生成失败</span><span className="text-[11px] text-foreground/45">{error}</span></div>}
+        {error && <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/90 p-6 text-center text-foreground/60"><ImageOffIcon className="size-8" /><span className="text-xs">图像生成失败</span><span className="text-xs text-foreground/45">{error}</span></div>}
         <div className="absolute inset-0 grid grid-cols-8 place-items-center p-6" aria-hidden>
           {DOTS.map((dot) => {
             const row = Math.floor(dot / 8);

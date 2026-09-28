@@ -7,7 +7,7 @@ const Prism = lazy(async () => ({ default: (await import("./elements/syntax-high
 const Mermaid = lazy(async () => ({ default: (await import("./elements/mermaid-diagram.aui")).MermaidDiagram }));
 const GenerativeUI = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUIBlock }));
 
-const Fallback: FC<SyntaxHighlighterProps> = ({ code }) => <pre className="aui-md-pre max-h-[46dvh] overflow-auto rounded-b-xl border border-border/50 bg-muted/30 p-3.5 text-[13px]"><code>{code}</code></pre>;
+const Fallback: FC<SyntaxHighlighterProps> = ({ code }) => <pre className="aui-md-pre max-h-[46dvh] overflow-auto rounded-b-xl border border-border/50 bg-muted/30 p-3.5 text-sm"><code>{code}</code></pre>;
 
 export const ShikiCode: FC<SyntaxHighlighterProps> = (props) => <Suspense fallback={<Fallback {...props} />}><Shiki {...props} /></Suspense>;
 export const PrismCode: FC<SyntaxHighlighterProps> = (props) => {

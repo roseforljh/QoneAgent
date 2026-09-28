@@ -155,7 +155,7 @@ const diffViewerVariants = cva(
           "border-foreground/10 bg-foreground/[0.06] dark:bg-foreground/[0.08] border",
       },
       size: {
-        sm: "text-[11px]",
+        sm: "text-xs",
         default: "text-[12.5px]",
         lg: "text-[13.5px]",
       },
@@ -225,7 +225,7 @@ function DiffViewerStats({
   return (
     <span
       data-slot="diff-viewer-stats"
-      className="flex shrink-0 gap-1.5 text-[11px] tabular-nums"
+      className="flex shrink-0 gap-1.5 text-xs tabular-nums"
     >
       <span className="text-green-600 dark:text-green-400">+{additions}</span>
       <span className="text-red-600 dark:text-red-400">−{deletions}</span>
@@ -276,7 +276,7 @@ function DiffViewerHeader({
     <div
       data-slot="diff-viewer-header"
       className={cn(
-        "border-foreground/10 text-muted-foreground flex h-9 items-center gap-2 border-b ps-3.5 pe-3 text-[11px] font-medium tracking-wide",
+        "border-foreground/10 text-muted-foreground flex h-9 items-center gap-2 border-b ps-3.5 pe-3 text-xs font-medium tracking-wide",
         className,
       )}
       {...props}

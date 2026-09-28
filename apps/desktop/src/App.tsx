@@ -21,6 +21,7 @@ import { createQoneMessageQueue, getQoneMessageQueue, setQoneMessageQueue } from
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { WorkspaceDock } from "./components/assistant-ui/workspace-dock";
+import { ThreadHeader } from "./components/assistant-ui/thread-header";
 import { ProjectSection } from "./components/assistant-ui/project-section";
 import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
@@ -131,6 +132,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       return steerAgent({ sessionId: currentSessionId, runId: state.activeRunId, queueItemId, message: extractText(message), attachments });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
+    onError: (message) => useStore.setState({ lastError: message }),
   }) : null, [currentSessionId, runAgent, steerAgent]);
 
   const hydratedQueueSession = useRef<string | undefined>(undefined);
@@ -343,7 +345,7 @@ function PendingApprovals() {
 
 function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOpenSettings: () => void }) {
   return (
-    <div className="mt-auto shrink-0 border-t border-border/50 p-2">
+    <div className="mt-auto shrink-0 p-2">
       <button
         type="button"
         onClick={onOpenSettings}
@@ -363,6 +365,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
   const pendingRun = useRef<{ text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null>(null);
   const runtime = useQoneRuntime(pendingRun);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [dockView, setDockView] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   useEffect(() => {
@@ -391,7 +394,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
         <aside
           className={cn(
             "q-sidebar bg-muted/30 flex h-full shrink-0 flex-col overflow-hidden border-r border-border/50 transition-[width] duration-200",
-            sidebarCollapsed ? "w-12" : "w-64",
+            sidebarCollapsed ? "w-12" : "w-[var(--q-sidebar-width)]",
           )}
         >
           <div className="flex h-12 shrink-0 items-center overflow-hidden px-2">
@@ -407,60 +410,62 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
             </TooltipIconButton>
             <Logo collapsed={sidebarCollapsed} />
           </div>
-          <ThreadListRoot
-            className={cn(
-              "relative flex-1 overflow-x-hidden transition-[padding,width] duration-200",
-              sidebarCollapsed ? "w-12 overflow-hidden px-2 pt-1" : "w-64 overflow-y-auto [scrollbar-gutter:stable] p-3",
-            )}
-          >
-            <ThreadListNew
-              className={cn(
-                "overflow-hidden transition-all duration-200",
-                sidebarCollapsed ? "w-8 gap-0 px-2" : "w-full gap-2 px-2.5",
-              )}
-              labelClassName={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}
-            />
-            <Link
-              to="/plugins"
-              aria-label="应用"
-              className={cn(
-                "hover:bg-muted text-foreground/95 hover:text-foreground flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
-                sidebarCollapsed ? "w-8 justify-center gap-0 px-2" : "w-full",
-              )}
-            >
-              <PuzzleIcon className="size-4 shrink-0" />
-              <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}>应用</span>
-            </Link>
-            {sidebarLayout === "project" && (!workspacesLoaded || !sessionsLoaded) && !sidebarCollapsed && <SidebarLoadingSkeleton layout="project" />}
-            {sidebarLayout === "project" && workspacesLoaded && sessionsLoaded && <div
-              aria-hidden={sidebarCollapsed}
-              inert={sidebarCollapsed}
-              className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
-            >
-              <ProjectSection />
-            </div>}
-            {sidebarLayout === "list" && !sessionsLoaded && !sidebarCollapsed && <SidebarLoadingSkeleton layout="list" />}
-            {sidebarLayout === "list" && sessionsLoaded && <ThreadListItems
+          <ThreadListRoot className="relative min-h-0 w-full flex-1 gap-0 overflow-hidden">
+            <div className="flex shrink-0 flex-col gap-0.5 px-2 pb-2">
+              <ThreadListNew
+                className={cn(
+                  "h-[30px] overflow-hidden transition-all duration-200",
+                  sidebarCollapsed ? "w-8 gap-0 px-2" : "w-full gap-2 px-2.5",
+                )}
+                labelClassName={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}
+              />
+              <Link
+                to="/plugins"
+                aria-label="应用"
+                className={cn(
+                  "hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
+                  sidebarCollapsed ? "w-8 justify-center gap-0 px-2" : "w-full",
+                )}
+              >
+                <PuzzleIcon className="size-4 shrink-0" />
+                <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}>应用</span>
+              </Link>
+            </div>
+            <div className={cn("flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-2", sidebarCollapsed && "overflow-hidden")}>
+              {sidebarLayout === "project" && (!workspacesLoaded || !sessionsLoaded) && !sidebarCollapsed && <SidebarLoadingSkeleton layout="project" />}
+              {sidebarLayout === "project" && workspacesLoaded && sessionsLoaded && <div
                 aria-hidden={sidebarCollapsed}
                 inert={sidebarCollapsed}
                 className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
-              />}
+              >
+                <ProjectSection />
+              </div>}
+              {sidebarLayout === "list" && !sessionsLoaded && !sidebarCollapsed && <SidebarLoadingSkeleton layout="list" />}
+              {sidebarLayout === "list" && sessionsLoaded && <ThreadListItems
+                  aria-hidden={sidebarCollapsed}
+                  inert={sidebarCollapsed}
+                  className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
+                />}
+            </div>
           </ThreadListRoot>
           <SidebarFooter collapsed={sidebarCollapsed} onOpenSettings={() => setSettingsOpen(true)} />
         </aside>
 
-        <div className="relative min-w-0 flex-1 overflow-hidden bg-background">
+        <div className="q-chat-shell relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+          <ThreadHeader dockView={dockView} />
           {lastError && (
-            <div className="error-banner absolute inset-x-4 top-3 z-50" role="alert">
+            <div className="error-banner q-chat-error-banner absolute inset-x-4 z-50" role="alert">
               <span>{lastError}</span>
               <button className="icon-button" onClick={() => useStore.setState({ lastError: undefined })} aria-label="关闭错误"><X size={15} /></button>
             </div>
           )}
-          <Suspense fallback={<ThreadLoadingFallback />}>
-            <Thread><PendingApprovals /></Thread>
-          </Suspense>
+          <div className="q-chat-content relative min-h-0 flex-1 overflow-hidden">
+            <Suspense fallback={<ThreadLoadingFallback />}>
+              <Thread><PendingApprovals /></Thread>
+            </Suspense>
+          </div>
         </div>
-        <WorkspaceDock />
+        <WorkspaceDock onViewChange={setDockView} />
         {settingsOpen && <Suspense fallback={null}>
           <SettingsDialog open={settingsOpen} onClose={closeSettings} theme={theme} onToggleTheme={onToggleTheme} />
         </Suspense>}

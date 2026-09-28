@@ -1,0 +1,475 @@
+/* Desktop typography shared by chat, navigation, settings, and management. */
+html,
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--q-font-sans);
+}
+
+body {
+  font-size: var(--q-text-base);
+  font-weight: var(--q-ui-weight);
+  line-height: 1.5;
+  letter-spacing: 0;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.brand-link {
+  font-size: 18px;
+  font-weight: var(--q-weight-semibold);
+  letter-spacing: -0.04em;
+}
+
+.aui-thread-root {
+  font-size: var(--q-text-base);
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.aui-thread-root {
+  min-width: 0;
+  overflow-x: clip;
+  --q-thread-content-width: 48rem;
+}
+.q-thread-content { max-width: var(--q-thread-content-width); }
+.q-composer-content { max-width: var(--q-thread-content-width); }
+.aui-thread-root .aui-viewport {
+  min-width: 0;
+  margin-inline: -1rem;
+  padding-inline: 1rem;
+  scrollbar-gutter: stable;
+}
+/* Keep the bubble below the viewport edge while preserving assistant-ui's layout anchor. */
+.aui-thread-root [data-aui-top-anchor-user] {
+  padding-block-start: 4rem;
+}
+.aui-thread-root .q-message-root { overflow: visible; }
+.aui-thread-root .q-message-action-slot {
+  position: absolute;
+  z-index: 2;
+  top: 100%;
+  height: 28px;
+  min-height: 28px;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .14s ease;
+}
+.aui-thread-root .q-message-user .q-message-action-slot { right: 0; }
+.aui-thread-root .q-message-assistant .q-message-action-slot { left: 0; }
+.aui-thread-root .q-message-root:hover .q-message-action-slot,
+.aui-thread-root .q-message-root:focus-within .q-message-action-slot {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .aui-thread-root .q-message-action-slot { transition: none; }
+}
+
+.aui-thread-root .aui-md {
+  font-size: var(--q-text-base);
+  line-height: 1.625;
+}
+
+.aui-thread-root .aui-md h1,
+.aui-thread-root .aui-md h2,
+.aui-thread-root .aui-md h3,
+.aui-thread-root .aui-md h4,
+.aui-thread-root .aui-md h5,
+.aui-thread-root .aui-md h6 {
+  color: var(--foreground);
+  font-weight: var(--q-weight-semibold);
+  letter-spacing: 0;
+}
+
+.aui-thread-root .aui-md h1 { font-size: calc(var(--q-text-base) * 1.5); line-height: calc(var(--q-text-base) * 2); }
+.aui-thread-root .aui-md h2 { font-size: calc(var(--q-text-base) * 1.25); line-height: calc(var(--q-text-base) * 1.75); }
+.aui-thread-root .aui-md h3 { font-size: calc(var(--q-text-base) * 1.125); line-height: calc(var(--q-text-base) * 1.75); }
+.aui-thread-root .aui-md h4 { font-size: var(--q-text-base); line-height: calc(var(--q-text-base) * 1.5); }
+.aui-thread-root .aui-md :is(h5, h6) { font-size: var(--q-text-base); line-height: 1.625; }
+.aui-thread-root .aui-md p { margin-block: 0 10px; }
+.aui-thread-root .aui-md li { line-height: 1.58; }
+.aui-thread-root .aui-md strong { font-weight: var(--q-weight-semibold); }
+.aui-thread-root .aui-md pre,
+.aui-thread-root .aui-md code,
+.terminal-panel,
+.terminal-panel code {
+  font-family: var(--q-font-mono);
+  letter-spacing: 0;
+}
+
+.aui-thread-root .aui-md pre {
+  max-height: min(28rem, 46dvh);
+  overflow: auto;
+  overscroll-behavior: auto;
+  scrollbar-gutter: stable;
+  font-size: var(--q-text-sm);
+  line-height: 1.5;
+}
+.aui-thread-root .aui-md table { font-size: var(--q-text-sm); line-height: 1.45; }
+
+/* Assistant prose shares the chat scale and reading rhythm. */
+.aui-thread-root .q-assistant-text .aui-md {
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-base);
+  font-weight: var(--q-weight-regular);
+  line-height: 1.625;
+  letter-spacing: 0;
+}
+
+.aui-thread-root .q-assistant-text .aui-md :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: var(--q-text-base) 0;
+}
+.aui-thread-root .q-assistant-text .aui-md h1 {
+  margin-bottom: calc(var(--q-text-base) / 2);
+}
+.aui-thread-root .q-assistant-text .aui-md :is(h2, h3) {
+  margin-bottom: calc(var(--q-text-base) / 4);
+}
+.aui-thread-root .q-assistant-text .aui-md :is(h5, h6) {
+  margin-top: 0;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(h1, h2, h3, h4, h5, h6):last-child {
+  margin-bottom: 0;
+}
+.aui-thread-root .q-assistant-text .aui-md p {
+  margin-block: 0 var(--q-text-base);
+  line-height: inherit;
+}
+.aui-thread-root .q-assistant-text .aui-md p:last-child {
+  margin-bottom: 0;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(ul, ol) {
+  margin-block: 0;
+  margin-inline-start: 0;
+  padding-inline-start: calc(var(--q-text-base) * 1.625);
+  line-height: inherit;
+}
+.aui-thread-root .q-assistant-text .aui-md li {
+  padding-inline-start: calc(var(--q-text-base) * .375);
+  line-height: inherit;
+}
+.aui-thread-root .q-assistant-text .aui-md :is(ul, ol) > li {
+  margin-top: 0;
+}
+.aui-thread-root .q-assistant-text + .q-assistant-text {
+  margin-top: 0.75rem;
+}
+.aui-thread-root .q-assistant-text .aui-md strong {
+  font-weight: 600;
+}
+.aui-thread-root .q-assistant-text .aui-md .aui-md-inline-code {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  padding: 0.08em 0.3em;
+  font-size: var(--q-text-sm);
+  font-weight: 400;
+}
+
+.aui-thread-root [data-slot="image-preview"] img { max-height: min(28rem, 46dvh); }
+.aui-thread-root .q-message-user-attachments { scrollbar-width: thin; }
+.aui-thread-root .q-message-user-attachments > :only-child { max-width: 100%; }
+.aui-thread-root .q-user-image-thumbnail [data-slot="image-preview"] {
+  min-height: 0;
+  max-height: 12rem;
+  overflow: hidden;
+}
+.aui-thread-root .q-user-image-thumbnail [data-slot="image-preview"] img {
+  width: 100%;
+  height: auto;
+  max-height: 12rem;
+  object-fit: contain;
+}
+.aui-thread-root [data-slot="file-root"] { max-width: min(100%, 22rem); }
+.aui-thread-root [data-slot="generative-ui-block"] { overscroll-behavior: auto; }
+/* The agent section expands to its intrinsic height. Nested result panes own
+   their max-height and scrolling, so the execution section never becomes a
+   second scroll container. */
+.aui-thread-root .q-tool-timeline {
+  margin-bottom: 0.75rem;
+}
+.aui-thread-root .q-assistant-execution * {
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 18%, transparent) transparent;
+}
+.aui-thread-root .q-assistant-execution *::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+.aui-thread-root .q-assistant-execution *::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--muted-foreground) 20%, transparent);
+}
+.aui-thread-root .q-assistant-execution *::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--muted-foreground) 32%, transparent);
+}
+.aui-thread-root .q-assistant-execution *::-webkit-scrollbar-track,
+.aui-thread-root .q-assistant-execution *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.aui-thread-root .aui-composer-input {
+  font-size: var(--q-text-base);
+  line-height: 1.5;
+}
+
+.aui-thread-root .aui-composer-root + p,
+.aui-thread-root .aui-viewport-footer > p {
+  font-size: var(--q-text-xs);
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+}
+
+.q-sidebar [data-slot="aui_thread-list-new"],
+.q-sidebar .q-sidebar-settings {
+  font-size: 13px;
+  font-weight: var(--q-weight-medium);
+}
+
+.q-sidebar [data-slot="aui_thread-list-item-trigger"],
+.q-sidebar .q-sidebar-project-trigger {
+  font-size: var(--q-text-base);
+  font-weight: var(--q-weight-regular);
+  line-height: 1.5;
+}
+
+.q-sidebar .q-sidebar-section-label {
+  font-size: 12px;
+  font-weight: var(--q-weight-semibold);
+  letter-spacing: 0.035em;
+}
+
+.q-sidebar .q-sidebar-empty {
+  font-size: 12px;
+  font-weight: var(--q-weight-regular);
+  line-height: 1.5;
+}
+
+.q-model-picker,
+.q-model-picker-action {
+  font-size: 13px;
+  font-weight: var(--q-weight-medium);
+}
+
+.page-title {
+  font-size: 14px;
+  font-weight: var(--q-weight-medium);
+  letter-spacing: -0.015em;
+}
+
+.page-content,
+.settings-dialog {
+  font-size: 13px;
+}
+
+.settings-dialog-heading h2,
+.settings-panel h2 {
+  font-size: var(--q-text-heading-sm);
+  font-weight: var(--q-weight-bold);
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.settings-dialog-heading p,
+.settings-panel p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-dialog-nav-item strong,
+.settings-option-row > strong {
+  font-size: 13px;
+  font-weight: var(--q-weight-medium);
+}
+
+.settings-block-heading strong {
+  font-size: 14px;
+  font-weight: var(--q-weight-semibold);
+}
+
+.settings-dialog-nav-item,
+.settings-theme-switch button,
+.settings-value-button,
+.settings-primary-action,
+.settings-secondary-action,
+.settings-form-grid label,
+.settings-model-toolbar label {
+  font-size: 12px;
+}
+
+.settings-dialog-nav-item,
+.settings-theme-switch button,
+.settings-value-button,
+.settings-form-grid label,
+.settings-model-toolbar label,
+.settings-tabs button,
+.settings-capability-chip {
+  font-weight: var(--q-weight-medium);
+}
+
+.settings-primary-action,
+.settings-secondary-action,
+.settings-danger-action {
+  font-weight: var(--q-weight-semibold);
+}
+
+.settings-tabs button.is-active {
+  font-weight: var(--q-weight-semibold);
+}
+
+.settings-subdialog-header h3,
+.settings-memory-heading h3 {
+  font-weight: var(--q-weight-semibold);
+}
+
+.settings-preference-row strong,
+.settings-list-row strong,
+.settings-provider-card strong,
+.settings-model-card strong,
+.settings-mcp-card strong,
+.settings-skill-card strong,
+.settings-subagent-card-main strong {
+  font-weight: var(--q-weight-medium);
+}
+
+.settings-preference-row span,
+.settings-list-row span,
+.settings-provider-card small,
+.settings-model-card small,
+.settings-mcp-card small,
+.settings-skill-card small,
+.settings-subagent-card-main small {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.field,
+.muted-copy,
+.simple-list-row small,
+.simple-list-row code,
+.oauth-banner,
+.activity-section {
+  font-size: 13px;
+}
+
+.field input,
+.oauth-banner input,
+.settings-form-grid input,
+.settings-profile-form input,
+.settings-profile-form textarea {
+  font-size: 13px;
+  font-weight: var(--q-weight-regular);
+  line-height: 1.5;
+}
+
+.settings-section-toolbar strong,
+.settings-dialog-nav-item.is-active strong {
+  font-weight: var(--q-weight-semibold);
+}
+
+.q-sidebar [data-slot="aui_thread-list-item"][data-active] [data-slot="aui_thread-list-item-trigger"] {
+  color: var(--foreground);
+  font-weight: var(--q-weight-medium);
+}
+
+.qone-select-trigger:not(.q-model-picker-trigger),
+.qone-select-option strong,
+.settings-dropdown-option strong {
+  font-weight: var(--q-weight-regular);
+}
+
+.qone-select-option.is-selected strong,
+.settings-dropdown-option.is-selected strong {
+  font-weight: var(--q-weight-medium);
+}
+
+@media (max-width: 480px) {
+  .settings-dialog-heading h2,
+  .settings-panel h2 { font-size: var(--q-text-heading-sm); }
+}
+
+/* Shimmer via overlay: base text stays solid and crisp, a bright band clipped
+ * to a duplicated glyph layer sweeps across on top. */
+.q-shine-text {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background-image: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.75) 50%,
+    transparent 60%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: q-shine-sweep 1.8s linear infinite;
+}
+
+@keyframes q-shine-sweep {
+  from { background-position: 130% 0; }
+  to { background-position: -130% 0; }
+}
+
+/* Trailing ellipsis for status labels: three dots jump with mismatched
+ * delays and durations so the rhythm reads as lively rather than a wave. */
+.q-ellipsis-dots > span {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin-left: 2px;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: q-ellipsis-jump 1.2s cubic-bezier(0.3, 1.4, 0.6, 1) infinite;
+}
+.q-ellipsis-dots > span:nth-child(2) { animation-delay: 0.15s; animation-duration: 1.42s; }
+.q-ellipsis-dots > span:nth-child(3) { animation-delay: 0.3s; animation-duration: 1.08s; }
+
+@keyframes q-ellipsis-jump {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .q-ellipsis-dots > span { animation: none; }
+}
+
+/* Unified hover-reveal: .q-reveal content stays hidden until its surrounding
+ * .q-reveal-zone is hovered/focused, or it is pinned via [data-open="true"]. */
+.q-reveal {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(2px) scale(0.97);
+  filter: blur(3px);
+  transition:
+    opacity 0.16s ease-out 0.28s,
+    transform 0.2s cubic-bezier(0.32, 0.72, 0, 1) 0.28s,
+    filter 0.2s ease 0.28s,
+    visibility 0s linear 0.52s;
+}
+.q-reveal-zone:hover .q-reveal,
+.q-reveal-zone:focus-within .q-reveal,
+.q-reveal[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  filter: none;
+  transition:
+    opacity 0.22s ease-out,
+    transform 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+    filter 0.22s ease,
+    visibility 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-reveal { transition: none; }
+}

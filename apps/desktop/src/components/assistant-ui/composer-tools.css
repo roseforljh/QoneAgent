@@ -4,7 +4,7 @@
 .q-composer-tool-option[data-highlighted], .q-composer-tool-option:focus-visible { background: var(--q-hover); outline: none; }
 .q-composer-tool-copy { display: flex; min-width: 0; flex: 1; align-items: baseline; gap: 8px; overflow: hidden; text-align: start; }
 .q-composer-tool-copy strong { flex: none; overflow: hidden; color: var(--foreground); font-size: 13px; font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.q-composer-tool-copy small { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.q-composer-tool-copy small { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: var(--q-text-xs); line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .q-composer-tool-icon { stroke-width: 1.8; }
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="attachment"] { color: #60a5fa; }
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="mcp"] { color: #fb923c; }

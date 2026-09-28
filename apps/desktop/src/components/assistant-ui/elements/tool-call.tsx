@@ -1,13 +1,15 @@
 "use client";
 
 import { CheckIcon, ChevronRightIcon, Clock3Icon, XIcon } from "lucide-react";
-import type { ReactNode } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useRef, type ReactNode } from "react";
+import { useScrollLock } from "@assistant-ui/react";
+import { useReducedMotion } from "motion/react";
 import {
   Collapsible,
   CollapsibleTrigger,
 } from "../../ui/collapsible";
 import { cn } from "../../../lib/utils";
+import { MeasuredCollapse } from "./measured-collapse";
 import {
   FadeScroll,
   field,
@@ -50,12 +52,16 @@ export function ToolCall({
   onOpenChange,
   className,
 }: ToolCallProps) {
+  const reduceMotion = useReducedMotion();
+  const disclosureRef = useRef<HTMLDivElement>(null);
+  const lockScroll = useScrollLock(disclosureRef, reduceMotion ? 0 : 240);
   return (
     <Collapsible
+      ref={disclosureRef}
       data-slot="tool-call"
       data-status={failed ? "failed" : waiting ? "waiting" : pending ? "pending" : running ? "running" : "success"}
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(nextOpen) => { lockScroll(); onOpenChange(nextOpen); }}
       className={cn("w-full max-w-sm", className)}
     >
       <CollapsibleTrigger className="group/trigger text-foreground/55 hover:text-foreground/90 bg-background sticky top-0 z-10 -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-[13.5px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -91,21 +97,11 @@ export function ToolCall({
           )}
         </span>
       </CollapsibleTrigger>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
-            className="overflow-hidden outline-none"
-          >
-            <div data-slot="tool-result-panel" className={cn(field, "mt-2 overflow-hidden rounded-2xl")}>
-              <FadeScroll className={cn(regionViewport, "p-2.5")}>{result}</FadeScroll>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <MeasuredCollapse open={open} className="outline-none">
+        <div data-slot="tool-result-panel" className={cn(field, "mt-2 overflow-hidden rounded-2xl")}>
+          <FadeScroll className={cn(regionViewport, "p-2.5")}>{result}</FadeScroll>
+        </div>
+      </MeasuredCollapse>
     </Collapsible>
   );
 }

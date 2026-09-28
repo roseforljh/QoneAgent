@@ -40,6 +40,24 @@ export function sortSidebarSessions(sessions: readonly SessionInfo[], prefs: Sid
   });
 }
 
+export function groupProjectSidebarSessions(sessions: readonly SessionInfo[], workspaceIds: readonly string[], prefs: SidebarPreferences) {
+  const pinnedIds = new Set(prefs.priorityIds);
+  const pinned: SessionInfo[] = [];
+  const byWorkspace = new Map(workspaceIds.map((id) => [id, [] as SessionInfo[]]));
+  const unassigned: SessionInfo[] = [];
+
+  for (const session of sortSidebarSessions(sessions, prefs)) {
+    if (pinnedIds.has(session.id)) pinned.push(session);
+    else {
+      const projectSessions = session.workspaceId ? byWorkspace.get(session.workspaceId) : undefined;
+      if (projectSessions) projectSessions.push(session);
+      else unassigned.push(session);
+    }
+  }
+
+  return { pinned, byWorkspace, unassigned };
+}
+
 /** An explicit null selects unassigned/orphaned chats; undefined selects all. */
 export function filterSidebarSessions(sessions: readonly SessionInfo[], workspaceId: string | null | undefined, workspaceIds: readonly string[]): SessionInfo[] {
   const known = new Set(workspaceIds);

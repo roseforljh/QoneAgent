@@ -153,7 +153,7 @@ const AttachmentUI: FC = () => {
                   </span>
                   {attachmentMeta && (
                     <span className={cn(
-                      "text-[11px] leading-4",
+                      "text-xs leading-4",
                       isError ? "text-destructive/80" : "text-foreground/40",
                     )}>
                       {attachmentMeta}

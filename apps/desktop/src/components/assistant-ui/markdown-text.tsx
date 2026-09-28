@@ -41,13 +41,13 @@ function MarkdownTable({ className, children, ...props }: ComponentProps<"table"
   return (
     <figure className="border-foreground/10 rounded-xl my-3 border">
       <div className="border-foreground/10 bg-foreground/[0.025] dark:bg-foreground/[0.04] rounded-t-xl flex h-9 items-center justify-between border-b px-3">
-        <span className="text-muted-foreground font-mono text-[11px] [font-variant-ligatures:none]">table</span>
+        <span className="text-muted-foreground font-mono text-xs [font-variant-ligatures:none]">table</span>
         <button type="button" onClick={copy} aria-label="Copy table as markdown" className="text-muted-foreground hover:text-foreground rounded-md grid size-6 place-items-center transition-colors">
           {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
         </button>
       </div>
       <div className="overflow-x-auto">
-        <table ref={ref} className={cn("aui-md-table w-full border-separate border-spacing-0 text-[13px]", className)} {...props}>
+        <table ref={ref} className={cn("aui-md-table w-full border-separate border-spacing-0 text-sm", className)} {...props}>
           {children}
         </table>
       </div>
@@ -122,7 +122,7 @@ const defaultComponents = memoizeMarkdownComponents({
   strong: ({ className, ...props }) => <strong className={cn("aui-md-strong font-semibold", className)} {...props} />,
   span: MathSpan,
   sup: ({ className, ...props }) => <sup className={cn("aui-md-sup [&>a]:text-xs [&>a]:no-underline", className)} {...props} />,
-  pre: ({ className, ...props }) => <pre className={cn("aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed", className)} {...props} />,
+  pre: ({ className, ...props }) => <pre className={cn("aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-b-xl border border-t-0 p-3.5 text-sm leading-relaxed", className)} {...props} />,
   code: function Code({ className, ...props }) {
     const isCodeBlock = useIsMarkdownCodeBlock();
     return <code className={cn(!isCodeBlock && "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]", className)} {...props} />;

@@ -15,6 +15,7 @@ type QueueCallbacks = {
   send: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[]) => void;
   steer: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[]) => Promise<boolean>;
   sync: (items: QueueItemInfo[]) => void;
+  onError?: (message: string) => void;
 };
 
 type QueueBundle = {
@@ -29,6 +30,7 @@ type QueueBundle = {
   settleSteer: (persistentId: string, delivered: boolean) => void;
   getPersistentId: (localId: string) => string | undefined;
   getLocalId: (persistentId: string) => string | undefined;
+  getItem: (persistentId: string) => QueueItemInfo | undefined;
 };
 
 const activeQueues = new Map<string, QueueBundle>();
@@ -151,6 +153,18 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     },
   });
 
+  // Editing only has to stop the item under edit from being dispatched; the
+  // rest of the queue keeps flowing until that item reaches the head.
+  const syncEditHold = () => {
+    const head = controller.adapter.steerItems[0] ?? controller.adapter.items[0];
+    const shouldHold = editingLocalId !== undefined && head?.id === editingLocalId;
+    if (shouldHold && !holdReasons.has("edit")) hold("edit");
+    else if (!shouldHold && holdReasons.has("edit")) releaseHold("edit");
+  };
+  controller.subscribe(syncEditHold);
+
+  const reportError = (error: unknown) => callbacks.onError?.(error instanceof Error ? error.message : String(error));
+
   const findNewId = (before: readonly QueueItemState[], after: readonly QueueItemState[]) =>
     after.find((item) => !before.some((candidate) => candidate.id === item.id))?.id;
 
@@ -176,7 +190,9 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
             if (messages.get(localId) !== message) return;
             attachments.set(localId, serialized);
             persist();
-          }).catch(() => undefined);
+          }).catch((error) => {
+            if (messages.get(localId) === message) reportError(error);
+          });
         }
         persist();
       } catch (error) {
@@ -238,18 +254,18 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
         if (attachmentVersions.get(localId) !== version || !messages.has(localId)) return;
         attachments.set(localId, serialized);
         persist();
-      }).catch(() => {
-        // Restored native files intentionally have no browser bytes. Keep
-        // their persisted localPath only when the edited message cannot be
-        // serialized; an explicitly empty attachment list must stay empty.
+      }).catch((error) => {
+        // The edited attachments are unusable: keep the last valid list and
+        // tell the user instead of silently swapping attachments.
         if (attachmentVersions.get(localId) !== version || !messages.has(localId)) return;
         attachments.set(localId, preservedAttachments ?? attachments.get(localId) ?? []);
         persist();
+        reportError(error);
       });
       persist();
       if (editingLocalId === localId) {
         editingLocalId = undefined;
-        releaseHold("edit");
+        syncEditHold();
       }
     },
     remove(localId: string) {
@@ -263,7 +279,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       persist();
       if (editingLocalId === localId) {
         editingLocalId = undefined;
-        releaseHold("edit");
+        syncEditHold();
       }
     },
   };
@@ -272,14 +288,14 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     if (!messages.has(localId) || steeringIds.has(localId)) return false;
     if (editingLocalId && editingLocalId !== localId) return false;
     editingLocalId = localId;
-    hold("edit");
+    syncEditHold();
     return true;
   };
 
   const cancelEdit = () => {
     if (!editingLocalId) return;
     editingLocalId = undefined;
-    releaseHold("edit");
+    syncEditHold();
   };
 
   const restore = (items: QueueItemInfo[]) => {
@@ -354,5 +370,13 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     settleSteer,
     getPersistentId: (localId) => persistentIds.get(localId),
     getLocalId: (persistentId: string) => [...persistentIds.entries()].find(([, id]) => id === persistentId)?.[0],
+    // Read from the local queue, not the runtime snapshot, so a freshly queued
+    // item is editable at once. Undefined while its attachments are still
+    // being serialized, so an edit never starts from an incomplete list.
+    getItem: (persistentId: string) => {
+      const localId = [...persistentIds.entries()].find(([, id]) => id === persistentId)?.[0];
+      if (!localId || ((messages.get(localId)?.attachments?.length ?? 0) > 0 && !attachments.has(localId))) return undefined;
+      return snapshot().find((item) => item.id === persistentId);
+    },
   };
 }

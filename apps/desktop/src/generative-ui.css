@@ -78,7 +78,7 @@
 }
   [data-aui="fact-label"] {
     margin: 0;
-    font-size: 0.6875rem;
+    font-size: var(--q-text-xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: color-mix(in oklab, currentColor 62%, transparent);
@@ -444,7 +444,7 @@
     text-align: right;
 }
   [data-aui="chart-frame"] > [data-aui="chart-ticks"], [data-aui="chart-frame"] > [data-aui="chart-xlabels"] {
-    font-size: 0.6875rem;
+    font-size: var(--q-text-xs);
     color: var(--muted-foreground);
 }
   [data-aui="chart-frame"] > svg[data-aui="chart"] {

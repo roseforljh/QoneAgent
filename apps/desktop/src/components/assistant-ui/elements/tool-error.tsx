@@ -57,7 +57,7 @@ export function ToolError({
       <div className="flex items-center gap-2.5">
         <AlertCircleIcon className="size-3.5 shrink-0 text-red-500" />
         <span className={cn(mono, "text-foreground/55 shrink-0")}>{name}</span>
-        <span className="text-foreground/80 min-w-0 flex-1 truncate text-[13px]">
+        <span className="text-foreground/80 min-w-0 flex-1 truncate text-sm">
           {target}
         </span>
         {attempt !== undefined && maxAttempts !== undefined && <span className={cn(mono, "text-foreground/30 shrink-0 tabular-nums")}>
@@ -69,7 +69,7 @@ export function ToolError({
         className={cn(
           field,
           detailViewport,
-          "whitespace-pre-wrap break-words rounded-xl px-3 py-2 font-mono text-[11px] leading-relaxed text-red-700 dark:text-red-300 [overflow-wrap:anywhere]",
+          "whitespace-pre-wrap break-words rounded-xl px-3 py-2 font-mono text-xs leading-relaxed text-red-700 dark:text-red-300 [overflow-wrap:anywhere]",
         )}
       >
         {message}

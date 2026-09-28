@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { PartState } from "@assistant-ui/react";
-import { assistantPartRanges, visibleAssistantPartRanges } from "../src/components/assistant-ui/assistant-part-ranges";
+import { assistantPartRanges, assistantRangeSections, hasVisibleAnswer, visibleAssistantPartRanges } from "../src/components/assistant-ui/assistant-part-ranges";
+import { executionCollapsed } from "../src/components/assistant-ui/execution-disclosure-state";
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 import type { AssistantMessagePart } from "@qone/protocol";
 
@@ -81,4 +82,56 @@ test("subagent capsule stays at the first dispatch call, before later text and i
     { type: "text", index: 4 },
     { type: "image", index: 5 },
   ]);
+});
+
+test("execution folds commentary but keeps presentations, images, and the final answer visible", () => {
+  const parts = [
+    { type: "text", text: "准备" },
+    { type: "tool-call", toolName: "read", toolCallId: "read" },
+    { type: "text", text: "阶段结论" },
+    { type: "image", image: "data:image/png;base64,A" },
+    { type: "tool-call", toolName: "grep", toolCallId: "grep" },
+    { type: "text", text: "最终回答" },
+  ] as PartState[];
+  const sections = assistantRangeSections(assistantPartRanges(parts));
+  expect(sections.activity).toEqual([
+    { type: "text", index: 0 },
+    { type: "tools", startIndex: 1, endIndex: 2 },
+    { type: "text", index: 2 },
+    { type: "tools", startIndex: 4, endIndex: 5 },
+  ]);
+  expect(sections.persistent).toEqual([{ type: "image", index: 3 }]);
+  expect(sections.answer).toEqual([{ type: "text", index: 5 }]);
+  expect(hasVisibleAnswer(parts, sections.answer)).toBe(true);
+});
+
+test("execution waits for a visible final answer and respects manual choice and cancellation", () => {
+  const parts = [
+    { type: "tool-call", toolName: "read", toolCallId: "read" },
+    { type: "text", text: " " },
+  ] as PartState[];
+  const sections = assistantRangeSections(assistantPartRanges(parts));
+  expect(hasVisibleAnswer(parts, sections.answer)).toBe(false);
+  expect(executionCollapsed(undefined, false, true, false)).toBe(false);
+  expect(executionCollapsed(undefined, true, false, false)).toBe(false);
+  expect(executionCollapsed(undefined, true, true, true)).toBe(false);
+  expect(executionCollapsed(undefined, true, true, false)).toBe(true);
+  expect(executionCollapsed(false, true, true, false)).toBe(false);
+  expect(executionCollapsed(true, false, false, false)).toBe(true);
+});
+
+test("image before activity and a presentation within activity stay outside the disclosure", () => {
+  const parts = [
+    { type: "image", image: "data:image/png;base64,A" },
+    { type: "text", text: "先分析" },
+    { type: "tool-call", toolName: "read", toolCallId: "read" },
+    { type: "tool-call", toolName: "present", toolCallId: "view" },
+    { type: "tool-call", toolName: "grep", toolCallId: "grep" },
+    { type: "text", text: "结论" },
+  ] as PartState[];
+  const sections = assistantRangeSections(assistantPartRanges(parts));
+  expect(sections.leading).toEqual([{ type: "image", index: 0 }]);
+  expect(sections.persistent).toEqual([{ type: "presentation", index: 3 }]);
+  expect(sections.answer).toEqual([{ type: "text", index: 5 }]);
+  expect(assistantRangeSections(assistantPartRanges(parts.slice(0, 2))).answer).toHaveLength(2);
 });

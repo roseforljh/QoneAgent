@@ -180,3 +180,50 @@ test("deleting an item while editing does not release it for dispatch", async ()
   expect(sent).toEqual([]);
   expect(queue.adapter.items).toHaveLength(0);
 });
+
+test("editing a later item lets earlier items dispatch and holds only once it reaches the head", async () => {
+  let running = true;
+  const sent: string[] = [];
+  const queue = createQoneMessageQueue({
+    sessionId: "s",
+    isRunning: () => running,
+    send: (item) => { sent.push(item.content[0]?.type === "text" ? item.content[0].text : ""); running = true; queue.controller.notifyBusy(); },
+    steer: async () => true,
+    sync: () => {},
+  });
+  queue.adapter.enqueue(message("A"));
+  queue.adapter.enqueue(message("B"));
+  queue.adapter.enqueue(message("C"));
+  const editing = queue.adapter.items[1]!.id;
+  expect(queue.beginEdit(editing)).toBe(true);
+  expect(queue.getItem(queue.getPersistentId(editing)!)?.text).toBe("B");
+
+  running = false;
+  queue.controller.notifyIdle();
+  await flush();
+  expect(sent).toEqual(["A"]);
+
+  running = false;
+  queue.controller.notifyIdle();
+  await flush();
+  expect(sent).toEqual(["A"]);
+
+  queue.edit(editing, message("B2"));
+  await flush();
+  expect(sent).toEqual(["A", "B2"]);
+});
+
+test("attachment errors are reported instead of silently swallowed", async () => {
+  const errors: string[] = [];
+  const queue = createQoneMessageQueue({
+    sessionId: "s",
+    isRunning: () => true,
+    send: () => {},
+    steer: async () => true,
+    sync: () => {},
+    onError: (error) => errors.push(error),
+  });
+  queue.adapter.enqueue({ ...message("with file"), attachments: [{ id: "a", type: "image", name: "x.bmp", contentType: "image/bmp", status: { type: "complete" }, content: [{ type: "image", image: "data:image/bmp;base64,AA==" }] }] });
+  await flush();
+  expect(errors).toEqual(["不支持的图片格式：x.bmp"]);
+});

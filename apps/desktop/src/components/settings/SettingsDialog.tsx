@@ -1004,7 +1004,11 @@ function SubagentsSection() {
     window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(normalized));
     void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config });
   };
-  const saveAgent = (agent: SubagentProfile) => saveAgents([...agents.filter((item) => item.id !== agent.id), agent]);
+  const saveAgent = (agent: SubagentProfile) => saveAgents(
+    agents.some((item) => item.id === agent.id)
+      ? agents.map((item) => item.id === agent.id ? agent : item)
+      : [...agents, agent],
+  );
   const saveRuntime = (next: typeof runtime) => {
     setRuntime(next);
     const config = { profiles: dedupeSubagents(agents), routing: runtimeSubagentConfig.routing, runtime: next, updatedAt: Date.now() };

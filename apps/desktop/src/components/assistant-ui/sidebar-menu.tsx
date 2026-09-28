@@ -4,6 +4,7 @@ import { useStore } from "../../store";
 import { useLocale, type MessageKey } from "../../localization";
 import { useSidebarPreferences, type ChatSort, type SidebarLayout } from "../../lib/sidebar-preferences";
 import "./sidebar-menu.css";
+import { cn } from "../../lib/utils";
 
 const layouts: { value: SidebarLayout; label: MessageKey }[] = [
   { value: "project", label: "sidebar.byProject" },
@@ -67,23 +68,29 @@ export function SidebarEntityMenu({
   onRename,
   onDelete,
   ariaLabel,
+  side = "right",
+  align = "start",
+  triggerClassName,
 }: {
   pinned: boolean;
   onTogglePinned: () => void;
   onRename: () => void;
   onDelete: () => void | Promise<void>;
   ariaLabel: string;
+  side?: "top" | "right" | "bottom" | "left";
+  align?: "start" | "center" | "end";
+  triggerClassName?: string;
 }) {
   const { t } = useLocale();
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <button type="button" className="q-sidebar-menu-trigger text-muted-foreground hover:text-foreground grid size-6 place-items-center rounded-md" aria-label={ariaLabel}>
+        <button type="button" className={cn("q-sidebar-menu-trigger text-muted-foreground hover:text-foreground grid size-6 place-items-center rounded-md", triggerClassName)} aria-label={ariaLabel}>
           <MoreHorizontalIcon className="size-3.5" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content className="q-sidebar-menu" side="right" align="start" sideOffset={6} collisionPadding={8}>
+        <DropdownMenu.Content className="q-sidebar-menu" side={side} align={align} sideOffset={6} collisionPadding={8}>
           <DropdownMenu.Item className="q-sidebar-menu-item" onSelect={onTogglePinned}>
             {pinned ? <PinOffIcon className="size-4" /> : <PinIcon className="size-4" />}
             <span>{t(pinned ? "sidebar.unpin" : "sidebar.pin")}</span>

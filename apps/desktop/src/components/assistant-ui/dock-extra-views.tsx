@@ -168,7 +168,7 @@ export function DockBrowserView({ active, initialUrl, previewHtml, previewId }: 
             onChange={(e) => setAddress(e.target.value)}
             placeholder={t("dock.browserPlaceholder")}
             spellCheck={false}
-            className={cn(mono, "w-full rounded-full bg-foreground/[0.05] px-3 py-1 text-[12px] outline-none placeholder:text-foreground/35")}
+            className={cn(mono, "w-full rounded-full bg-foreground/[0.05] px-3 py-1 text-xs outline-none placeholder:text-foreground/35")}
           />
         </form>
         <TooltipIconButton tooltip={t("dock.browserOpenExternal")} onClick={() => void openExternally()} disabled={!currentPageUrl && !currentPreviewHtml && !currentDataUrl} className="size-7 shrink-0">
@@ -181,8 +181,8 @@ export function DockBrowserView({ active, initialUrl, previewHtml, previewId }: 
         {failed && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
             <GlobeIcon className="size-5 text-foreground/35" />
-            <p className="text-[13px] text-foreground/50">{t(previewHtmlRef.current !== undefined ? "dock.browserPreviewFailed" : "dock.browserFailed")}</p>
-            <p className={cn(mono, "text-[11px] text-foreground/35")}>{failed}</p>
+            <p className="text-sm text-foreground/50">{t(previewHtmlRef.current !== undefined ? "dock.browserPreviewFailed" : "dock.browserFailed")}</p>
+            <p className={cn(mono, "text-xs text-foreground/35")}>{failed}</p>
           </div>
         )}
       </div>
@@ -219,11 +219,11 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
     window.setTimeout(() => send({ type: "mcp.list", requestId: rid() }), 500);
   };
 
-  if (!servers.length) return <p className="px-3 py-4 text-[13px] text-foreground/45">{t("mcp.noConnections")}</p>;
+  if (!servers.length) return <p className="px-3 py-4 text-sm text-foreground/45">{t("mcp.noConnections")}</p>;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <p className={cn(mono, "shrink-0 px-3 py-2 text-[11px] text-foreground/45")}>
+      <p className={cn(mono, "shrink-0 px-3 py-2 text-xs text-foreground/45")}>
         {t("dock.mcpConnected", { connected, total: servers.length })}
       </p>
       <FadeScroll className="min-h-0 flex-1 py-1">
@@ -241,8 +241,8 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
               >
                 <ChevronRightIcon className={cn("size-3 shrink-0 text-foreground/40 transition-transform duration-150", open && "rotate-90")} />
                 <PlugIcon className="size-3.5 shrink-0 text-foreground/45" />
-                <span className="min-w-0 flex-1 truncate text-[13px]">{server.name}</span>
-                <span className={cn(mono, "shrink-0 text-[11px] text-foreground/40")}>{server.toolCount ?? 0} tools</span>
+                <span className="min-w-0 flex-1 truncate text-sm">{server.name}</span>
+                <span className={cn(mono, "shrink-0 text-xs text-foreground/40")}>{server.toolCount ?? 0} tools</span>
                 <span
                   className={cn("size-1.5 shrink-0 rounded-full", server.connected ? "bg-emerald-500" : server.oauth ? "bg-amber-500" : "bg-foreground/25")}
                   title={connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}
@@ -250,14 +250,14 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
               </button>
               {open && (
                 <div className="px-3 pb-2.5 pt-1">
-                  <p className={cn(mono, "truncate text-[11px] text-foreground/45")} title={transport}>{transport}</p>
-                  <p className="mt-1 flex items-center gap-1.5 text-[11px] text-foreground/50">{connecting && <LoaderCircleIcon className="settings-spin size-3 shrink-0" aria-hidden="true" />}{connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}</p>
+                  <p className={cn(mono, "truncate text-xs text-foreground/45")} title={transport}>{transport}</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-xs text-foreground/50">{connecting && <LoaderCircleIcon className="settings-spin size-3 shrink-0" aria-hidden="true" />}{connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}</p>
                   <div className="mt-2 flex items-center gap-1.5">
                     {server.oauth && !server.connected && !connecting && (
                       <button
                         type="button"
                         onClick={() => send({ type: "mcp.oauth.begin", requestId: rid(), serverId: server.id })}
-                        className="rounded-md bg-amber-500/15 px-2 py-1 text-[11px] font-medium text-amber-600 transition-colors hover:bg-amber-500/25 dark:text-amber-400"
+                        className="rounded-md bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-500/25 dark:text-amber-400"
                       >
                         {t("mcp.authorize")}
                       </button>
@@ -267,7 +267,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
                         type="button"
                         disabled={connecting}
                         onClick={() => reconnect(server.id)}
-                        className="rounded-md bg-foreground/[0.07] px-2 py-1 text-[11px] font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.12]"
+                        className="rounded-md bg-foreground/[0.07] px-2 py-1 text-xs font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.12]"
                       >
                         {t("dock.mcpReconnect")}
                       </button>
@@ -301,7 +301,7 @@ export function DockSkillsView({ workspaceId, refreshNonce }: { workspaceId?: st
     send({ type: "skills.list", requestId: rid(), cwd: workspacePath });
   }, [send, workspacePath, refreshNonce]);
 
-  if (!skills.length) return <p className="px-3 py-4 text-[13px] text-foreground/45">{t("skills.none")}</p>;
+  if (!skills.length) return <p className="px-3 py-4 text-sm text-foreground/45">{t("skills.none")}</p>;
 
   return (
     <FadeScroll className="min-h-0 flex-1 py-1">
@@ -314,8 +314,8 @@ export function DockSkillsView({ workspaceId, refreshNonce }: { workspaceId?: st
         >
           <WandSparklesIcon className="size-3.5 shrink-0 text-violet-500/80 dark:text-violet-400/80" />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px]">{skill.name}</span>
-            {skill.description && <span className="block truncate text-[11px] text-foreground/45">{skill.description}</span>}
+            <span className="block truncate text-sm">{skill.name}</span>
+            {skill.description && <span className="block truncate text-xs text-foreground/45">{skill.description}</span>}
           </span>
         </button>
       ))}

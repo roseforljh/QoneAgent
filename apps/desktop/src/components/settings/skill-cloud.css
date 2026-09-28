@@ -3,7 +3,7 @@
 .skill-cloud-intro { margin: -7px 0 16px; color: var(--muted-foreground); font-size: 12px; }
 .skill-cloud-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .skill-cloud-tabs { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--q-surface-muted); }
-.skill-cloud-tabs button { min-height: 27px; border: 0; border-radius: 6px; padding: 0 11px; background: transparent; color: var(--muted-foreground); font-size: 11px; cursor: pointer; transition: background .16s ease, color .16s ease; }
+.skill-cloud-tabs button { min-height: 27px; border: 0; border-radius: 6px; padding: 0 11px; background: transparent; color: var(--muted-foreground); font-size: var(--q-text-xs); cursor: pointer; transition: background .16s ease, color .16s ease; }
 .skill-cloud-tabs button.is-active { background: var(--card); color: var(--foreground); box-shadow: 0 1px 5px rgb(0 0 0 / 9%); }
 .skill-cloud-search { flex-basis: 215px; margin: 0; }
 .skill-cloud-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 3px; }
@@ -14,17 +14,17 @@
 .skill-cloud-item-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .skill-cloud-item-copy strong, .skill-cloud-item-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .skill-cloud-item-copy strong { font-size: 12px; }
-.skill-cloud-item-copy small, .skill-cloud-item-meta small { color: var(--muted-foreground); font-size: 10px; }
+.skill-cloud-item-copy small, .skill-cloud-item-meta small { color: var(--muted-foreground); font-size: var(--q-text-xs); }
 .skill-cloud-item-meta { display: flex; align-items: flex-end; flex-direction: column; gap: 4px; }
-.skill-cloud-item-meta em { color: var(--primary); font-size: 10px; font-style: normal; }
+.skill-cloud-item-meta em { color: var(--primary); font-size: var(--q-text-xs); font-style: normal; }
 .skill-cloud-pagination { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 42px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
-.skill-cloud-pagination button { display: grid; min-width: 27px; height: 27px; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted-foreground); font-size: 11px; cursor: pointer; }
+.skill-cloud-pagination button { display: grid; min-width: 27px; height: 27px; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted-foreground); font-size: var(--q-text-xs); cursor: pointer; }
 .skill-cloud-pagination button:hover:not(:disabled) { background: var(--q-hover); color: var(--foreground); }
 .skill-cloud-pagination button.is-active { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); }
 .skill-cloud-pagination button:disabled { cursor: wait; opacity: .45; }
 .skill-cloud-pagination .skill-cloud-page-arrow { color: var(--foreground); font-size: 18px; }
-.skill-cloud-pagination > span { margin-left: 5px; color: var(--muted-foreground); font-size: 10px; }
-.skill-cloud-error { color: #e35d6a; font-size: 11px; }
+.skill-cloud-pagination > span { margin-left: 5px; color: var(--muted-foreground); font-size: var(--q-text-xs); }
+.skill-cloud-error { color: #e35d6a; font-size: var(--q-text-xs); }
 .skill-cloud-confirm { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 20px; border-radius: inherit; background: rgb(0 0 0 / 52%); }
 .skill-cloud-confirm-card { width: min(390px, 100%); padding: 18px; border: 1px solid var(--border); border-radius: 11px; background: var(--q-surface); box-shadow: 0 18px 44px rgb(0 0 0 / 25%); }
 .skill-cloud-confirm-card p { color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }

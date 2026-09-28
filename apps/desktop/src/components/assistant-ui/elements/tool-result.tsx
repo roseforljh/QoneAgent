@@ -32,11 +32,11 @@ function FileResult({ presentation }: { presentation: Extract<ToolPresentation, 
   return (
     <div data-slot="tool-file-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/40">
       {presentation.name && (
-        <div className="border-b border-foreground/10 px-3 py-2 font-mono text-[11px] text-foreground/50">
+        <div className="border-b border-foreground/10 px-3 py-2 font-mono text-xs text-foreground/50">
           {presentation.name}
         </div>
       )}
-      <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-[12px] leading-relaxed text-foreground/80 [overflow-wrap:anywhere]">
+      <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground/80 [overflow-wrap:anywhere]">
         {presentation.content}
       </pre>
     </div>
@@ -46,7 +46,7 @@ function FileResult({ presentation }: { presentation: Extract<ToolPresentation, 
 function TerminalResult({ presentation }: { presentation: Extract<ToolPresentation, { kind: "terminal" }> }) {
   return (
     <div data-slot="tool-terminal-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/45">
-      <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-[12px] leading-relaxed text-foreground/75 [overflow-wrap:anywhere]">
+      <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground/75 [overflow-wrap:anywhere]">
         {presentation.output || ""}
       </pre>
     </div>
@@ -56,11 +56,11 @@ function TerminalResult({ presentation }: { presentation: Extract<ToolPresentati
 function SearchResult({ presentation }: { presentation: Extract<ToolPresentation, { kind: "search" }> }) {
   return (
     <div data-slot="tool-search-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/40">
-      {presentation.query && <div className="border-b border-foreground/10 px-3 py-2 font-mono text-[11px] text-foreground/50">{presentation.query}</div>}
+      {presentation.query && <div className="border-b border-foreground/10 px-3 py-2 font-mono text-xs text-foreground/50">{presentation.query}</div>}
       {presentation.items.length > 0 ? (
         <ul className="divide-y divide-foreground/[0.06]">
           {presentation.items.map((item, index) => (
-            <li key={`${item.path ?? "result"}-${item.line ?? index}-${index}`} className="flex min-w-0 gap-2 px-3 py-1.5 font-mono text-[12px] leading-relaxed">
+            <li key={`${item.path ?? "result"}-${item.line ?? index}-${index}`} className="flex min-w-0 gap-2 px-3 py-1.5 font-mono text-xs leading-relaxed">
               {item.path && <span className="shrink-0 text-foreground/50">{item.path}{item.line !== undefined ? `:${item.line}` : ""}</span>}
               <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/75 [overflow-wrap:anywhere]">{item.text}</span>
             </li>
@@ -92,9 +92,9 @@ function TextResult({ presentation }: { presentation: Extract<ToolPresentation, 
 export function ToolFallback({ presentation }: { presentation: Extract<ToolPresentation, { kind: "unknown" }> }) {
   return (
     <details data-slot="tool-fallback" className="rounded-xl border border-foreground/10 bg-background/35 px-3 py-2">
-      <summary className="cursor-pointer text-[11px] text-foreground/50">调试回退</summary>
+      <summary className="cursor-pointer text-xs text-foreground/50">调试回退</summary>
       {presentation.text && <p className="mt-2 whitespace-pre-wrap break-words text-foreground/75">{presentation.text}</p>}
-      <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/60 [overflow-wrap:anywhere]">
+      <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground/60 [overflow-wrap:anywhere]">
         {presentation.debugJson}
       </pre>
     </details>

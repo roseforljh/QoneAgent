@@ -31,7 +31,7 @@
 .q-subagent-row:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
 .q-subagent-empty { padding: 30px 6px; color: var(--muted-foreground); font-size: 13px; text-align: center; }
 .q-subagent-detail-title { margin: 5px 0 7px; font-size: 16px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-.q-subagent-detail-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; color: var(--muted-foreground); font-size: 11px; }
+.q-subagent-detail-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; color: var(--muted-foreground); font-size: var(--q-text-xs); }
 .q-subagent-task { margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .q-subagent-transcript { min-width: 0; overflow-wrap: anywhere; }
 .q-subagent-error { margin-top: 18px; padding: 9px; border-radius: 7px; background: color-mix(in oklab, #fb7185 9%, transparent); color: #fb7185; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }

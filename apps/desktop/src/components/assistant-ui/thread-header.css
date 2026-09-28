@@ -1,0 +1,99 @@
+:root { --q-thread-header-height: 46px; }
+
+:root[data-theme="dark"] .q-chat-shell { --background: #0f0f11; }
+
+.q-thread-header {
+  display: flex;
+  position: relative;
+  z-index: 25;
+  height: var(--q-thread-header-height);
+  min-height: var(--q-thread-header-height);
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-inline: clamp(16px, 3.5vw, 64px) 20px;
+  background: var(--background);
+}
+
+.q-chat-content::before {
+  content: "";
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  inset-inline: 0;
+  height: 1rem;
+  pointer-events: none;
+  background-image: linear-gradient(to bottom, var(--background), transparent);
+}
+
+.q-chat-error-banner { top: calc(var(--q-thread-header-height) + 8px); }
+.q-thread-header-title {
+  overflow: hidden;
+  min-width: 0;
+  max-width: 320px;
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: var(--q-weight-medium);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.q-thread-header-title-input {
+  min-width: 0;
+  width: min(36rem, 100%);
+  border: 1px solid var(--ring);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+
+.q-thread-header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.q-thread-header-actions .q-thread-header-action {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 7px;
+  border-radius: 8px;
+  color: var(--q-subtle);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+.q-thread-header-actions .q-thread-header-action:hover,
+.q-thread-header-actions .q-thread-header-action:focus-visible,
+.q-thread-header-actions .q-thread-header-action[aria-pressed="true"],
+.q-thread-header-actions .q-thread-header-action[data-state="open"] {
+  background: var(--q-hover);
+  color: var(--foreground);
+}
+
+.q-thread-header-actions .q-thread-header-action > svg { width: 18px; height: 18px; }
+
+.q-thread-header-actions .q-thread-header-action:disabled {
+  cursor: default;
+  opacity: .4;
+}
+
+@media (max-width: 600px) {
+  .q-thread-header {
+    padding-inline: 16px 12px;
+  }
+  .q-thread-header-actions { gap: 2px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .q-thread-header-actions .q-thread-header-action { transition: none; }
+}

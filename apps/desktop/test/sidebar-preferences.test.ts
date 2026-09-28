@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SessionInfo } from "@qone/protocol";
-import { filterSidebarSessions, moveSidebarSession, parseSidebarPreferences, sortSidebarSessions } from "../src/lib/sidebar-preferences";
+import { filterSidebarSessions, groupProjectSidebarSessions, moveSidebarSession, parseSidebarPreferences, sortSidebarSessions } from "../src/lib/sidebar-preferences";
 
 const session = (id: string, updatedAt: number, workspaceId?: string): SessionInfo => ({
   id, title: id, createdAt: updatedAt - 1, updatedAt, workspaceId,
@@ -23,4 +23,12 @@ test("manual order moves one chat and project filtering isolates orphan chats", 
   const sessions = [session("a", 1, "project-a"), session("b", 2), session("c", 3, "project-b")];
   expect(filterSidebarSessions(sessions, "project-a", ["project-a", "project-b"]).map((item) => item.id)).toEqual(["a"]);
   expect(filterSidebarSessions(sessions, null, ["project-a", "project-b"]).map((item) => item.id)).toEqual(["b"]);
+});
+
+test("project sidebar places each chat in one visible group", () => {
+  const sessions = [session("pinned", 4, "project-a"), session("project", 3, "project-a"), session("orphan", 2, "removed-project"), session("unassigned", 1)];
+  const groups = groupProjectSidebarSessions(sessions, ["project-a"], { layout: "project", sort: "recent", manualOrder: [], priorityIds: ["pinned"] });
+  expect(groups.pinned.map((item) => item.id)).toEqual(["pinned"]);
+  expect(groups.byWorkspace.get("project-a")?.map((item) => item.id)).toEqual(["project"]);
+  expect(groups.unassigned.map((item) => item.id)).toEqual(["orphan", "unassigned"]);
 });

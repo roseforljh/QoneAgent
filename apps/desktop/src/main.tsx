@@ -4,6 +4,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./router";
 import { initLocale } from "./localization";
 import "./index.css";
+import "./desktop-overrides.css";
 import { reportStartup } from "./lib/startup-diagnostic";
 
 reportStartup("Loading application modules");
