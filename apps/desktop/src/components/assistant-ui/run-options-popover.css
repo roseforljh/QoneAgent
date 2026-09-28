@@ -33,10 +33,12 @@
 .q-think-wave:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .q-think-wave[aria-disabled="true"] { opacity: .45; cursor: default; }
 .q-think-wave-fill { position: absolute; z-index: 1; inset-block: 0; inset-inline-start: 0; border-radius: 999px; background: linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 68%, #fff)); transition: width .18s cubic-bezier(.3, .7, .3, 1); }
-.q-think-wave-flakes { position: absolute; z-index: 2; inset: 0; border-radius: 999px; pointer-events: none; }
-.q-think-wave-flake { position: absolute; left: -6%; color: var(--primary-foreground); opacity: 0; transform: translate(-50%, -50%); will-change: left, margin-top, transform; }
-.q-think-wave-flakes[data-on] .q-think-wave-flake { opacity: .9; animation: q-flake-flow var(--dur, 5s) ease-in-out infinite var(--delay, 0s), q-flake-spin calc(var(--dur, 5s) * 1.31) linear infinite var(--delay, 0s); }
+.q-think-wave-flakes { position: absolute; z-index: 2; inset: 0; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity .18s ease; }
+.q-think-wave-flakes[data-on] { opacity: .9; }
+.q-think-wave-flake-lane { position: absolute; left: -6%; width: 100%; height: 0; animation: q-flake-flow var(--flake-duration) linear infinite var(--flake-delay); will-change: transform; }
+.q-think-wave-flake { position: absolute; left: 0; top: 0; color: var(--primary-foreground); transform: translate(-50%, -50%); animation: q-flake-spin 4s linear infinite var(--flake-delay); }
 .q-think-wave-dot { position: absolute; top: 50%; width: 5px; height: 5px; border-radius: 50%; background: color-mix(in srgb, var(--foreground) 34%, transparent); transition: transform .16s ease; }
+.q-think-wave-dot[data-under-penguin] { opacity: 0; }
 .q-think-wave-knob { position: absolute; z-index: 3; top: 50%; width: 46px; height: 46px; transform: translate(-50%, -50%); transition: left .18s cubic-bezier(.3, .7, .3, 1); }
 .q-think-wave-penguin { display: block; width: 46px; height: 46px; image-rendering: pixelated; transform: scaleX(var(--dir, 1)); filter: drop-shadow(0 1px 2px rgb(0 0 0 / 45%)); }
 .q-think-wave-penguin[data-walking] { animation: q-penguin-walk .24s ease-in-out infinite alternate; }
@@ -44,13 +46,10 @@
 .q-think-wave-label { flex: none; min-width: 34px; color: var(--muted-foreground); font-size: var(--q-text-xs); text-align: end; }
 @keyframes q-penguin-walk { from { transform: scaleX(var(--dir, 1)) rotate(-8deg) translateY(0); } to { transform: scaleX(var(--dir, 1)) rotate(8deg) translateY(-2px); } }
 @keyframes q-flake-flow {
-  0% { left: -6%; margin-top: 0; }
-  23% { left: 19%; margin-top: var(--bob-a, 0px); }
-  49% { left: 44%; margin-top: var(--bob-b, 0px); }
-  72% { left: 67%; margin-top: var(--bob-a, 0px); }
-  100% { left: 106%; margin-top: 0; }
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(112%, 0, 0); }
 }
 @keyframes q-flake-spin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
 .q-run-options-card button:focus-visible, .q-run-options-trigger:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 @keyframes q-run-options-in { from { opacity: 0; transform: translateY(4px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@media (prefers-reduced-motion: reduce) { .q-run-options-card, .q-think-wave-flake, .q-think-wave-penguin { animation: none; } .q-run-options-card button { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .q-run-options-card, .q-think-wave-penguin { animation: none; } .q-think-wave-flakes { display: none; } .q-run-options-card button { transition: none; } }

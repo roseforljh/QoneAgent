@@ -42,9 +42,9 @@ export function MessagePair({
 }: MessagePairProps) {
   const shown = take(words, visibleWords);
   const userSurfaceClass = cn(
-    "min-w-0 max-w-[85%] self-end break-words text-sm",
+    "min-w-0 max-w-[70%] self-end break-words text-start",
     variant === "bubble"
-      ? "rounded-2xl border border-border/40 bg-primary px-3.5 py-2 text-start text-primary-foreground"
+      ? "rounded-[22px] bg-foreground/[0.05] px-4 py-2.5 text-foreground text-sm leading-[1.5]"
       : "text-foreground/90 text-end",
   );
 

@@ -1,4 +1,7 @@
-.q-chat-footer { isolation: isolate; }
+.q-chat-footer {
+  isolation: isolate;
+  background: transparent;
+}
 
 /* Keep assistant-ui's turn anchoring while skipping paint and layout for old turns. */
 .q-message-block[data-static-turn] {
@@ -9,9 +12,14 @@
 .q-chat-footer::before {
   content: "";
   position: absolute;
-  inset: -3rem 0 0;
+  inset: -4rem 0 0;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--q-chat-bg) 75%);
-  mask-image: linear-gradient(to right, transparent, #000 18%);
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgb(0 0 0 / 8%) 28%,
+    rgb(0 0 0 / 32%) 62%,
+    var(--q-chat-bg) 100%
+  );
 }

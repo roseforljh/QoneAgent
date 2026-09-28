@@ -776,9 +776,28 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
       if (!isDockView(requestedView)) return;
       openTab(requestedView);
     };
+    const toggleDockPanel = () => {
+      setLauncherOpen(false);
+      if (activeTabId) {
+        setActiveTabId(undefined);
+        return;
+      }
+      const fallbackTab = openTabs.at(-1);
+      if (fallbackTab) {
+        setActiveTabId(fallbackTab.id);
+        return;
+      }
+      const tab = { id: rid(), view: "session" as const };
+      setOpenTabs([tab]);
+      setActiveTabId(tab.id);
+    };
     window.addEventListener("qone-toggle-dock-view", toggleDockView);
-    return () => window.removeEventListener("qone-toggle-dock-view", toggleDockView);
-  }, []);
+    window.addEventListener("qone-toggle-dock-panel", toggleDockPanel);
+    return () => {
+      window.removeEventListener("qone-toggle-dock-view", toggleDockView);
+      window.removeEventListener("qone-toggle-dock-panel", toggleDockPanel);
+    };
+  }, [activeTabId, openTabs]);
 
   const tabMeta: Record<DockView, { icon: LucideIcon; label: string }> = {
     session: { icon: ListTodoIcon, label: t("dock.session") },

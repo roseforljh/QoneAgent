@@ -59,8 +59,13 @@
   --border: #e5e5e5;
   --input: #e5e5e5;
   --ring: #a1a1a1;
+  --q-app-menu-foreground: color-mix(in oklab, var(--foreground) 50%, transparent);
+  --q-scrollbar-color: color-mix(in oklab, var(--foreground) 30%, transparent);
+  --q-scrollbar-surface-color: color-mix(in oklab, var(--foreground) 10%, transparent);
+  --q-scrollbar-surface-hover-color: color-mix(in oklab, var(--foreground) 15%, transparent);
   --q-bg: var(--background);
   --q-sidebar: #f7f7f5;
+  --q-sidebar-selected-bg: color-mix(in srgb, var(--foreground) 8%, var(--q-sidebar));
   --q-surface: var(--background);
   --q-surface-muted: #f1f1ef;
   --q-hover: #ececea;
@@ -127,8 +132,12 @@
   --border: #262626;
   --input: #262626;
   --ring: #737373;
+  --q-app-menu-foreground: color-mix(in oklab, white 50%, transparent);
+  --q-scrollbar-surface-color: color-mix(in oklab, var(--foreground) 12%, transparent);
+  --q-scrollbar-surface-hover-color: color-mix(in oklab, var(--foreground) 20%, transparent);
   --q-bg: var(--background);
   --q-sidebar: #0b0b0b;
+  --q-sidebar-selected-bg: color-mix(in srgb, var(--foreground) 12%, var(--q-sidebar));
   --q-surface: #141414;
   --q-surface-muted: #1d1d1d;
   --q-hover: #252525;
@@ -188,6 +197,7 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
   font-size: 14px;
 }
 .q-sidebar-session-title {
+  --q-sidebar-title-delay: .35s;
   display: block;
   min-width: 0;
   flex: 1 1 auto;
@@ -224,14 +234,13 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
 }
 .q-sidebar-session-row:hover .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-track,
 .q-sidebar-session-row:has(:focus-visible) .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-track {
-  animation: q-sidebar-title-scroll calc(var(--q-sidebar-title-duration) + .35s) cubic-bezier(.49, .6, .7, 1) forwards;
+  animation: q-sidebar-title-scroll var(--q-sidebar-title-duration) cubic-bezier(.49, .6, .7, 1) var(--q-sidebar-title-delay) forwards;
 }
 .q-sidebar-session-row:hover .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-clip,
 .q-sidebar-session-row:has(:focus-visible) .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-clip {
-  animation: q-sidebar-title-fade-right calc(var(--q-sidebar-title-duration) + .35s) linear forwards;
+  animation: q-sidebar-title-fade-right calc(var(--q-sidebar-title-duration) + var(--q-sidebar-title-delay)) linear forwards;
 }
 @keyframes q-sidebar-title-scroll {
-  0%, 35% { transform: translateX(0); }
   to { transform: translateX(calc(-1 * var(--q-sidebar-title-distance))); }
 }
 @keyframes q-sidebar-title-fade-right {
@@ -290,11 +299,7 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
   pointer-events: auto;
 }
 .q-sidebar .q-sidebar-session-row[data-active] {
-  background: transparent;
-}
-.q-sidebar .q-sidebar-session-row[data-active]:hover,
-.q-sidebar .q-sidebar-session-row[data-active]:has([data-state="open"]) {
-  background: color-mix(in srgb, var(--foreground) 5%, var(--q-sidebar));
+  background: var(--q-sidebar-selected-bg);
 }
 .q-sidebar .q-sidebar-session-row[data-active] .q-sidebar-session-trigger {
   font-weight: var(--q-weight-medium);
@@ -409,13 +414,24 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
 .q-model-picker-action:hover {
   color: var(--foreground);
 }
-* { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent; }
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--muted-foreground) 35%, transparent); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: color-mix(in oklab, var(--muted-foreground) 55%, transparent); }
-::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
-::-webkit-scrollbar-corner { background: transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--q-scrollbar-color) transparent; }
+/* Keep normal scroll surfaces quiet until the pointer enters or drags them. */
+:is(
+  .overflow-auto, .overflow-scroll, .overflow-x-auto, .overflow-y-auto, .overflow-x-scroll, .overflow-y-scroll,
+  .aui-viewport, .xterm-viewport, .q-message-user-attachments, .page-shell, .tool-call-list, .qone-select-menu,
+  .settings-dialog-nav, .settings-dialog-content, .settings-dropdown, .settings-subdialog,
+  .settings-sync-list, .q-chat-search-results, .q-model-picker-list, .q-run-options-card,
+  .q-subagent-panel-scroll, .q-composer-queue, .q-sidebar-menu, .skill-cloud-list,
+  [data-aui="carousel"], [data-aui="markdown"] pre, .aui-md pre
+) { scrollbar-color: var(--q-scrollbar-surface-color) transparent; }
+:is(
+  .overflow-auto, .overflow-scroll, .overflow-x-auto, .overflow-y-auto, .overflow-x-scroll, .overflow-y-scroll,
+  .aui-viewport, .xterm-viewport, .q-message-user-attachments, .page-shell, .tool-call-list, .qone-select-menu,
+  .settings-dialog-nav, .settings-dialog-content, .settings-dropdown, .settings-subdialog,
+  .settings-sync-list, .q-chat-search-results, .q-model-picker-list, .q-run-options-card,
+  .q-subagent-panel-scroll, .q-composer-queue, .q-sidebar-menu, .skill-cloud-list,
+  [data-aui="carousel"], [data-aui="markdown"] pre, .aui-md pre
+):is(:hover, :active) { scrollbar-color: var(--q-scrollbar-surface-hover-color) transparent; }
 /* Interactive controls use a subtle brightness change for keyboard focus.
    Avoid stacking global outlines with component and Tailwind focus rings. */
 :is(button, a, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"]):focus-visible {
@@ -961,39 +977,33 @@ a { text-decoration: none; }
   .settings-subagent-runtime-grid, .settings-subagent-switches, .settings-subagent-list { grid-template-columns: 1fr; }
 }
 
-/* The disabled composer button must keep a visible black arrow in dark mode. */
-.aui-composer-send:disabled {
-  background-color: #8f8f8f !important;
-  color: #000 !important;
-  opacity: 1 !important;
+/* Send, queue-send, and stop share the Codex composer control surface. */
+.aui-thread-root .aui-composer-send,
+.aui-thread-root .aui-composer-cancel {
+  width: 100%;
+  height: 100%;
+  padding: 2px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--foreground);
+  color: var(--background);
+  box-shadow: none;
+  transition: opacity 150ms ease;
 }
-.aui-composer-send:disabled .aui-composer-send-icon {
-  color: #000 !important;
-  stroke: #000 !important;
+.aui-thread-root .aui-composer-send:hover,
+.aui-thread-root .aui-composer-cancel:hover {
+  background: var(--foreground);
+  color: var(--background);
 }
-:root:not([data-theme="dark"]) .aui-composer-send:not(:disabled) {
-  background-color: var(--primary) !important;
-  color: var(--primary-foreground) !important;
+.aui-thread-root .q-composer-submit-control:has(.aui-composer-send:disabled) {
+  opacity: .5;
 }
-:root:not([data-theme="dark"]) .aui-composer-send:not(:disabled) .aui-composer-send-icon {
-  color: var(--primary-foreground) !important;
-  stroke: var(--primary-foreground) !important;
+.aui-thread-root .aui-composer-send:disabled {
+  cursor: default;
+  opacity: 1;
 }
-:root[data-theme="dark"] .aui-composer-send:not(:disabled) .aui-composer-send-icon {
-  color: #000 !important;
-  stroke: #000 !important;
-}
-
-/* The cancel control uses a light circular button in dark mode. Keep its
-   square stop glyph dark enough to remain visible against that background. */
-:root[data-theme="dark"] .aui-composer-cancel {
-  background-color: #f5f5f5 !important;
-  color: #000 !important;
-}
-:root[data-theme="dark"] .aui-composer-cancel-icon {
-  color: #000 !important;
-  stroke: #000 !important;
-  fill: #000 !important;
+.aui-thread-root .q-composer-submit-glyph {
+  color: var(--background);
 }
 
 @media (max-width: 680px) {

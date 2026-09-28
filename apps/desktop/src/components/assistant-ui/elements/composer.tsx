@@ -55,10 +55,34 @@ export interface ComposerModel {
 }
 
 export interface ComposerUsage {
-  system?: number;
-  tools: number;
-  messages: number;
+  used: number;
   total: number;
+}
+
+const TOKEN_UNITS = [
+  { threshold: 1_000_000_000, suffix: "b" },
+  { threshold: 1_000_000, suffix: "m" },
+  { threshold: 1_000, suffix: "k" },
+] as const;
+
+function formatTokenCount(value: number): string {
+  const safeValue = Math.max(0, Math.round(Number.isFinite(value) ? value : 0));
+  const unitIndex = TOKEN_UNITS.findIndex(({ threshold }) => safeValue >= threshold);
+
+  if (unitIndex === -1) return String(safeValue);
+
+  let unit = TOKEN_UNITS[unitIndex];
+  let amount = safeValue / unit.threshold;
+  let roundedAmount = Number(amount.toFixed(1));
+
+  // Avoid values such as 1000k. Promote them to the next unit instead.
+  if (roundedAmount >= 1_000 && unitIndex > 0) {
+    unit = TOKEN_UNITS[unitIndex - 1];
+    amount = safeValue / unit.threshold;
+    roundedAmount = Number(amount.toFixed(1));
+  }
+
+  return `${roundedAmount}${unit.suffix}`;
 }
 
 const ATTACHMENT_ICONS: Record<
@@ -481,18 +505,13 @@ export function ComposerContext({
   label = "Context",
   note,
   triggerLabel = "Context usage",
+  modelName,
   className,
   ...props
-}: Omit<ComponentProps<"div">, "children"> & { usage: ComposerUsage; label?: string; note?: string; triggerLabel?: string }) {
-  const used = (usage.system ?? 0) + usage.tools + usage.messages;
-  const fraction = usage.total === 0 ? 0 : used / usage.total;
+}: Omit<ComponentProps<"div">, "children"> & { usage?: ComposerUsage; label?: string; note?: string; triggerLabel?: string; modelName?: string }) {
+  const fraction = usage && usage.total > 0 ? usage.used / usage.total : 0;
   const warn = fraction > 0.85;
   const circumference = 2 * Math.PI * 6;
-  const segments = [
-    ...(usage.system === undefined ? [] : [{ label: "System", value: usage.system, className: "bg-foreground/25" }]),
-    { label: "Tools", value: usage.tools, className: "bg-foreground/45" },
-    { label: "Messages", value: usage.messages, className: "bg-foreground/80" },
-  ];
 
   return (
     <div
@@ -519,43 +538,17 @@ export function ComposerContext({
               warn ? "text-red-500 dark:text-red-400" : "text-foreground/35",
             )}
           >
-            {Math.round(fraction * 100)}%
+            {usage ? `${Math.round(fraction * 100)}%` : "—"}
           </p>
         </div>
         <div className="bg-foreground/[0.06] flex h-[5px] w-full gap-px overflow-hidden rounded-full">
-          {segments.map((segment) => (
-            <span
-              key={segment.label}
-              className={cn(
-                "h-full transition-[width] duration-700 motion-reduce:transition-none",
-                segment.className,
-              )}
-              style={{ width: `${pct(segment.value, usage.total)}%` }}
-            />
-          ))}
+          <span className="h-full bg-foreground/80 transition-[width] duration-700 motion-reduce:transition-none" style={{ width: `${clamp(fraction, 0, 1) * 100}%` }} />
         </div>
-        <div className="flex flex-col gap-2">
-          {segments.map((segment) => (
-            <div
-              key={segment.label}
-              className="text-foreground/55 flex items-center gap-2.5 text-sm"
-            >
-              <span
-                aria-hidden
-                className={cn("size-1.5 rounded-full", segment.className)}
-              />
-              <span className="flex-1">{segment.label}</span>
-              <span className={cn(mono, "text-foreground/40 tabular-nums")}>
-                {segment.value < 0.1 && segment.value > 0 ? "<0.1" : segment.value.toFixed(1)}k
-              </span>
-            </div>
-          ))}
-        </div>
-        <div className="bg-foreground/[0.06] h-px" />
+        {modelName && <p className="truncate text-foreground/45 text-xs" title={modelName}>{modelName}</p>}
         <div className="text-foreground/55 flex items-center justify-between text-sm">
           <span>Total</span>
           <span className={cn(mono, "text-foreground/40 tabular-nums")}>
-            {used.toFixed(1)}k / {usage.total.toFixed(1)}k
+            {usage ? `${formatTokenCount(usage.used)} / ${formatTokenCount(usage.total)}` : "—"}
           </span>
         </div>
         {note && <p className="text-foreground/40 text-xs leading-snug">{note}</p>}
@@ -565,7 +558,7 @@ export function ComposerContext({
         aria-label={triggerLabel}
         className={cn(
           ghostButton,
-          "size-8",
+          "size-8 bg-transparent! shadow-none! hover:bg-transparent! dark:hover:bg-transparent! hover:shadow-none!",
           warn && "text-red-500 dark:text-red-400",
         )}
       >

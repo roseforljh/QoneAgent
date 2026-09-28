@@ -1,17 +1,17 @@
 import { type FC, type ReactNode } from "react";
 import { useAuiState } from "@assistant-ui/react";
-import { FileTextIcon, Globe2Icon, ImageIcon, PlusIcon, TargetIcon, type LucideIcon } from "lucide-react";
+import { FileTextIcon, Globe2Icon, ListCollapseIcon, PlusIcon, TargetIcon, type LucideIcon } from "lucide-react";
 import { useLocale } from "../../localization";
 import type { ComposerToolId } from "../../lib/composer-tool-editor";
 import "./composer-tools.css";
 
-export type ComposerTool = { id: ComposerToolId; label: string; description: string; icon: LucideIcon };
+export type ComposerTool = { id: ComposerToolId | "compact"; label: string; description: string; icon: LucideIcon };
 
 export function getComposerTools(t: ReturnType<typeof useLocale>["t"]): ComposerTool[] {
   return [
     { id: "attachment", label: t("composer.toolAttachment"), description: t("composer.toolAttachmentDescription"), icon: FileTextIcon },
     { id: "web-search", label: t("composer.toolWebSearch"), description: t("composer.toolWebSearchDescription"), icon: Globe2Icon },
-    { id: "image-generation", label: t("composer.toolImageGeneration"), description: t("composer.toolImageGenerationDescription"), icon: ImageIcon },
+    { id: "compact", label: t("composer.toolCompact"), description: t("composer.toolCompactDescription"), icon: ListCollapseIcon },
     { id: "goal", label: t("composer.toolGoal"), description: t("composer.toolGoalDescription"), icon: TargetIcon },
   ];
 }

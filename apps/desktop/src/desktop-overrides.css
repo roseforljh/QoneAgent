@@ -49,6 +49,19 @@ body {
   padding-block-start: 4rem;
 }
 .aui-thread-root .q-message-root { overflow: visible; }
+.aui-thread-root .q-user-message-bubble {
+  max-width: 70%;
+  overflow: hidden;
+  border-radius: 22px;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  color: var(--foreground);
+  padding: 10px 16px;
+  font-size: var(--q-text-base);
+  line-height: 1.5;
+}
+.aui-thread-root .q-user-message-bubble-paired {
+  max-width: 100%;
+}
 .aui-thread-root .q-message-action-slot {
   position: absolute;
   z-index: 2;
@@ -196,24 +209,6 @@ body {
 .aui-thread-root .q-tool-timeline {
   margin-bottom: 0.75rem;
 }
-.aui-thread-root .q-assistant-execution * {
-  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 18%, transparent) transparent;
-}
-.aui-thread-root .q-assistant-execution *::-webkit-scrollbar {
-  width: 3px;
-  height: 3px;
-}
-.aui-thread-root .q-assistant-execution *::-webkit-scrollbar-thumb {
-  background: color-mix(in oklab, var(--muted-foreground) 20%, transparent);
-}
-.aui-thread-root .q-assistant-execution *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklab, var(--muted-foreground) 32%, transparent);
-}
-.aui-thread-root .q-assistant-execution *::-webkit-scrollbar-track,
-.aui-thread-root .q-assistant-execution *::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
 .aui-thread-root .aui-composer-input {
   font-size: var(--q-text-base);
   line-height: 1.5;

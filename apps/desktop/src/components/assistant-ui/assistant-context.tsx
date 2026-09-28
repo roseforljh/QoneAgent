@@ -1,5 +1,4 @@
-import { useMemo, useState, type FC } from "react";
-import { useAuiState } from "@assistant-ui/react";
+import { useEffect, useState, type FC } from "react";
 import { ComposerContext } from "./elements/composer";
 import { MemoryChips, type MemoryChip } from "./elements/memory-chips";
 import { useStore } from "../../store";
@@ -45,35 +44,30 @@ export const AssistantMemoryChips: FC<{ visible: boolean }> = ({ visible }) => {
 
 export const AssistantContext: FC<{ visible: boolean }> = ({ visible }) => {
   const { t } = useLocale();
-  const parts = useAuiState((state) => state.message.parts);
+  const sessionId = useStore((state) => state.currentSessionId);
   const modelConfigs = useStore((state) => state.modelConfigs);
   const selectedModelId = useStore((state) => state.selectedModelId);
-  const usage = useMemo(() => {
-    const textChars = parts.reduce((total, part) => {
-      if (part.type === "text") return total + part.text.length;
-      if (part.type === "tool-call") return total + part.argsText.length + JSON.stringify(part.result ?? "").length;
-      return total;
-    }, 0);
-    const selected = modelConfigs.find((config) => config.id === selectedModelId);
-    const config = selected?.config ?? {};
-    const metadata = config.modelMetadata;
-    const maxContext = typeof config.maxContext === "number"
-      ? config.maxContext
-      : metadata && typeof metadata === "object" && typeof (metadata as { contextWindow?: unknown }).contextWindow === "number"
-        ? (metadata as { contextWindow: number }).contextWindow
-        : 128_000;
-    return {
-      messages: textChars / 4 / 1000,
-      tools: parts.filter((part) => part.type === "tool-call").length * 0.1,
-      total: maxContext / 1000,
-    };
-  }, [modelConfigs, parts, selectedModelId]);
+  const selectedModel = modelConfigs.find((config) => config.id === selectedModelId);
+  const connected = useStore((state) => state.connected);
+  const running = useStore((state) => state.running);
+  const loadingSessionId = useStore((state) => state.messagesLoadingSessionId);
+  const latestMessageId = useStore((state) => state.messages.at(-1)?.id);
+  const compactionPhase = useStore((state) => state.compactionStatus?.phase);
+  const contextUsage = useStore((state) => state.contextUsage);
+  const refreshContextUsage = useStore((state) => state.refreshContextUsage);
+
+  useEffect(() => {
+    if (visible && connected && sessionId && selectedModelId && !running && compactionPhase !== "running" && loadingSessionId !== sessionId) refreshContextUsage();
+  }, [visible, connected, sessionId, selectedModelId, selectedModel?.updatedAt, running, loadingSessionId, latestMessageId, compactionPhase, refreshContextUsage]);
 
   if (!visible) return null;
   return <ComposerContext
-    usage={usage}
+    usage={contextUsage && contextUsage.sessionId === sessionId && contextUsage.model === selectedModelId
+      ? { used: contextUsage.tokens, total: contextUsage.contextWindow }
+      : undefined}
     label={t("chat.context")}
     triggerLabel={t("chat.contextUsage")}
     note={t("chat.contextEstimate")}
+    modelName={typeof selectedModel?.config.displayName === "string" ? selectedModel.config.displayName : selectedModel?.model}
   />;
 };

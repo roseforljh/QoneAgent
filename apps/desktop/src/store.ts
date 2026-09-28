@@ -78,6 +78,9 @@ interface AgentState {
   workspacesLoaded: boolean;
   lastError?: string;
   chatRunError?: ChatRunError;
+  compactionStatus?: { requestId: string; sessionId: string; phase: "running" | "done" };
+  contextUsage?: { sessionId: string; model: string; tokens: number; contextWindow: number };
+  contextUsageRequestId?: string;
   sessions: SessionInfo[];
   searchResults: SessionSearchResult[];
   searchLoading: boolean;
@@ -168,6 +171,8 @@ interface AgentState {
   setDefaultPermissionMode: (mode: RunPermissionMode) => void;
   setRunThinking: (modelId: string, level: RunThinkingLevel) => void;
   setCompactionSettings: (settings: { autoCompactionEnabled: boolean; compactionThreshold: number }) => void;
+  compactSession: () => void;
+  refreshContextUsage: () => void;
 }
 
 const rid = () => crypto.randomUUID();
@@ -279,6 +284,9 @@ export const useStore = create<AgentState>((set, get) => ({
   workspacesLoaded: !hasTauriBridge(),
   lastError: undefined,
   chatRunError: undefined,
+  compactionStatus: undefined,
+  contextUsage: undefined,
+  contextUsageRequestId: undefined,
   sessions: [],
   searchResults: [],
   searchLoading: false,
@@ -480,7 +488,7 @@ export const useStore = create<AgentState>((set, get) => ({
     pendingMessageReplacements.delete(id);
     const workspaceId = get().sessions.find((session) => session.id === id)?.workspaceId;
     const workspaceChanged = workspaceId !== undefined && workspaceId !== get().currentWorkspaceId;
-    set({ currentSessionId: id, messagesLoadingSessionId: id, queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], chatRunError: undefined });
+    set({ currentSessionId: id, messagesLoadingSessionId: id, queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, compactionStatus: undefined, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], chatRunError: undefined });
     get().send({ type: "session.messages", requestId: rid(), sessionId: id });
     get().send({ type: "goal.get", requestId: rid(), sessionId: id });
     get().send({ type: "session.queue.list", requestId: rid(), sessionId: id });
@@ -533,6 +541,9 @@ export const useStore = create<AgentState>((set, get) => ({
       activeMessageSequence: undefined,
       preparedToolCallIds: [],
       running: true,
+      compactionStatus: undefined,
+      contextUsage: undefined,
+      contextUsageRequestId: undefined,
       creatingSession: false,
       pendingMessage: undefined,
       pendingGoal: undefined,
@@ -602,6 +613,28 @@ export const useStore = create<AgentState>((set, get) => ({
     const next = { autoCompactionEnabled: settings.autoCompactionEnabled, compactionThreshold };
     set(next);
     void get().send({ type: "compaction.settings.set", requestId: rid(), ...next });
+  },
+  compactSession: () => {
+    const { currentSessionId, selectedModelId, connected, compactionStatus } = get();
+    if (!connected || !currentSessionId || !selectedModelId) {
+      set({ lastError: "请先连接运行时、选择会话和模型。" });
+      return;
+    }
+    if (compactionStatus?.sessionId === currentSessionId && compactionStatus.phase === "running") return;
+    const requestId = rid();
+    set({ compactionStatus: { requestId, sessionId: currentSessionId, phase: "running" }, contextUsage: undefined, contextUsageRequestId: undefined, lastError: undefined });
+    void get().send({ type: "session.compact", requestId, sessionId: currentSessionId, model: selectedModelId }).then((sent) => {
+      if (!sent) set((state) => state.compactionStatus?.requestId === requestId ? { compactionStatus: undefined } : state);
+    });
+  },
+  refreshContextUsage: () => {
+    const { connected, currentSessionId, selectedModelId } = get();
+    if (!connected || !currentSessionId || !selectedModelId) return;
+    const requestId = rid();
+    set({ contextUsageRequestId: requestId, contextUsage: undefined });
+    void get().send({ type: "session.context.get", requestId, sessionId: currentSessionId, model: selectedModelId }).then((sent) => {
+      if (!sent) set((state) => state.contextUsageRequestId === requestId ? { contextUsageRequestId: undefined } : state);
+    });
   },
 
   refreshWorkspace: (id = get().currentWorkspaceId) => {
@@ -722,6 +755,7 @@ export function initBridge() {
         const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
         return {
           connected: false,
+          compactionStatus: undefined,
           browserStatus: st.browserStatus ? { ...st.browserStatus, targetConnected: false, phase: "error", lastError: "浏览器运行时已退出" } : undefined,
           mcpConnectingIds: [],
           githubDeviceAuthorization: undefined,
@@ -1150,6 +1184,14 @@ export function initBridge() {
         useStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
         break;
       case "error":
+        if (msg.requestId && msg.requestId === useStore.getState().contextUsageRequestId) {
+          useStore.setState({ contextUsageRequestId: undefined, contextUsage: undefined });
+          break;
+        }
+        if (msg.requestId && msg.requestId === useStore.getState().compactionStatus?.requestId) {
+          useStore.setState({ compactionStatus: undefined, lastError: displayRuntimeError(msg.message) });
+          break;
+        }
         if (msg.requestId && steerRequests.has(msg.requestId)) {
           steerRequests.get(msg.requestId)?.resolve(false);
           break;
@@ -1197,6 +1239,17 @@ export function initBridge() {
           ...(st.creatingSession ? { creatingSession: false, pendingMessage: undefined } : {}),
           ...(st.running && !st.activeRunId && !pendingAgentRun ? { running: false } : {}),
         }));
+        break;
+      case "session.compacted":
+        useStore.setState((state) => state.compactionStatus?.requestId === msg.requestId
+          ? { compactionStatus: { ...state.compactionStatus, phase: "done" } }
+          : state);
+        break;
+      case "session.context":
+        useStore.setState((state) => state.contextUsageRequestId === msg.requestId &&
+          state.currentSessionId === msg.sessionId && state.selectedModelId === msg.model
+          ? { contextUsageRequestId: undefined, contextUsage: { sessionId: msg.sessionId, model: msg.model, tokens: msg.tokens, contextWindow: msg.contextWindow } }
+          : state);
         break;
       case "agent.event": {
         const ev = msg.event;

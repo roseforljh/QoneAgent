@@ -9,11 +9,11 @@
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="attachment"] { color: #60a5fa; }
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="mcp"] { color: #fb923c; }
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="web-search"] { color: #2dd4bf; }
-.q-composer-tool-option .q-composer-tool-icon[data-tool-id="image-generation"] { color: #f472b6; }
+.q-composer-tool-option .q-composer-tool-icon[data-tool-id="compact"] { color: #f472b6; }
 .q-composer-tool-option .q-composer-tool-icon[data-tool-id="skill"] { color: #c084fc; }
 :root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="attachment"] { color: #2563eb; }
 :root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="web-search"] { color: #0f766e; }
-:root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="image-generation"] { color: #db2777; }
+:root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="compact"] { color: #db2777; }
 :root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="skill"] { color: #9333ea; }
 :root:not([data-theme="dark"]) .q-composer-tool-option .q-composer-tool-icon[data-tool-id="mcp"] { color: #ea580c; }
 .q-composer-tool-chip { display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid transparent; border-radius: 999px; font-size: .82em; font-weight: 600; line-height: 1.35; white-space: nowrap; vertical-align: baseline; user-select: none; }

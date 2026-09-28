@@ -4,6 +4,7 @@ import { UserImageThumbnail } from "./elements/user-image-thumbnail";
 import { ComposerToolChip, ComposerToolsPopover, type ComposerTool } from "./composer-tools";
 import { ComposerTriggers } from "./composer-triggers";
 import { ComposerEditorBridge, type InsertComposerTool, type ToggleComposerMention } from "./composer-editor-bridge";
+import { ComposerActionGlyph } from "./composer-action-glyph";
 import { LongPasteAttachmentPlugin } from "./long-paste-attachment";
 import { AssistantParts } from "./assistant-parts";
 import { MessagePair } from "./elements/message-pair";
@@ -43,7 +44,6 @@ import {
 } from "@assistant-ui/react";
 import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 import {
-  ArrowUpIcon,
   CheckIcon,
   ChevronDownIcon,
   CornerDownRightIcon,
@@ -102,7 +102,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background text-foreground flex h-full flex-col items-stretch px-4 [--q-chat-bg:var(--background)]"
       style={{
-        ["--composer-bg" as string]: "color-mix(in oklab, var(--color-muted) 40%, var(--color-background))",
+        ["--composer-bg" as string]: "var(--color-muted)",
         ["--composer-radius" as string]: "var(--radius-thread)",
         ["--composer-padding" as string]: "8px",
       }}
@@ -149,7 +149,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           <ChatRunErrorView />
           <div className="mx-auto w-full q-thread-content empty:hidden">{children}</div>
 
-          <ThreadPrimitive.ViewportFooter className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-background pb-2">
+          <ThreadPrimitive.ViewportFooter className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-transparent pb-2">
             <ThreadScrollToBottom />
             <div className="relative z-1 mx-auto w-full q-composer-content">
               {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
@@ -234,6 +234,8 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const aui = useAui();
   const { t } = useLocale();
   const sessionId = useStore((state) => state.currentSessionId);
+  const compactSession = useStore((state) => state.compactSession);
+  const compactionStatus = useStore((state) => state.compactionStatus);
   const editingQueueItem = useStore((state) => state.editingQueueItem);
   const insertToolRef = useRef<InsertComposerTool | null>(null);
   const toggleMentionRef = useRef<ToggleComposerMention | null>(null);
@@ -258,8 +260,9 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
       });
       else shellRef.current?.querySelector<HTMLButtonElement>(".aui-composer-add-attachment")?.click();
     }
-    else if (tool.id !== "image-generation") insertToolRef.current?.(tool);
-  }, [onNativeFiles]);
+    else if (tool.id === "compact") compactSession();
+    else insertToolRef.current?.({ id: tool.id, label: tool.label });
+  }, [compactSession, onNativeFiles]);
   const onMentionStateChange = useCallback((open: boolean, close: () => void) => {
     closeMentionRef.current = close;
     setMentionOpen(open);
@@ -273,6 +276,11 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   return (
     <>
     <GoalStatusBar />
+    {compactionStatus && compactionStatus.sessionId === sessionId && (
+      <div role="status" aria-live="polite" className="q-composer-content mx-auto mb-2 text-xs text-muted-foreground">
+        {t(compactionStatus.phase === "running" ? "composer.compacting" : "composer.compacted")}
+      </div>
+    )}
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <div className="q-composer-rail">
         <div className="q-composer-queue" role="list" aria-label={t("chat.queueLabel")}>
@@ -323,7 +331,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
         <div
           ref={shellRef}
           data-slot="aui_composer-shell"
-          className="relative z-10 border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
+          className="relative z-10 border-foreground/10 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
         >
           {editingQueueItem && (
             <div className="flex items-center justify-between px-2.5 py-1 text-xs text-muted-foreground" role="status">
@@ -336,7 +344,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
           <LexicalComposerInput autoFocus submitMode="none" placeholder={placeholder} className={composerInputClass} directiveChip={ComposerToolChip}>
             <ComposerEditorBridge onReady={onEditorReady} onMentionToggleReady={onMentionToggleReady} />
             <LongPasteAttachmentPlugin />
-            <ComposerQueueEnterPlugin />
+            <ComposerQueueEnterPlugin menuOpen={mentionOpen} />
           </LexicalComposerInput>
           <ComposerTriggers onToolSelect={onToolSelect} onMentionStateChange={onMentionStateChange} />
           <ComposerAction mentionOpen={mentionOpen} onToggleMention={toggleMention} />
@@ -366,6 +374,7 @@ const GoalStatusBar: FC = () => {
 const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> = ({ mentionOpen, onToggleMention }) => {
   const { t } = useLocale();
   const isRunning = useAuiState((state) => state.thread.isRunning);
+  const showSend = useAuiState((state) => !state.thread.isRunning || (state.thread.capabilities.queue && state.composer.canSend));
   const sendLabel = t(isRunning ? "chat.queueSend" : "chat.sendMessage");
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
@@ -391,28 +400,32 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
             </ComposerPrimitive.StopDictation>
           </AuiIf>
         </AuiIf>
-        <AuiIf condition={(s) => !s.thread.isRunning || (s.thread.capabilities.queue && s.composer.canSend)}>
-          <ComposerPrimitive.Send asChild>
-            <TooltipIconButton
-              tooltip={sendLabel}
-              side="bottom"
-              type="button"
-              variant="default"
-              size="icon"
-              className="aui-composer-send size-7 rounded-full dark:text-black disabled:bg-muted-foreground disabled:text-black disabled:opacity-100"
-              aria-label={sendLabel}
-            >
-              <ArrowUpIcon className="aui-composer-send-icon size-4" />
-            </TooltipIconButton>
-          </ComposerPrimitive.Send>
-        </AuiIf>
-        <AuiIf condition={(s) => s.thread.isRunning && !(s.thread.capabilities.queue && s.composer.canSend)}>
-          <ComposerPrimitive.Cancel asChild>
-            <Button type="button" variant="default" size="icon" className="aui-composer-cancel size-7 rounded-full" aria-label={t("chat.stopGenerating")} title={t("chat.stopGenerating")}>
-              <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
-            </Button>
-          </ComposerPrimitive.Cancel>
-        </AuiIf>
+        <div className="q-composer-submit-control relative size-7 shrink-0">
+          <span className="q-composer-submit-glyph pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+            <ComposerActionGlyph stopped={!showSend} />
+          </span>
+          <AuiIf condition={(s) => !s.thread.isRunning || (s.thread.capabilities.queue && s.composer.canSend)}>
+            <ComposerPrimitive.Send asChild>
+              <Button
+                type="button"
+                variant="default"
+                size="icon"
+                className="aui-composer-send absolute inset-0"
+                aria-label={sendLabel}
+                title={sendLabel}
+              >
+                <span className="sr-only">{sendLabel}</span>
+              </Button>
+            </ComposerPrimitive.Send>
+          </AuiIf>
+          <AuiIf condition={(s) => s.thread.isRunning && !(s.thread.capabilities.queue && s.composer.canSend)}>
+            <ComposerPrimitive.Cancel asChild>
+              <Button type="button" variant="default" size="icon" className="aui-composer-cancel absolute inset-0" aria-label={t("chat.stopGenerating")} title={t("chat.stopGenerating")}>
+                <span className="sr-only">{t("chat.stopGenerating")}</span>
+              </Button>
+            </ComposerPrimitive.Cancel>
+          </AuiIf>
+        </div>
       </div>
     </div>
   );
@@ -432,7 +445,7 @@ const ThreadScrollToBottom: FC = () => {
 };
 
 const assistantActionClassName =
-  "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground";
+  "flex size-7 items-center justify-center rounded-md bg-transparent! shadow-none! text-muted-foreground transition-colors hover:bg-transparent! hover:shadow-none! hover:text-foreground";
 
 const retryUserMessage = (messageId: string) => {
   const state = useStore.getState();
@@ -447,7 +460,7 @@ const UserMessageText: FC<{ paired?: boolean }> = ({ paired = false }) => {
   if (!hasText) return null;
 
   return (
-    <div className={cn("w-fit min-w-0 break-words rounded-[18px] bg-primary text-primary-foreground px-3.5 py-2 text-start text-sm leading-[calc(1em+4px)] tracking-[-0.01em]", paired ? "max-w-full" : "max-w-[85%]")}>
+    <div className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-full" : "max-w-[70%]")}>
       <MessagePrimitive.Parts>
         {({ part }) => part.type === "text" ? <span className="whitespace-pre-wrap">{part.text}</span> : null}
       </MessagePrimitive.Parts>
@@ -485,7 +498,7 @@ const UserMessage: FC<{ messageId: string }> = ({ messageId }) => {
 
 const PairUserContent: FC = () => {
   return (
-    <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-fit max-w-[85%] flex-col items-end gap-0.5 self-end">
+    <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-fit max-w-[70%] flex-col items-end gap-0.5 self-end">
       <UserMessageText paired />
     </MessagePrimitive.Root>
   );
@@ -498,7 +511,7 @@ const PairUserAttachments: FC = () => {
   if (!hasAttachments) return null;
 
   return (
-    <div className="q-message-user-attachments flex w-fit max-w-[85%] min-w-0 flex-nowrap items-end gap-2 self-end overflow-x-auto overscroll-x-contain pb-1">
+    <div className="q-message-user-attachments flex w-fit max-w-[70%] min-w-0 flex-nowrap items-end gap-2 self-end overflow-x-auto overscroll-x-contain pb-1">
       <MessagePrimitive.Parts>
         {({ part }) => {
           if (part.type === "file") return <div className="shrink-0"><File {...part} /></div>;

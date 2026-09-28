@@ -9,7 +9,7 @@ import { COMMAND_PRIORITY_HIGH, KEY_ENTER_COMMAND } from "lexical";
  * that state. `submitMode="none"` on the input prevents the built-in handler
  * from racing this plugin.
  */
-export function ComposerQueueEnterPlugin() {
+export function ComposerQueueEnterPlugin({ menuOpen }: { menuOpen: boolean }) {
   const [editor] = useLexicalComposerContext();
   const aui = useAui();
 
@@ -17,6 +17,7 @@ export function ComposerQueueEnterPlugin() {
     KEY_ENTER_COMMAND,
     (event) => {
       if (!event || event.isComposing || event.shiftKey || event.ctrlKey || event.metaKey) return false;
+      if (menuOpen) return false;
       const thread = aui.thread.getState();
       const composer = aui.composer.getState();
       if (!composer.canSend || (thread.isRunning && !thread.capabilities.queue)) return false;
@@ -25,7 +26,7 @@ export function ComposerQueueEnterPlugin() {
       return true;
     },
     COMMAND_PRIORITY_HIGH,
-  ), [aui, editor]);
+  ), [aui, editor, menuOpen]);
 
   return null;
 }

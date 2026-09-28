@@ -38,6 +38,7 @@ import qonePenguinUrl from "./assets/qone-penguin.png";
 import { BrowserIntegration } from "./components/browser/BrowserIntegration";
 import { ReachChannels } from "./components/reach/ReachChannels";
 import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
+import { AppChrome } from "./components/app-chrome/AppChrome";
 
 type Theme = "light" | "dark";
 
@@ -377,6 +378,16 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
     return () => window.removeEventListener("qone-open-settings", openSettings);
   }, []);
   useEffect(() => {
+    const toggleSidebar = () => setSidebarCollapsed((collapsed) => !collapsed);
+    const openSearch = () => setSearchOpen(true);
+    window.addEventListener("qone-toggle-sidebar", toggleSidebar);
+    window.addEventListener("qone-open-search", openSearch);
+    return () => {
+      window.removeEventListener("qone-toggle-sidebar", toggleSidebar);
+      window.removeEventListener("qone-open-search", openSearch);
+    };
+  }, []);
+  useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -567,6 +578,9 @@ export default function App() {
     if (workspaceMatch && !running) { const routeWorkspaceId = decodeURIComponent(workspaceMatch[1]); if (workspaces.some((workspace) => workspace.id === routeWorkspaceId) && currentWorkspaceId !== routeWorkspaceId) selectWorkspace(routeWorkspaceId); }
   }, [pathname, sessions, workspaces, currentSessionId, currentWorkspaceId, running, selectSession, selectWorkspace]);
 
-  if (["/skills", "/plugins", "/permissions"].includes(pathname)) return <ManagementPanel kind={pathname.slice(1) as "skills" | "plugins" | "permissions"} />;
-  return <ChatPage theme={theme} onToggleTheme={toggleTheme} initialSettingsOpen={pathname === "/settings"} />;
+  return <AppChrome path={pathname}>
+    {["/skills", "/plugins", "/permissions"].includes(pathname)
+      ? <ManagementPanel kind={pathname.slice(1) as "skills" | "plugins" | "permissions"} />
+      : <ChatPage theme={theme} onToggleTheme={toggleTheme} initialSettingsOpen={pathname === "/settings"} />}
+  </AppChrome>;
 }

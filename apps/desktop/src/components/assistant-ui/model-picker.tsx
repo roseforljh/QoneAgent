@@ -22,11 +22,14 @@ export const ModelPicker: FC = () => {
   const [view, setView] = useState<"simple" | "advanced">("simple");
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [openTriggerWidth, setOpenTriggerWidth] = useState<number>();
   const [providerSnapshot, setProviderSnapshot] = useState(() => readCurrentProvider());
   const [panelHeights, setPanelHeights] = useState<{ simple: number; advanced: number }>();
   const simpleRef = useRef<HTMLDivElement>(null);
   const advancedRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const openLabelRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const refresh = () => setProviderSnapshot(readCurrentProvider());
@@ -52,6 +55,7 @@ export const ModelPicker: FC = () => {
   const thinkingIndex = Math.max(0, thinkingOptions.findIndex((option) => option.value === thinking));
   const displayLabel = activeModel?.label ?? t("chat.configureModel");
   const thinkingLabel = activeModel ? t(thinkingOptions[thinkingIndex]?.labelKey ?? "") : "";
+  const openLabel = t(activeModel && thinkingOptions.length >= 2 ? "model.selectEffort" : "chat.selectModel");
 
   useEffect(() => {
     if (models.length > 0 && !selected) setSelectedModel(models[0].id);
@@ -111,18 +115,27 @@ export const ModelPicker: FC = () => {
   };
 
   return <Popover.Root open={open} onOpenChange={(nextOpen) => {
-    if (nextOpen) preparePicker();
+    if (nextOpen) {
+      setOpenTriggerWidth(Math.max(
+        triggerRef.current?.offsetWidth ?? 0,
+        openLabelRef.current?.offsetWidth ?? 0,
+      ));
+      preparePicker();
+    } else setOpenTriggerWidth(undefined);
     setOpen(nextOpen);
   }}>
     <Popover.Trigger asChild>
-      <button type="button" aria-label={t("chat.selectModel")} title={displayLabel} aria-expanded={open} data-selected={Boolean(selected)} className="q-model-picker-trigger">
-        <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={16} />
-        <span className="q-model-picker-trigger-name">{displayLabel}</span>
-        {activeModel && <span className="q-model-picker-effort-label">{thinkingLabel}</span>}
+      <button ref={triggerRef} type="button" aria-label={open ? openLabel : t("chat.selectModel")} title={open ? openLabel : displayLabel} aria-expanded={open} data-selected={Boolean(selected)} data-state={open ? "open" : "closed"} className="q-model-picker-trigger" style={openTriggerWidth === undefined ? undefined : { width: openTriggerWidth }}>
+        <span ref={openLabelRef} className="q-model-picker-trigger-measure" aria-hidden="true"><span>{openLabel}</span><ChevronDownIcon size={14} /></span>
+        {open ? <span className="q-model-picker-trigger-placeholder">{openLabel}</span> : <>
+          <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={16} />
+          <span className="q-model-picker-trigger-name">{displayLabel}</span>
+          {activeModel && <span className="q-model-picker-effort-label">{thinkingLabel}</span>}
+        </>}
         <ChevronDownIcon size={14} aria-hidden="true" />
       </button>
     </Popover.Trigger>
-    <Popover.Content side="top" align="end" sideOffset={8} collisionPadding={12} className="q-model-picker-card"
+    <Popover.Content side="top" align="center" sideOffset={8} collisionPadding={12} className="q-model-picker-card"
       onOpenAutoFocus={(event) => { event.preventDefault(); measurePanels(); }}
       onKeyDown={(event) => {
         if (view !== "advanced" || (event.target as HTMLElement).closest('input, [role="slider"]')) return;

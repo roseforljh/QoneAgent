@@ -15,6 +15,20 @@ const permissionModes = [
   { value: "full", labelKey: "composer.permissionFull", descriptionKey: "composer.permissionFullDescription", icon: ShieldIcon },
 ] as const;
 
+const SNOWFLAKE_CYCLE_MS = 6400;
+const snowflakes = [
+  { top: "38%", size: 7 },
+  { top: "60%", size: 5 },
+  { top: "46%", size: 9 },
+  { top: "55%", size: 6 },
+  { top: "34%", size: 8 },
+  { top: "63%", size: 5 },
+  { top: "43%", size: 7 },
+  { top: "56%", size: 6 },
+] as const;
+const TRACK_INSET = 10;
+const trackPosition = (position: number) => `calc(${position * 100}% + ${TRACK_INSET - position * TRACK_INSET * 2}px)`;
+
 // Shockwave picker: a capsule track with a filled segment + knob and evenly
 // spaced dots that bulge as the knob passes them. Drag or wheel to change.
 export const ThinkingWave: FC<{
@@ -57,8 +71,8 @@ export const ThinkingWave: FC<{
 
   const ratioFromClientX = (clientX: number) => {
     const rect = trackRef.current?.getBoundingClientRect();
-    if (!rect || rect.width <= 20) return 0;
-    return Math.min(1, Math.max(0, (clientX - rect.left - 10) / (rect.width - 20)));
+    if (!rect || rect.width <= TRACK_INSET * 2) return 0;
+    return Math.min(1, Math.max(0, (clientX - rect.left - TRACK_INSET) / (rect.width - TRACK_INSET * 2)));
   };
 
   // 拖动时按指针经过的位置直接吸附到最近档位，选中态实时提交（右侧档位名同步变）
@@ -118,27 +132,23 @@ export const ThinkingWave: FC<{
         onPointerDown={onPointerDown}
         onKeyDown={onKeyDown}
       >
-        <span className="q-think-wave-fill" style={{ width: `calc(${ratio * 100}% + ${10 - ratio * 20}px)` }} aria-hidden="true" />
+        <span className="q-think-wave-fill" style={{ width: trackPosition(ratio) }} aria-hidden="true" />
         {/* 雪花按整条轨道宽度流动，clip-path 只负责裁掉填充段以外的部分，
             所以填充伸缩不会改变雪花的速度和位置 */}
         <span
           className="q-think-wave-flakes"
-          data-on={ratio > 0.22 || undefined}
-          style={{ clipPath: `inset(0 calc(${(1 - ratio) * 100}% - ${10 - ratio * 20}px) 0 0)` }}
+          data-on={ratio > 0 || undefined}
+          style={{ clipPath: `inset(0 calc(${(1 - ratio) * 100}% - ${TRACK_INSET - ratio * TRACK_INSET * 2}px) 0 0)`, "--flake-duration": `${SNOWFLAKE_CYCLE_MS}ms` } as CSSProperties}
           aria-hidden="true"
         >
-          {[
-            { top: "38%", size: 7, dur: 5.2, delay: -0.6, bobA: -2, bobB: 1.5 },
-            { top: "60%", size: 5, dur: 6.6, delay: -2.1, bobA: 2, bobB: -1.5 },
-            { top: "46%", size: 9, dur: 4.6, delay: -3.4, bobA: -2.5, bobB: 2 },
-            { top: "57%", size: 6, dur: 7.4, delay: -1.5, bobA: 1.5, bobB: -2 },
-          ].map((flake, i) => (
-            <SnowflakeIcon
+          {snowflakes.map((flake, i) => (
+            <span
               key={i}
-              size={flake.size}
-              className="q-think-wave-flake"
-              style={{ top: flake.top, "--dur": `${flake.dur}s`, "--delay": `${flake.delay}s`, "--bob-a": `${flake.bobA}px`, "--bob-b": `${flake.bobB}px` } as CSSProperties}
-            />
+              className="q-think-wave-flake-lane"
+              style={{ top: flake.top, "--flake-delay": `${-i * SNOWFLAKE_CYCLE_MS / snowflakes.length}ms` } as CSSProperties}
+            >
+              <SnowflakeIcon size={flake.size} className="q-think-wave-flake" />
+            </span>
           ))}
         </span>
         {options.map((option, i) => {
@@ -149,11 +159,12 @@ export const ThinkingWave: FC<{
               key={option.value}
               aria-hidden="true"
               className="q-think-wave-dot"
-              style={{ left: `calc(${pos * 100}% + ${10 - pos * 20}px)`, transform: `translate(-50%, -50%) scale(${(1 + wave * 1.05).toFixed(3)})` }}
+              data-under-penguin={i === index || undefined}
+              style={{ left: trackPosition(pos), transform: `translate(-50%, -50%) scale(${(1 + wave * 1.05).toFixed(3)})` }}
             />
           );
         })}
-        <span className="q-think-wave-knob" style={{ left: `calc(max(14px, ${ratio * 100}% + ${2 - ratio * 20}px))` }} aria-hidden="true">
+        <span className="q-think-wave-knob" style={{ left: trackPosition(ratio) }} aria-hidden="true">
           <img
             src={penguinUrl}
             alt=""
@@ -222,7 +233,6 @@ export const RunOptionsPopover: FC = () => {
         (event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>("button[aria-pressed='true']")?.focus();
       }}>
       <section className="q-run-options-section" aria-label={t("composer.permissions")}>
-        <h3>{t("composer.permissions")}</h3>
         <div className="q-run-options-modes">
           {permissionModes.map((mode) => {
             const Icon = mode.icon;

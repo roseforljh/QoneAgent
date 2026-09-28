@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckIcon, ChevronRightIcon, Clock3Icon, XIcon } from "lucide-react";
+import { ChevronRightIcon, Clock3Icon, XIcon } from "lucide-react";
 import { useRef, type ReactNode } from "react";
 import { useScrollLock } from "@assistant-ui/react";
 import { useReducedMotion } from "motion/react";
@@ -89,13 +89,12 @@ export function ToolCall({
           </span>
         )}
         <ChevronRightIcon className="size-3.5 shrink-0 opacity-0 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover/trigger:opacity-60 group-focus-visible/trigger:opacity-60 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />
-        <span className="ms-auto flex w-4 items-center justify-end">
-          {waiting && <Clock3Icon className="size-3.5 text-amber-500" />}
-          {failed && <XIcon className="size-3.5 text-red-500" />}
-          {!running && !waiting && !pending && !failed && (
-            <CheckIcon className="fade-in zoom-in-90 animate-in size-3.5 text-emerald-500 duration-200" />
-          )}
-        </span>
+        {(waiting || failed) && (
+          <span className="ms-auto flex w-4 items-center justify-end">
+            {waiting && <Clock3Icon className="size-3.5 text-amber-500" />}
+            {failed && <XIcon className="size-3.5 text-red-500" />}
+          </span>
+        )}
       </CollapsibleTrigger>
       <MeasuredCollapse open={open} className="outline-none">
         <div data-slot="tool-result-panel" className={cn(field, "mt-2 overflow-hidden rounded-2xl")}>
