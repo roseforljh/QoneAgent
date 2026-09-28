@@ -12,8 +12,10 @@ import {
   type ExternalStoreThreadListAdapter,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import type { MessageAttachmentInfo, PluginInfo } from "@qone/protocol";
+import { type MessageAttachmentInfo, type PluginInfo } from "@qone/protocol";
 import { assistantMessageContent } from "./lib/assistant-message-parts";
+import { isImageModel } from "./lib/image-model-config";
+import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { createQoneMessageQueue, getQoneMessageQueue, setQoneMessageQueue } from "./lib/qone-message-queue";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
@@ -95,6 +97,10 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const queueItems = useStore((s) => s.queueItems);
   const queueLoadedSessionId = useStore((s) => s.queueLoadedSessionId);
   const toolCalls = useStore((s) => s.toolCalls);
+  const childImagesByRun = useStore(selectSubagentImages);
+  const selectedModelId = useStore((s) => s.selectedModelId);
+  const modelConfigs = useStore((s) => s.modelConfigs);
+  const chatRunError = useStore((s) => s.chatRunError);
   const sessions = useStore((s) => s.sessions);
   const currentSessionId = useStore((s) => s.currentSessionId);
   const runAgent = useStore((s) => s.runAgent);
@@ -158,12 +164,28 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   }, [queue, running]);
 
   const hasStreamingAssistant = running;
-  const runtimeMessages = useMemo(
-    () => hasStreamingAssistant
-      ? [...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts.length ? streamingParts : undefined, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }]
-      : messages,
-    [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant],
-  );
+  const selectedModel = modelConfigs.find((config) => config.id === selectedModelId);
+  const imageGenerationError = !hasStreamingAssistant && chatRunError && chatRunError.sessionId === currentSessionId && chatRunError.userMessageId && isImageModel(selectedModel)
+    ? messages.find((message) => message.id === chatRunError.userMessageId)
+    : undefined;
+  const runtimeMessages = useMemo(() => {
+    if (hasStreamingAssistant) return [...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts.length ? streamingParts : undefined, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }];
+    if (!imageGenerationError) return messages;
+    return [...messages, { id: `image-error:${imageGenerationError.id}`, role: "assistant", content: "", createdAt: Date.now() }];
+  }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError]);
+  const imageWindows = useMemo(() => {
+    const windows = new Map<string, { after?: number; through?: number }>();
+    const lastAssistantByRun = new Map<string, number>();
+    for (const message of runtimeMessages) {
+      if (message.role !== "assistant" || !message.runId) continue;
+      windows.set(message.id, {
+        after: lastAssistantByRun.get(message.runId),
+        through: message.id === "streaming" ? undefined : message.createdAt,
+      });
+      if (message.id !== "streaming" && message.createdAt !== undefined) lastAssistantByRun.set(message.runId, message.createdAt);
+    }
+    return windows;
+  }, [runtimeMessages]);
   const toolCallsByRun = useMemo(() => {
     const grouped = new Map<string, ToolCall[]>();
     for (const call of toolCalls) {
@@ -222,14 +244,19 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       const isStreamingMessage = message.id === "streaming";
       const calls = !message.parts && message.runId ? (toolCallsByRun.get(message.runId) ?? []) : [];
       const converted = assistantMessageContent(message, calls, isStreamingMessage);
-      // The main conversation keeps delegation compact. Full child transcripts
-      // are rendered only inside the subagent dock via ReadonlyThreadProvider.
-      const content = converted;
+      // The child transcript stays in the dock, but its images also belong
+      // to the parent answer. Derive them from persisted child runs so live
+      // updates and reopened sessions use the same content.
+      const imageWindow = imageWindows.get(message.id);
+      const content = appendSubagentImages(converted, message.runId ? childImagesByRun.get(message.runId) : undefined, imageWindow?.after, imageWindow?.through);
+      const imageGenerationPending = isStreamingMessage && running && isImageModel(selectedModel) && content.length === 0;
+      const imageGenerationFailed = message.id.startsWith("image-error:") && imageGenerationError ? { prompt: imageGenerationError.content, error: chatRunError?.detail } : undefined;
       return {
         id: message.id,
         role,
         createdAt,
         content,
+        metadata: imageGenerationPending || imageGenerationFailed ? { custom: { qoneImageGeneration: imageGenerationPending ? { prompt: message.content, generating: true } : imageGenerationFailed } } : undefined,
         status: isStreamingMessage && running ? { type: "running" } : { type: "complete", reason: "stop" },
       };
     },

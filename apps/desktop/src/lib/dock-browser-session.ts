@@ -21,6 +21,7 @@ export function createDockBrowserSession(
   invoke: BrowserInvoke,
   url: string,
   onError: (error: unknown) => void,
+  initialHtml?: string,
 ) {
   let disposed = false;
   let opened = false;
@@ -42,6 +43,7 @@ export function createDockBrowserSession(
         // browser_open creates a hidden child. Only this owner may reveal it.
         await invoke("browser_open", { url, ...desired.bounds });
         opened = true;
+        if (initialHtml !== undefined) await invoke("browser_preview", { html: initialHtml });
       }
       if (disposed) return;
       const next = desired;
@@ -81,7 +83,7 @@ export function createDockBrowserSession(
         void enqueue(sync).catch(report);
       }
     },
-    command(command: "browser_navigate" | "browser_eval", args: Record<string, unknown>) {
+    command(command: "browser_navigate" | "browser_eval" | "browser_preview", args: Record<string, unknown>) {
       return enqueue(async () => {
         if (!disposed && opened && !failed) await invoke(command, args);
       }).catch(report);

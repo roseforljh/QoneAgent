@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { CloudDownload, LoaderCircle, Search, X } from "lucide-react";
-import type { CloudSkillInfo } from "@qone/protocol";
+import { SKILL_CATALOG_TIMEOUT, type CloudSkillInfo } from "@qone/protocol";
 import { requestSkillCloud, useStore } from "../../store";
 import { useLocale } from "../../localization";
 import "./skill-cloud.css";
@@ -138,5 +138,5 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
 
 function formatCloudError(cause: unknown, t: (key: "skills.cloud.timeout") => string): string {
   const message = cause instanceof Error ? cause.message : String(cause);
-  return /timed out|timeout/i.test(message) ? t("skills.cloud.timeout") : message;
+  return message === SKILL_CATALOG_TIMEOUT ? t("skills.cloud.timeout") : message;
 }

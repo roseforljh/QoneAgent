@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 use std::sync::{
@@ -12,6 +13,24 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
+fn ensure_global_instructions_file() -> Result<(), String> {
+    let root = std::env::var_os("APPDATA")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| "无法确定 Qone 数据目录".to_string())?;
+    let directory = root.join("Qone");
+    std::fs::create_dir_all(&directory).map_err(|error| format!("创建 Qone 数据目录失败：{error}"))?;
+    let file = directory.join("Qone.md");
+    if !file.exists() {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file)
+            .map_err(|error| format!("创建 Qone.md 失败：{error}"))?;
+    }
+    Ok(())
+}
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -320,6 +339,34 @@ fn pick_attachment_files() -> Result<Vec<AttachmentFileInfo>, String> {
     }).collect()
 }
 
+#[tauri::command]
+async fn save_image_as(filename: String, data: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let name = std::path::Path::new(&filename)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("image.png");
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("图片另存为")
+            .set_file_name(name)
+            .save_file()
+        else {
+            return Ok(false);
+        };
+        let bytes = BASE64
+            .decode(data)
+            .map_err(|error| format!("无法读取图片数据：{error}"))?;
+        if bytes.is_empty() {
+            return Err("图片数据为空".into());
+        }
+        std::fs::write(path, bytes).map_err(|error| format!("保存图片失败：{error}"))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|error| format!("保存图片失败：{error}"))?
+}
+
 // --- Windows Credential Manager ---
 
 #[cfg(windows)]
@@ -328,23 +375,31 @@ mod creds;
 fn persist_runtime_secret(line: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     let event_type = value.get("type")?.as_str()?;
-    if event_type != "mcp.oauth.token" && event_type != "mcp.oauth.credential" {
+    if event_type != "mcp.oauth.token" && event_type != "mcp.oauth.credential" && event_type != "mcp.oauth.invalidated" {
         return None;
     }
     let key = value.get("key")?.as_str()?;
     let server_id = value.get("serverId")?.as_str()?;
-    let token = if event_type == "mcp.oauth.credential" {
+    let token = if event_type == "mcp.oauth.invalidated" {
+        ""
+    } else if event_type == "mcp.oauth.credential" {
         value.get("value")?.as_str()?
     } else {
         value.get("accessToken")?.as_str()?
     };
     let result = validate_secret_key(key).and_then(|_| {
         #[cfg(windows)]
-        return creds::set(key, token);
+        {
+            if event_type == "mcp.oauth.invalidated" {
+                return if creds::get(key)?.is_some() { creds::delete(key) } else { Ok(()) };
+            }
+            return creds::set(key, token);
+        }
         #[allow(unreachable_code)]
         Err("secrets only supported on Windows".into())
     });
     Some(match result {
+        Ok(()) if event_type == "mcp.oauth.invalidated" => line.to_string(),
         Ok(()) => {
             serde_json::json!({ "type": "mcp.oauth.saved", "serverId": server_id, "key": key })
                 .to_string()
@@ -471,6 +526,26 @@ async fn browser_navigate(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn browser_preview(html: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    return tauri::async_runtime::spawn_blocking(move || browser::preview(html))
+        .await
+        .map_err(|error| error.to_string())?;
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
+async fn browser_open_preview_external(app: AppHandle, html: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    return tauri::async_runtime::spawn_blocking(move || browser::open_preview_external(&app, &html))
+        .await
+        .map_err(|error| error.to_string())?;
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
 async fn browser_bounds(x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
     #[cfg(desktop)]
     return browser::bounds(x, y, w, h);
@@ -522,6 +597,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            ensure_global_instructions_file().map_err(std::io::Error::other)?;
             #[cfg(all(windows, debug_assertions))]
             dev_network::install(app.handle());
             let generation = Arc::new(AtomicU64::new(0));
@@ -588,6 +664,7 @@ fn main() {
             pick_workspace,
             read_dropped_file,
             pick_attachment_files,
+            save_image_as,
             secret_set,
             secret_get,
             secret_delete,
@@ -597,6 +674,8 @@ fn main() {
             terminal_kill,
             browser_open,
             browser_navigate,
+            browser_preview,
+            browser_open_preview_external,
             browser_bounds,
             browser_visible,
             browser_eval,
@@ -605,11 +684,11 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {
-            #[cfg(windows)]
             if let tauri::RunEvent::Exit = event {
+                #[cfg(windows)]
                 conpty::kill_all();
+                #[cfg(desktop)]
+                browser::cleanup_external_previews();
             }
-            #[cfg(not(windows))]
-            let _ = event;
         });
 }

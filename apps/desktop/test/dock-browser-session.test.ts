@@ -155,8 +155,38 @@ test("an offscreen host hides its old native hit area", async () => {
 
 test("WebView2 commands cannot block the synchronous IPC handler", async () => {
   const source = await Bun.file(new URL("../src-tauri/src/main.rs", import.meta.url)).text();
-  for (const command of ["open", "navigate", "bounds", "visible", "eval", "close"]) {
+  for (const command of ["open", "navigate", "preview", "bounds", "visible", "eval", "close"]) {
     expect(source).toMatch(new RegExp(`async fn browser_${command}\\(`));
   }
   expect(source).toContain("spawn_blocking(move || browser::open");
+  expect(source).toContain("spawn_blocking(move || browser::preview");
+});
+
+test("code preview loads after native creation and before the child becomes visible", async () => {
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const session = createDockBrowserSession(async (command, args) => { calls.push({ command, args }); }, "about:blank", () => {}, "<h1>Preview</h1>");
+  try {
+    session.update(bounds, true);
+    await tick();
+    expect(calls.map((call) => call.command)).toEqual(["browser_open", "browser_preview", "browser_bounds", "browser_visible"]);
+    expect(calls[1]?.args).toEqual({ html: "<h1>Preview</h1>" });
+  } finally {
+    session.dispose();
+    await tick();
+  }
+});
+
+test("failed preview closes the native child before showing an error", async () => {
+  const calls: string[] = [];
+  const errors: unknown[] = [];
+  const session = createDockBrowserSession(async (command) => {
+    calls.push(command);
+    if (command === "browser_preview") throw new Error("preview failed");
+  }, "about:blank", (error) => errors.push(error), "<h1>Preview</h1>");
+  session.update(bounds, true);
+  await tick();
+  expect(calls).toEqual(["browser_open", "browser_preview", "browser_close"]);
+  expect(errors).toHaveLength(1);
+  session.dispose();
+  await tick();
 });

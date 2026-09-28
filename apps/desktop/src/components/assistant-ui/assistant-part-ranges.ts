@@ -2,6 +2,9 @@ import type { PartState } from "@assistant-ui/react";
 
 export type AssistantPartRange =
   | { type: "text"; index: number }
+  | { type: "image"; index: number }
+  | { type: "images"; startIndex: number; endIndex: number }
+  | { type: "subagents"; index: number }
   | { type: "tools"; startIndex: number; endIndex: number }
   | { type: "presentation"; index: number };
 
@@ -20,6 +23,14 @@ export function assistantPartRanges(parts: readonly PartState[]): AssistantPartR
     if (part.type === "text") {
       ranges.push({ type: "text", index });
       index++;
+      continue;
+    }
+    if (part.type === "image") {
+      const startIndex = index;
+      while (index < parts.length && parts[index]?.type === "image") index++;
+      ranges.push(index - startIndex === 1
+        ? { type: "image", index: startIndex }
+        : { type: "images", startIndex, endIndex: index });
       continue;
     }
     if (isPresentation(part)) {
@@ -44,4 +55,25 @@ export function assistantPartRanges(parts: readonly PartState[]): AssistantPartR
     index++;
   }
   return ranges;
+}
+
+export function visibleAssistantPartRanges(parts: readonly PartState[], hideSubagentCalls: boolean, showSubagentCapsule: boolean): AssistantPartRange[] {
+  const firstDispatchIndex = showSubagentCapsule
+    ? parts.findIndex((part) => part.type === "tool-call" && part.toolName === "dispatch_subagent")
+    : -1;
+  return assistantPartRanges(parts).flatMap((range): AssistantPartRange[] => {
+    if (!hideSubagentCalls || range.type !== "tools") return [range];
+    const visible: AssistantPartRange[] = [];
+    let start = -1;
+    for (let index = range.startIndex; index < range.endIndex; index++) {
+      const part = parts[index];
+      if (part?.type === "tool-call" && part.toolName === "dispatch_subagent") {
+        if (start >= 0) visible.push({ ...range, startIndex: start, endIndex: index });
+        if (index === firstDispatchIndex) visible.push({ type: "subagents", index });
+        start = -1;
+      } else if (start < 0) start = index;
+    }
+    if (start >= 0) visible.push({ ...range, startIndex: start, endIndex: range.endIndex });
+    return visible;
+  });
 }

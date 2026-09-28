@@ -6,7 +6,10 @@ import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { formatDuration } from "../../lib/utils";
 import { subagentMessages } from "../../lib/subagent-messages";
+import { subagentImageGenerations } from "../../lib/subagent-image-generations";
+import { SubagentLogo } from "../settings/subagent-logo";
 import { AssistantParts } from "./assistant-parts";
+import { ImageGeneration } from "./elements/image-generation";
 import "./subagent-view.css";
 
 const active = (status: SubagentRunInfo["status"]) => ["created", "running", "waiting_approval", "paused"].includes(status);
@@ -22,29 +25,25 @@ function useClock(running: boolean) {
 }
 
 export const SubagentCapsule: FC = () => {
-  const { locale } = useLocale();
+  const { locale, t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
   const activeRunId = useStore((state) => state.activeRunId);
   const messageRunId = useStore((state) => state.messages.find((message) => message.id === messageId)?.runId);
   const allSubagents = useStore((state) => state.subagents);
+  const models = useStore((state) => state.modelConfigs);
   const maxConcurrent = useStore((state) => state.subagentConfig.runtime.maxConcurrent);
-  const streamingText = useStore((state) => state.streaming);
-  const messageParts = useAuiState((state) => state.message.parts);
-  const messageLoading = useAuiState((state) => state.message.status?.type === "running");
   const runId = messageId === "streaming" ? activeRunId : messageRunId;
   // 侧栏保留当前会话的历史；消息胶囊只反映当前这条主 Agent 消息启动的子代理。
   const subagents = useMemo(
     () => runId ? allSubagents.filter((item) => item.parentRunId === runId) : [],
     [allSubagents, runId],
   );
+  const imageGenerations = useMemo(() => subagentImageGenerations(subagents, runId, models), [subagents, runId, models]);
   const running = subagents.filter((item) => active(item.status));
   const queued = subagents.filter((item) => item.status === "created");
   const executing = running.length - queued.length;
   const now = useClock(running.length > 0);
   if (subagents.length === 0) return null;
-  // Keep the initial "正在连接…" state quiet. Once Pi emits text or a tool
-  // call, the capsule becomes useful because it reflects observable progress.
-  if (messageLoading && messageParts.length === 0 && !streamingText.trim()) return null;
   const elapsed = running.length ? formatDuration((now - Math.min(...running.map((item) => item.startedAt))) / 1000, locale) : undefined;
   const label = locale === "zh-CN"
     ? running.length
@@ -69,6 +68,13 @@ export const SubagentCapsule: FC = () => {
       {elapsed && <span className="q-subagent-elapsed">· {elapsed}</span>}
       <ChevronRightIcon size={14} aria-hidden="true" />
     </button>
+    {imageGenerations.map((generation) => <ImageGeneration
+      key={generation.id}
+      prompt={generation.prompt}
+      generating={generation.generating}
+      error={generation.missingImage ? t("subagent.noImageGenerated") : generation.error}
+      onRegenerate={!generation.generating ? () => useStore.getState().send({ type: "subagent.control", requestId: crypto.randomUUID(), runId: generation.id, action: "retry" }) : undefined}
+    />)}
   </div>;
 };
 
@@ -101,6 +107,7 @@ export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
   const { locale } = useLocale();
   const sessionId = useStore((state) => state.currentSessionId);
   const subagents = useStore((state) => state.subagents);
+  const subagentConfig = useStore((state) => state.subagentConfig);
   const modelConfigs = useStore((state) => state.modelConfigs);
   const [selectedId, setSelectedId] = useState<string>();
   const now = useClock(subagents.some((item) => active(item.status)));
@@ -125,6 +132,7 @@ export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
       {subagents.length === 0 ? <p className="q-subagent-empty">{locale === "zh-CN" ? "暂无子代理" : "No subagents yet"}</p> : subagents.map((item) => <button
         type="button" key={item.id} className="q-subagent-row" onClick={() => setSelectedId(item.id)}
       >
+        <SubagentLogo logo={subagentConfig.profiles.find((profile) => profile.id === item.profileId)?.logo} name={item.title} size={24} />
         {item.status === "completed" ? <CheckIcon size={13} className="shrink-0 text-emerald-400" aria-hidden="true" />
           : <span className={`q-subagent-dot ${active(item.status) ? "is-running" : "is-failed"}`} aria-hidden="true" />}
         <span className="min-w-0 flex-1 truncate text-start">{item.title}</span>

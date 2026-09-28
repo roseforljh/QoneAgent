@@ -13,7 +13,7 @@
   cursor: pointer;
   transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
-.q-subagent-capsule-anchor { display: flex; align-items: flex-start; }
+.q-subagent-capsule-anchor { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .q-subagent-capsule:hover { background: var(--muted); border-color: var(--border); transform: translateY(-1px); }
 .q-subagent-capsule:focus-visible, .q-subagent-row:focus-visible, .q-subagent-panel-header button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .q-subagent-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--muted-foreground); }

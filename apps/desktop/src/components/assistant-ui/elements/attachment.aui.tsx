@@ -2,9 +2,7 @@
 
 import {
   type PropsWithChildren,
-  useState,
   type FC,
-  isValidElement,
 } from "react";
 import {
   XIcon,
@@ -27,12 +25,6 @@ import {
   TooltipTrigger,
 } from "../../ui/tooltip";
 import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogTrigger,
-} from "../../ui/dialog";
-import {
   Avatar,
   AvatarImage,
   AvatarFallback,
@@ -40,55 +32,14 @@ import {
 import { TooltipIconButton } from "../tooltip-icon-button";
 import { useAttachmentSrc } from "../../../hooks/use-attachment-src";
 import { cn } from "../../../lib/utils";
-
-type AttachmentPreviewProps = {
-  src: string;
-};
-
-const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src }) => {
-  const [isLoaded, setIsLoaded] = useState(false);
-  return (
-    <img
-      src={src}
-      alt="Attachment preview"
-      className={cn(
-        "block h-auto max-h-[80vh] w-auto max-w-full rounded-sm object-contain transition-opacity duration-300 motion-reduce:transition-none",
-        isLoaded
-          ? "aui-attachment-preview-image-loaded opacity-100"
-          : "aui-attachment-preview-image-loading opacity-0",
-      )}
-      onLoad={() => setIsLoaded(true)}
-    />
-  );
-};
+import { Image } from "./image";
 
 const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
   const src = useAttachmentSrc();
+  const filename = useAuiState((state) => state.attachment.name);
 
   if (!src) return children;
-
-  return (
-    <Dialog>
-      <DialogTrigger
-        className="aui-attachment-preview-trigger cursor-zoom-in"
-        asChild
-      >
-        {isValidElement(children) ? (
-          children
-        ) : (
-          <button type="button">{children}</button>
-        )}
-      </DialogTrigger>
-      <DialogContent className="aui-attachment-preview-dialog-content [&>button]:bg-foreground/60 [&>button]:hover:bg-foreground/80 [&_svg]:text-background p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0!">
-        <DialogTitle className="aui-sr-only sr-only">
-          Image Attachment Preview
-        </DialogTitle>
-        <div className="aui-attachment-preview bg-background relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden rounded-sm">
-          <AttachmentPreview src={src} />
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
+  return <Image.Zoom src={src} alt={filename || "Image attachment"} filename={filename}>{children}</Image.Zoom>;
 };
 
 const AttachmentThumb: FC = () => {
@@ -184,24 +135,11 @@ const AttachmentUI: FC = () => {
             <TooltipTrigger asChild>
               <div
                 className={cn(
-                  "aui-attachment-tile bg-foreground/[0.04] hover:after:bg-foreground/10 focus-visible:ring-ring/50 relative flex min-w-0 max-w-[min(100%,22rem)] cursor-pointer items-center gap-2.5 overflow-hidden rounded-[14px] py-1.5 ps-1.5 pe-7 transition-transform outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-black/10 after:transition-colors after:ring-inset focus-visible:ring-1 active:scale-[0.98] motion-reduce:transition-none dark:bg-foreground/[0.06] dark:after:ring-white/10",
+                  "aui-attachment-tile bg-foreground/[0.04] hover:after:bg-foreground/10 focus-visible:ring-ring/50 relative flex min-w-0 max-w-[min(100%,22rem)] cursor-pointer items-center gap-2.5 overflow-hidden rounded-[14px] py-1.5 ps-1.5 pe-7 outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-black/10 after:transition-colors after:ring-inset focus-visible:ring-1 dark:bg-foreground/[0.06] dark:after:ring-white/10",
                   isError &&
                     "after:ring-destructive/60 dark:after:ring-destructive/60",
                 )}
                 data-state={isError ? "error" : isUploading ? "uploading" : "done"}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    e.currentTarget.click();
-                  } else if (e.key === " ") {
-                    e.preventDefault();
-                  }
-                }}
-                onKeyUp={(e) => {
-                  if (e.key === " ") e.currentTarget.click();
-                }}
                 aria-label={`${attachmentName || typeLabel} attachment${
                   isError ? ", upload failed" : isUploading ? ", uploading" : ""
                 }`}

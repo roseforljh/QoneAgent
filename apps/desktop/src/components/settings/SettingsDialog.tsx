@@ -1,14 +1,15 @@
-import { modelListUrl, modelNamesEqual, type ProviderApiType } from "@qone/protocol";
+import { detectImageModel, isBuiltinSubagentId, modelListUrl, modelNamesEqual, supportsExtendedImageQuality, type ImageApiFormat, type ProviderApiType } from "@qone/protocol";
 import { NumberField } from "@base-ui/react/number-field";
+import { Switch } from "@base-ui/react/switch";
 import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
 import { fetchProviderModelCatalog } from "../../lib/provider-model-catalog";
-import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings, type Capability, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
+import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings, type Capability, type ImageGenerationSettings, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { check } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { hasTauriBridge, requestModelMetadata, requestSkillMutation } from "../../store";
 import { MemoryChips, type MemoryChip } from "../assistant-ui/elements/memory-chips";
 import { QoneSelect } from "../ui/Select";
@@ -36,9 +37,6 @@ import {
   Trash2,
   Upload,
   WandSparkles,
-  Video,
-  Mic2,
-  Volume2,
   X,
 } from "lucide-react";
 import { useStore } from "../../store";
@@ -64,14 +62,14 @@ import { ModelCard } from "./ModelCard";
 import { ProviderLogo } from "./ProviderLogo";
 import { SkillCloudDialog } from "./SkillCloudDialog";
 import { SkillCreateDialog } from "./SkillCreateDialog";
-import { CapabilitySection, type CapabilityId } from "./CapabilitySection";
 import { SubagentRuntimeSettings } from "./SubagentRuntimeSettings";
 import { SubagentTemporarySettings } from "./SubagentTemporarySettings";
+import { normalizeSubagentLogos, SubagentLogo } from "./subagent-logo";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import "./model-layout.css";
 
 type Theme = "light" | "dark";
-type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents" | "compaction" | CapabilityId;
+type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents" | "compaction";
 
 type SettingsSection = {
   id: SettingsSectionId;
@@ -91,10 +89,6 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "skills", labelKey: "nav.skills", icon: BrainCircuit },
   { id: "subagents", labelKey: "nav.subagents", icon: BotMessageSquare },
   { id: "compaction", labelKey: "nav.compaction", icon: SlidersHorizontal },
-  { id: "webSearch", labelKey: "nav.webSearch", icon: Globe2 },
-  { id: "videoRecognition", labelKey: "nav.videoRecognition", icon: Video },
-  { id: "stt", labelKey: "nav.stt", icon: Mic2 },
-  { id: "tts", labelKey: "nav.tts", icon: Volume2 },
 ];
 
 const DEFAULT_ORDER = SETTINGS_SECTIONS.map((section) => section.id);
@@ -288,6 +282,29 @@ function PersonalizationSection() {
   const { t } = useLocale();
   const [profile, setProfile] = useState<PersonalizationProfile>(loadPersonalizationProfile);
   const [showMemoryInfo, setShowMemoryInfo] = useState(false);
+  const globalPrompt = useStore((state) => state.globalPrompt);
+  const globalPromptPath = useStore((state) => state.globalPromptPath);
+  const globalPromptLoaded = useStore((state) => state.globalPromptLoaded);
+  const send = useStore((state) => state.send);
+  const [globalPromptDraft, setGlobalPromptDraft] = useState(globalPrompt);
+
+  useEffect(() => {
+    if (globalPromptLoaded) setGlobalPromptDraft(globalPrompt);
+  }, [globalPrompt, globalPromptLoaded]);
+
+  useEffect(() => {
+    if (!globalPromptLoaded || globalPromptDraft === globalPrompt) return;
+    const timer = window.setTimeout(() => {
+      void send({ type: "global-prompt.set", requestId: crypto.randomUUID(), content: globalPromptDraft });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [globalPrompt, globalPromptDraft, globalPromptLoaded, send]);
+
+  // revealItemInDir is covered by opener:default; openPath would need an extra opener:allow-open-path scope.
+  const openGlobalPromptDirectory = () => {
+    if (!globalPromptPath) return;
+    void revealItemInDir(globalPromptPath).catch((error) => console.error("reveal Qone.md failed", error));
+  };
 
   const updateProfile = <K extends keyof PersonalizationProfile>(key: K, value: PersonalizationProfile[K]) => {
     setProfile((current) => {
@@ -317,6 +334,22 @@ function PersonalizationSection() {
         }}
         className="mb-4 max-w-none"
       />}
+      <section className="settings-global-prompt-section">
+        <div className="settings-global-prompt-heading">
+          <div><h3>{t("personalization.globalPrompt")}</h3><p>{t("personalization.globalPromptDescription")}</p></div>
+          <button type="button" className="settings-global-prompt-link" onClick={openGlobalPromptDirectory} disabled={!globalPromptPath} title={globalPromptPath}>Qone.md</button>
+        </div>
+        <textarea
+          className="settings-global-prompt-input"
+          rows={7}
+          value={globalPromptDraft}
+          disabled={!globalPromptLoaded}
+          onChange={(event) => setGlobalPromptDraft(event.target.value)}
+          placeholder={t("personalization.globalPromptPlaceholder")}
+          aria-label={t("personalization.globalPrompt")}
+        />
+        <p className="settings-global-prompt-hint">{t("personalization.globalPromptHint")}</p>
+      </section>
       <section className="settings-memory-section">
         <div className="settings-memory-heading"><h3>{t("personalization.memory")}</h3><CircleHelp size={18} /></div>
         <div className="settings-memory-row">
@@ -328,13 +361,18 @@ function PersonalizationSection() {
   );
 }
 
-function ModelSyncDialog({ open, fetched, existing, onClose, onAdd }: { open: boolean; fetched: ProviderModel[]; existing: ProviderModel[]; onClose: () => void; onAdd: (models: ProviderModel[]) => void }) {
+function ModelSyncDialog({ open, fetched, existing, onClose, onAdd, onRemove }: { open: boolean; fetched: ProviderModel[]; existing: ProviderModel[]; onClose: () => void; onAdd: (models: ProviderModel[]) => void; onRemove: (ids: string[]) => void }) {
   const { t } = useLocale();
   const [tab, setTab] = useState<"new" | "missing">("new");
+  // New models start selected (adding is the common case); missing ones start unselected because selecting removes them.
+  const [unselectedNew, setUnselectedNew] = useState<Set<string>>(new Set());
+  const [selectedMissing, setSelectedMissing] = useState<Set<string>>(new Set());
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     setTab("new");
+    setUnselectedNew(new Set());
+    setSelectedMissing(new Set());
     const previous = document.activeElement as HTMLElement | null;
     dialogRef.current?.focus();
     const handleKey = (event: KeyboardEvent) => {
@@ -356,14 +394,34 @@ function ModelSyncDialog({ open, fetched, existing, onClose, onAdd }: { open: bo
   const configuredCount = fetched.filter((model) => Object.values(model.settings?.metadataSources ?? {}).includes("provider")).length;
   const newModels = fetched.filter((model) => !existing.some((current) => current.id === model.id));
   const missingModels = existing.filter((model) => !fetchedIds.has(model.id));
+  const listed = tab === "new" ? newModels : missingModels;
+  const isSelected = (id: string) => tab === "new" ? !unselectedNew.has(id) : selectedMissing.has(id);
+  const toggle = (id: string) => (tab === "new" ? setUnselectedNew : setSelectedMissing)((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const selectedNew = newModels.filter((model) => !unselectedNew.has(model.id));
+  const selectedMissingIds = missingModels.filter((model) => selectedMissing.has(model.id)).map((model) => model.id);
   return createPortal(
     <div className="settings-sync-layer">
       <div ref={dialogRef} tabIndex={-1} className="settings-subdialog settings-sync-dialog" role="dialog" aria-modal="true" aria-label={t("provider.sync")}>
         <div className="settings-subdialog-header"><div><span>{t("provider.sync")}</span><h3>{t("provider.providerModels")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
         <p className="settings-inline-status" role="status">{t("provider.metadataSummary", { count: configuredCount, total: fetched.length })}</p>
         <div className="settings-tabs"><button type="button" className={cn(tab === "new" && "is-active")} onClick={() => setTab("new")}>{t("provider.newModels")} <em>{newModels.length}</em></button><button type="button" className={cn(tab === "missing" && "is-active")} onClick={() => setTab("missing")}>{t("provider.missingModels")} <em>{missingModels.length}</em></button></div>
-        <div className="settings-sync-list">{(tab === "new" ? newModels : missingModels).map((model) => <div className="settings-sync-row" key={model.id}><span>{model.label}</span>{model.label !== model.id && <code>{model.id}</code>}</div>)}{(tab === "new" ? newModels : missingModels).length === 0 && <p className="settings-empty">{t(tab === "new" ? "provider.noNewModels" : "provider.noMissingModels")}</p>}</div>
-        <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button>{tab === "new" && <button type="button" className="settings-primary-action" onClick={() => { onAdd(newModels); onClose(); }}><Check size={15} />{t("provider.addNewModels")}</button>}</div>
+        <div className="settings-sync-list">
+          {listed.map((model) => (
+            <button type="button" role="checkbox" aria-checked={isSelected(model.id)} className="settings-sync-row is-selectable" key={model.id} onClick={() => toggle(model.id)}>
+              <span className="settings-sync-check" aria-hidden="true">{isSelected(model.id) && <Check size={12} strokeWidth={3} />}</span>
+              <span>{model.label}</span>{model.label !== model.id && <code>{model.id}</code>}
+            </button>
+          ))}
+          {listed.length === 0 && <p className="settings-empty">{t(tab === "new" ? "provider.noNewModels" : "provider.noMissingModels")}</p>}
+        </div>
+        <div className="settings-subdialog-footer">
+          <button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button>
+          <button type="button" className="settings-primary-action" onClick={() => { onAdd(selectedNew); onRemove(selectedMissingIds); onClose(); }}><Save size={15} />{t("common.save")}</button>
+        </div>
       </div>
     </div>, document.body
   );
@@ -468,6 +526,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
           existing={models}
           onClose={() => setSyncOpen(false)}
           onAdd={(newModels) => setModels((current) => [...current, ...newModels.filter((model) => !current.some((existing) => existing.id === model.id))])}
+          onRemove={(ids) => setModels((current) => current.filter((model) => !ids.includes(model.id)))}
         />
       </div>
     </div>
@@ -544,11 +603,11 @@ function ConfigurationSection() {
   </>;
 }
 
-function ModelSourceSummary({ settings }: { settings: ModelSettings }) {
+function ModelSourceSummary({ settings, isImageModel }: { settings: ModelSettings; isImageModel: boolean }) {
   const { t } = useLocale();
   const fields: Array<[ModelSettingField, string]> = [
-    ["maxOutput", t("model.maxOutput")], ["maxContext", t("model.maxContext")],
-    ["thinking", t("model.thinking")], ["input", t("model.inputCapabilities")], ["output", t("model.outputCapabilities")],
+    ...(!isImageModel ? [["maxOutput", t("model.maxOutput")], ["maxContext", t("model.maxContext")], ["thinking", t("model.thinking")]] as Array<[ModelSettingField, string]> : []),
+    ["input", t("model.inputCapabilities")], ["output", t("model.outputCapabilities")],
   ];
   const sourceKeys = { provider: "model.source.provider", pi: "model.source.pi", "models.dev": "model.source.modelsDev", config: "model.source.manual", default: "model.source.default", unknown: "model.source.unknown" } as const;
   return <div className="settings-model-sources" aria-label={t("model.source.title")}>{fields.map(([field, label]) => {
@@ -571,6 +630,11 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
   }, [open, model?.id]);
   if (!open) return null;
   const apiType = settings.apiType ?? provider.apiType;
+  const detectedImage = detectImageModel({ model: name, provider: provider.id, apiType, imageApiFormat: settings.imageApiFormat, input: settings.input, output: settings.output, manualInput: settings.metadataOverrides?.input === true, manualOutput: settings.metadataOverrides?.output === true, metadata: settings.modelMetadata });
+  const isImageModel = detectedImage.isImageModel;
+  const imageApiFormat = settings.imageApiFormat ?? detectedImage.format;
+  const visibleInput = isImageModel && !settings.metadataOverrides?.input && (settings.metadataSources?.input ?? "default") === "default" ? ["text", "image"] as Capability[] : settings.input;
+  const visibleOutput = isImageModel && !settings.metadataOverrides?.output && (settings.metadataSources?.output ?? "default") === "default" ? ["image"] as Capability[] : settings.output;
   const thinkingOptions = thinkingLevelOptionsForApi(apiType);
   const selectedThinking = normalizeThinkingLevel(settings.thinking, apiType);
   const update = <K extends keyof ModelSettings>(key: K, value: ModelSettings[K]) => setSettings((current) => ({
@@ -585,7 +649,10 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
     apiType: value,
     thinking: normalizeThinkingLevel(current.thinking, value),
   }));
-  const toggleCapability = (kind: "input" | "output", value: Capability) => update(kind, settings[kind].includes(value) ? settings[kind].filter((item) => item !== value) : [...settings[kind], value]);
+  const toggleCapability = (kind: "input" | "output", value: Capability) => {
+    const selected = kind === "input" ? visibleInput : visibleOutput;
+    update(kind, selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
+  };
   const fetchConfiguration = async () => {
     const modelId = name.trim();
     if (!modelId) { setStatus({ key: "model.fetchNameFirst" }); return; }
@@ -604,15 +671,26 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
         resolved = merchant;
       }
       if (sequence !== fetchSequence.current) return;
-      if (!resolved.settings?.modelMetadata || Object.keys(resolved.settings.modelMetadata).every((key) => key === "id" || key === "label")) {
-        setStatus({ key: "model.noConfiguration" }); return;
-      }
+      // Judge by where each field actually came from; modelMetadata only holds the provider's raw entry, not Pi/models.dev results.
+      const sources = resolved.settings?.metadataSources ?? {};
+      const fetchedFields: Array<[ModelSettingField, string]> = [
+        ...(!isImageModel ? [["maxOutput", t("model.maxOutput")], ["maxContext", t("model.maxContext")]] as Array<[ModelSettingField, string]> : []),
+        ["input", t("model.inputCapabilities")], ["output", t("model.outputCapabilities")],
+      ];
+      const found = (field: ModelSettingField) => sources[field] !== undefined && sources[field] !== "default";
+      if (!fetchedFields.some(([field]) => found(field))) { setStatus({ key: "model.noConfiguration" }); return; }
       setSettings((current) => ({ ...mergeFetchedModel({ id: modelId, label: modelId, settings: current }, resolved).settings!, apiType }));
-      setStatus({ key: "model.configurationFetched" });
+      const missing = fetchedFields.filter(([field]) => !found(field) && !settings.metadataOverrides?.[field]).map(([, label]) => label);
+      setStatus(missing.length ? { key: "model.configurationPartial", values: { fields: missing.join(" / ") } } : { key: "model.configurationFetched" });
     } catch (error) { if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "model.fetchConfigurationFailed", values: { error: String(error) } }); }
     finally { if (sequence === fetchSequence.current) setFetching(false); }
   };
-  const save = () => { if (!name.trim()) return; onSaved({ id: name.trim(), label: name.trim(), settings: { ...settings, apiType, thinking: selectedThinking } }, model?.id); onClose(); };
+  const save = () => {
+    if (!name.trim()) return;
+    const imageSettings = isImageModel ? { input: visibleInput, output: visibleOutput } : {};
+    onSaved({ id: name.trim(), label: name.trim(), settings: { ...settings, ...imageSettings, apiType, thinking: selectedThinking } }, model?.id);
+    onClose();
+  };
   const remove = async () => { if (model && await confirmDestructiveAction(t("model.deleteConfirm", { name: model.label }))) { onDeleted(model); onClose(); } };
   return (
     <div
@@ -636,18 +714,21 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
           </button>
           {status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}
         </div>
-        <ModelSourceSummary settings={settings} />
+        <ModelSourceSummary settings={settings} isImageModel={isImageModel} />
         <div className="settings-form-grid">
           <label className="is-wide">{t("model.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("model.namePlaceholder")} /></label>
           <label className="is-wide">{t("model.apiType")}<QoneSelect value={apiType} onChange={(value) => updateApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("model.apiType")} /></label>
-          <label>{t("model.maxOutput")}<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label>
-          <label>{t("model.maxContext")}<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label>
-          <label>{t("model.thinking")}<QoneSelect value={selectedThinking} onChange={(value) => update("thinking", value as ThinkingLevel)} options={thinkingOptions.map((option) => ({ value: option.value, label: t(option.labelKey) }))} ariaLabel={t("model.thinking")} /></label>
+          {!isImageModel && <>
+            <label>{t("model.maxOutput")}<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label>
+            <label>{t("model.maxContext")}<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label>
+            <label>{t("model.thinking")}<QoneSelect value={selectedThinking} onChange={(value) => update("thinking", value as ThinkingLevel)} options={thinkingOptions.map((option) => ({ value: option.value, label: t(option.labelKey) }))} ariaLabel={t("model.thinking")} /></label>
+          </>}
         </div>
         <div className="settings-capability-grid">
-          <CapabilityEditor title={t("model.inputCapabilities")} values={settings.input} onToggle={(value) => toggleCapability("input", value)} />
-          <CapabilityEditor title={t("model.outputCapabilities")} values={settings.output} onToggle={(value) => toggleCapability("output", value)} />
+          <CapabilityEditor title={t("model.inputCapabilities")} values={visibleInput} onToggle={(value) => toggleCapability("input", value)} />
+          <CapabilityEditor title={t("model.outputCapabilities")} values={visibleOutput} onToggle={(value) => toggleCapability("output", value)} />
         </div>
+        {isImageModel && <ImageGenerationEditor format={imageApiFormat ?? "openai-image"} modelName={name} value={settings.imageGeneration} onChange={(imageGeneration) => update("imageGeneration", imageGeneration)} onFormatChange={(format) => update("imageApiFormat", format)} />}
         <div className="settings-subdialog-footer">
           {model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}
           <button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button>
@@ -656,6 +737,54 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
       </div>
     </div>
   );
+}
+
+function ImageGenerationEditor({ format, modelName, value, onChange, onFormatChange }: { format: ImageApiFormat; modelName: string; value?: ImageGenerationSettings; onChange: (value: ImageGenerationSettings) => void; onFormatChange: (value: ImageApiFormat) => void }) {
+  const { t } = useLocale();
+  const current = value ?? {};
+  const commonSizes = ["auto", "1024x1024", "1536x1024", "1024x1536", "2048x2048", "2048x1152", "3840x2160"];
+  const customSize = !commonSizes.includes(current.size ?? "auto");
+  const qualityOptions = supportsExtendedImageQuality(modelName)
+    ? ["auto", "low", "medium", "high", "xhigh", "max"]
+    : ["auto", "low", "medium", "high"];
+  const set = <K extends keyof ImageGenerationSettings>(key: K, next: ImageGenerationSettings[K]) => onChange({ ...current, [key]: next });
+  const select = (label: string, selected: string, options: readonly string[], change: (next: string) => void) =>
+    <QoneSelect value={selected} onChange={change} options={options.map((item) => ({ value: item, label: item }))} ariaLabel={label} />;
+  const count = (max?: number) => <label><span>{t("model.imageCount")}</span><QoneSelect value={typeof current.n === "number" ? "manual" : "auto"} onChange={(next) => set("n", next === "auto" ? "auto" : 1)} options={[{ value: "auto", label: "auto" }, { value: "manual", label: t("model.imageManualCount") }]} ariaLabel={t("model.imageCount")} />{typeof current.n === "number" ? <input type="number" min="1" {...(max ? { max } : {})} value={current.n} onChange={(event) => set("n", Math.min(max ?? Number.MAX_SAFE_INTEGER, Math.max(1, Number(event.target.value) || 1)))} aria-label={t("model.imageManualCount")} /> : <small className="settings-image-field-hint">{t("model.imageAutoCountHint")}</small>}</label>;
+  return <div className="settings-form-grid is-wide" aria-label={t("model.imageParameters")}>
+    <label className="is-wide"><span>{t("model.imageApiFormat")}</span><QoneSelect value={format} onChange={(next) => onFormatChange(next as ImageApiFormat)} options={[{ value: "openai-image", label: "OpenAI Image" }, { value: "gemini-image", label: "Gemini Image" }, { value: "qwen-image", label: "Qwen Image" }, { value: "seedream-image", label: "Seedream Image" }]} ariaLabel={t("model.imageApiFormat")} /></label>
+    {format === "openai-image" && <>
+      <label><span>{t("model.imageSize")}</span><QoneSelect value={customSize ? "custom" : current.size ?? "auto"} onChange={(next) => set("size", next === "custom" ? "" : next)} options={[...commonSizes.map((item) => ({ value: item, label: item })), { value: "custom", label: t("model.imageCustomSize") }]} ariaLabel={t("model.imageSize")} />{customSize && <input value={current.size ?? ""} onChange={(event) => set("size", event.target.value)} placeholder="WIDTHxHEIGHT" aria-label={t("model.imageCustomSize")} />}</label>
+      <label><span>{t("model.imageQuality")}</span>{select(t("model.imageQuality"), current.quality ?? "auto", qualityOptions, (next) => set("quality", next as ImageGenerationSettings["quality"]))}</label>
+      <label><span>{t("model.imageBackground")}</span>{select(t("model.imageBackground"), current.background ?? "auto", ["auto", "opaque", "transparent"], (next) => set("background", next as ImageGenerationSettings["background"]))}</label>
+      <label><span>{t("model.imageOutputFormat")}</span>{select(t("model.imageOutputFormat"), current.outputFormat ?? "png", ["png", "jpeg", "webp"], (next) => set("outputFormat", next as ImageGenerationSettings["outputFormat"]))}{(current.outputFormat ?? "png") === "png" && <small className="settings-image-field-hint">{t("model.imageCompressionFormatHint")}</small>}</label>
+      {(current.outputFormat === "jpeg" || current.outputFormat === "webp") && <label><span>{t("model.imageCompression")}</span><input type="number" min="0" max="100" value={current.outputCompression ?? ""} onChange={(event) => set("outputCompression", event.target.value === "" ? undefined : Math.min(100, Math.max(0, Number(event.target.value))))} /></label>}
+      {count(10)}
+    </>}
+    {format === "gemini-image" && <>
+      <label><span>{t("model.imageAspectRatio")}</span>{select(t("model.imageAspectRatio"), current.aspectRatio ?? "auto", ["auto", "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"], (next) => set("aspectRatio", next))}</label>
+      <label><span>{t("model.imageSize")}</span>{select(t("model.imageSize"), current.imageSize ?? "auto", ["auto", "1K", "2K", "4K"], (next) => set("imageSize", next))}</label>
+    </>}
+    {format === "qwen-image" && <>
+      <label><span>{t("model.imageSize")}</span><input value={current.size ?? "auto"} onChange={(event) => set("size", event.target.value)} placeholder="1328*1328" /></label>
+      <label><span>{t("model.imageNegativePrompt")}</span><input value={current.negativePrompt ?? ""} onChange={(event) => set("negativePrompt", event.target.value)} /></label>
+      <label><span>{t("model.imageSeed")}</span><input type="number" value={current.seed ?? ""} onChange={(event) => set("seed", event.target.value === "" ? undefined : Number(event.target.value))} /></label>
+      <label><span>{t("model.imageTransport")}</span><QoneSelect value={current.transport ?? "openai-compatible"} onChange={(next) => set("transport", next as ImageGenerationSettings["transport"])} options={[{ value: "openai-compatible", label: "OpenAI compatible" }, { value: "dashscope", label: "DashScope" }]} ariaLabel={t("model.imageTransport")} /></label>
+      <label><span>{t("model.imagePromptExtend")}</span>{select(t("model.imagePromptExtend"), String(current.promptExtend ?? true), ["true", "false"], (next) => set("promptExtend", next === "true"))}</label>
+      <label><span>{t("model.imagePromptExtendMode")}</span>{select(t("model.imagePromptExtendMode"), current.promptExtendMode ?? "direct", ["direct", "agent"], (next) => set("promptExtendMode", next as ImageGenerationSettings["promptExtendMode"]))}</label>
+      <label><span>{t("model.imageThinking")}</span>{select(t("model.imageThinking"), String(current.enableThinking ?? true), ["true", "false"], (next) => set("enableThinking", next === "true"))}</label>
+      <label><span>{t("model.imageWatermark")}</span>{select(t("model.imageWatermark"), String(current.watermark ?? false), ["false", "true"], (next) => set("watermark", next === "true"))}</label>
+      {count(6)}
+      <label><span>{t("model.imageAsync")}</span>{select(t("model.imageAsync"), String(current.async ?? false), ["false", "true"], (next) => set("async", next === "true"))}</label>
+    </>}
+    {format === "seedream-image" && <>
+      <label><span>{t("model.imageSize")}</span><input value={current.size ?? "auto"} onChange={(event) => set("size", event.target.value)} placeholder="2K" /></label>
+      <label><span>{t("model.imageResponseFormat")}</span><QoneSelect value={current.responseFormat ?? "url"} onChange={(next) => set("responseFormat", next as ImageGenerationSettings["responseFormat"])} options={[{ value: "url", label: "URL" }, { value: "b64_json", label: "Base64" }]} ariaLabel={t("model.imageResponseFormat")} /></label>
+      <label><span>{t("model.imageSequential")}</span>{select(t("model.imageSequential"), current.sequentialImageGeneration ?? "disabled", ["disabled", "auto"], (next) => set("sequentialImageGeneration", next as ImageGenerationSettings["sequentialImageGeneration"]))}</label>
+      <label><span>{t("model.imageWatermark")}</span>{select(t("model.imageWatermark"), String(current.watermark ?? false), ["false", "true"], (next) => set("watermark", next === "true"))}</label>
+      {count()}
+    </>}
+  </div>;
 }
 
 function CapabilityEditor({ title, values, onToggle }: { title: string; values: Capability[]; onToggle: (value: Capability) => void }) {
@@ -729,13 +858,23 @@ function ModelsSection() {
   </>;
 }
 
-type SubagentProfile = { id: string; name: string; instructions: string; modelId: string; enabled: boolean; tools?: string[]; permissionMode?: "ask" | "auto" | "full"; updatedAt: number };
+type SubagentProfile = { id: string; name: string; instructions: string; modelId: string; logo?: string; enabled: boolean; tools?: string[]; permissionMode?: "ask" | "auto" | "full"; updatedAt: number };
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
+
+function dedupeSubagents(profiles: SubagentProfile[]): SubagentProfile[] {
+  const seen = new Set<string>();
+  return profiles.filter((profile) => {
+    if (!profile || typeof profile.id !== "string" || seen.has(profile.id)) return false;
+    seen.add(profile.id);
+    return true;
+  });
+}
 
 function loadSubagents(): SubagentProfile[] {
   try {
     const saved = JSON.parse(window.localStorage.getItem(SUBAGENTS_STORAGE_KEY) ?? "[]") as SubagentProfile[];
-    return Array.isArray(saved) ? saved : [];
+    if (!Array.isArray(saved)) return [];
+    return normalizeSubagentLogos(dedupeSubagents(saved));
   } catch {
     return [];
   }
@@ -753,12 +892,12 @@ function SubagentEditorDialog({ open, initial, modelOptions, onClose, onSaved }:
     setName(initial?.name ?? ""); setInstructions(initial?.instructions ?? ""); setModelId(initial?.modelId ?? modelOptions[0]?.id ?? ""); setTools(initial?.tools?.join(", ") ?? ""); setPermissionMode(initial?.permissionMode ?? "ask");
   }, [open, initial?.id, modelOptions[0]?.id]);
   const save = () => {
-    if (!name.trim() || !instructions.trim() || !modelId) return;
-    onSaved({ id: initial?.id ?? `subagent-${Date.now()}`, name: name.trim(), instructions: instructions.trim(), modelId, tools: tools.split(",").map((item) => item.trim()).filter(Boolean), permissionMode, enabled: initial?.enabled ?? true, updatedAt: Date.now() });
+    if (!name.trim() || !instructions.trim() || (!modelId && !isBuiltinSubagentId(initial?.id ?? ""))) return;
+    onSaved({ id: initial?.id ?? `subagent-${Date.now()}`, name: name.trim(), instructions: instructions.trim(), modelId, logo: initial?.logo, tools: tools.split(",").map((item) => item.trim()).filter(Boolean), permissionMode, enabled: initial?.enabled ?? true, updatedAt: Date.now() });
     onClose();
   };
   if (!open) return null;
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("subagent.create")}><div className="settings-subdialog-header"><div><span>Sub-agent</span><h3>{initial ? t("subagent.edit") : t("subagent.create")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("subagent.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("subagent.namePlaceholder")} /></label><label className="is-wide">{t("subagent.driverModel")}<QoneSelect value={modelId} onChange={setModelId} placeholder={t("subagent.selectModel")} options={modelOptions.map((model) => ({ value: model.id, label: model.label }))} ariaLabel={t("subagent.driverModel")} /></label><label>{t("subagent.permissionMode")}<QoneSelect value={permissionMode ?? "ask"} onChange={(value) => setPermissionMode(value as SubagentProfile["permissionMode"])} options={[{ value: "ask", label: t("composer.permissionAsk") }, { value: "auto", label: t("composer.permissionAuto") }, { value: "full", label: t("composer.permissionFull") }]} ariaLabel={t("subagent.permissionMode")} /></label><label className="is-wide">{t("subagent.toolAllowList")}<input value={tools} onChange={(event) => setTools(event.target.value)} placeholder={t("subagent.toolAllowListPlaceholder")} /><small>{t("subagent.toolAllowListDescription")}</small></label><label className="is-wide">{t("subagent.systemPrompt")}<textarea className="settings-subagent-prompt" rows={7} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder={t("subagent.promptPlaceholder")} /></label></div><div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!name.trim() || !instructions.trim() || !modelId} onClick={save}><Save size={15} />{t("subagent.save")}</button></div></div></div>;
+  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("subagent.create")}><div className="settings-subdialog-header"><div><span>Sub-agent</span><h3>{initial ? t("subagent.edit") : t("subagent.create")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("subagent.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("subagent.namePlaceholder")} /></label><label className="is-wide">{t("subagent.driverModel")}<QoneSelect value={modelId} onChange={setModelId} placeholder={t("subagent.selectModel")} options={modelOptions.map((model) => ({ value: model.id, label: model.label }))} ariaLabel={t("subagent.driverModel")} /></label><label>{t("subagent.permissionMode")}<QoneSelect value={permissionMode ?? "ask"} onChange={(value) => setPermissionMode(value as SubagentProfile["permissionMode"])} options={[{ value: "ask", label: t("composer.permissionAsk") }, { value: "auto", label: t("composer.permissionAuto") }, { value: "full", label: t("composer.permissionFull") }]} ariaLabel={t("subagent.permissionMode")} /></label><label className="is-wide">{t("subagent.toolAllowList")}<input value={tools} onChange={(event) => setTools(event.target.value)} placeholder={t("subagent.toolAllowListPlaceholder")} /><small>{t("subagent.toolAllowListDescription")}</small></label><label className="is-wide">{t("subagent.systemPrompt")}<textarea className="settings-subagent-prompt" rows={7} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder={t("subagent.promptPlaceholder")} /></label></div><div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!name.trim() || !instructions.trim() || (!modelId && !isBuiltinSubagentId(initial?.id ?? ""))} onClick={save}><Save size={15} />{t("subagent.save")}</button></div></div></div>;
 }
 
 function CompactionSection() {
@@ -853,20 +992,22 @@ function SubagentsSection() {
   ]).values());
   useEffect(() => {
     if (runtimeSubagentConfig.updatedAt <= 0) return;
-    setAgents(runtimeSubagentConfig.profiles);
+    const normalized = normalizeSubagentLogos(dedupeSubagents(runtimeSubagentConfig.profiles));
+    setAgents(normalized);
     setRuntime(runtimeSubagentConfig.runtime);
-    window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(runtimeSubagentConfig.profiles));
+    window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(normalized));
   }, [runtimeSubagentConfig.updatedAt]);
   const saveAgents = (next: SubagentProfile[]) => {
-    const config = { profiles: next, routing: runtimeSubagentConfig.routing, runtime, updatedAt: Date.now() };
-    setAgents(next);
-    window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(next));
+    const normalized = normalizeSubagentLogos(dedupeSubagents(next));
+    const config = { profiles: normalized, routing: runtimeSubagentConfig.routing, runtime, updatedAt: Date.now() };
+    setAgents(normalized);
+    window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(normalized));
     void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config });
   };
   const saveAgent = (agent: SubagentProfile) => saveAgents([...agents.filter((item) => item.id !== agent.id), agent]);
   const saveRuntime = (next: typeof runtime) => {
     setRuntime(next);
-    const config = { profiles: agents, routing: runtimeSubagentConfig.routing, runtime: next, updatedAt: Date.now() };
+    const config = { profiles: dedupeSubagents(agents), routing: runtimeSubagentConfig.routing, runtime: next, updatedAt: Date.now() };
     void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config });
   };
   const deleteAgent = async (agent: SubagentProfile) => { if (await confirmDestructiveAction(t("subagent.deleteConfirm", { name: agent.name }))) saveAgents(agents.filter((item) => item.id !== agent.id)); };
@@ -896,7 +1037,7 @@ function SubagentsSection() {
   return <>
     <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.title")} />
     <div className="settings-section-toolbar"><div><strong>{t("subagent.mine")}</strong><span>{agents.length} {t("subagent.count")}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("subagent.new")}</button></div>
-    <div className="settings-subagent-list">{agents.map((agent) => <div className={cn("settings-subagent-card", !agent.enabled && "is-disabled")} key={agent.id}><div className="settings-subagent-card-main"><span className="settings-provider-icon"><BotMessageSquare size={17} /></span><div><strong>{agent.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? agent.modelId} · {agent.enabled ? t("subagent.enabled") : t("subagent.disabled")}</small><p>{agent.instructions}</p></div></div><div className="settings-subagent-actions"><button type="button" onClick={() => saveAgents(agents.map((item) => item.id === agent.id ? { ...item, enabled: !item.enabled, updatedAt: Date.now() } : item))}>{agent.enabled ? t("subagent.disable") : t("subagent.enable")}</button><button type="button" onClick={() => { setEditing(agent); setDialogOpen(true); }}>{t("common.edit")}</button><button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={() => deleteAgent(agent)}><Trash2 size={14} /></button></div></div>)}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
+    <div className="settings-subagent-list">{agents.map((agent) => { const builtin = isBuiltinSubagentId(agent.id); const openEditor = () => { setEditing(agent); setDialogOpen(true); }; return <div className={cn("settings-subagent-card", "is-actionable", !agent.enabled && "is-disabled")} key={agent.id} role="button" tabIndex={0} aria-label={`${agent.name} · ${t("common.edit")}`} onClick={openEditor} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openEditor(); } }}><div className="settings-subagent-card-main"><SubagentLogo logo={agent.logo} name={agent.name} size={36} /><div><strong>{agent.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? (agent.modelId ? agent.modelId : t("subagent.followMainModel"))} · {builtin ? t("subagent.builtIn") : agent.enabled ? t("subagent.enabled") : t("subagent.disabled")}</small></div></div><div className="settings-subagent-actions"><Switch.Root checked={agent.enabled} aria-label={t(agent.enabled ? "subagent.disable" : "subagent.enable")} className={cn("settings-switch", agent.enabled && "is-on")} onClick={(event) => event.stopPropagation()} onCheckedChange={(checked) => { saveAgents(agents.map((item) => item.id === agent.id ? { ...item, enabled: checked, updatedAt: Date.now() } : item)); }}><Switch.Thumb /></Switch.Root>{!builtin && <button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={(event) => { event.stopPropagation(); void deleteAgent(agent); }}><Trash2 size={14} /></button>}</div></div>; })}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
     <button type="button" className="settings-subagent-settings-card" onClick={() => setView("temporary")}>
       <span className="settings-subagent-settings-icon"><BotMessageSquare size={17} aria-hidden="true" /></span>
       <span className="settings-subagent-settings-copy"><strong>{t("subagent.temporaryTitle")}</strong><small>{temporaryModelLabel}</small></span>
@@ -1355,10 +1496,6 @@ function SectionContent({ activeSection, theme, onToggleTheme }: { activeSection
     case "skills": return <SkillsSection />;
     case "subagents": return <SubagentsSection />;
     case "compaction": return <CompactionSection />;
-    case "webSearch":
-    case "videoRecognition":
-    case "stt":
-    case "tts": return <CapabilitySection id={activeSection} />;
   }
 }
 

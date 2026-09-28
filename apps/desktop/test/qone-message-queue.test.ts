@@ -104,6 +104,59 @@ test("failed native steering returns the item to its original queue position", a
   expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["A", "B"]);
 });
 
+test("accepted steering remains pending until Pi delivers the user turn", async () => {
+  let persistentId = "";
+  const queue = createQoneMessageQueue({
+    sessionId: "s",
+    isRunning: () => true,
+    send: () => {},
+    steer: async () => true,
+    sync: (items) => { persistentId = items[0]?.id ?? persistentId; },
+  });
+  queue.adapter.enqueue(message("change direction"));
+  const localId = queue.adapter.items[0]!.id;
+  queue.adapter.move(localId, { lane: "steer", insertAfter: null });
+  await flush();
+  expect(queue.adapter.steerItems.map((item) => item.prompt)).toEqual(["change direction"]);
+  expect(queue.getLocalId(persistentId)).toBe(localId);
+
+  queue.settleSteer(persistentId, true);
+  expect(queue.adapter.steerItems).toHaveLength(0);
+  expect(queue.getLocalId(persistentId)).toBeUndefined();
+});
+
+test("undelivered steering returns to the queue after the run ends", async () => {
+  let persistentId = "";
+  const queue = createQoneMessageQueue({
+    sessionId: "s",
+    isRunning: () => true,
+    send: () => {},
+    steer: async () => true,
+    sync: (items) => { persistentId = items[0]?.id ?? persistentId; },
+  });
+  queue.adapter.enqueue(message("try again"));
+  queue.adapter.move(queue.adapter.items[0]!.id, { lane: "steer", insertAfter: null });
+  await flush();
+  queue.settleSteer(persistentId, false);
+  expect(queue.adapter.steerItems).toHaveLength(0);
+  expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["try again"]);
+});
+
+test("a steering item restored after a stopped run is dispatched instead of stranded", async () => {
+  const sent: string[] = [];
+  const queue = createQoneMessageQueue({
+    sessionId: "s",
+    isRunning: () => false,
+    send: (_message, id) => { sent.push(id); },
+    steer: async () => true,
+    sync: () => {},
+  });
+  queue.restore([{ id: "pending", sessionId: "s", text: "still needed", lane: "steer", status: "steering", position: 0, createdAt: 1, updatedAt: 1 }]);
+  await flush();
+  expect(queue.adapter.steerItems).toHaveLength(0);
+  expect(sent).toEqual(["pending"]);
+});
+
 test("deleting an item while editing does not release it for dispatch", async () => {
   let running = true;
   const sent: string[] = [];

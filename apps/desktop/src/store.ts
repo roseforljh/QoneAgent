@@ -2,10 +2,11 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, DEFAULT_SUBAGENT_RUNTIME, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, DEFAULT_SUBAGENT_RUNTIME, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type MessageInfo, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate } from "./localization";
+import { getQoneMessageQueue } from "./lib/qone-message-queue";
 
 const displayRuntimeError = (message: string) => message === "MCP_NPX_UNAVAILABLE"
   ? translate(resolveLocale(getLanguageSetting()), "mcp.nodeRequired")
@@ -124,6 +125,10 @@ interface AgentState {
   gitEntries: WorkspaceGitEntry[];
   gitLoaded: boolean;
   runtimeCapabilities: string[];
+  globalPrompt: string;
+  globalPromptPath?: string;
+  globalPromptDirectory?: string;
+  globalPromptLoaded: boolean;
   autoCompactionEnabled: boolean;
   compactionThreshold: number;
   workspaceError?: string;
@@ -235,7 +240,7 @@ export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
   if (existing) return existing;
   const requestId = rid();
   const request = new Promise<CloudResponse>((resolve, reject) => {
-    const timer = setTimeout(() => { cloudRequests.delete(requestId); reject(new Error("云库请求超时")); }, command.type === "skills.cloud.install" ? 120_000 : 60_000);
+    const timer = setTimeout(() => { cloudRequests.delete(requestId); reject(new Error(SKILL_CATALOG_TIMEOUT)); }, command.type === "skills.cloud.install" ? 120_000 : 60_000);
     cloudRequests.set(requestId, {
       resolve: (response) => { clearTimeout(timer); cloudRequests.delete(requestId); resolve(response); },
       reject: (error) => { clearTimeout(timer); cloudRequests.delete(requestId); reject(error); },
@@ -310,6 +315,10 @@ export const useStore = create<AgentState>((set, get) => ({
   gitEntries: [],
   gitLoaded: false,
   runtimeCapabilities: [],
+  globalPrompt: "",
+  globalPromptPath: undefined,
+  globalPromptDirectory: undefined,
+  globalPromptLoaded: !hasTauriBridge(),
   ...DEFAULT_COMPACTION_SETTINGS,
   workspaceError: undefined,
   pinnedWorkspaceIds: (() => {
@@ -760,7 +769,11 @@ export function initBridge() {
           }
         }
         s.send({ type: "permission.list", requestId: rid() });
+        s.send({ type: "global-prompt.get", requestId: rid() });
         s.send({ type: "events.replay", requestId: rid(), sessionId: useStore.getState().currentSessionId, afterSequence: lastSequence });
+        break;
+      case "global-prompt":
+        useStore.setState({ globalPrompt: msg.content, globalPromptPath: msg.path, globalPromptDirectory: msg.directory, globalPromptLoaded: true });
         break;
       case "session.created":
         clearDelta();
@@ -1096,6 +1109,13 @@ export function initBridge() {
       case "mcp.oauth.saved":
         if (msg.key.endsWith(".tokens") || !msg.key.endsWith(".client")) useStore.setState({ oauthAuthorization: undefined });
         break;
+      case "mcp.oauth.invalidated":
+        // Do not restore a rejected token while native deletion/list updates arrive.
+        restoredMcpSecrets.add(msg.key);
+        useStore.setState((st) => ({
+          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connected: false, toolCount: 0 } : server),
+        }));
+        break;
       case "mcp.oauth.token":
         useStore.setState({ lastError: "OAuth token was not intercepted by the native credential bridge" });
         break;
@@ -1157,6 +1177,14 @@ export function initBridge() {
       case "agent.event": {
         const ev = msg.event;
         lastSequence = Math.max(lastSequence, ev.sequence);
+        if ((ev.type === "agent.steer.delivered" || ev.type === "agent.steer.undelivered") && ev.sessionId) {
+          const queueItemId = (ev.payload as { queueItemId?: unknown } | undefined)?.queueItemId;
+          if (typeof queueItemId === "string") getQoneMessageQueue(ev.sessionId)?.settleSteer(queueItemId, ev.type === "agent.steer.delivered");
+          if (ev.type === "agent.steer.delivered" && ev.sessionId === useStore.getState().currentSessionId) {
+            clearDelta();
+            useStore.setState({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [] });
+          }
+        }
         if (ev.sessionId && ev.sessionId !== useStore.getState().currentSessionId) {
           if (["agent.completed", "agent.cancelled", "agent.failed"].includes(ev.type) && ev.runId === useStore.getState().activeRunId) {
             useStore.setState({ running: false, activeRunId: undefined });

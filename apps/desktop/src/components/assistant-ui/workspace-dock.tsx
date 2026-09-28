@@ -538,7 +538,11 @@ export function WorkspaceDock() {
   const workspaceId = useStore((s) => s.currentWorkspaceId);
   const workspacePath = useStore((s) => s.workspaces.find((w) => w.id === s.currentWorkspaceId)?.path);
   const [view, setView] = useState<DockView>();
-  const [browserUrl, setBrowserUrl] = useState("https://www.bing.com");
+  const [browserTarget, setBrowserTarget] = useState({ url: "https://www.bing.com", html: undefined as string | undefined, requestId: undefined as string | undefined });
+  const viewRef = useRef(view);
+  const browserTargetRef = useRef(browserTarget);
+  viewRef.current = view;
+  browserTargetRef.current = browserTarget;
   const [openViews, setOpenViews] = useState<DockView[]>([]);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [terminalOpened, setTerminalOpened] = useState(false);
@@ -569,10 +573,18 @@ export function WorkspaceDock() {
     setTerminalDetail(detail);
   }, []);
 
-  useEffect(() => onOpenBrowserInDock((url) => {
-    setBrowserUrl(url);
+  useEffect(() => onOpenBrowserInDock((target) => {
     setMoreOpen(false);
     setLauncherOpen(false);
+    if (target.requestId && viewRef.current === "browser" && browserTargetRef.current.requestId === target.requestId) {
+      viewRef.current = undefined;
+      setView(undefined);
+      return;
+    }
+    const nextTarget = { url: target.url, html: target.html, requestId: target.requestId };
+    browserTargetRef.current = nextTarget;
+    viewRef.current = "browser";
+    setBrowserTarget(nextTarget);
     setOpenViews((current) => current.includes("browser") ? current : [...current, "browser"]);
     setView("browser");
   }), []);
@@ -758,16 +770,16 @@ export function WorkspaceDock() {
 
   return (
     <>
-      <div
+      {!view && <div
         ref={dockZoneRef}
         data-qone-dock-zone="true"
         className="q-dock-reveal-zone absolute top-0 z-30 p-3"
-        style={{ right: view ? panelW : 0, transition: dragging ? "none" : PANEL_TRANSITION }}
+        style={{ right: 0, transition: dragging ? "none" : PANEL_TRANSITION }}
       >
         <div
           ref={dockRevealRef}
           className="q-dock-reveal flex flex-col items-center gap-0.5 rounded-full border border-border/60 bg-background/85 p-1 shadow-lg backdrop-blur"
-          data-open={(!!view || moreOpen || launcherOpen) || undefined}
+          data-open={(moreOpen || launcherOpen) || undefined}
         >
           <div ref={expandRef}>
             <TooltipIconButton
@@ -823,7 +835,7 @@ export function WorkspaceDock() {
             </AnimatePresence>
           </div>
         </div>
-      </div>
+      </div>}
       {view && isNarrowScreen && (
         <div
           role="presentation"
@@ -918,7 +930,7 @@ export function WorkspaceDock() {
             {terminalOpened && workspaceId && <TerminalView workspaceId={workspaceId} active={view === "terminal"} apiRef={terminalApiRef} onStatus={onTerminalStatus} />}
           </div>
           <div className={cn("min-h-0 flex-1", view === "browser" ? "flex flex-col" : "hidden")}>
-            {view === "browser" && <DockBrowserView active={!launcherOpen && !moreOpen && !dragging} initialUrl={browserUrl} />}
+            {view === "browser" && <DockBrowserView active={!launcherOpen && !moreOpen && !dragging} initialUrl={browserTarget.url} previewHtml={browserTarget.html} previewId={browserTarget.requestId} />}
           </div>
           {view === "mcp" && <DockMcpView refreshNonce={refreshNonce} />}
           {view === "skills" && <DockSkillsView workspaceId={workspaceId} refreshNonce={refreshNonce} />}

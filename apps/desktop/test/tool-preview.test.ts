@@ -3,13 +3,15 @@ import { detectToolPreview } from "../src/components/assistant-ui/tool-preview";
 import { toolActivity } from "../src/components/assistant-ui/tool-call-display";
 
 test("partial arguments preview available changes without inventing old file contents", () => {
-  expect(detectToolPreview({ path: "a.ts" })).toBeUndefined();
-  expect(detectToolPreview({ path: "a.ts", oldText: "old" })).toBeUndefined();
-  expect(detectToolPreview({ path: "a.ts", oldText: "old", newText: "n" })).toMatchObject({
+  expect(detectToolPreview("edit", { path: "a.ts" })).toBeUndefined();
+  expect(detectToolPreview("edit", { path: "a.ts", edits: [{ oldText: "old" }] })).toBeUndefined();
+  expect(detectToolPreview("edit", { path: "a.ts", edits: [{ oldText: "old", newText: "n" }] })).toMatchObject({
     kind: "diff", oldFile: { content: "old" }, newFile: { content: "n" },
   });
-  expect(detectToolPreview({ path: "a.ts", content: "new content" })).toEqual({ kind: "file", name: "a.ts", content: "new content" });
-  expect(detectToolPreview({ command: "bun test" })).toMatchObject({ kind: "terminal", command: "bun test", output: "" });
+  expect(detectToolPreview("edit", { path: "a.ts", oldText: "old", newText: "n" })).toMatchObject({ kind: "diff" });
+  expect(detectToolPreview("write", { path: "a.ts", content: "new content" })).toEqual({ kind: "file", name: "a.ts", content: "new content" });
+  expect(detectToolPreview("powershell", { command: "bun test" })).toEqual({ kind: "terminal", command: "bun test", output: "" });
+  expect(detectToolPreview("mcp:fs:save", { path: "a.ts", content: "x" })).toBeUndefined();
 });
 
 test("tool lifecycle distinguishes generation, queue, execution, approval, and completion", () => {

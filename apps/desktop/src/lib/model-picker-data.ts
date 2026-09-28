@@ -1,4 +1,4 @@
-import type { ModelConfigInfo, ProviderApiType } from "@qone/protocol";
+import { detectImageModel, type ImageApiFormat, type ModelConfigInfo, type ModelMetadata, type ProviderApiType } from "@qone/protocol";
 import { defaultModelSettings, type ModelSettings, type ProviderModel, type ProviderProfile } from "./model-settings";
 
 export const PROVIDERS_STORAGE_KEY = "qone-model-providers";
@@ -22,9 +22,26 @@ export function providerProfilesFromModelConfigs(configs: ModelConfigInfo[]): Pr
       baseUrl: typeof saved.baseUrl === "string" ? saved.baseUrl : "",
       updatedAt: config.updatedAt,
     };
+    const detectedImage = detectImageModel({
+      model: config.model,
+      provider: config.provider,
+      apiType: typeof saved.apiType === "string" ? saved.apiType : undefined,
+      imageApiFormat: typeof saved.imageApiFormat === "string" ? saved.imageApiFormat as ImageApiFormat : undefined,
+      input: Array.isArray(saved.input) ? saved.input as string[] : undefined,
+      output: Array.isArray(saved.output) ? saved.output as string[] : undefined,
+      manualInput: recordBoolean(saved.metadataOverrides, "input"),
+      manualOutput: recordBoolean(saved.metadataOverrides, "output"),
+      metadata: saved.modelMetadata && typeof saved.modelMetadata === "object" ? saved.modelMetadata as ModelMetadata : undefined,
+    });
+    const manualInput = recordBoolean(saved.metadataOverrides, "input");
+    const manualOutput = recordBoolean(saved.metadataOverrides, "output");
     const settings = {
       ...defaultModelSettings(),
       ...saved,
+      ...(detectedImage.isImageModel ? {
+        ...(manualInput ? {} : { input: ["text", "image"] }),
+        ...(manualOutput ? {} : { output: ["image"] }),
+      } : {}),
       apiType: providerApiTypes.has(saved.apiType as ProviderApiType) ? saved.apiType as ProviderApiType : current.apiType,
     } as ModelSettings;
     current.models.push({
@@ -44,6 +61,10 @@ export function providerProfilesFromModelConfigs(configs: ModelConfigInfo[]): Pr
     models: value.models,
     updatedAt: value.updatedAt,
   }));
+}
+
+function recordBoolean(value: unknown, key: string): boolean {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>)[key] === true);
 }
 
 export function filterPickerModels(models: PickerModel[], query: string): PickerModel[] {

@@ -26,6 +26,7 @@ type QueueBundle = {
   releaseIdle: () => void;
   edit: (id: string, message: AppendMessage, preservedAttachments?: MessageAttachmentInfo[]) => void;
   remove: (id: string) => void;
+  settleSteer: (persistentId: string, delivered: boolean) => void;
   getPersistentId: (localId: string) => string | undefined;
   getLocalId: (persistentId: string) => string | undefined;
 };
@@ -208,23 +209,15 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
           .then((serialized) => callbacks.steer(message, queueItemId, serialized))
           .catch(() => false)
           .then((accepted) => {
-            if (accepted) {
-              controller.adapter.remove(localId);
-              messages.delete(localId);
-              persistentIds.delete(localId);
-              attachments.delete(localId);
-              timestamps.delete(localId);
-              attachmentVersions.delete(localId);
-              persist();
-            } else if (messages.has(localId)) {
+            if (!accepted && messages.has(localId)) {
               const restoreBefore = queuedItems.slice(restoreIndex + 1).find((item) => controller.adapter.items.some((current) => current.id === item.id))?.id;
               controller.adapter.move(localId, { lane: "queue", insertBefore: restoreBefore ?? null });
               persist();
             }
-          })
-          .finally(() => {
-            steeringIds.delete(localId);
-            releaseHold(`steer:${localId}`);
+            if (!accepted) {
+              steeringIds.delete(localId);
+              releaseHold(`steer:${localId}`);
+            }
           });
         return;
       }
@@ -292,6 +285,8 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
   const restore = (items: QueueItemInfo[]) => {
     restoring = true;
     hold("restore");
+    for (const id of steeringIds) releaseHold(`steer:${id}`);
+    let normalizedSteer = false;
     try {
       controller.clear();
       messages.clear();
@@ -299,27 +294,52 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       attachments.clear();
       timestamps.clear();
       attachmentVersions.clear();
+      steeringIds.clear();
       editingLocalId = undefined;
       holdReasons.delete("edit");
       const ordered = [...items].sort((a, b) => a.position - b.position);
       for (const item of ordered) {
         const message = toMessage(item);
-        const before = item.lane === "steer" ? controller.adapter.steerItems : controller.adapter.items;
-        if (item.lane === "steer") controller.adapter.steer(message);
+        const lane = item.lane === "steer" && callbacks.isRunning() ? "steer" : "queue";
+        if (item.lane === "steer" && lane === "queue") normalizedSteer = true;
+        const before = lane === "steer" ? controller.adapter.steerItems : controller.adapter.items;
+        if (lane === "steer") controller.adapter.steer(message);
         else controller.adapter.enqueue(message);
-        const after = item.lane === "steer" ? controller.adapter.steerItems : controller.adapter.items;
+        const after = lane === "steer" ? controller.adapter.steerItems : controller.adapter.items;
         const localId = findNewId(before, after);
         if (localId) {
           messages.set(localId, message);
           persistentIds.set(localId, item.id);
           attachments.set(localId, item.attachments ?? []);
           timestamps.set(localId, { createdAt: item.createdAt, updatedAt: item.updatedAt });
+          if (lane === "steer") {
+            steeringIds.add(localId);
+            hold(`steer:${localId}`);
+          }
         }
       }
     } finally {
       restoring = false;
       if (!callbacks.isRunning()) releaseHold("restore");
+      if (normalizedSteer) persist();
     }
+  };
+
+  const settleSteer = (persistentId: string, delivered: boolean) => {
+    const localId = [...persistentIds.entries()].find(([, id]) => id === persistentId)?.[0];
+    if (!localId) return;
+    if (delivered) {
+      controller.adapter.remove(localId);
+      messages.delete(localId);
+      persistentIds.delete(localId);
+      attachments.delete(localId);
+      timestamps.delete(localId);
+      attachmentVersions.delete(localId);
+    } else {
+      controller.adapter.move(localId, { lane: "queue", insertBefore: controller.adapter.items[0]?.id ?? null });
+    }
+    steeringIds.delete(localId);
+    releaseHold(`steer:${localId}`);
   };
 
   return {
@@ -331,6 +351,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     releaseIdle: () => releaseHold("restore"),
     edit: adapter.edit,
     remove: adapter.remove,
+    settleSteer,
     getPersistentId: (localId) => persistentIds.get(localId),
     getLocalId: (persistentId: string) => [...persistentIds.entries()].find(([, id]) => id === persistentId)?.[0],
   };

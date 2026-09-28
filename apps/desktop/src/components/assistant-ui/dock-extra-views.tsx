@@ -5,6 +5,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ChevronRightIcon,
+  ExternalLinkIcon,
   GlobeIcon,
   LoaderCircleIcon,
   PlugIcon,
@@ -14,7 +15,7 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { useStore, hasTauriBridge } from "../../store";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { clipBrowserBounds, createDockBrowserSession } from "../../lib/dock-browser-session";
@@ -22,6 +23,7 @@ import { FadeScroll, mono } from "./elements/surfaces";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
+import { externalBrowserUrl, htmlFromDataUrl, isHtmlDataUrl, sandboxPreviewHtml } from "../../lib/browser-dock";
 
 const rid = () => crypto.randomUUID();
 const BROWSER_HOME = "https://www.bing.com";
@@ -39,21 +41,27 @@ function toUrl(input: string): string | undefined {
 
 // The page area is a real WebView2 child of the main window (src-tauri
 // browser.rs); this view only owns the toolbar and reports its rect.
-export function DockBrowserView({ active, initialUrl }: { active: boolean; initialUrl: string }) {
+export function DockBrowserView({ active, initialUrl, previewHtml, previewId }: { active: boolean; initialUrl: string; previewHtml?: string; previewId?: string }) {
   const { t } = useLocale();
   const hostRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
-  activeRef.current = active;
   const browserUrlRef = useRef(initialUrl);
+  const previewHtmlRef = useRef(previewHtml);
+  const previewIdRef = useRef(previewId);
   const [address, setAddress] = useState(initialUrl);
+  const [currentPageUrl, setCurrentPageUrl] = useState(() => previewHtml === undefined ? externalBrowserUrl(initialUrl) : undefined);
+  const [currentDataUrl, setCurrentDataUrl] = useState(() => isHtmlDataUrl(initialUrl) ? initialUrl : undefined);
+  const [currentPreviewHtml, setCurrentPreviewHtml] = useState(previewHtml);
+  const [externalOpenError, setExternalOpenError] = useState<string>();
   const [failed, setFailed] = useState<string>();
+  activeRef.current = active && !failed;
   const sessionRef = useRef<ReturnType<typeof createDockBrowserSession> | undefined>(undefined);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
     let alive = true;
-    const session = createDockBrowserSession(invoke, initialUrl, (error) => setFailed(String(error)));
+    const session = createDockBrowserSession(invoke, initialUrl, (error) => setFailed(String(error)), previewHtml);
     sessionRef.current = session;
     const sync = () => {
       if (!alive) return;
@@ -62,7 +70,13 @@ export function DockBrowserView({ active, initialUrl }: { active: boolean; initi
     };
     sync();
     const unNav = listen<{ url: string }>("browser:navigated", (event) => {
-      if (alive) setAddress(event.payload.url);
+      if (!alive || (previewHtmlRef.current !== undefined && event.payload.url === "about:blank")) return;
+      previewHtmlRef.current = undefined;
+      setAddress(event.payload.url);
+      setCurrentPageUrl(externalBrowserUrl(event.payload.url));
+      setCurrentDataUrl(isHtmlDataUrl(event.payload.url) ? event.payload.url : undefined);
+      setCurrentPreviewHtml(undefined);
+      setExternalOpenError(undefined);
     });
     const ro = new ResizeObserver(sync);
     ro.observe(host);
@@ -80,22 +94,54 @@ export function DockBrowserView({ active, initialUrl }: { active: boolean; initi
   }, []);
 
   useEffect(() => {
-    if (browserUrlRef.current === initialUrl) return;
+    if (browserUrlRef.current === initialUrl && previewHtmlRef.current === previewHtml && previewIdRef.current === previewId) return;
     browserUrlRef.current = initialUrl;
+    previewHtmlRef.current = previewHtml;
+    previewIdRef.current = previewId;
     setAddress(initialUrl);
-    void sessionRef.current?.command("browser_navigate", { url: initialUrl });
-  }, [initialUrl]);
+    setCurrentPageUrl(previewHtml === undefined ? externalBrowserUrl(initialUrl) : undefined);
+    setCurrentDataUrl(isHtmlDataUrl(initialUrl) ? initialUrl : undefined);
+    setCurrentPreviewHtml(previewHtml);
+    setExternalOpenError(undefined);
+    setFailed(undefined);
+    if (previewHtml !== undefined) {
+      void sessionRef.current?.command("browser_preview", { html: previewHtml });
+    } else {
+      void sessionRef.current?.command("browser_navigate", { url: initialUrl });
+    }
+  }, [initialUrl, previewHtml, previewId]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const bounds = clipBrowserBounds(host.getBoundingClientRect(), window.innerWidth, window.innerHeight);
-    sessionRef.current?.update(bounds, active);
-  }, [active]);
+    sessionRef.current?.update(bounds, active && !failed);
+  }, [active, failed]);
 
   const go = () => {
     const url = toUrl(address);
-    if (url) void sessionRef.current?.command("browser_navigate", { url });
+    if (url) {
+      previewHtmlRef.current = undefined;
+      setCurrentDataUrl(undefined);
+      setCurrentPreviewHtml(undefined);
+      setExternalOpenError(undefined);
+      void sessionRef.current?.command("browser_navigate", { url });
+    }
+  };
+
+  const openExternally = async () => {
+    setExternalOpenError(undefined);
+    try {
+      if (currentPageUrl) {
+        await openUrl(currentPageUrl);
+        return;
+      }
+      const preview = currentDataUrl ? htmlFromDataUrl(currentDataUrl) : undefined;
+      const html = currentPreviewHtml ?? (preview === undefined ? undefined : sandboxPreviewHtml(preview));
+      if (html) await invoke("browser_open_preview_external", { html });
+    } catch (error) {
+      setExternalOpenError(String(error));
+    }
   };
 
   return (
@@ -118,20 +164,24 @@ export function DockBrowserView({ active, initialUrl }: { active: boolean; initi
           }}
         >
           <input
-            value={address}
+            value={previewHtmlRef.current !== undefined && address === initialUrl ? t("dock.codePreview") : address}
             onChange={(e) => setAddress(e.target.value)}
             placeholder={t("dock.browserPlaceholder")}
             spellCheck={false}
             className={cn(mono, "w-full rounded-full bg-foreground/[0.05] px-3 py-1 text-[12px] outline-none placeholder:text-foreground/35")}
           />
         </form>
+        <TooltipIconButton tooltip={t("dock.browserOpenExternal")} onClick={() => void openExternally()} disabled={!currentPageUrl && !currentPreviewHtml && !currentDataUrl} className="size-7 shrink-0">
+          <ExternalLinkIcon className="size-3.5" />
+        </TooltipIconButton>
       </div>
+      {externalOpenError && <p role="alert" title={externalOpenError} className="shrink-0 truncate px-3 py-1 text-xs text-destructive">{t("dock.browserOpenExternalFailed")}: {externalOpenError}</p>}
       {/* ms-1.5 keeps the native webview clear of the panel resize separator */}
       <div ref={hostRef} className="relative ms-1.5 min-h-0 flex-1">
         {failed && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
             <GlobeIcon className="size-5 text-foreground/35" />
-            <p className="text-[13px] text-foreground/50">{t("dock.browserFailed")}</p>
+            <p className="text-[13px] text-foreground/50">{t(previewHtmlRef.current !== undefined ? "dock.browserPreviewFailed" : "dock.browserFailed")}</p>
             <p className={cn(mono, "text-[11px] text-foreground/35")}>{failed}</p>
           </div>
         )}

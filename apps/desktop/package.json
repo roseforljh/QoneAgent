@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:prepare": "bun scripts/prepare-dev.ts",
     "build:sidecar": "bun run scripts/prepare-opencli.ts && bun run scripts/prepare-reach-tools.ts && bun run scripts/prepare-ffmpeg.ts && bun build ../agent-runtime/src/index.ts --compile --outfile src-tauri/binaries/qone-runtime-x86_64-pc-windows-msvc.exe",
     "build": "tsc --noEmit && vite build",
     "build:release": "bun run build:sidecar && bun run build",
@@ -22,6 +23,7 @@
     "@lexical/react": "0.49.0",
     "@lobehub/icons-static-svg": "^1.95.1",
     "@qone/protocol": "*",
+    "@tabler/icons-react": "^3.48.0",
     "@tanstack/react-router": "^1.170.38",
     "@tanstack/react-virtual": "^3.14.13",
     "@tauri-apps/api": "^2.8.0",
@@ -57,6 +59,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "esbuild": "^0.28.2",
     "tailwindcss": "^4.1.13",
     "typescript": "^5.9.0",
     "vite": "^7.1.0"

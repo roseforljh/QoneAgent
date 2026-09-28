@@ -8,24 +8,29 @@ function localDay(date: Date) {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
-/** Dates belong to rendered rows; a paired turn starts on its user's date. */
+/** Dates follow the last visible row of each past day; a paired turn starts on its user's date. */
 export function messageDaySeparators(
   messages: readonly DatedPairableMessage[],
   pairedUserIdByAssistant: ReadonlyMap<string, string>,
+  today = new Date(),
 ) {
   const byId = new Map(messages.map((message) => [message.id, message]));
   const pairedUserIds = new Set(pairedUserIdByAssistant.values());
   const separators = new Map<string, Date>();
-  let previousDay: string | undefined;
+  const todayDay = localDay(today);
+  let previous: { id: string; date: Date; day: string } | undefined;
 
   for (const message of messages) {
     if (message.role === "user" && pairedUserIds.has(message.id)) continue;
     const pairedUser = byId.get(pairedUserIdByAssistant.get(message.id) ?? "");
     const date = pairedUser?.createdAt ?? message.createdAt;
     const day = localDay(date);
-    if (day !== previousDay) separators.set(message.id, date);
-    previousDay = day;
+    if (previous && day !== previous.day && previous.day !== todayDay) {
+      separators.set(previous.id, previous.date);
+    }
+    previous = { id: message.id, date, day };
   }
+  if (previous && previous.day !== todayDay) separators.set(previous.id, previous.date);
 
   return separators;
 }

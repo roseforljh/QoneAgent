@@ -9,14 +9,13 @@ import {
   type PropsWithChildren,
 } from "react";
 import { createPortal } from "react-dom";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { cva, type VariantProps } from "class-variance-authority";
 import {
-  CopyIcon,
   DownloadIcon,
   ImageIcon,
   ImageOffIcon,
   Loader2Icon,
-  RefreshCwIcon,
   ShieldAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -25,6 +24,7 @@ import type {
   ImageMessagePartComponent,
 } from "@assistant-ui/react";
 import { cn } from "../../../lib/utils";
+import { useStore } from "../../../store";
 
 const extensionForMimeType = (mimeType?: string): string => {
   switch (mimeType) {
@@ -102,43 +102,62 @@ const defaultFilenameFromImage = (image: string): string => {
   return "image.png";
 };
 
-const downloadImagePart = (
+const saveImagePart = async (
   part: Pick<ImageMessagePart, "image" | "filename">,
-): void => {
-  if (typeof document === "undefined") return;
+): Promise<void> => {
   const filename = part.filename ?? defaultFilenameFromImage(part.image);
   const isDataUri = /^data:/i.test(part.image);
-  const blob = isDataUri ? dataUriToBlob(part.image) : null;
-  if (isDataUri && !blob) return;
-  const objectUrl = blob ? URL.createObjectURL(blob) : null;
-  const href = objectUrl ?? part.image;
-  const a = document.createElement("a");
-  a.href = href;
-  a.download = filename;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 40_000);
+  const native = isTauri();
+  const picker = (window as Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
+  if (!native && !picker) {
+    const blob = isDataUri ? dataUriToBlob(part.image) : null;
+    if (isDataUri && !blob) throw new Error("Image data could not be read");
+    const objectUrl = blob ? URL.createObjectURL(blob) : null;
+    const a = document.createElement("a");
+    a.href = objectUrl ?? part.image;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 40_000);
+    return;
+  }
+  const blob = isDataUri ? dataUriToBlob(part.image) : await fetch(part.image).then((response) => {
+    if (!response.ok) throw new Error(`Image download failed: ${response.status}`);
+    return response.blob();
+  });
+  if (!blob) throw new Error("Image data could not be read");
+  if (native) {
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const encoded = String(reader.result).split(",", 2)[1];
+        if (encoded) resolve(encoded);
+        else reject(new Error("Image data could not be read"));
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    await invoke("save_image_as", { filename, data });
+    return;
+  }
+  if (picker) {
+    try {
+      const file = await picker.call(window, { suggestedName: filename });
+      const writable = await file.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      throw error;
+    }
+  }
 };
 
-const copyImagePart = async (
-  part: Pick<ImageMessagePart, "image">,
-): Promise<void> => {
-  if (
-    typeof navigator === "undefined" ||
-    !navigator.clipboard ||
-    typeof ClipboardItem === "undefined"
-  ) {
-    throw new Error("Clipboard API is not available in this environment.");
-  }
-  const blob = /^data:/i.test(part.image)
-    ? dataUriToBlob(part.image)
-    : await fetch(part.image).then((r) => r.blob());
-  if (!blob) return;
-  const mime = mimeFromImage(part.image) ?? blob.type ?? "image/png";
-  await navigator.clipboard.write([new ClipboardItem({ [mime]: blob })]);
-};
+function reportSaveError(error: unknown): void {
+  useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
+}
 
 const imageVariants = cva(
   "aui-image-root relative overflow-hidden rounded-lg",
@@ -290,25 +309,26 @@ function ImageFilename({
 type ImageZoomProps = PropsWithChildren<{
   src: string;
   alt?: string;
+  filename?: string;
 }>;
 
-function ImageZoom({ src, alt = "Image preview", children }: ImageZoomProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const triggerRef = useRef<HTMLDivElement>(null);
+export function ImageLightbox({ src, alt, filename, onClose, children }: {
+  src: string;
+  alt: string;
+  filename?: string;
+  onClose: () => void;
+  children?: React.ReactNode;
+}) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-
-  const handleOpen = useCallback(() => setIsOpen(true), []);
-  const handleClose = useCallback(() => {
-    setIsOpen(false);
-    triggerRef.current?.focus();
-  }, []);
+  const [saving, setSaving] = useState(false);
+  const [failedSrc, setFailedSrc] = useState<string>();
 
   useEffect(() => {
-    if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        handleClose();
+        e.preventDefault();
+        onClose();
         return;
       }
       if (e.key !== "Tab") return;
@@ -328,82 +348,100 @@ function ImageZoom({ src, alt = "Image preview", children }: ImageZoomProps) {
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, handleClose]);
+  }, [onClose]);
 
   useEffect(() => {
-    if (!isOpen) return;
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
     return () => {
       document.body.style.overflow = originalOverflow;
     };
-  }, [isOpen]);
+  }, []);
 
-  useEffect(() => {
-    if (isOpen) closeRef.current?.focus();
-  }, [isOpen]);
-
-  return (
-    <>
-      <div
-        ref={triggerRef}
-        onClick={handleOpen}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            e.currentTarget.click();
-          } else if (e.key === " ") {
-            e.preventDefault();
-          }
-        }}
-        onKeyUp={(e) => {
-          if (e.key === " ") e.currentTarget.click();
-        }}
-        role="button"
-        tabIndex={0}
-        className="aui-image-zoom-trigger cursor-zoom-in"
-        aria-label="Click to zoom image"
-      >
-        {children}
+  return createPortal(
+    <div
+      ref={overlayRef}
+      data-slot="image-zoom-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image preview"
+      className="aui-image-zoom-overlay fade-in animate-in fixed inset-0 z-50 flex flex-col gap-3 bg-black/90 p-4 duration-200 sm:p-6"
+      onClick={onClose}
+    >
+      <div className="flex h-10 w-full shrink-0 items-center justify-end gap-2" onClick={(event) => event.stopPropagation()}>
+        {children && <div className="me-auto text-xs tabular-nums text-white/55">{children}</div>}
+        <button
+          type="button"
+          disabled={saving || failedSrc === src}
+          data-slot="image-save-as"
+          aria-label="Save image as"
+          title="Save image as"
+          className="inline-flex size-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50"
+          onClick={async () => {
+            setSaving(true);
+            try { await saveImagePart({ image: src, filename }); }
+            catch (error) { reportSaveError(error); }
+            finally { setSaving(false); }
+          }}
+        >
+          <DownloadIcon className="size-5" />
+        </button>
+        <button
+          ref={closeRef}
+          type="button"
+          data-slot="image-close"
+          aria-label="Close image preview"
+          title="Close"
+          onClick={onClose}
+          className="inline-flex size-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+        >
+          <XIcon className="size-5" />
+        </button>
       </div>
-      {isOpen &&
-        createPortal(
-          <div
-            ref={overlayRef}
-            data-slot="image-zoom-overlay"
-            role="dialog"
-            aria-modal="true"
-            className="aui-image-zoom-overlay fade-in animate-in fixed inset-0 z-50 flex items-center justify-center bg-black/80 duration-200"
-            onClick={handleClose}
-            aria-label="Zoomed image"
-          >
-            <img
+      <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+        {failedSrc === src
+          ? <ImageOffIcon className="size-10 text-white/40" aria-label="Image could not be loaded" />
+          : <img
               data-slot="image-zoom-content"
               src={src}
               alt={alt}
-              className="aui-image-zoom-content fade-in zoom-in-95 animate-in max-h-[90vh] max-w-[90vw] cursor-zoom-out object-contain duration-200"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleClose();
-              }}
-            />
-            <button
-              ref={closeRef}
-              type="button"
-              aria-label="Close zoomed image"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleClose();
-              }}
-              className="text-muted-foreground hover:text-foreground bg-background/80 absolute end-4 top-4 cursor-pointer rounded-md p-2"
-            >
-              <XIcon className="size-5" />
-            </button>
-          </div>,
-          document.body,
-        )}
-    </>
+              className="aui-image-zoom-content max-h-full max-w-full object-contain"
+              onClick={(event) => event.stopPropagation()}
+              onError={() => setFailedSrc(src)}
+            />}
+      </div>
+    </div>,
+    document.body,
   );
+}
+
+function ImageZoom({ src, alt = "Image preview", filename, children }: ImageZoomProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const handleClose = useCallback(() => {
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
+  return <>
+    <div
+      ref={triggerRef}
+      onClick={() => setIsOpen(true)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") { event.preventDefault(); setIsOpen(true); }
+        else if (event.key === " ") event.preventDefault();
+      }}
+      onKeyUp={(event) => { if (event.key === " ") setIsOpen(true); }}
+      role="button"
+      tabIndex={0}
+      className="aui-image-zoom-trigger cursor-pointer"
+      aria-label="Open image preview"
+    >
+      {children}
+    </div>
+    {isOpen && <ImageLightbox src={src} alt={alt} filename={filename} onClose={handleClose} />}
+  </>;
 }
 
 function ImageGenerating({ className }: { className?: string }) {
@@ -443,77 +481,6 @@ function ImageContentFilterError({
   );
 }
 
-export type ImageActionsProps = {
-  part: ImageMessagePart;
-  /**
-   * Wire to your own generation call to show a regenerate button. The button
-   * renders only when this is set and the part carries a `prompt`.
-   */
-  onRegenerate?: () => void | Promise<void>;
-  className?: string;
-};
-
-function RegenerateButton({
-  onRegenerate,
-}: {
-  onRegenerate: () => void | Promise<void>;
-}) {
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        setIsRegenerating(true);
-        try {
-          await onRegenerate();
-        } catch {
-        } finally {
-          setIsRegenerating(false);
-        }
-      }}
-      disabled={isRegenerating}
-      data-slot="image-regenerate"
-      aria-label="Regenerate image"
-      className="hover:bg-muted inline-flex size-7 items-center justify-center rounded disabled:opacity-50"
-    >
-      <RefreshCwIcon
-        className={cn("size-4", isRegenerating && "animate-spin")}
-      />
-    </button>
-  );
-}
-
-function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
-  return (
-    <div
-      data-slot="image-actions"
-      className={cn("flex items-center gap-1 p-1", className)}
-    >
-      <button
-        type="button"
-        onClick={() => downloadImagePart(part)}
-        data-slot="image-download"
-        aria-label="Download image"
-        className="hover:bg-muted inline-flex size-7 items-center justify-center rounded"
-      >
-        <DownloadIcon className="size-4" />
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          copyImagePart(part).catch(() => {});
-        }}
-        data-slot="image-copy"
-        aria-label="Copy image"
-        className="hover:bg-muted inline-flex size-7 items-center justify-center rounded"
-      >
-        <CopyIcon className="size-4" />
-      </button>
-      {onRegenerate && <RegenerateButton onRegenerate={onRegenerate} />}
-    </div>
-  );
-}
-
 const ImageImpl: ImageMessagePartComponent = (props) => {
   const { image, filename, status } = props;
 
@@ -534,9 +501,18 @@ const ImageImpl: ImageMessagePartComponent = (props) => {
     );
   }
 
+  if (status?.type === "incomplete") {
+    return (
+      <ImageRoot>
+        <ImageContentFilterError reason={status.reason === "error" ? "Image generation failed." : "Image could not be loaded."} />
+        <ImageFilename>{filename}</ImageFilename>
+      </ImageRoot>
+    );
+  }
+
   return (
     <ImageRoot>
-      <ImageZoom src={image} alt={filename || "Image content"}>
+      <ImageZoom src={image} alt={filename || "Image content"} filename={filename}>
         <ImagePreview src={image} alt={filename || "Image content"} />
       </ImageZoom>
       <ImageFilename>{filename}</ImageFilename>
@@ -549,7 +525,6 @@ const Image = memo(ImageImpl) as unknown as ImageMessagePartComponent & {
   Preview: typeof ImagePreview;
   Filename: typeof ImageFilename;
   Zoom: typeof ImageZoom;
-  Actions: typeof ImageActions;
   Generating: typeof ImageGenerating;
   ContentFilterError: typeof ImageContentFilterError;
 };
@@ -559,7 +534,6 @@ Image.Root = ImageRoot;
 Image.Preview = ImagePreview;
 Image.Filename = ImageFilename;
 Image.Zoom = ImageZoom;
-Image.Actions = ImageActions;
 Image.Generating = ImageGenerating;
 Image.ContentFilterError = ImageContentFilterError;
 
@@ -569,7 +543,6 @@ export {
   ImagePreview,
   ImageFilename,
   ImageZoom,
-  ImageActions,
   ImageGenerating,
   ImageContentFilterError,
   imageVariants,

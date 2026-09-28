@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { PartState } from "@assistant-ui/react";
-import { assistantPartRanges } from "../src/components/assistant-ui/assistant-part-ranges";
+import { assistantPartRanges, visibleAssistantPartRanges } from "../src/components/assistant-ui/assistant-part-ranges";
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 import type { AssistantMessagePart } from "@qone/protocol";
 
@@ -48,5 +48,37 @@ test("a Pi text block separates tool groups even if assistant-ui hides whitespac
   expect(assistantPartRanges(visible as PartState[])).toEqual([
     { type: "tools", startIndex: 0, endIndex: 1 },
     { type: "tools", startIndex: 1, endIndex: 2 },
+  ]);
+});
+
+test("adjacent image parts form one gallery range while separated images stay independent", () => {
+  const parts = [
+    { type: "image" as const, image: "data:image/png;base64,A", messageSequence: 1 },
+    { type: "image" as const, image: "data:image/png;base64,B", messageSequence: 1 },
+    { type: "text" as const, text: "说明", messageSequence: 1 },
+    { type: "image" as const, image: "data:image/png;base64,C", messageSequence: 1 },
+  ];
+  expect(assistantPartRanges(parts as PartState[])).toEqual([
+    { type: "images", startIndex: 0, endIndex: 2 },
+    { type: "text", index: 2 },
+    { type: "image", index: 3 },
+  ]);
+});
+
+test("subagent capsule stays at the first dispatch call, before later text and images", () => {
+  const parts = [
+    { type: "text", text: "准备", status: { type: "complete" } },
+    { type: "tool-call", toolName: "read", toolCallId: "read", status: { type: "complete" } },
+    { type: "tool-call", toolName: "dispatch_subagent", toolCallId: "child-1", status: { type: "complete" } },
+    { type: "tool-call", toolName: "dispatch_subagent", toolCallId: "child-2", status: { type: "complete" } },
+    { type: "text", text: "结果", status: { type: "complete" } },
+    { type: "image", image: "data:image/png;base64,A", status: { type: "complete" } },
+  ] as PartState[];
+  expect(visibleAssistantPartRanges(parts, true, true)).toEqual([
+    { type: "text", index: 0 },
+    { type: "tools", startIndex: 1, endIndex: 2 },
+    { type: "subagents", index: 2 },
+    { type: "text", index: 4 },
+    { type: "image", index: 5 },
   ]);
 });

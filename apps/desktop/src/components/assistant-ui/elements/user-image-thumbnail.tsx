@@ -29,7 +29,7 @@ export const UserImageThumbnail: FC<ComponentProps<typeof Image>> = (part) => {
       title={filename}
       style={{ width: measured?.image === image ? measured.width : 128 }}
     >
-      <Image.Zoom src={image} alt={filename || "Image attachment"}>
+      <Image.Zoom src={image} alt={filename || "Image attachment"} filename={filename}>
         <Image.Preview src={image} alt={filename || "Image attachment"} onNaturalSize={onNaturalSize} />
       </Image.Zoom>
       <Image.Filename>{filename}</Image.Filename>

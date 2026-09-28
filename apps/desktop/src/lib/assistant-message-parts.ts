@@ -16,6 +16,7 @@ function stringifyToolValue(value: unknown): string {
 
 function orderedPart(part: AssistantMessagePart, parentId: string): ThreadAssistantMessagePart {
   if (part.type === "text") return { type: "text", text: part.text, parentId };
+  if (part.type === "image") return { type: "image", image: part.image, filename: part.filename };
   return {
     type: "tool-call",
     toolCallId: part.toolCallId,

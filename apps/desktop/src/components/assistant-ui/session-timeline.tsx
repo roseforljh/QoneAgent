@@ -63,8 +63,8 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
   const result = call?.result !== undefined ? call.result : part.result !== undefined ? part.result : call?.summary;
   const formattedResult = formatToolPayload(result);
   const args = useDeferredValue(call?.args ?? part.args);
-  const normalizedResult = useMemo(() => result !== undefined ? detectToolPresentation(result, failed ? undefined : args) : undefined, [result, args, failed]);
-  const livePresentation = useMemo(() => detectToolPreview(args), [args]);
+  const normalizedResult = useMemo(() => result !== undefined ? detectToolPresentation(part.toolName, result, failed ? undefined : args) : undefined, [part.toolName, result, args, failed]);
+  const livePresentation = useMemo(() => detectToolPreview(part.toolName, args), [part.toolName, args]);
   const presentation = normalizedResult ?? (status !== "success" && status !== "failed" ? livePresentation : undefined);
   const editing = livePresentation?.kind === "diff" || livePresentation?.kind === "file" || step.icon === PenLineIcon;
   const activeLabel = status === "generating"
@@ -162,8 +162,8 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
   const headerPart = toolWorking ? activePart : lastPart;
   const headerCall = toolWorking ? activeCall : lastCall;
   const headerResult = headerCall?.result !== undefined ? headerCall.result : headerPart?.result;
-  const headerStat = headerResult !== undefined
-    ? toolDiffStats(detectToolPresentation(headerResult, headerCall?.args ?? headerPart?.args))
+  const headerStat = headerResult !== undefined && headerPart
+    ? toolDiffStats(detectToolPresentation(headerPart.toolName, headerResult, headerCall?.args ?? headerPart.args))
     : undefined;
   const [now, setNow] = useState(() => Date.now());
 

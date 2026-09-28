@@ -1,4 +1,4 @@
-import { normalizeThinkingLevelForApi, parseModelMetadataResponse, thinkingLevelsForApi as protocolThinkingLevelsForApi, type ModelMetadata, type ModelMetadataSource, type ModelMetadataSources, type ProviderApiType, type RunThinkingLevel } from "@qone/protocol";
+import { detectImageModel, normalizeThinkingLevelForApi, parseModelMetadataResponse, thinkingLevelsForApi as protocolThinkingLevelsForApi, type ImageApiFormat, type ModelMetadata, type ModelMetadataSource, type ModelMetadataSources, type ProviderApiType, type RunThinkingLevel } from "@qone/protocol";
 
 export type Capability = "text" | "image" | "video" | "audio";
 export type ThinkingLevel = RunThinkingLevel;
@@ -12,6 +12,27 @@ export const thinkingLevelOptions = [
   { value: "max", labelKey: "model.max" },
 ] as const;
 export type ModelSettingField = "maxOutput" | "maxContext" | "thinking" | "input" | "output";
+export type ImageGenerationSettings = {
+  size?: "auto" | string;
+  quality?: "auto" | "low" | "medium" | "high" | "xhigh" | "max";
+  background?: "auto" | "transparent" | "opaque";
+  outputFormat?: "png" | "jpeg" | "webp";
+  outputCompression?: number;
+  moderation?: "auto" | "low";
+  n?: number | "auto";
+  aspectRatio?: "auto" | string;
+  imageSize?: "auto" | "1K" | "2K" | "4K" | string;
+  responseFormat?: "url" | "b64_json";
+  negativePrompt?: string;
+  promptExtend?: boolean;
+  promptExtendMode?: "direct" | "agent";
+  enableThinking?: boolean;
+  watermark?: boolean;
+  seed?: number;
+  sequentialImageGeneration?: "disabled" | "auto";
+  transport?: "openai-compatible" | "dashscope";
+  async?: boolean;
+};
 
 export type ModelSettings = {
   apiType?: ProviderApiType;
@@ -24,6 +45,8 @@ export type ModelSettings = {
   modelMetadata?: ModelMetadata;
   metadataSources?: Partial<Record<ModelSettingField, ModelMetadataSource>>;
   metadataOverrides?: Partial<Record<"maxOutput" | "maxContext" | "thinking" | "input" | "output", boolean>>;
+  imageApiFormat?: ImageApiFormat;
+  imageGeneration?: ImageGenerationSettings;
 };
 
 export type ProviderModel = { id: string; label: string; settings?: ModelSettings };
@@ -52,12 +75,14 @@ export function modelSettingsFromMetadata(metadata?: ModelMetadata, sources?: Mo
   if (!metadata) return defaults;
   const input = metadata.input?.filter((value): value is Capability => capabilities.includes(value as Capability));
   const output = metadata.output?.filter((value): value is Capability => capabilities.includes(value as Capability));
+  const imageModel = detectImageModel({ model: metadata.id ?? "", imageApiFormat: metadata.imageApiFormat, input: metadata.input, output: metadata.output, metadata }).isImageModel;
   return {
     ...defaults,
     ...(metadata.maxTokens ? { maxOutput: metadata.maxTokens } : {}),
     ...(metadata.contextWindow ? { maxContext: metadata.contextWindow } : {}),
-    ...(input?.length ? { input } : {}),
-    ...(output?.length ? { output } : {}),
+    ...(imageModel ? { input: input?.includes("image") ? input : ["text", "image"], output: output?.length ? output : ["image"] } : {}),
+    ...(!imageModel && input?.length ? { input } : {}),
+    ...(!imageModel && output?.length ? { output } : {}),
     modelMetadata: metadata,
     metadataSources: {
       maxOutput: sources?.maxTokens ?? (metadata.maxTokens ? "provider" : "default"),
@@ -78,7 +103,7 @@ export function parseModelsResponse(data: unknown): ProviderModel[] {
 }
 
 export function withResolvedModelSettings(model: ProviderModel, metadata: ModelMetadata, sources: ModelMetadataSources): ProviderModel {
-  return { ...model, settings: { ...modelSettingsFromMetadata(metadata, sources), ...(model.settings?.apiType ? { apiType: model.settings.apiType } : {}), modelMetadata: model.settings?.modelMetadata } };
+  return { ...model, settings: { ...modelSettingsFromMetadata(metadata, sources), ...(model.settings?.apiType ? { apiType: model.settings.apiType } : {}), ...(model.settings?.imageApiFormat ? { imageApiFormat: model.settings.imageApiFormat } : {}), ...(model.settings?.imageGeneration ? { imageGeneration: model.settings.imageGeneration } : {}), modelMetadata: model.settings?.modelMetadata } };
 }
 
 function sameValue<T>(left: T, right: T): boolean {
@@ -111,6 +136,8 @@ export function mergeFetchedModel(existing: ProviderModel, fetched: ProviderMode
       thinking: current.apiType || incoming.apiType ? normalizeThinkingLevel(current.thinking, current.apiType ?? incoming.apiType) : current.thinking,
       input: refreshedValue(current.input, hasFetched("input") ? incoming.input : undefined, cached?.input?.length ? cachedSettings?.input : undefined, defaults.input, overrides.input),
       output: refreshedValue(current.output, hasFetched("output") ? incoming.output : undefined, cached?.output?.length ? cachedSettings?.output : undefined, defaults.output, overrides.output),
+      ...(current.imageApiFormat ? { imageApiFormat: current.imageApiFormat } : {}),
+      ...(current.imageGeneration ? { imageGeneration: current.imageGeneration } : {}),
       modelMetadata: metadata,
       metadataSources: incoming.metadataSources,
       autoMetadata: true,

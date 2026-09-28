@@ -21,7 +21,7 @@ export function ModelCard({ label, description, id, selected, onEdit, onSelect }
         </span>
       </button>
       <label className="settings-model-select">
-        <input type="radio" name="settings-current-model" value={id} checked={selected} onChange={onSelect} aria-label={t("model.select", { label })} />
+        <input type="radio" name="settings-current-model" value={id} checked={selected} onChange={onSelect} onClick={() => { if (selected) onSelect(); }} aria-label={t("model.select", { label })} />
       </label>
     </div>
   );

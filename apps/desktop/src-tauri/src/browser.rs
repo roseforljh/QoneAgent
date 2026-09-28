@@ -2,10 +2,57 @@
 // main window, positioned over the dock panel area by the frontend.
 // Navigations are reported back via "browser:navigated" events.
 
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewBuilder, WebviewUrl, Wry};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewBuilder,
+    WebviewUrl, Wry,
+};
+#[cfg(target_os = "windows")]
+use webview2_com::CoTaskMemPWSTR;
 
 static BROWSER: LazyLock<Mutex<Option<Webview<Wry>>>> = LazyLock::new(|| Mutex::new(None));
+static PREVIEW_FILES: LazyLock<Mutex<Vec<PathBuf>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static PREVIEW_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+pub fn open_preview_external(app: &AppHandle, html: &str) -> Result<(), String> {
+    let directory = app.path().app_cache_dir().map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let (path, mut file) = loop {
+        let sequence = PREVIEW_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = directory.join(format!("qone-preview-{}-{sequence}.html", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => break (path, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    };
+    let result = file
+        .write_all(html.as_bytes())
+        .map_err(|error| error.to_string())
+        .and_then(|_| {
+            drop(file);
+            tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|error| error.to_string())
+        });
+    if result.is_ok() {
+        if let Ok(mut files) = PREVIEW_FILES.lock() {
+            files.push(path);
+        }
+    } else {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
+pub fn cleanup_external_previews() {
+    if let Ok(mut files) = PREVIEW_FILES.lock() {
+        for path in files.drain(..) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
 
 fn with<R>(f: impl FnOnce(&Webview<Wry>) -> Result<R, String>) -> Result<R, String> {
     let guard = BROWSER.lock().map_err(|e| e.to_string())?;
@@ -31,11 +78,15 @@ pub fn open(app: &AppHandle, url: &str, x: f64, y: f64, w: f64, h: f64) -> Resul
     }
     let window = app.get_window("main").ok_or("no main window")?;
     let app2 = app.clone();
-    let builder = WebviewBuilder::new("dock-browser", WebviewUrl::External(target))
-        .on_navigation(move |next| {
-            let _ = app2.emit("browser:navigated", serde_json::json!({ "url": next.as_str() }));
+    let builder = WebviewBuilder::new("dock-browser", WebviewUrl::External(target)).on_navigation(
+        move |next| {
+            let _ = app2.emit(
+                "browser:navigated",
+                serde_json::json!({ "url": next.as_str() }),
+            );
             true
-        });
+        },
+    );
     let webview = window
         // Do not expose a hit-test surface until the frontend owner has checked
         // whether a menu is open or this mount was disposed during creation.
@@ -54,6 +105,35 @@ pub fn open(app: &AppHandle, url: &str, x: f64, y: f64, w: f64, h: f64) -> Resul
 pub fn navigate(url: &str) -> Result<(), String> {
     let target = Url::parse(url).map_err(|e| e.to_string())?;
     with(|webview| webview.navigate(target.clone()).map_err(|e| e.to_string()))
+}
+
+#[cfg(target_os = "windows")]
+// Tauri rejects top-level data URLs by default; load generated previews into
+// the existing child WebView2 instead of navigating to a data URL.
+pub fn preview(html: String) -> Result<(), String> {
+    with(|webview| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        webview
+            .with_webview(move |platform| {
+                let result = (|| -> Result<(), String> {
+                    let core = unsafe { platform.controller().CoreWebView2() }
+                        .map_err(|e| e.to_string())?;
+                    let source = CoTaskMemPWSTR::from(html.as_str());
+                    unsafe { core.NavigateToString(*source.as_ref().as_pcwstr()) }
+                        .map_err(|e| e.to_string())
+                })();
+                let _ = sender.send(result);
+            })
+            .map_err(|e| e.to_string())?;
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|e| e.to_string())?
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn preview(_html: String) -> Result<(), String> {
+    Err("code preview requires WebView2".into())
 }
 
 pub fn bounds(x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {

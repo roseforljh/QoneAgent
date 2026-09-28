@@ -1,42 +1,26 @@
 import { expect, test } from "bun:test";
 import { detectToolPresentation, toolPresentationSummary } from "../src/components/assistant-ui/tool-presentation";
 
-test("normalizes unified patches without relying on the tool name", () => {
-  const presentation = detectToolPresentation({
-    content: [{ type: "text", text: "updated" }],
-    details: { patch: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new" },
-  });
-  expect(presentation.kind).toBe("diff");
-  expect(presentation.kind === "diff" && presentation.patch).toContain("@@ -1 +1 @@");
-});
+const patch = "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new";
 
-test("finds a patch in a plain result string or nested content block", () => {
-  const patch = "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new";
-  expect(detectToolPresentation(patch).kind).toBe("diff");
-  expect(detectToolPresentation({ content: [{ type: "text", text: patch }] }).kind).toBe("diff");
-});
+test("edit uses Pi's structured patch, or its edits when the result was truncated", () => {
+  const presentation = detectToolPresentation("edit", {
+    content: [{ type: "text", text: "Successfully replaced 1 block(s) in src/app.ts." }],
+    details: { patch },
+  }, { path: "src/app.ts", edits: [{ oldText: "old", newText: "new" }] });
+  expect(presentation).toEqual({ kind: "diff", patch, name: "src/app.ts" });
 
-test("normalizes before and after content into a diff", () => {
-  const presentation = detectToolPresentation({ path: "notes.md", before: "old", after: "new" });
-  expect(presentation).toEqual({
-    kind: "diff",
-    oldFile: { content: "old", name: "notes.md" },
-    newFile: { content: "new", name: "notes.md" },
-    name: "notes.md",
+  expect(detectToolPresentation("edit", "{\"content\":[{\"type\":\"text\"", { path: "a.ts", edits: [{ oldText: "old", newText: "new" }] })).toEqual({
+    kind: "diff", oldFile: { content: "old", name: "a.ts" }, newFile: { content: "new", name: "a.ts" }, name: "a.ts",
   });
 });
 
-test("treats a successful path and content result as a file change", () => {
+test("write shows the written content as the new file", () => {
   const presentation = detectToolPresentation(
+    "write",
     { content: [{ type: "text", text: "Successfully wrote to src/app.ts" }] },
     { path: "src/app.ts", content: "export const ready = true;" },
   );
-  expect(presentation.kind).toBe("diff");
-  expect(presentation.kind === "diff" && presentation.newFile?.content).toContain("ready");
-});
-
-test("normalizes a path and changed content into a diff", () => {
-  const presentation = detectToolPresentation({ path: "src/app.ts", content: "export const ready = true;" });
   expect(presentation).toEqual({
     kind: "diff",
     oldFile: { content: "", name: "src/app.ts" },
@@ -45,28 +29,27 @@ test("normalizes a path and changed content into a diff", () => {
   });
 });
 
-test("keeps a read result as a file view", () => {
-  const presentation = detectToolPresentation(
-    { content: [{ type: "text", text: "export const ready = true;" }] },
-    { path: "src/app.ts" },
-  );
-  expect(presentation).toEqual({ kind: "file", content: "export const ready = true;", name: "src/app.ts" });
+test("read, shell and grep get their dedicated views by tool name", () => {
+  expect(detectToolPresentation("read", { content: [{ type: "text", text: "export const ready = true;" }] }, { path: "src/app.ts" }))
+    .toEqual({ kind: "file", content: "export const ready = true;", name: "src/app.ts" });
+  expect(detectToolPresentation("powershell", { content: [{ type: "text", text: "ok" }] }, { command: "bun test" }))
+    .toEqual({ kind: "terminal", command: "bun test", output: "ok" });
+  const search = detectToolPresentation("grep", { content: [{ type: "text", text: "src/app.ts:12: ready" }] }, { pattern: "ready" });
+  expect(search.kind === "search" && search.items[0]).toEqual({ path: "src/app.ts", line: 12, text: "ready" });
 });
 
-test("maps command output, search output, images, text, and unknown data", () => {
-  expect(detectToolPresentation({ content: [{ type: "text", text: "ok" }] }, { command: "pnpm test" }).kind).toBe("terminal");
-  expect(detectToolPresentation(undefined, { command: "pnpm test" })).toEqual({ kind: "terminal", command: "pnpm test", output: "" });
+test("other tools are never guessed into diffs, file writes, searches or terminals", () => {
+  expect(detectToolPresentation("mcp:git:diff", { content: [{ type: "text", text: patch }] }).kind).toBe("text");
+  expect(detectToolPresentation("mcp:fs:save", { content: [{ type: "text", text: "Successfully saved" }] }, { path: "a.ts", content: "x" }).kind).toBe("text");
+  expect(detectToolPresentation("mcp:code:search", { content: [{ type: "text", text: "src/app.ts:12: ready" }] }, { pattern: "ready" }).kind).toBe("text");
+  expect(detectToolPresentation("mcp:ci:run", { content: [{ type: "text", text: "ok" }] }, { command: "pnpm test" }).kind).toBe("text");
+});
 
-  const search = detectToolPresentation(
-    { content: [{ type: "text", text: "src/app.ts:12: ready" }] },
-    { pattern: "ready" },
-  );
-  expect(search.kind).toBe("search");
-  expect(search.kind === "search" && search.items[0]).toEqual({ path: "src/app.ts", line: 12, text: "ready" });
-
-  expect(detectToolPresentation({ content: [{ type: "image", data: "data:image/png;base64,aGk=", mimeType: "image/png" }] }).kind).toBe("image");
-  expect(detectToolPresentation("plain result")).toEqual({ kind: "text", text: "plain result" });
-  const unknown = detectToolPresentation({ value: 1 });
+test("image blocks, text and unknown data", () => {
+  expect(detectToolPresentation("mcp:img:render", { content: [{ type: "image", data: "aGk=", mimeType: "image/png" }] }))
+    .toEqual({ kind: "image", src: "aGk=", mimeType: "image/png" });
+  expect(detectToolPresentation("mcp:x:y", "plain result")).toEqual({ kind: "text", text: "plain result" });
+  const unknown = detectToolPresentation("mcp:x:y", { value: 1 });
   expect(unknown.kind).toBe("unknown");
   expect(toolPresentationSummary(unknown)).not.toContain("value");
 });

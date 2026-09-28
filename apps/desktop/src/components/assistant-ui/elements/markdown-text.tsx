@@ -12,15 +12,18 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { normalizeMathDelimiters, escapeCurrencyDollars } from "@assistant-ui/react-markdown";
-import { type FC, memo, useMemo, useRef } from "react";
+import { type FC, memo, useMemo, useRef, useState } from "react";
 import type { TextMessagePartProps } from "@assistant-ui/react";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, EyeIcon } from "lucide-react";
 
 import { TooltipIconButton } from "../tooltip-icon-button";
 import { useCopyToClipboard } from "../../../hooks/use-copy-to-clipboard";
 import { cn } from "../../../lib/utils";
 import { normalizeMultilineDisplayMath } from "../../../lib/normalize-display-math";
 import { ShikiCode, PrismCode, MermaidCode, GenerativeUICode } from "../code-renderers";
+import { canPreviewCode, createCodePreviewHtml } from "../../../lib/code-preview";
+import { openCodePreviewInDock } from "../../../lib/browser-dock";
+import { useLocale } from "../../../localization";
 
 type MarkdownNode = { type?: string; value?: string; children?: MarkdownNode[] };
 
@@ -116,7 +119,26 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
 export const MarkdownText = memo(MarkdownTextImpl);
 
 const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
+  const { t } = useLocale();
   const { isCopied, copyToClipboard } = useCopyToClipboard();
+  const previewSourceId = useRef<string | undefined>(undefined);
+  const sourceId = previewSourceId.current ?? (previewSourceId.current = crypto.randomUUID());
+  const previewable = canPreviewCode(language, code);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string>();
+  const onPreview = async () => {
+    if (previewing) return;
+    setPreviewing(true);
+    setPreviewError(undefined);
+    try {
+      const html = await createCodePreviewHtml(language, code);
+      if (html) openCodePreviewInDock(html, sourceId);
+    } catch (error) {
+      setPreviewError(String(error));
+    } finally {
+      setPreviewing(false);
+    }
+  };
   const onCopy = () => {
     if (!code || isCopied) return;
     copyToClipboard(code);
@@ -127,14 +149,22 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
       <span className="aui-code-header-language text-muted-foreground font-medium lowercase">
         {language}
       </span>
-      <TooltipIconButton tooltip="Copy" onClick={onCopy}>
-        {!isCopied && (
-          <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
+      <div className="flex items-center gap-0.5">
+        {previewError && <span role="alert" title={previewError} className="max-w-40 truncate text-destructive">{t("chat.previewCodeFailed")}: {previewError}</span>}
+        {previewable && (
+          <TooltipIconButton tooltip={t("chat.previewCode")} onClick={() => void onPreview()} disabled={previewing}>
+            <EyeIcon className={previewing ? "animate-pulse" : undefined} />
+          </TooltipIconButton>
         )}
-        {isCopied && (
-          <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
-        )}
-      </TooltipIconButton>
+        <TooltipIconButton tooltip={t("chat.copyMessage")} onClick={onCopy}>
+          {!isCopied && (
+            <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
+          )}
+          {isCopied && (
+            <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
+          )}
+        </TooltipIconButton>
+      </div>
     </div>
   );
 };

@@ -69,6 +69,7 @@
 .settings-model-sources { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 18px; }
 .settings-model-sources span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted-foreground); font-size: 11px; }
 .settings-model-sources strong { color: var(--foreground); font-weight: var(--q-weight-medium); }
+.settings-image-field-hint { color: var(--muted-foreground); font-size: 11px; line-height: 1.45; }
 
 /* Outside the provider dialog: only the list scrolls, never the surrounding form. */
 .settings-sync-layer {
@@ -104,6 +105,34 @@
 }
 .settings-sync-dialog .settings-sync-row { min-height: 54px; padding: 12px 8px; gap: 20px; }
 .settings-sync-row > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-sync-dialog .settings-sync-row.is-selectable {
+  width: 100%;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color .15s ease;
+}
+.settings-sync-row.is-selectable:hover { background: color-mix(in srgb, var(--q-hover) 60%, transparent); }
+.settings-sync-row.is-selectable:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.settings-sync-row.is-selectable > span:not(.settings-sync-check) { flex: 1; }
+.settings-sync-check {
+  display: grid;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border: 1.5px solid var(--muted-foreground);
+  border-radius: 4px;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.settings-sync-row[aria-checked="true"] .settings-sync-check { border-color: var(--foreground); background: var(--foreground); color: var(--background); }
 .settings-sync-row code { max-width: 48%; }
 .settings-sync-dialog .settings-subdialog-footer { gap: 10px; margin-top: 0; padding-top: 18px; }
 

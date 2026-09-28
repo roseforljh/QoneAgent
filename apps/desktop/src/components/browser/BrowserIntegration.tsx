@@ -15,18 +15,16 @@ export function BrowserIntegration() {
   const [installPromptOpen, setInstallPromptOpen] = useState(false);
   const working = status?.phase === "syncing" || status?.phase === "connecting";
 
-  const extensionUnavailable = (message?: string) => Boolean(message && /browser bridge extension|opencli.*extension|extension.*not connected/i.test(message));
-
   useEffect(() => {
-    if (extensionUnavailable(status?.lastError)) setInstallPromptOpen(true);
-  }, [status?.lastError]);
+    if (status?.errorCode === "bridge-unavailable") setInstallPromptOpen(true);
+  }, [status?.errorCode, status?.lastError]);
 
   const connect = async () => {
     setError(undefined);
     if (!await send({ type: "browser.connect", requestId: crypto.randomUUID() })) setError("无法连接当前 Chrome");
   };
 
-  const statusError = status?.lastError?.includes("MCP_NPX_UNAVAILABLE")
+  const statusError = status?.errorCode === "npx-unavailable"
     ? "需要安装 Node.js 20.18.1 或更高版本，并确保 npx 可用" : status?.lastError;
   const summary = working ? "正在连接当前 Chrome…"
     : status?.targetConnected ? "已连接当前 Chrome"

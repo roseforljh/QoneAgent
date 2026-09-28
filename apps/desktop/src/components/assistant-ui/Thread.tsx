@@ -6,7 +6,6 @@ import { ComposerTriggers } from "./composer-triggers";
 import { ComposerEditorBridge, type InsertComposerTool, type ToggleComposerMention } from "./composer-editor-bridge";
 import { LongPasteAttachmentPlugin } from "./long-paste-attachment";
 import { AssistantParts } from "./assistant-parts";
-import { SubagentCapsule } from "./subagent-view";
 import { MessagePair } from "./elements/message-pair";
 import { DaySeparatorMarker } from "./elements/day-separator";
 import { ErrorState } from "./elements/error-state";
@@ -29,6 +28,7 @@ import { pickNativeAttachmentFiles, useNativeFileDrop } from "../../lib/native-f
 import { hasTauriBridge } from "../../store";
 import { fileFromDataUrl, getQoneMessageQueue } from "../../lib/qone-message-queue";
 import { createNativeAttachmentFile } from "../../lib/native-attachment-file";
+import { ComposerQueueEnterPlugin } from "./composer-queue-enter";
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -68,13 +68,19 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const workspacesLoaded = useStore((state) => state.workspacesLoaded);
   const messagesLoadingSessionId = useStore((state) => state.messagesLoadingSessionId);
   const threadMessages = useAuiState((state) => state.thread.messages);
+  const [today, setToday] = useState(() => new Date());
+  useEffect(() => {
+    const nextMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    const timer = setTimeout(() => setToday(new Date()), nextMidnight.getTime() - Date.now());
+    return () => clearTimeout(timer);
+  }, [today]);
   const pairedUserIdByAssistant = useMemo(() => pairMessageIds(threadMessages), [threadMessages]);
   const pairedUserIds = useMemo(() => new Set(pairedUserIdByAssistant.values()), [pairedUserIdByAssistant]);
   const latestAssistantId = useMemo(
     () => [...threadMessages].reverse().find((message) => message.role === "assistant")?.id,
     [threadMessages],
   );
-  const daySeparators = useMemo(() => messageDaySeparators(threadMessages, pairedUserIdByAssistant), [threadMessages, pairedUserIdByAssistant]);
+  const daySeparators = useMemo(() => messageDaySeparators(threadMessages, pairedUserIdByAssistant, today), [threadMessages, pairedUserIdByAssistant, today]);
   const dayFormatter = useMemo(() => new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }), [locale]);
   const canChat = (() => {
     const session = sessions.find((item) => item.id === currentSessionId);
@@ -112,20 +118,20 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       <AuiIf condition={(s) => !s.thread.isEmpty}>
         <ThreadPrimitive.Viewport turnAnchor="top" autoScroll className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto">
           <ConversationMapAui />
-          <div className="q-message-list flex w-full min-w-0 flex-col gap-7">
+          <div className="q-message-list flex w-full min-w-0 flex-col gap-7 pt-6">
             <ThreadPrimitive.Messages>
               {({ message }) => {
                 if (message.role === "user" && pairedUserIds.has(message.id)) return null;
                 const date = daySeparators.get(message.id);
                 return (
                   <div className="q-message-block flex w-full flex-col gap-5" data-message-block>
-                    {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto max-w-2xl" />}
                     {message.role === "user"
                       ? <UserMessage messageId={message.id} />
                       : <AssistantMessage
                         userMessageId={pairedUserIdByAssistant.get(message.id)}
                         showLatestExtras={message.id === latestAssistantId}
                       />}
+                    {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto max-w-2xl" />}
                   </div>
                 );
               }}
@@ -184,20 +190,26 @@ const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canCha
 const composerInputClass =
   "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-9 w-full resize-none bg-transparent px-2.5 py-1 text-sm leading-6 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1";
 
-const QueueItemRow: FC<{ queueItem: QueueItemState; persistentId?: string; onEdit: () => void }> = ({ queueItem, onEdit }) => (
-  <div className="q-composer-queue-item flex min-w-0 items-center gap-2 border-b border-foreground/5 px-2.5 py-1.5 text-xs last:border-b-0">
-    <span className="shrink-0 text-muted-foreground/60" aria-hidden>↳</span>
-    <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate" title={queueItem.prompt} />
-    <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={onEdit}>编辑</button>
-    <QueueItemPrimitive.Steer className="shrink-0 text-muted-foreground hover:text-foreground">引导</QueueItemPrimitive.Steer>
-    <QueueItemPrimitive.Remove className="shrink-0 px-1 text-muted-foreground hover:text-foreground" aria-label="删除待发送消息">×</QueueItemPrimitive.Remove>
-  </div>
-);
+const QueueItemRow: FC<{ queueItem: QueueItemState; steering: boolean; onEdit: () => void }> = ({ queueItem, steering, onEdit }) => {
+  const { t } = useLocale();
+  return (
+    <div className="q-composer-queue-item flex min-w-0 items-center gap-2 border-b border-foreground/5 px-2.5 py-1.5 text-xs last:border-b-0">
+      <span className="shrink-0 text-muted-foreground/60" aria-hidden>↳</span>
+      <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate" title={queueItem.prompt} />
+      {steering ? <span className="shrink-0 text-muted-foreground">{t("chat.steerPending")}</span> : <>
+        <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={onEdit}>编辑</button>
+        <QueueItemPrimitive.Steer className="shrink-0 text-muted-foreground hover:text-foreground">引导</QueueItemPrimitive.Steer>
+        <QueueItemPrimitive.Remove className="shrink-0 px-1 text-muted-foreground hover:text-foreground" aria-label="删除待发送消息">×</QueueItemPrimitive.Remove>
+      </>}
+    </div>
+  );
+};
 
 const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const aui = useAui();
   const sessionId = useStore((state) => state.currentSessionId);
   const editingQueueItem = useStore((state) => state.editingQueueItem);
+  const queueItems = useStore((state) => state.queueItems);
   const insertToolRef = useRef<InsertComposerTool | null>(null);
   const toggleMentionRef = useRef<ToggleComposerMention | null>(null);
   const closeMentionRef = useRef<(() => void) | null>(null);
@@ -249,7 +261,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
               {({ queueItem }) => {
               const persistentId = sessionId ? getQoneMessageQueue(sessionId)?.getPersistentId(queueItem.id) : undefined;
               if (persistentId && editingQueueItem?.id === persistentId) return null;
-              return <QueueItemRow queueItem={queueItem} persistentId={persistentId} onEdit={() => {
+              return <QueueItemRow queueItem={queueItem} steering={queueItems.some((item) => item.id === persistentId && item.lane === "steer")} onEdit={() => {
                 if (!sessionId || !persistentId) return;
                 const item = useStore.getState().queueItems.find((candidate) => candidate.id === persistentId);
                 if (!item) return;
@@ -286,9 +298,10 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
           )}
           <ComposerAttachments />
           <ComposerAddAttachment hidden />
-          <LexicalComposerInput autoFocus placeholder={placeholder} className={composerInputClass} directiveChip={ComposerToolChip}>
+          <LexicalComposerInput autoFocus submitMode="none" placeholder={placeholder} className={composerInputClass} directiveChip={ComposerToolChip}>
             <ComposerEditorBridge onReady={onEditorReady} onMentionToggleReady={onMentionToggleReady} />
             <LongPasteAttachmentPlugin />
+            <ComposerQueueEnterPlugin />
           </LexicalComposerInput>
           <ComposerTriggers onToolSelect={onToolSelect} onMentionStateChange={onMentionStateChange} />
           <ComposerAction anchorRef={shellRef} mentionOpen={mentionOpen} onToggleMention={toggleMention} />
@@ -340,7 +353,7 @@ const ComposerAction: FC<{ anchorRef: RefObject<HTMLDivElement | null>; mentionO
             </ComposerPrimitive.StopDictation>
           </AuiIf>
         </AuiIf>
-        <AuiIf condition={(s) => !s.thread.isRunning}>
+        <AuiIf condition={(s) => !s.thread.isRunning || (s.thread.capabilities.queue && s.composer.canSend)}>
           <ComposerPrimitive.Send asChild>
             <TooltipIconButton
               tooltip="Send message"
@@ -355,7 +368,7 @@ const ComposerAction: FC<{ anchorRef: RefObject<HTMLDivElement | null>; mentionO
             </TooltipIconButton>
           </ComposerPrimitive.Send>
         </AuiIf>
-        <AuiIf condition={(s) => s.thread.isRunning}>
+        <AuiIf condition={(s) => s.thread.isRunning && !(s.thread.capabilities.queue && s.composer.canSend)}>
           <ComposerPrimitive.Cancel asChild>
             <Button type="button" variant="default" size="icon" className="aui-composer-cancel size-7 rounded-full" aria-label="Stop generating">
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
@@ -513,11 +526,10 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean }
         ) : undefined}
         assistantContent={
           <MessagePrimitive.Root className="q-message-root q-message-assistant relative flex w-full flex-col">
-            <AssistantParts hideSubagentCalls />
+            <AssistantParts hideSubagentCalls showSubagentCapsule />
             <MessageSourcesView />
             <AssistantMemoryChips visible={showLatestExtras} />
             <AgentPreparation />
-            {showLatestExtras && <SubagentCapsule />}
           </MessagePrimitive.Root>
         }
         actions={
