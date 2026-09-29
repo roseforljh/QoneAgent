@@ -125,6 +125,9 @@
       "version": "0.0.1",
     },
   },
+  "patchedDependencies": {
+    "@assistant-ui/react@0.15.21": "patches/@assistant-ui%2Freact@0.15.21.patch",
+  },
   "overrides": {
     "@earendil-works/chord": "0.86.0",
     "@earendil-works/pi-agent-core": "0.86.0",

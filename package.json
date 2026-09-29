@@ -26,5 +26,8 @@
   "devDependencies": {
     "bun-types": "^1.4.2",
     "typescript": "^5.9.0"
+  },
+  "patchedDependencies": {
+    "@assistant-ui/react@0.15.21": "patches/@assistant-ui%2Freact@0.15.21.patch"
   }
 }
