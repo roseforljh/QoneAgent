@@ -18,6 +18,8 @@ struct Pty {
     hpc: HPCON,
     input: usize,   // HANDLE as usize — we write here
     process: usize, // HANDLE
+    cols: i16,
+    rows: i16,
 }
 
 unsafe impl Send for Pty {}
@@ -183,6 +185,8 @@ fn spawn_with_events(
                 hpc,
                 input: in_write.0 as usize,
                 process: pi.hProcess.0 as usize,
+                cols,
+                rows,
             },
         );
 
@@ -296,9 +300,20 @@ pub fn write(id: &str, data: &str) -> Result<(), String> {
 }
 
 pub fn resize(id: &str, cols: i16, rows: i16) -> Result<(), String> {
-    let guard = PTYS.lock().map_err(|e| e.to_string())?;
-    let pty = guard.get(id).ok_or("no such terminal")?;
-    unsafe { ResizePseudoConsole(pty.hpc, COORD { X: cols, Y: rows }).map_err(|e| e.to_string()) }
+    if cols <= 0 || rows <= 0 {
+        return Err("terminal dimensions must be positive".into());
+    }
+    let mut guard = PTYS.lock().map_err(|e| e.to_string())?;
+    let pty = guard.get_mut(id).ok_or("no such terminal")?;
+    if pty.cols == cols && pty.rows == rows {
+        return Ok(());
+    }
+    unsafe {
+        ResizePseudoConsole(pty.hpc, COORD { X: cols, Y: rows }).map_err(|e| e.to_string())?;
+    }
+    pty.cols = cols;
+    pty.rows = rows;
+    Ok(())
 }
 
 pub fn kill(id: &str) -> Result<(), String> {

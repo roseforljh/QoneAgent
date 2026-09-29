@@ -49,6 +49,18 @@ fn powershell_prompt_and_interactive_input() {
     read_until(id, &rx, &format!("PS {}>", cwd.display()));
     write(id, "Write-Output ('QONE_' + 'INPUT_OK')\r").unwrap();
     read_until(id, &rx, "QONE_INPUT_OK");
+    // Resizing to the current geometry must not ask ConPTY to redraw.
+    resize(id, 100, 30).unwrap();
+    assert!(resize(id, 0, 30).is_err());
+    assert!(resize(id, 100, -1).is_err());
     resize(id, 80, 24).unwrap();
+    {
+        let terminals = PTYS.lock().unwrap();
+        let pty = terminals.get(id).unwrap();
+        assert_eq!((pty.cols, pty.rows), (80, 24));
+    }
+    resize(id, 80, 24).unwrap();
+    write(id, "Write-Output ('QONE_' + 'RESIZE_OK')\r").unwrap();
+    read_until(id, &rx, "QONE_RESIZE_OK");
     write(id, "exit\r").unwrap();
 }

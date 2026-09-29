@@ -289,16 +289,12 @@ struct DroppedFilePayload {
     size: u64,
 }
 
-const MAX_GEMINI_FILE_BYTES: u64 = 2_000_000_000;
 const MAX_INLINE_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
 fn attachment_file_info(path: &std::path::Path) -> Result<(String, u64), String> {
     let metadata = std::fs::metadata(path).map_err(|error| format!("无法读取附件：{error}"))?;
     if !metadata.is_file() {
         return Err("拖入的项目不是文件".into());
-    }
-    if metadata.len() > MAX_GEMINI_FILE_BYTES {
-        return Err("Gemini Files API 单文件不能超过 2 GB".into());
     }
     let name = path
         .file_name()
@@ -310,10 +306,10 @@ fn attachment_file_info(path: &std::path::Path) -> Result<(String, u64), String>
 }
 
 #[tauri::command]
-fn read_dropped_file(path: String) -> Result<DroppedFilePayload, String> {
+fn read_dropped_file(path: String, metadata_only: Option<bool>) -> Result<DroppedFilePayload, String> {
     let file_path = std::path::PathBuf::from(&path);
     let (name, size) = attachment_file_info(&file_path)?;
-    if size > MAX_INLINE_FILE_BYTES {
+    if metadata_only.unwrap_or(false) || size > MAX_INLINE_FILE_BYTES {
         return Ok(DroppedFilePayload { name, data: String::new(), path: Some(path), size });
     }
     let data = std::fs::read(&file_path)
