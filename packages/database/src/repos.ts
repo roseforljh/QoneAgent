@@ -1,4 +1,4 @@
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { sessions, messages, runs, subagentRuns, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
 import type { Db } from "./index.js";
 import type { AssistantMessagePart, GoalInfo, GoalStatus, MessageAttachmentInfo, QueueItemInfo, RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
@@ -604,19 +604,46 @@ export class EventRepo {
       }
     });
   }
+
+  listCompactions(sessionId: string): { id: string; throughMessageId: string; createdAt: number; status: "completed" | "interrupted"; source: "manual" | "automatic" }[] {
+    return this.db.select().from(events)
+      .where(and(eq(events.sessionId, sessionId), inArray(events.type, ["context.compacted", "context.compaction.interrupted"])))
+      .orderBy(events.sequence).all().flatMap((row) => {
+        try {
+          const payload: unknown = JSON.parse(row.payload);
+          if (!payload || typeof payload !== "object") return [];
+          const { id, throughMessageId, createdAt, source } = payload as { id?: unknown; throughMessageId?: unknown; createdAt?: unknown; source?: unknown };
+          return typeof id === "string" && typeof throughMessageId === "string"
+            ? [{ id, throughMessageId, createdAt: typeof createdAt === "number" ? createdAt : row.timestamp, status: row.type === "context.compacted" ? "completed" as const : "interrupted" as const, source: source === "automatic" ? "automatic" as const : "manual" as const }]
+            : [];
+        } catch { return []; }
+      });
+  }
 }
 
 export class ArtifactRepo {
   constructor(private db: Db) {}
 
-  add(input: { sessionId: string; type: string; name: string; path: string; mimeType?: string; size?: number }) {
-    const row = { id: crypto.randomUUID(), ...input, mimeType: input.mimeType ?? null, size: input.size ?? null, createdAt: Date.now() };
+  add(input: { id?: string; sessionId: string; runId?: string; type: string; name: string; path: string; mimeType?: string; size?: number }) {
+    const row = { ...input, id: input.id ?? crypto.randomUUID(), runId: input.runId ?? null, mimeType: input.mimeType ?? null, size: input.size ?? null, createdAt: Date.now() };
     this.db.insert(artifacts).values(row).run();
     return row;
   }
 
   listBySession(sessionId: string) {
     return this.db.select().from(artifacts).where(eq(artifacts.sessionId, sessionId)).orderBy(desc(artifacts.createdAt)).all();
+  }
+
+  deleteByRunIds(sessionId: string, runIds: string[]) {
+    if (!runIds.length) return [];
+    const where = and(eq(artifacts.sessionId, sessionId), inArray(artifacts.runId, runIds));
+    const removed = this.db.select().from(artifacts).where(where).all();
+    this.db.delete(artifacts).where(where).run();
+    return removed;
+  }
+
+  delete(id: string) {
+    this.db.delete(artifacts).where(eq(artifacts.id, id)).run();
   }
 }
 

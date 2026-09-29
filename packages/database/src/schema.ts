@@ -121,6 +121,7 @@ export const artifacts = sqliteTable(
     sessionId: text("session_id")
       .notNull()
       .references(() => sessions.id, { onDelete: "cascade" }),
+    runId: text("run_id"),
     type: text("type").notNull(),
     name: text("name").notNull(),
     path: text("path").notNull(),

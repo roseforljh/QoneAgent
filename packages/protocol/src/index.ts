@@ -22,6 +22,7 @@ export const GENERATIVE_UI_COMPONENTS = [
   "ListViewItem", "Table", "Markdown", "Chart", "Alert", "Icon",
 ] as const;
 export { isCodexSubscriptionEndpoint, modelBaseUrl, modelListUrl } from "./model-endpoint";
+export { mediaMimeTypeFromName } from "./media-mime";
 export {
   mergeModelMetadata,
   modelNameCandidates,
@@ -124,6 +125,7 @@ export type RuntimeCommand =
       permissionMode?: RunPermissionMode;
       thinking?: RunThinkingLevel;
       queueItemId?: string;
+      mcpServerId?: string;
     }
   | { type: "agent.steer"; requestId: string; sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }
   | { type: "queue.upsert"; requestId: string; sessionId: string; item: QueueItemInfo }
@@ -157,15 +159,24 @@ export interface CompactionSettingsInfo {
   compactionThreshold: number;
 }
 
+export interface CompactionMarkerInfo {
+  id: string;
+  throughMessageId: string;
+  createdAt: number;
+  status: "completed" | "interrupted";
+  source: "manual" | "automatic";
+}
+
 export type RuntimeEvent =
   | { type: "pong"; requestId: string; capabilities?: string[]; compaction?: CompactionSettingsInfo }
-  | { type: "session.compacted"; requestId: string; sessionId: string }
+  | { type: "session.compacted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo }
+  | { type: "session.compactionInterrupted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo; message: string }
   | { type: "session.context"; requestId: string; sessionId: string; model: string; tokens: number; contextWindow: number }
   | { type: "session.created"; session: SessionInfo }
   | { type: "session.list"; sessions: SessionInfo[] }
   | { type: "session.search"; requestId: string; query: string; results: SessionSearchResult[] }
   | { type: "session.renamed"; session: SessionInfo }
-  | { type: "session.messages"; sessionId: string; messages: MessageInfo[] }
+  | { type: "session.messages"; sessionId: string; messages: MessageInfo[]; compactions?: CompactionMarkerInfo[] }
   | { type: "session.queue"; sessionId: string; items: QueueItemInfo[] }
   | { type: "session.runs"; sessionId: string; runs: RunInfo[] }
   | { type: "session.toolCalls"; sessionId: string; toolCalls: ToolCallInfo[] }
@@ -305,6 +316,7 @@ export interface ToolCallInfo {
 export interface ArtifactInfo {
   id: string;
   sessionId: string;
+  runId?: string;
   type: string;
   name: string;
   path: string;
@@ -418,6 +430,18 @@ export interface McpServerInfo {
   oauthClientId?: string;
 }
 
+export function parseMcpCommand(message: string): { serverId: string; text: string } | undefined {
+  const text = message.trimStart();
+  const match = /^\/mcp:([^\s]+)(?:\s+|$)/u.exec(text);
+  if (!match) return undefined;
+  try {
+    const serverId = decodeURIComponent(match[1]!);
+    return serverId ? { serverId, text: text.slice(match[0].length).trimStart() } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface CloudSkillInfo {
   source: string;
   skillId: string;
@@ -440,10 +464,12 @@ export interface BrowserSyncStatus {
 /** Error message code for a cloud skill catalog request that ran out of time. */
 export const SKILL_CATALOG_TIMEOUT = "SKILL_CATALOG_TIMEOUT";
 
-export const CAPABILITY_IDS = ["webSearch", "videoRecognition", "imageGeneration", "stt", "tts"] as const;
+export const CAPABILITY_IDS = ["videoRecognition", "imageGeneration", "videoGeneration", "stt", "tts"] as const;
 export type CapabilityId = (typeof CAPABILITY_IDS)[number];
 export const builtinSubagentId = (capability: CapabilityId) => `builtin:${capability}`;
 export const isBuiltinSubagentId = (id: string) => CAPABILITY_IDS.some((capability) => builtinSubagentId(capability) === id);
+/** Retired built-ins are removed from saved configurations during migration. */
+export const REMOVED_BUILTIN_SUBAGENT_IDS: readonly string[] = ["builtin:webSearch"];
 export const SUBAGENT_LOGO_IDS = [
   "search", "video", "photo", "microphone", "volume", "sparkles", "robot", "code",
   "database", "brain", "chart-bar", "shield", "rocket", "palette", "cpu", "cloud",
@@ -467,9 +493,9 @@ export const SUBAGENT_LOGO_IDS = [
 ] as const;
 export type SubagentLogoId = (typeof SUBAGENT_LOGO_IDS)[number];
 const builtinSubagentLogos: Record<CapabilityId, SubagentLogoId> = {
-  webSearch: "search",
   videoRecognition: "video",
   imageGeneration: "photo",
+  videoGeneration: "camera",
   stt: "microphone",
   tts: "volume",
 };
@@ -640,13 +666,16 @@ const messageAttachment = z.object({
   type: z.enum(["image", "file"]),
   name: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(128),
-  data: z.string().max(70_000_000),
+  data: z.string(),
   localPath: z.string().min(1).max(4096).optional(),
 }).refine((attachment) => attachment.localPath
   ? attachment.type === "file" && /^(?:audio|video)\//i.test(attachment.mimeType) && attachment.data === ""
-  : /^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i.test(attachment.data) &&
+  : (/^(?:audio|video)\//i.test(attachment.mimeType) || attachment.data.length <= 70_000_000) &&
+    /^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i.test(attachment.data) &&
     attachment.data.toLowerCase().startsWith(`data:${attachment.mimeType.toLowerCase()}`) &&
     (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType)));
+const nonMediaAttachmentBytes = (attachments: readonly { data: string; mimeType: string }[] | undefined) =>
+  attachments?.reduce((total, attachment) => total + (/^(?:audio|video)\//i.test(attachment.mimeType) ? 0 : attachment.data.length), 0) ?? 0;
 const subagentProfile = z.object({
   id: id.max(128), name: z.string().trim().min(1).max(120),
   instructions: z.string().trim().min(1).max(32_000), modelId: z.string().max(512), logo: z.string().trim().min(1).max(64).optional(),
@@ -684,7 +713,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.toolCalls": z.object({ type: z.literal("session.toolCalls"), ...request, sessionId: id }),
   "session.subagents": z.object({ type: z.literal("session.subagents"), ...request, sessionId: id }),
   "goal.get": z.object({ type: z.literal("goal.get"), ...request, sessionId: id }),
-  "goal.start": z.object({ type: z.literal("goal.start"), ...request, sessionId: id, objective: z.string().trim().min(1), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((goal) => (goal.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 140_000_000, "Goal attachments exceed the maximum size"),
+  "goal.start": z.object({ type: z.literal("goal.start"), ...request, sessionId: id, objective: z.string().trim().min(1), attachments: z.array(messageAttachment).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((goal) => nonMediaAttachmentBytes(goal.attachments) <= 140_000_000, "Goal attachments exceed the maximum size"),
   "goal.pause": z.object({ type: z.literal("goal.pause"), ...request, sessionId: id, reason: z.string().optional() }),
   "goal.resume": z.object({ type: z.literal("goal.resume"), ...request, sessionId: id }),
   "goal.clear": z.object({ type: z.literal("goal.clear"), ...request, sessionId: id }),
@@ -721,13 +750,13 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
-  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), attachments: z.array(messageAttachment).max(8).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(), queueItemId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && (run.attachments?.reduce((total, attachment) => total + attachment.data.length, 0) ?? 0) <= 140_000_000, "Message or valid attachments required"),
+  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), attachments: z.array(messageAttachment).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(), queueItemId: id.optional(), mcpServerId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && nonMediaAttachmentBytes(run.attachments) <= 140_000_000, "Message or valid attachments required"),
   "global-prompt.get": z.object({ type: z.literal("global-prompt.get"), ...request }),
   "global-prompt.set": z.object({ type: z.literal("global-prompt.set"), ...request, content: z.string().max(200_000) }),
-  "agent.steer": z.object({ type: z.literal("agent.steer"), ...request, sessionId: id, runId: id, queueItemId: id, message: z.string(), attachments: z.array(messageAttachment).max(8).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length), "Message or valid attachments required"),
-  "queue.upsert": z.object({ type: z.literal("queue.upsert"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).max(8).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
-  "queue.edit": z.object({ type: z.literal("queue.edit"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).max(8).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
-  "queue.sync": z.object({ type: z.literal("queue.sync"), ...request, sessionId: id, items: z.array(z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).max(8).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() })).max(100) }),
+  "agent.steer": z.object({ type: z.literal("agent.steer"), ...request, sessionId: id, runId: id, queueItemId: id, message: z.string(), attachments: z.array(messageAttachment).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length), "Message or valid attachments required"),
+  "queue.upsert": z.object({ type: z.literal("queue.upsert"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
+  "queue.edit": z.object({ type: z.literal("queue.edit"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
+  "queue.sync": z.object({ type: z.literal("queue.sync"), ...request, sessionId: id, items: z.array(z.object({ id, sessionId: id, text: z.string(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() })).max(100) }),
   "queue.remove": z.object({ type: z.literal("queue.remove"), ...request, sessionId: id, queueItemId: id }),
   "agent.stop": z.object({ type: z.literal("agent.stop"), ...request, runId: id }),
   "tool.approve": z.object({ type: z.literal("tool.approve"), ...request, approvalId: id }),

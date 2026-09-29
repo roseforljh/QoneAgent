@@ -120,6 +120,7 @@ function migrate(sqlite: Database) {
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      run_id TEXT,
       type TEXT NOT NULL,
       name TEXT NOT NULL,
       path TEXT NOT NULL,
@@ -235,6 +236,9 @@ function migrate(sqlite: Database) {
     CREATE INDEX IF NOT EXISTS idx_goal_events_goal ON goal_events(goal_id, created_at);
   `);
   const messageColumns = new Set(sqlite.query("PRAGMA table_info(messages)").all().map((column) => (column as { name: string }).name));
+  if (!sqlite.query("PRAGMA table_info(artifacts)").all().some((column) => (column as { name: string }).name === "run_id")) {
+    sqlite.exec("ALTER TABLE artifacts ADD COLUMN run_id TEXT");
+  }
   if (!messageColumns.has("goal_id")) sqlite.exec("ALTER TABLE messages ADD COLUMN goal_id TEXT");
   const runColumns = new Set(sqlite.query("PRAGMA table_info(runs)").all().map((column) => (column as { name: string }).name));
   if (!runColumns.has("origin")) sqlite.exec("ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'");
