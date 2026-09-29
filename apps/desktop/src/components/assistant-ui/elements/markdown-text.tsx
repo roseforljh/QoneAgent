@@ -1,14 +1,12 @@
 "use client";
 
-import "@assistant-ui/react-markdown/styles/dot.css";
-
 import {
   type CodeHeaderProps,
   MarkdownTextPrimitive,
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
   useIsMarkdownCodeBlock,
 } from "@assistant-ui/react-markdown";
-import remarkGfm from "remark-gfm";
+import { remarkQoneGfm } from "../../../lib/markdown-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { normalizeMathDelimiters, escapeCurrencyDollars } from "@assistant-ui/react-markdown";
@@ -97,7 +95,8 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
 
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm, remarkMath, remarkQoneAutolink]}
+      smooth={false}
+      remarkPlugins={[remarkQoneGfm, remarkMath, remarkQoneAutolink]}
       rehypePlugins={[rehypeKatex]}
       preprocess={(text) => escapeCurrencyDollars(normalizeMultilineDisplayMath(normalizeMathDelimiters(text)))}
       className="aui-md"

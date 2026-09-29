@@ -26,7 +26,7 @@ const SessionRow: FC<{ session: SessionInfo }> = ({ session }) => {
   const deleteSession = useStore((s) => s.deleteSession);
   const priority = useSidebarPreferences((s) => s.priorityIds.includes(session.id));
   const titleGenerating = useStore((s) => s.titleGeneratingSessionIds.includes(session.id));
-  const isRunning = useStore((s) => s.running && s.activeRunId !== undefined && s.runs.some((run) => run.id === s.activeRunId && run.sessionId === session.id));
+  const isRunning = useStore((s) => s.runningSessionIds.includes(session.id));
   const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(session.title);

@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { requestDiagnostics } from "./scripts/vite-request-diagnostics";
+import { dependencyPatches } from "./scripts/vite-dependency-patches";
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 
@@ -31,7 +32,7 @@ export default defineConfig({
   // Keep the repository-level .env available to the desktop client. Only
   // VITE_* values are exposed to the renderer; the GitHub client ID is public.
   envDir: "../..",
-  plugins: [react(), tailwindcss(), requestDiagnostics(), reactPreviewRuntime()],
+  plugins: [react(), tailwindcss(), requestDiagnostics(), reactPreviewRuntime(), dependencyPatches(fileURLToPath(new URL("../../", import.meta.url)))],
   clearScreen: false,
   server: {
     host: "127.0.0.1",

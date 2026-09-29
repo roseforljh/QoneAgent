@@ -57,8 +57,6 @@ const labelOf = (message: ThreadMessage) => {
   );
   if (tools.length === 1) return tools[0]!;
   if (tools.length > 1) return `${tools.length} tool calls`;
-  if (parts.some((part) => part.type === "reasoning")) return "Reasoning";
-
   // A composer submission carries its files in `attachments` and leaves
   // `content` empty, so both places decide an attachment-only turn's label.
   const carriers = [...parts, ...(message.attachments ?? [])];

@@ -1,5 +1,5 @@
+import { CodexChevronRightIcon as ChevronRightIcon } from "./execution-icons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ChevronRightIcon } from "lucide-react";
 import { useAuiState, useScrollLock } from "@assistant-ui/react";
 import { useMemo, useRef, type FC, type ReactNode } from "react";
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
@@ -46,14 +46,20 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, finalA
   const runId = messageId === "streaming" ? activeRunId : messageRunId;
   const run = runId ? runs.find((item) => item.id === runId) : undefined;
   const runFinished = Boolean(run && !["created", "running", "waiting_approval", "paused"].includes(run.status));
-  const allToolsFinished = toolParts.length > 0 && toolParts.every((part) => {
+  const allToolsFinished = toolParts.every((part) => {
     const call = toolCallsById.get(part.toolCallId);
     return call?.status === "success"
       || call?.status === "failed"
       || part.result !== undefined
       || part.isError;
   });
-  const executionFinished = runFinished || !messageRunning || (allToolsFinished && finalAnswerStarted);
+  const reasoningRunning = messageRunning && ranges.some((range) => {
+    if (range.type !== "reasoning") return false;
+    const part = parts[range.index];
+    return part?.type === "reasoning" && part.status.type === "running";
+  });
+  const activitySettled = allToolsFinished && !reasoningRunning;
+  const executionFinished = runFinished || !messageRunning || (activitySettled && finalAnswerStarted);
   const activeToolIndex = useMemo(() => toolParts.findIndex((part) => {
     const call = toolCallsById.get(part.toolCallId);
     return call?.status === "running"
@@ -73,18 +79,20 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, finalA
     ? formatDuration((completedAt - startedAt) / 1000, locale)
     : undefined;
   const executionLabel = executionFinished
-    ? workedDuration ? t("chat.executionWorkedFor", { duration: workedDuration }) : t("chat.executionCompleted", { count: toolParts.length })
+    ? workedDuration ? t("chat.executionWorkedFor", { duration: workedDuration }) : toolParts.length ? t("chat.executionCompleted", { count: toolParts.length }) : t("chat.reasoning")
     : messageRunning
     ? activeToolIndex >= 0
       ? t("chat.executionRunning", { current: activeToolIndex + 1 })
-      : t("chat.executionFinishing")
+      : reasoningRunning ? t("chat.reasoningActive") : t("chat.executionFinishing")
     : t("chat.executionFinishing");
   const finishing = !executionFinished && activeToolIndex < 0;
 
-  const disclosureKey = JSON.stringify([sessionId, runId, runId ? toolParts[0]?.toolCallId ?? messageId : messageId]);
+  const firstRange = ranges[0];
+  const firstIndex = firstRange && ("index" in firstRange ? firstRange.index : firstRange.startIndex);
+  const disclosureKey = JSON.stringify([sessionId, runId ?? messageId, firstIndex]);
   const override = useExecutionDisclosureState((state) => state.overrides[disclosureKey]);
   const setCollapsed = useExecutionDisclosureState((state) => state.setCollapsed);
-  const collapsed = executionCollapsed(override, finalAnswerStarted, allToolsFinished || !messageRunning, run?.status === "cancelled" || run?.status === "interrupted");
+  const collapsed = executionCollapsed(override, finalAnswerStarted, activitySettled || !messageRunning, run?.status === "cancelled" || run?.status === "interrupted");
   const visibleOpen = !collapsed;
   const disclosureRef = useRef<HTMLDivElement>(null);
   const lockScroll = useScrollLock(disclosureRef, reduceMotion ? 0 : 240);

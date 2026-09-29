@@ -25,9 +25,11 @@ import { EllipsisDots, ShimmerLabel } from "./elements/surfaces";
 import { ConversationMapAui } from "./elements/conversation-map.aui";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
+import { ThreadScrollFollower } from "./thread-scroll-follower";
 import "./thread-viewport.css";
 import "./composer-queue.css";
 import { useStore } from "../../store";
+import { getThreadScrollState, pruneThreadScrollStates } from "../../lib/thread-scroll-state";
 import { useLocale } from "../../localization";
 import { pickNativeAttachmentFiles, useNativeFileDrop } from "../../lib/native-file-drop";
 import { hasTauriBridge } from "../../store";
@@ -67,13 +69,14 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const sessions = useStore((state) => state.sessions);
   const workspaces = useStore((state) => state.workspaces);
   const currentSessionId = useStore((state) => state.currentSessionId);
-  const currentWorkspaceId = useStore((state) => state.currentWorkspaceId);
-  const workspaceLoadingId = useStore((state) => state.workspaceLoadingId);
   const draftWorkspaceId = useStore((state) => state.draftWorkspaceId);
   const creatingSession = useStore((state) => state.creatingSession);
   const sessionsLoaded = useStore((state) => state.sessionsLoaded);
   const workspacesLoaded = useStore((state) => state.workspacesLoaded);
   const messagesLoadingSessionId = useStore((state) => state.messagesLoadingSessionId);
+  useEffect(() => {
+    if (sessionsLoaded) pruneThreadScrollStates(sessions.map((session) => session.id));
+  }, [sessions, sessionsLoaded]);
   const threadMessages = useAuiState((state) => state.thread.messages);
   const compactions = useStore((state) => state.compactions);
   const compactionStatus = useStore((state) => state.currentSessionId ? state.compactionStatuses[state.currentSessionId] : undefined);
@@ -93,9 +96,9 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     const after = new Map<string, Marker[]>();
     const between = new Map<string, Marker[]>();
     for (const marker of [
-      ...compactions.map((item) => ({ id: item.id, throughMessageId: item.throughMessageId, startedAt: item.createdAt, status: item.status, source: item.source })),
+      ...compactions.filter((item) => item.partIndex === undefined || !item.runId).map((item) => ({ id: item.id, throughMessageId: item.throughMessageId, startedAt: item.createdAt, status: item.status, source: item.source })),
       ...(compactionStatus ? [{ id: compactionStatus.requestId, throughMessageId: compactionStatus.throughMessageId, startedAt: compactionStatus.startedAt, status: "running" as const, source: "manual" as const }] : []),
-      ...(autoCompactionStatus ? [{ id: autoCompactionStatus.id, throughMessageId: autoCompactionStatus.throughMessageId, startedAt: autoCompactionStatus.startedAt, status: "running" as const, source: "automatic" as const }] : []),
+      ...(autoCompactionStatus && autoCompactionStatus.partIndex === undefined ? [{ id: autoCompactionStatus.id, throughMessageId: autoCompactionStatus.throughMessageId, startedAt: autoCompactionStatus.startedAt, status: "running" as const, source: "automatic" as const }] : []),
     ]) {
       const pairedAssistantId = visibleAnchorByUser.get(marker.throughMessageId);
       const anchorId = pairedAssistantId ?? marker.throughMessageId;
@@ -118,11 +121,11 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       (draftWorkspaceId && workspaces.some((workspace) => workspace.id === draftWorkspaceId)),
     );
   })();
+  // Project file loading must not unmount the selected conversation's viewport.
   const conversationLoading = !sessionsLoaded || !workspacesLoaded || Boolean(
-    currentWorkspaceId && workspaceLoadingId === currentWorkspaceId,
-  ) || Boolean(
     currentSessionId && messagesLoadingSessionId === currentSessionId,
   );
+  const messageListRef = useRef<HTMLDivElement>(null);
   return (
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background text-foreground flex h-full flex-col items-stretch px-4 [--q-chat-bg:var(--background)]"
@@ -145,9 +148,19 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       </AuiIf>
 
       <AuiIf condition={(s) => !s.thread.isEmpty}>
-        <ThreadPrimitive.Viewport turnAnchor="top" autoScroll className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto">
+        <ThreadPrimitive.Viewport
+          key={currentSessionId}
+          turnAnchor="bottom"
+          autoScroll
+          scrollRestoration={getThreadScrollState(currentSessionId)}
+          scrollToBottomOnInitialize={false}
+          scrollToBottomOnRunStart={true}
+          scrollToBottomOnThreadSwitch={false}
+          className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto"
+        >
           <ConversationMapAui />
-          <div className="q-message-list flex w-full min-w-0 flex-col gap-7 pt-6">
+          <ThreadScrollFollower contentRef={messageListRef} />
+          <div ref={messageListRef} className="q-message-list flex w-full min-w-0 flex-col gap-7 pt-6">
             <ThreadPrimitive.Messages>
               {({ message }) => {
                 if (message.role === "user" && pairedUserIds.has(message.id)) return null;
@@ -654,6 +667,10 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
 
 const AgentPreparation: FC = () => {
   const { t } = useLocale();
+  const activeRunId = useStore((state) => state.activeRunId);
+  const request = useStore((state) => state.modelRequest);
+  const requestStartedAt = request?.runId === activeRunId ? request?.startedAt : undefined;
+  const [now, setNow] = useState(Date.now);
   const messageRunning = useAuiState((state) => state.message.status?.type === "running");
   const activeMessageSequence = useStore((state) => state.activeMessageSequence);
   const streaming = useStore((state) => state.streaming);
@@ -687,7 +704,8 @@ const AgentPreparation: FC = () => {
   // The run can be active before Pi emits message.started. Keep this fallback
   // independent of activeMessageSequence so the first visible state is not a
   // blank assistant bubble.
-  const candidate = messageRunning && !hasCurrentText && !hasUnfinishedTool && !tailIsToolRegion;
+  const hasReasoning = tailPart?.type === "reasoning" && tailPart.status.type === "running" && Boolean(tailPart.text.trim());
+  const candidate = messageRunning && !hasCurrentText && !hasUnfinishedTool && !tailIsToolRegion && !hasReasoning;
   const [visiblePhase, setVisiblePhase] = useState<string>();
 
   useEffect(() => {
@@ -699,13 +717,21 @@ const AgentPreparation: FC = () => {
     return () => clearTimeout(timer);
   }, [candidate, phaseKey]);
 
+  useEffect(() => {
+    if (!candidate || requestStartedAt === undefined) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [candidate, requestStartedAt]);
+
   if (!candidate || visiblePhase !== phaseKey) return null;
   return (
     <div className="text-foreground/55 flex items-center py-1 text-sm" role="status" aria-live="polite">
       <ShimmerLabel active className="relative inline-block leading-none">
-        {t("chat.connecting")}
+        {t(requestStartedAt === undefined ? "chat.preparingRequest" : "chat.waitingResponse")}
       </ShimmerLabel>
       <EllipsisDots />
+      {requestStartedAt !== undefined && <span className="ms-2 text-xs tabular-nums opacity-70" aria-hidden="true">{Math.max(0, Math.floor((now - requestStartedAt) / 1000))}s</span>}
     </div>
   );
 };

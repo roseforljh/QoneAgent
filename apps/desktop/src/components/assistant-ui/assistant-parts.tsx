@@ -1,4 +1,4 @@
-import { useMemo, type FC } from "react";
+import { Fragment, useMemo, type FC } from "react";
 import { MessagePrimitive, useAuiState, type PartState } from "@assistant-ui/react";
 import { MarkdownText } from "./markdown-text";
 import { GenerativeUIPresentation, SessionTimeline } from "./session-timeline";
@@ -9,6 +9,9 @@ import { ImageGallery } from "./elements/image-gallery";
 import { ImageGeneration } from "./elements/image-generation";
 import { useStore } from "../../store";
 import { SubagentCapsule } from "./subagent-view";
+import { Reasoning } from "./reasoning";
+import { ContextCompactionMarker } from "./context-compaction-marker";
+import { compactionDisplayIndex, compactionRangeSegments, type PositionedCompaction } from "./compaction-ranges";
 
 function regenerateCurrentTurn(messageId: string): void {
   const state = useStore.getState();
@@ -47,8 +50,19 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
   const ranges = useMemo(() => visibleAssistantPartRanges(parts, hideSubagentCalls, showSubagentCapsule), [hideSubagentCalls, parts, showSubagentCapsule]);
   const sections = useMemo(() => assistantRangeSections(ranges), [ranges]);
   const finalAnswerStarted = hasVisibleAnswer(parts, sections.answer);
+  const messageId = useAuiState((state) => state.message.id);
+  const runId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
+  const compactions = useStore((state) => state.compactions);
+  const pending = useStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
+  const segments = useMemo(() => {
+    const markers: PositionedCompaction[] = compactions.flatMap((marker) => marker.runId === runId && marker.partIndex !== undefined
+      ? [{ ...marker, partIndex: marker.partIndex, startedAt: marker.createdAt }] : []);
+    if (pending?.runId === runId && pending?.partIndex !== undefined) markers.push({ ...pending, partIndex: pending.partIndex, status: "running", source: "automatic" });
+    return compactionRangeSegments(ranges, markers.map((marker) => ({ ...marker, partIndex: compactionDisplayIndex(parts, marker.partIndex) })));
+  }, [ranges, parts, compactions, pending, runId]);
 
   const renderRange = (range: AssistantPartRange) => {
+    if (range.type === "reasoning") return <MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />;
     if (range.type === "text") return (
       <div className="q-assistant-text text-foreground" key={`text-${range.index}`}>
         <MessagePrimitive.PartByIndex index={range.index} components={{ Text: MarkdownText }} />
@@ -67,13 +81,19 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
   return <>
     {!hasImage && <PendingImageGeneration />}
     {showSubagentCapsule && !hasDispatch && <SubagentCapsule />}
-    {sections.leading.map(renderRange)}
-    {sections.activity.length > 0 && (
-      <AssistantExecution ranges={sections.activity} finalAnswerStarted={finalAnswerStarted}>
-        {sections.activity.map(renderRange)}
-      </AssistantExecution>
-    )}
-    {sections.persistent.map(renderRange)}
-    {sections.answer.map(renderRange)}
+    {segments.map((segment) => {
+      const group = assistantRangeSections(segment.ranges);
+      return <Fragment key={segment.marker?.id ?? "tail"}>
+        {group.leading.map(renderRange)}
+        {group.activity.length > 0 && (
+          <AssistantExecution ranges={group.activity} finalAnswerStarted={finalAnswerStarted}>
+            {group.activity.map(renderRange)}
+          </AssistantExecution>
+        )}
+        {group.persistent.map(renderRange)}
+        {group.answer.map(renderRange)}
+        {segment.marker && <ContextCompactionMarker {...segment.marker} />}
+      </Fragment>;
+    })}
   </>;
 };

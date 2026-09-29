@@ -35,6 +35,9 @@ test("official ToolCall displays actual request, result, and failure state", () 
   expect(html).toContain("file content");
   expect(html).toContain("file.ts");
   expect(html).toContain('data-slot="tool-result-panel"');
+  expect(html).toContain('data-slot="codex-icon"');
+  expect(html).not.toContain("text-red-");
+  expect(html).not.toContain("text-amber-");
   expect(html).not.toContain("Request");
   expect(html).not.toContain("{ \"path\": \"file.ts\" }");
 });

@@ -1,0 +1,25 @@
+.q-reasoning { min-width: 0; padding-block: .25rem; color: var(--muted-foreground); }
+.q-reasoning-trigger {
+  width: 100%;
+  display: flex; align-items: center; gap: .375rem; padding-block: .25rem;
+  font-size: 13.5px; background: transparent; text-align: start;
+  transition: color 160ms ease; cursor: pointer;
+  user-select: none; -webkit-user-select: none;
+}
+/* Text and decorative glyphs belong to the trigger's single click target. */
+.q-reasoning-trigger * { pointer-events: none; }
+.q-reasoning-trigger:hover { color: var(--foreground); }
+.q-reasoning-trigger:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: .25rem; }
+.q-reasoning-content {
+  margin: .375rem 0 .125rem;
+  padding-inline-end: .5rem;
+  font-size: 13px; line-height: 1.6;
+  overflow-x: hidden; overflow-wrap: anywhere;
+  overscroll-behavior-y: contain;
+}
+.q-reasoning-content p { margin: 0; font: inherit; color: inherit; }
+.q-reasoning-content p + p { margin-top: .5em; }
+.q-reasoning-content:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: .25rem; }
+@media (prefers-reduced-motion: reduce) {
+  .q-reasoning-trigger { transition: none; }
+}

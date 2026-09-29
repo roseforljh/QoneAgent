@@ -2,6 +2,7 @@ import type { PartState } from "@assistant-ui/react";
 
 export type AssistantPartRange =
   | { type: "text"; index: number }
+  | { type: "reasoning"; index: number }
   | { type: "image"; index: number }
   | { type: "images"; startIndex: number; endIndex: number }
   | { type: "subagents"; index: number }
@@ -17,24 +18,24 @@ export interface AssistantRangeSections {
 
 /** Keep final answer content outside the execution disclosure. */
 export function assistantRangeSections(ranges: readonly AssistantPartRange[]): AssistantRangeSections {
-  let lastToolIndex = -1;
+  let lastActivityIndex = -1;
   for (let index = ranges.length - 1; index >= 0; index--) {
-    if (ranges[index]?.type === "tools") {
-      lastToolIndex = index;
+    if (ranges[index]?.type === "tools" || ranges[index]?.type === "reasoning") {
+      lastActivityIndex = index;
       break;
     }
   }
-  if (lastToolIndex < 0) return { leading: [], activity: [], persistent: [], answer: [...ranges] };
+  if (lastActivityIndex < 0) return { leading: [], activity: [], persistent: [], answer: [...ranges] };
 
-  const firstActivityIndex = ranges.findIndex((range) => range.type === "text" || range.type === "tools");
+  const firstActivityIndex = ranges.findIndex((range) => range.type === "text" || range.type === "tools" || range.type === "reasoning");
   const leading = ranges.slice(0, firstActivityIndex);
   const activity: AssistantPartRange[] = [];
   const persistent: AssistantPartRange[] = [];
-  for (const range of ranges.slice(firstActivityIndex, lastToolIndex + 1)) {
-    if (range.type === "text" || range.type === "tools") activity.push(range);
+  for (const range of ranges.slice(firstActivityIndex, lastActivityIndex + 1)) {
+    if (range.type === "text" || range.type === "tools" || range.type === "reasoning") activity.push(range);
     else persistent.push(range);
   }
-  return { leading, activity, persistent, answer: ranges.slice(lastToolIndex + 1) };
+  return { leading, activity, persistent, answer: ranges.slice(lastActivityIndex + 1) };
 }
 
 export function hasVisibleAnswer(parts: readonly PartState[], ranges: readonly AssistantPartRange[]): boolean {
@@ -59,8 +60,8 @@ export function assistantPartRanges(parts: readonly PartState[]): AssistantPartR
   const ranges: AssistantPartRange[] = [];
   for (let index = 0; index < parts.length;) {
     const part = parts[index]!;
-    if (part.type === "text") {
-      ranges.push({ type: "text", index });
+    if (part.type === "text" || part.type === "reasoning") {
+      ranges.push({ type: part.type, index });
       index++;
       continue;
     }

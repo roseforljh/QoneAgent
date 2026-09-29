@@ -123,8 +123,8 @@ export const ThreadListNew = forwardRef<HTMLButtonElement, ComponentPropsWithout
 ThreadListNew.displayName = "ThreadListNew";
 
 export const ThreadListItem: FC = () => {
-  const isRunning = useAuiState((s) => s.threadListItem.isRunning);
   const id = useAuiState((s) => s.threadListItem.id);
+  const isRunning = useStore((s) => s.runningSessionIds.includes(id));
   const sessions = useStore((s) => s.sessions);
   const renameSession = useStore((s) => s.renameSession);
   const deleteSession = useStore((s) => s.deleteSession);

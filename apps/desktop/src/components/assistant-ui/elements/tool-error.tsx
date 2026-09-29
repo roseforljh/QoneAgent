@@ -1,7 +1,8 @@
 "use client";
 
+import { CodexAlertCircleIcon as AlertCircleIcon, CodexLoader2Icon as Loader2Icon, CodexRotateCwIcon as RotateCwIcon } from "../execution-icons";
+
 import type { ComponentProps } from "react";
-import { AlertCircleIcon, Loader2Icon, RotateCwIcon } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { detailViewport, field, mono, paper } from "./surfaces";
 
@@ -55,7 +56,7 @@ export function ToolError({
       {...props}
     >
       <div className="flex items-center gap-2.5">
-        <AlertCircleIcon className="size-3.5 shrink-0 text-red-500" />
+        <AlertCircleIcon className="size-3.5 shrink-0 text-foreground/60" />
         <span className={cn(mono, "text-foreground/55 shrink-0")}>{name}</span>
         <span className="text-foreground/80 min-w-0 flex-1 truncate text-sm">
           {target}
@@ -69,7 +70,7 @@ export function ToolError({
         className={cn(
           field,
           detailViewport,
-          "whitespace-pre-wrap break-words rounded-xl px-3 py-2 font-mono text-xs leading-relaxed text-red-700 dark:text-red-300 [overflow-wrap:anywhere]",
+          "whitespace-pre-wrap break-words rounded-xl px-3 py-2 font-mono text-xs leading-relaxed text-foreground/60 [overflow-wrap:anywhere]",
         )}
       >
         {message}

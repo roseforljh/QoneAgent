@@ -35,7 +35,8 @@ export function MeasuredCollapse({ open, children, className }: { open: boolean;
       className={className}
       style={{ overflow: open && settled ? "visible" : "hidden", pointerEvents: open ? "auto" : "none" }}
     >
-      {renderContent && <div ref={contentRef}>{children}</div>}
+      {/* Contain child margins so measured and settled heights remain identical. */}
+      {renderContent && <div ref={contentRef} style={{ display: "flow-root" }}>{children}</div>}
     </motion.div>
   );
 }

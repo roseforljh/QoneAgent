@@ -394,6 +394,8 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
   const view = collapsed ? undefined : activeTab?.view;
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = collapsed ? undefined : activeTab;
+  const openTabsRef = useRef(openTabs);
+  openTabsRef.current = openTabs;
   useEffect(() => onViewChange?.(view), [view, onViewChange]);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [launcherOpen, setLauncherOpen] = useState(false);
@@ -457,6 +459,18 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
   useEffect(() => {
     const toggleSubagents = () => {
       setLauncherOpen(false);
+      if (activeTabRef.current?.view === "subagents") {
+        setCollapsed(true);
+        return;
+      }
+
+      const existingTab = openTabsRef.current.find((tab) => tab.view === "subagents");
+      if (existingTab) {
+        setActiveTabId(existingTab.id);
+        setCollapsed(false);
+        return;
+      }
+
       const tab = { id: rid(), view: "subagents" as const };
       setOpenTabs((current) => [...current, tab]);
       setActiveTabId(tab.id);

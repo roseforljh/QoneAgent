@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronRightIcon, Clock3Icon, XIcon } from "lucide-react";
+import { CodexChevronRightIcon as ChevronRightIcon, CodexClock3Icon as Clock3Icon, CodexXIcon as XIcon, type ExecutionIcon } from "../execution-icons";
+
 import { useRef, type ReactNode } from "react";
 import { useScrollLock } from "@assistant-ui/react";
 import { useReducedMotion } from "motion/react";
@@ -20,6 +21,7 @@ import {
 } from "./surfaces";
 
 export interface ToolCallProps {
+  icon?: ExecutionIcon;
   label: string;
   activeLabel: string;
   query: string;
@@ -39,6 +41,7 @@ export interface ToolCallProps {
 }
 
 export function ToolCall({
+  icon: Icon,
   label,
   activeLabel,
   query,
@@ -65,6 +68,7 @@ export function ToolCall({
       className={cn("w-full max-w-sm", className)}
     >
       <CollapsibleTrigger className="group/trigger text-foreground/55 hover:text-foreground/90 bg-background sticky top-0 z-10 -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-[13.5px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {Icon && <Icon className="size-3.5 shrink-0 opacity-60" />}
         <SwapLabel active={running ? 0 : 1} className="text-start">
           <ShimmerLabel
             active={running}
@@ -84,15 +88,15 @@ export function ToolCall({
         </span>
         {stat && (
           <span className={cn(mono, "bg-foreground/[0.06] flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5")}>
-            {stat.added > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{stat.added}</span>}
-            {stat.removed > 0 && <span className="text-red-600 dark:text-red-400">−{stat.removed}</span>}
+            {stat.added > 0 && <span className="text-foreground/60">+{stat.added}</span>}
+            {stat.removed > 0 && <span className="text-foreground/60">−{stat.removed}</span>}
           </span>
         )}
         <ChevronRightIcon className="size-3.5 shrink-0 opacity-0 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover/trigger:opacity-60 group-focus-visible/trigger:opacity-60 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />
         {(waiting || failed) && (
           <span className="ms-auto flex w-4 items-center justify-end">
-            {waiting && <Clock3Icon className="size-3.5 text-amber-500" />}
-            {failed && <XIcon className="size-3.5 text-red-500" />}
+            {waiting && <Clock3Icon className="size-3.5 text-foreground/60" />}
+            {failed && <XIcon className="size-3.5 text-foreground/60" />}
           </span>
         )}
       </CollapsibleTrigger>

@@ -1,7 +1,7 @@
 "use client";
 
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { remarkQoneGfm } from "../../../lib/markdown-gfm";
 import type { GenerativeUILibrary } from "@assistant-ui/react-generative-ui";
 import { defaultGenerativeUILibrary } from "@assistant-ui/react-generative-ui";
 import { GENERATIVE_UI_COMPONENTS } from "@qone/protocol";
@@ -17,7 +17,7 @@ export const styledGenerativeUILibrary: GenerativeUILibrary = {
     description: "A markdown string, rendered with GitHub-flavored markdown.",
     render: ({ value, children }) => (
       <div data-aui="markdown">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{value ?? ""}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkQoneGfm]}>{value ?? ""}</ReactMarkdown>
         {children}
       </div>
     ),

@@ -1,3 +1,5 @@
+import { bindSessionQueue, hydrateSessionQueue } from "./lib/session-queue-lifecycle";
+import { sessionStore } from "./lib/session-execution-state";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore, initBridge, type ToolCall } from "./store";
 import { reportStartup } from "./lib/startup-diagnostic";
@@ -18,7 +20,7 @@ import { isImageModel } from "./lib/image-model-config";
 import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { expandComposerCommand } from "./lib/composer-command";
-import { createQoneMessageQueue, getQoneMessageQueue, setQoneMessageQueue } from "./lib/qone-message-queue";
+import { createQoneMessageQueue, getQoneMessageQueue } from "./lib/qone-message-queue";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { WorkspaceDock } from "./components/assistant-ui/workspace-dock";
@@ -101,7 +103,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const streaming = useStore((s) => s.streaming);
   const streamingParts = useStore((s) => s.streamingParts);
   const running = useStore((s) => s.running);
-  const compacting = useStore((s) => Boolean(s.currentSessionId && s.compactionStatuses[s.currentSessionId]));
+  const connected = useStore((s) => s.connected);
   const activeRunId = useStore((s) => s.activeRunId);
   const queueItems = useStore((s) => s.queueItems);
   const queueLoadedSessionId = useStore((s) => s.queueLoadedSessionId);
@@ -120,9 +122,9 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const send = useStore((s) => s.send);
   const sidebarPreferences = useSidebarPreferences();
 
-  const queue = useMemo(() => currentSessionId ? createQoneMessageQueue({
+  const queue = useMemo(() => currentSessionId && connected ? getQoneMessageQueue(currentSessionId) ?? createQoneMessageQueue({
     sessionId: currentSessionId,
-    isRunning: () => useStore.getState().running || Boolean(useStore.getState().compactionStatuses[currentSessionId]),
+    isRunning: () => sessionStore(useStore, currentSessionId).getState().running || Boolean(useStore.getState().compactionStatuses[currentSessionId]),
     editPending: (message) => {
       const state = useStore.getState();
       if (!state.editingQueueItem || state.currentSessionId !== currentSessionId) return false;
@@ -133,45 +135,22 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       useStore.setState({ editingQueueItem: undefined });
       return true;
     },
-    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal); },
+    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId); },
     steer: (message, queueItemId, attachments) => {
-      const state = useStore.getState();
+      const state = sessionStore(useStore, currentSessionId).getState();
       if (!state.activeRunId) return Promise.resolve(false);
       return steerAgent({ sessionId: currentSessionId, runId: state.activeRunId, queueItemId, message: extractComposerPrompt(message).text, attachments });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
     onError: (message) => useStore.setState({ lastError: message }),
-  }) : null, [currentSessionId, runAgent, steerAgent]);
+  }) : null, [currentSessionId, connected, runAgent, steerAgent]);
 
-  const hydratedQueueSession = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!queue || !currentSessionId) return;
-    if (queueLoadedSessionId !== currentSessionId) {
-      if (queueLoadedSessionId === undefined && hydratedQueueSession.current === currentSessionId) {
-        queue.restore([]);
-        hydratedQueueSession.current = undefined;
-      }
-      return;
-    }
-    if (hydratedQueueSession.current === currentSessionId) return;
-    queue.restore(queueItems);
-    hydratedQueueSession.current = currentSessionId;
+    if (queue && currentSessionId && queueLoadedSessionId === currentSessionId) hydrateSessionQueue(queue, queueItems);
   }, [queue, currentSessionId, queueLoadedSessionId, queueItems]);
   useEffect(() => {
-    if (!queue || !currentSessionId) return;
-    setQoneMessageQueue(currentSessionId, queue);
-    return () => setQoneMessageQueue(currentSessionId, undefined);
+    if (queue && currentSessionId) bindSessionQueue(currentSessionId, queue);
   }, [queue, currentSessionId]);
-  const wasRunning = useRef(false);
-  useEffect(() => {
-    if (!queue) return;
-    if ((running || compacting) && !wasRunning.current) queue.controller.notifyBusy();
-    if (!running && !compacting && wasRunning.current) {
-      queue.controller.notifyIdle();
-      queue.releaseIdle();
-    }
-    wasRunning.current = running || compacting;
-  }, [queue, running, compacting]);
 
   const hasStreamingAssistant = running;
   const selectedModel = modelConfigs.find((config) => config.id === selectedModelId);
@@ -571,7 +550,6 @@ export default function App() {
   const workspaces = useStore((s) => s.workspaces);
   const currentWorkspaceId = useStore((s) => s.currentWorkspaceId);
   const currentSessionId = useStore((s) => s.currentSessionId);
-  const running = useStore((s) => s.running);
   const selectWorkspace = useStore((s) => s.selectWorkspace);
   const selectSession = useStore((s) => s.selectSession);
 
@@ -582,8 +560,8 @@ export default function App() {
   useEffect(() => {
     const sessionMatch = pathname.match(/^\/chat\/([^/]+)/); const workspaceMatch = pathname.match(/^\/workspaces\/([^/]+)/);
     if (sessionMatch) { const routeSessionId = decodeURIComponent(sessionMatch[1]); if (sessions.some((session) => session.id === routeSessionId) && currentSessionId !== routeSessionId) selectSession(routeSessionId); }
-    if (workspaceMatch && !running) { const routeWorkspaceId = decodeURIComponent(workspaceMatch[1]); if (workspaces.some((workspace) => workspace.id === routeWorkspaceId) && currentWorkspaceId !== routeWorkspaceId) selectWorkspace(routeWorkspaceId); }
-  }, [pathname, sessions, workspaces, currentSessionId, currentWorkspaceId, running, selectSession, selectWorkspace]);
+    if (workspaceMatch) { const routeWorkspaceId = decodeURIComponent(workspaceMatch[1]); if (workspaces.some((workspace) => workspace.id === routeWorkspaceId) && currentWorkspaceId !== routeWorkspaceId) selectWorkspace(routeWorkspaceId); }
+  }, [pathname, sessions, workspaces, currentSessionId, currentWorkspaceId, selectSession, selectWorkspace]);
 
   return <AppChrome path={pathname}>
     {["/skills", "/plugins", "/permissions"].includes(pathname)

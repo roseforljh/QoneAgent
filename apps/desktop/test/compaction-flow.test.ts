@@ -124,14 +124,15 @@ test("automatic compaction events appear in the same conversation timeline", () 
   });
   emit({ type: "agent.event", event: {
     eventId: "start-event", sequence: 100, sessionId: "session-1", runId: "run-1", type: "context.compaction.started", timestamp: 400,
-    payload: { id: "start-event", throughMessageId: "user-1", startedAt: 400, source: "automatic" },
+    payload: { id: "auto-1", partIndex: 3, throughMessageId: "user-1", startedAt: 400, source: "automatic" },
   } });
   expect(useStore.getState().autoCompactionStatuses["session-1"]?.throughMessageId).toBe("user-1");
+  expect(useStore.getState().autoCompactionStatuses["session-1"]?.partIndex).toBe(3);
 
   emit({ type: "agent.event", event: {
     eventId: "finish-event", sequence: 101, sessionId: "session-1", runId: "run-1", type: "context.compacted", timestamp: 500,
-    payload: { id: "auto-1", throughMessageId: "user-1", createdAt: 500, status: "completed", source: "automatic" },
+    payload: { id: "auto-1", partIndex: 3, throughMessageId: "user-1", createdAt: 400, status: "completed", source: "automatic" },
   } });
   expect(useStore.getState().autoCompactionStatuses["session-1"]).toBeUndefined();
-  expect(useStore.getState().compactions).toEqual([{ id: "auto-1", throughMessageId: "user-1", createdAt: 500, status: "completed", source: "automatic" }]);
+  expect(useStore.getState().compactions).toEqual([{ id: "auto-1", runId: "run-1", partIndex: 3, throughMessageId: "user-1", createdAt: 400, status: "completed", source: "automatic" }]);
 });

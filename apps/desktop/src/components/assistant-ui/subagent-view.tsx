@@ -1,6 +1,6 @@
+import { CodexArrowLeftIcon as ArrowLeftIcon, CodexCheckIcon as CheckIcon, CodexChevronRightIcon as ChevronRightIcon, CodexXIcon as XIcon, CodexLoader2Icon, CodexClock3Icon } from "./execution-icons";
 import { useEffect, useMemo, useState, type FC } from "react";
 import { MessagePrimitive, ReadonlyThreadProvider, ThreadPrimitive, useAuiState } from "@assistant-ui/react";
-import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import type { SubagentRunInfo } from "@qone/protocol";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
@@ -77,7 +77,7 @@ export const SubagentCapsule: FC = () => {
       aria-label={locale === "zh-CN" ? "打开子代理侧边栏" : "Open subagents"}
       title={summary}
     >
-      <span className={`q-subagent-dot ${running.length ? "is-running" : "is-done"}`} aria-hidden="true" />
+      {running.length ? <CodexLoader2Icon className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : <CheckIcon size={14} />}
       <span>{label}</span>
       {elapsed && <span className="q-subagent-elapsed">· {elapsed}</span>}
       <ChevronRightIcon size={14} aria-hidden="true" />
@@ -149,8 +149,9 @@ export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
         type="button" key={item.id} className="q-subagent-row" onClick={() => setSelectedId(item.id)}
       >
         <SubagentLogo logo={subagentConfig.profiles.find((profile) => profile.id === item.profileId)?.logo} name={item.title} size={24} />
-        {item.status === "completed" ? <CheckIcon size={13} className="shrink-0 text-emerald-400" aria-hidden="true" />
-          : <span className={`q-subagent-dot ${active(item.status) ? "is-running" : "is-failed"}`} aria-hidden="true" />}
+        {item.status === "completed" ? <CheckIcon size={13} className="shrink-0 text-foreground/60" aria-hidden="true" />
+          : item.status === "created" || item.status === "waiting_approval" || item.status === "paused" ? <CodexClock3Icon className="size-3.5 shrink-0" />
+          : active(item.status) ? <CodexLoader2Icon className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : <XIcon size={14} />}
         <span className="min-w-0 flex-1 truncate text-start">{item.title}</span>
         <span className="q-subagent-elapsed">{duration(item)}</span>
         <ChevronRightIcon size={14} aria-hidden="true" />

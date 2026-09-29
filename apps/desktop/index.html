@@ -30,21 +30,99 @@
       }
 
       #root > main[aria-label="正在加载 Qone"] {
+        --qone-boot-sidebar-width: clamp(240px, 275px, min(520px, calc(100vw - 320px)));
         display: flex;
-        align-items: center;
-        justify-content: center;
+        flex-direction: column;
         width: 100%;
         height: 100%;
         color: var(--qone-boot-foreground);
         background: var(--qone-boot-background);
         font: 14px/1.5 system-ui, sans-serif;
+        user-select: none;
       }
+
+      .qone-boot-titlebar {
+        display: flex;
+        height: 36px;
+        min-height: 36px;
+        align-items: center;
+        background: var(--qone-boot-background);
+        border-bottom: 1px solid color-mix(in srgb, var(--qone-boot-foreground) 8%, transparent);
+        color: var(--qone-boot-foreground);
+      }
+
+      .qone-boot-nav,
+      .qone-boot-window-controls {
+        display: flex;
+        height: 100%;
+        align-items: center;
+      }
+
+      .qone-boot-nav { gap: 4px; padding: 0 6px 0 8px; }
+      .qone-boot-nav span,
+      .qone-boot-window-controls span {
+        display: grid;
+        width: 30px;
+        height: 28px;
+        place-items: center;
+        color: var(--qone-boot-foreground);
+        font-size: 22px;
+        line-height: 1;
+      }
+
+      .qone-boot-nav span:first-child { opacity: .45; }
+      .qone-boot-menu { display: flex; height: 100%; align-items: center; gap: 2px; }
+      .qone-boot-menu span { padding: 4px 10px; color: var(--qone-boot-foreground); }
+      .qone-boot-titlebar-fill { flex: 1; }
+      .qone-boot-window-controls span { width: 46px; height: 36px; font-size: 18px; }
+      .qone-boot-window-controls span:first-child { font-size: 20px; }
+
+      .qone-boot-body { display: flex; min-height: 0; flex: 1; }
+      .qone-boot-sidebar {
+        display: flex;
+        width: var(--qone-boot-sidebar-width);
+        min-width: 0;
+        flex-direction: column;
+        padding: 16px 12px 12px;
+        background: color-mix(in srgb, var(--qone-boot-background) 94%, var(--qone-boot-foreground));
+        border-right: 1px solid color-mix(in srgb, var(--qone-boot-foreground) 12%, transparent);
+      }
+
+      .qone-boot-brand { display: flex; height: 32px; align-items: center; gap: 10px; color: var(--qone-boot-foreground); font-weight: 600; }
+      .qone-boot-brand-mark { width: 20px; height: 20px; border-radius: 6px; background: color-mix(in srgb, var(--qone-boot-foreground) 24%, transparent); }
+      .qone-boot-sidebar-nav { display: grid; gap: 6px; margin-top: 20px; color: var(--qone-boot-foreground); }
+      .qone-boot-sidebar-item { height: 30px; padding: 5px 10px; border-radius: 6px; }
+      .qone-boot-sidebar-item:first-child { background: color-mix(in srgb, var(--qone-boot-foreground) 10%, transparent); }
+      .qone-boot-sidebar-section { margin: 22px 8px 4px; color: color-mix(in srgb, var(--qone-boot-foreground) 64%, transparent); font-size: 12px; }
+      .qone-boot-settings { margin-top: auto; padding: 5px 10px; color: color-mix(in srgb, var(--qone-boot-foreground) 72%, transparent); }
+      .qone-boot-main { position: relative; min-width: 0; flex: 1; background: var(--qone-boot-background); }
+      .qone-boot-loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); white-space: nowrap; }
     </style>
     <script src="/boot-theme.js"></script>
   </head>
   <body>
     <div id="root">
-      <main aria-label="正在加载 Qone">正在加载 Qone…</main>
+      <main aria-label="正在加载 Qone">
+        <div class="qone-boot-titlebar">
+          <div class="qone-boot-nav" aria-hidden="true"><span>‹</span><span>›</span></div>
+          <div class="qone-boot-menu" aria-hidden="true"><span>文件</span><span>编辑</span><span>视图</span><span>帮助</span></div>
+          <div class="qone-boot-titlebar-fill"></div>
+          <div class="qone-boot-window-controls" aria-hidden="true"><span>−</span><span>□</span><span>×</span></div>
+        </div>
+        <div class="qone-boot-body">
+          <aside class="qone-boot-sidebar" aria-hidden="true">
+            <div class="qone-boot-brand"><span class="qone-boot-brand-mark"></span><span>Qone</span></div>
+            <div class="qone-boot-sidebar-nav">
+              <div class="qone-boot-sidebar-item">✎　新建会话</div>
+              <div class="qone-boot-sidebar-item">◎　应用</div>
+            </div>
+            <div class="qone-boot-sidebar-section">项目</div>
+            <div class="qone-boot-sidebar-item">▱　正在读取项目…</div>
+            <div class="qone-boot-settings">⚙　设置</div>
+          </aside>
+          <section class="qone-boot-main"><div class="qone-boot-loading">正在加载 Qone…</div></section>
+        </div>
+      </main>
     </div>
     <script src="/startup-diagnostics.js"></script>
     <script type="module" src="/src/main.tsx"></script>
