@@ -3,10 +3,12 @@ import { File } from "./elements/file";
 import { UserImageThumbnail } from "./elements/user-image-thumbnail";
 import { ComposerToolChip, ComposerToolsPopover, type ComposerTool } from "./composer-tools";
 import { ComposerTriggers } from "./composer-triggers";
-import { ComposerEditorBridge, type InsertComposerTool, type ToggleComposerMention } from "./composer-editor-bridge";
+import { ComposerEditorBridge, type ComposerMentionControls, type InsertComposerCommand, type InsertComposerTool } from "./composer-editor-bridge";
+import type { ComposerCommand } from "../../lib/composer-tool-editor";
 import { ComposerActionGlyph } from "./composer-action-glyph";
 import { LongPasteAttachmentPlugin } from "./long-paste-attachment";
 import { AssistantParts } from "./assistant-parts";
+import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
 import { MessagePair } from "./elements/message-pair";
 import { DaySeparatorMarker } from "./elements/day-separator";
 import { ErrorState } from "./elements/error-state";
@@ -21,6 +23,7 @@ import { ModelPicker } from "./model-picker";
 import { RunOptionsPopover } from "./run-options-popover";
 import { EllipsisDots, ShimmerLabel } from "./elements/surfaces";
 import { ConversationMapAui } from "./elements/conversation-map.aui";
+import { ContextCompactionMarker } from "./context-compaction-marker";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
 import "./thread-viewport.css";
 import "./composer-queue.css";
@@ -72,6 +75,9 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const workspacesLoaded = useStore((state) => state.workspacesLoaded);
   const messagesLoadingSessionId = useStore((state) => state.messagesLoadingSessionId);
   const threadMessages = useAuiState((state) => state.thread.messages);
+  const compactions = useStore((state) => state.compactions);
+  const compactionStatus = useStore((state) => state.currentSessionId ? state.compactionStatuses[state.currentSessionId] : undefined);
+  const autoCompactionStatus = useStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
   const [today, setToday] = useState(() => new Date());
   useEffect(() => {
     const nextMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
@@ -80,6 +86,25 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   }, [today]);
   const pairedUserIdByAssistant = useMemo(() => pairMessageIds(threadMessages), [threadMessages]);
   const pairedUserIds = useMemo(() => new Set(pairedUserIdByAssistant.values()), [pairedUserIdByAssistant]);
+  const compactionMarkersByMessage = useMemo(() => {
+    const visibleAnchorByUser = new Map([...pairedUserIdByAssistant].map(([assistantId, userId]) => [userId, assistantId]));
+    const visibleMessageIds = new Set(threadMessages.map((message) => message.id));
+    type Marker = { id: string; status: "running" | "completed" | "interrupted"; source: "manual" | "automatic"; startedAt: number };
+    const after = new Map<string, Marker[]>();
+    const between = new Map<string, Marker[]>();
+    for (const marker of [
+      ...compactions.map((item) => ({ id: item.id, throughMessageId: item.throughMessageId, startedAt: item.createdAt, status: item.status, source: item.source })),
+      ...(compactionStatus ? [{ id: compactionStatus.requestId, throughMessageId: compactionStatus.throughMessageId, startedAt: compactionStatus.startedAt, status: "running" as const, source: "manual" as const }] : []),
+      ...(autoCompactionStatus ? [{ id: autoCompactionStatus.id, throughMessageId: autoCompactionStatus.throughMessageId, startedAt: autoCompactionStatus.startedAt, status: "running" as const, source: "automatic" as const }] : []),
+    ]) {
+      const pairedAssistantId = visibleAnchorByUser.get(marker.throughMessageId);
+      const anchorId = pairedAssistantId ?? marker.throughMessageId;
+      if (!visibleMessageIds.has(anchorId)) continue;
+      const target = pairedAssistantId ? between : after;
+      target.set(anchorId, [...(target.get(anchorId) ?? []), marker]);
+    }
+    return { after, between };
+  }, [compactions, compactionStatus, autoCompactionStatus, pairedUserIdByAssistant, threadMessages]);
   const latestAssistantId = useMemo(
     () => [...threadMessages].reverse().find((message) => message.role === "assistant")?.id,
     [threadMessages],
@@ -139,8 +164,14 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
                       : <AssistantMessage
                         userMessageId={pairedUserIdByAssistant.get(message.id)}
                         showLatestExtras={message.id === latestAssistantId}
+                        betweenContent={compactionMarkersByMessage.between.get(message.id)?.map((marker) => (
+                          <ContextCompactionMarker key={marker.id} status={marker.status} source={marker.source} startedAt={marker.startedAt} />
+                        ))}
                       />}
                     {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto q-thread-content" />}
+                    {compactionMarkersByMessage.after.get(message.id)?.map((marker) => (
+                      <ContextCompactionMarker key={marker.id} status={marker.status} source={marker.source} startedAt={marker.startedAt} />
+                    ))}
                   </div>
                 );
               }}
@@ -235,12 +266,15 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const { t } = useLocale();
   const sessionId = useStore((state) => state.currentSessionId);
   const compactSession = useStore((state) => state.compactSession);
-  const compactionStatus = useStore((state) => state.compactionStatus);
+  const compacting = useStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
   const editingQueueItem = useStore((state) => state.editingQueueItem);
   const insertToolRef = useRef<InsertComposerTool | null>(null);
-  const toggleMentionRef = useRef<ToggleComposerMention | null>(null);
+  const insertCommandRef = useRef<InsertComposerCommand | null>(null);
+  const mentionControlsRef = useRef<ComposerMentionControls | null>(null);
   const closeMentionRef = useRef<(() => void) | null>(null);
+  const mentionWasOpen = useRef(false);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [slashOpen, setSlashOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const onNativeFiles = useCallback(async (files: globalThis.File[]) => {
     await Promise.all(files.map(async (file) => {
@@ -253,6 +287,8 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   }, [aui]);
   useNativeFileDrop(shellRef, onNativeFiles);
   const onEditorReady = useCallback((insert: InsertComposerTool | null) => { insertToolRef.current = insert; }, []);
+  const onCommandReady = useCallback((insert: InsertComposerCommand | null) => { insertCommandRef.current = insert; }, []);
+  const onCommandSelect = useCallback((command: ComposerCommand) => { insertCommandRef.current?.(command); }, []);
   const onToolSelect = useCallback((tool: ComposerTool) => {
     if (tool.id === "attachment") {
       if (hasTauriBridge()) void pickNativeAttachmentFiles().then(onNativeFiles).catch((error) => {
@@ -265,22 +301,20 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   }, [compactSession, onNativeFiles]);
   const onMentionStateChange = useCallback((open: boolean, close: () => void) => {
     closeMentionRef.current = close;
+    if (mentionWasOpen.current && !open) mentionControlsRef.current?.cancel();
+    mentionWasOpen.current = open;
     setMentionOpen(open);
   }, []);
-  const onMentionToggleReady = useCallback((toggle: ToggleComposerMention | null) => { toggleMentionRef.current = toggle; }, []);
+  const onMentionToggleReady = useCallback((controls: ComposerMentionControls | null) => { mentionControlsRef.current = controls; }, []);
   const toggleMention = useCallback(() => {
-    if (mentionOpen) closeMentionRef.current?.();
-    else toggleMentionRef.current?.();
+    if (mentionOpen) {
+      if (!mentionControlsRef.current?.cancel()) closeMentionRef.current?.();
+    } else mentionControlsRef.current?.open();
   }, [mentionOpen]);
 
   return (
     <>
     <GoalStatusBar />
-    {compactionStatus && compactionStatus.sessionId === sessionId && (
-      <div role="status" aria-live="polite" className="q-composer-content mx-auto mb-2 text-xs text-muted-foreground">
-        {t(compactionStatus.phase === "running" ? "composer.compacting" : "composer.compacted")}
-      </div>
-    )}
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <div className="q-composer-rail">
         <div className="q-composer-queue" role="list" aria-label={t("chat.queueLabel")}>
@@ -342,11 +376,11 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
           <ComposerAttachments />
           <ComposerAddAttachment hidden />
           <LexicalComposerInput autoFocus submitMode="none" placeholder={placeholder} className={composerInputClass} directiveChip={ComposerToolChip}>
-            <ComposerEditorBridge onReady={onEditorReady} onMentionToggleReady={onMentionToggleReady} />
+            <ComposerEditorBridge onReady={onEditorReady} onCommandReady={onCommandReady} onMentionToggleReady={onMentionToggleReady} />
             <LongPasteAttachmentPlugin />
-            <ComposerQueueEnterPlugin menuOpen={mentionOpen} />
+            <ComposerQueueEnterPlugin menuOpen={mentionOpen || slashOpen} compacting={compacting} />
           </LexicalComposerInput>
-          <ComposerTriggers onToolSelect={onToolSelect} onMentionStateChange={onMentionStateChange} />
+          <ComposerTriggers onToolSelect={onToolSelect} onCommandSelect={onCommandSelect} onMentionStateChange={onMentionStateChange} onSlashStateChange={setSlashOpen} />
           <ComposerAction mentionOpen={mentionOpen} onToggleMention={toggleMention} />
         </div>
       </ComposerPrimitive.AttachmentDropzone>
@@ -375,6 +409,7 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
   const { t } = useLocale();
   const isRunning = useAuiState((state) => state.thread.isRunning);
   const showSend = useAuiState((state) => !state.thread.isRunning || (state.thread.capabilities.queue && state.composer.canSend));
+  const compacting = useStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
   const sendLabel = t(isRunning ? "chat.queueSend" : "chat.sendMessage");
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
@@ -413,6 +448,7 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
                 className="aui-composer-send absolute inset-0"
                 aria-label={sendLabel}
                 title={sendLabel}
+                disabled={compacting}
               >
                 <span className="sr-only">{sendLabel}</span>
               </Button>
@@ -546,8 +582,11 @@ const PairUserActions: FC = () => {
   );
 };
 
-const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean }> = ({ userMessageId, showLatestExtras }) => {
+const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; betweenContent?: ReactNode }> = ({ userMessageId, showLatestExtras, betweenContent }) => {
   const { t } = useLocale();
+  const messageId = useAuiState((state) => state.message.id);
+  const runId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
+  const runIds = useMemo(() => runId ? [runId] : [], [runId]);
   return (
       <MessagePair
         userMessage=""
@@ -575,9 +614,11 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean }
             components={{ Message: PairUserActions }}
           />
         ) : undefined}
+        betweenContent={betweenContent}
         assistantContent={
           <MessagePrimitive.Root className="q-message-root q-message-assistant relative flex w-full flex-col">
             <AssistantParts hideSubagentCalls showSubagentCapsule />
+            <GeneratedMediaArtifacts runIds={runIds} />
             <MessageSourcesView />
             <AssistantMemoryChips visible={showLatestExtras} />
             <AgentPreparation />

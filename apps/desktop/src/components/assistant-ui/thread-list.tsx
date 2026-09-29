@@ -7,7 +7,13 @@ import {
   ThreadListPrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { MoreHorizontalIcon, PencilIcon, PinIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { AnimatedSidebarIcon } from "../ui/AnimatedSidebarIcon";
+import { CodexIcon } from "../ui/CodexIcon";
+import moreIcon from "../../assets/codex-icons/ellipsis-horizontal-light-16.svg";
+import pinIcon from "../../assets/codex-icons/pin-light-16.svg";
+import pinOffIcon from "../../assets/codex-icons/pin-slash-light-16.svg";
+import pencilIcon from "../../assets/codex-icons/pencil-light-16.svg";
+import trashIcon from "../../assets/codex-icons/trash-light-16.svg";
 import { Fragment, forwardRef, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type FC } from "react";
 import { useStore } from "../../store";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
@@ -100,12 +106,12 @@ export const ThreadListNew = forwardRef<HTMLButtonElement, ComponentPropsWithout
           ref={ref}
           variant="ghost"
           data-slot="aui_thread-list-new"
-          className={cn("hover:bg-muted text-foreground/95 hover:text-foreground data-active:bg-muted h-10 justify-start gap-2.5 rounded-md px-2.5", className)}
+          className={cn("group hover:bg-muted text-foreground/95 hover:text-foreground data-active:bg-muted h-10 justify-start gap-2.5 rounded-md px-2.5", className)}
           {...props}
         >
           {children ?? (
             <>
-              <PlusIcon data-slot="aui_thread-list-new-icon" className="size-4 shrink-0" />
+              <AnimatedSidebarIcon kind="new-chat" />
               <span data-slot="aui_thread-list-new-label" className={cn("whitespace-nowrap", labelClassName)}>{t("sidebar.newChat")}</span>
             </>
           )}
@@ -186,7 +192,7 @@ const ThreadListItemMore: FC<{ isRunning: boolean; onRename: () => void; onDelet
             data-slot="aui_thread-list-item-more"
             className="data-[state=open]:bg-accent size-6 shrink-0 p-0 focus-visible:ring-0"
           >
-            <MoreHorizontalIcon className="size-3.5" />
+            <CodexIcon src={moreIcon} className="size-3.5" />
             <span className="sr-only">{t("sidebar.chatOptions")}</span>
           </Button>
         </ThreadListItemMorePrimitive.Trigger>
@@ -203,15 +209,15 @@ const ThreadListItemMore: FC<{ isRunning: boolean; onRename: () => void; onDelet
             onSelect={() => togglePriority(id)}
             className="q-sidebar-menu-item"
           >
-            <PinIcon className="size-4" />
+            <CodexIcon src={priority ? pinOffIcon : pinIcon} className="size-4" />
             <span>{t(priority ? "sidebar.unpin" : "sidebar.pin")}</span>
           </ThreadListItemMorePrimitive.Item>
           <ThreadListItemMorePrimitive.Item data-slot="aui_thread-list-item-more-item" onSelect={onRename} className="q-sidebar-menu-item">
-            <PencilIcon className="size-4" />
+            <CodexIcon src={pencilIcon} className="size-4" />
             <span>{t("sidebar.rename")}</span>
           </ThreadListItemMorePrimitive.Item>
           <ThreadListItemMorePrimitive.Item data-slot="aui_thread-list-item-more-item" onSelect={onDelete} className="q-sidebar-menu-item q-sidebar-menu-item-danger">
-            <TrashIcon className="size-4" />
+            <CodexIcon src={trashIcon} className="size-4" />
             <span>{t("common.delete")}</span>
           </ThreadListItemMorePrimitive.Item>
         </ThreadListItemMorePrimitive.Content>

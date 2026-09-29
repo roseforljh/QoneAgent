@@ -52,13 +52,13 @@ export const AssistantContext: FC<{ visible: boolean }> = ({ visible }) => {
   const running = useStore((state) => state.running);
   const loadingSessionId = useStore((state) => state.messagesLoadingSessionId);
   const latestMessageId = useStore((state) => state.messages.at(-1)?.id);
-  const compactionPhase = useStore((state) => state.compactionStatus?.phase);
+  const compacting = useStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
   const contextUsage = useStore((state) => state.contextUsage);
   const refreshContextUsage = useStore((state) => state.refreshContextUsage);
 
   useEffect(() => {
-    if (visible && connected && sessionId && selectedModelId && !running && compactionPhase !== "running" && loadingSessionId !== sessionId) refreshContextUsage();
-  }, [visible, connected, sessionId, selectedModelId, selectedModel?.updatedAt, running, loadingSessionId, latestMessageId, compactionPhase, refreshContextUsage]);
+    if (visible && connected && sessionId && selectedModelId && !running && !compacting && loadingSessionId !== sessionId) refreshContextUsage();
+  }, [visible, connected, sessionId, selectedModelId, selectedModel?.updatedAt, running, loadingSessionId, latestMessageId, compacting, refreshContextUsage]);
 
   if (!visible) return null;
   return <ComposerContext

@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { DropdownMenu } from "radix-ui";
-import { BotMessageSquareIcon, FolderTreeIcon, GitBranchIcon, GlobeIcon, ListTodoIcon, MoreHorizontalIcon, PencilIcon, PinIcon, PinOffIcon, PlugIcon, SquareTerminalIcon, TrashIcon, WandSparklesIcon } from "lucide-react";
+import { BotMessageSquareIcon, FolderTreeIcon, GlobeIcon, ListTodoIcon, PencilIcon, PinIcon, PinOffIcon, PlugIcon, TrashIcon, WandSparklesIcon } from "lucide-react";
+import { CodexIcon } from "../ui/CodexIcon";
+import moreIcon from "../../assets/codex-icons/ellipsis-horizontal-light-20.svg";
+import terminalIcon from "../../assets/codex-icons/terminal-light-20.svg";
+import branchIcon from "../../assets/codex-icons/branch-light-20.svg";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { useSidebarPreferences } from "../../lib/sidebar-preferences";
@@ -82,7 +86,7 @@ export function ThreadHeader({ dockView }: { dockView?: string }) {
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button type="button" className="q-thread-header-action" aria-label={t("dock.more")}>
-              <MoreHorizontalIcon className="size-[18px]" />
+              <CodexIcon src={moreIcon} className="size-[18px]" />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
@@ -114,7 +118,7 @@ export function ThreadHeader({ dockView }: { dockView?: string }) {
           aria-pressed={dockView === "terminal"}
           className="q-thread-header-action"
         >
-          <SquareTerminalIcon className="size-[18px]" />
+          <CodexIcon src={terminalIcon} className="size-[18px]" />
         </TooltipIconButton>
         <TooltipIconButton
           tooltip={t("dock.git")}
@@ -122,7 +126,7 @@ export function ThreadHeader({ dockView }: { dockView?: string }) {
           aria-pressed={dockView === "git"}
           className="q-thread-header-action"
         >
-          <GitBranchIcon className="size-[18px]" />
+          <CodexIcon src={branchIcon} className="size-[18px]" />
         </TooltipIconButton>
       </div>
     </header>

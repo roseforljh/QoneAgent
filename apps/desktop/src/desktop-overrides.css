@@ -471,7 +471,76 @@ body {
   .q-reveal { transition: none; }
 }
 
-.q-sidebar-search-trigger { margin-inline-start: auto; }
+.q-sidebar-search-trigger {
+  margin-inline-start: auto;
+  color: var(--muted-foreground);
+}
+.q-sidebar-search-trigger:is(:hover, :focus-visible) {
+  color: var(--foreground);
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .q-sidebar-search-trigger [data-slot="q-sidebar-search-motion"] {
+    opacity: 0;
+  }
+  .q-sidebar-search-trigger:is(:hover, :focus-visible) [data-slot="q-sidebar-search-static"] {
+    animation: q-sidebar-search-static-hide 1ms linear 300ms both;
+  }
+  .q-sidebar-search-trigger:is(:hover, :focus-visible) [data-slot="q-sidebar-search-motion"] {
+    animation: q-sidebar-search-motion-show 1ms linear 300ms both;
+  }
+  .q-sidebar-search-trigger:is(:hover, :focus-visible) .q-sidebar-search-lens {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: q-sidebar-search-lens 333ms cubic-bezier(.22, .8, .24, 1) 300ms both;
+  }
+  .q-sidebar-search-trigger:focus-visible [data-slot="q-sidebar-search-static"],
+  .q-sidebar-search-trigger:focus-visible [data-slot="q-sidebar-search-motion"],
+  .q-sidebar-search-trigger:focus-visible .q-sidebar-search-lens {
+    animation-delay: 0ms;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-sidebar-search-trigger [data-slot="q-sidebar-search-motion"] { display: none; }
+}
+@keyframes q-sidebar-search-static-hide {
+  to { opacity: 0; }
+}
+@keyframes q-sidebar-search-motion-show {
+  to { opacity: 1; }
+}
+@keyframes q-sidebar-search-lens {
+  0% { transform: scaleX(1); }
+  50% { transform: scaleX(.01); }
+  100% { transform: scaleX(1); }
+}
+.q-sidebar [data-slot="q-sidebar-animated-icon"] {
+  opacity: .75;
+  transform-origin: center;
+  transition: opacity 140ms ease, transform 140ms cubic-bezier(.2, .7, .2, 1);
+}
+.q-sidebar :is([data-slot="aui_thread-list-new"], [data-slot="q-sidebar-app-link"]):is(:hover, :focus-visible) [data-slot="q-sidebar-animated-icon"] {
+  opacity: 1;
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .q-sidebar [data-slot="aui_thread-list-new"]:is(:hover, :focus-visible) [data-slot="q-sidebar-animated-icon"] {
+    animation: q-sidebar-new-chat-hover 620ms cubic-bezier(.22, .8, .24, 1) both;
+  }
+  .q-sidebar [data-slot="q-sidebar-app-link"]:is(:hover, :focus-visible) [data-slot="q-sidebar-animated-icon"] {
+    animation: q-sidebar-plugins-hover 560ms cubic-bezier(.22, .8, .24, 1) both;
+  }
+}
+@keyframes q-sidebar-new-chat-hover {
+  0%, 100% { transform: rotate(0deg) translate(0, 0) scale(1); }
+  28% { transform: rotate(-7deg) translate(-.25px, .25px) scale(1.04); }
+  58% { transform: rotate(5deg) translate(.35px, -.2px) scale(1.08); }
+  78% { transform: rotate(-2deg) translate(-.1px, .1px) scale(1.03); }
+}
+@keyframes q-sidebar-plugins-hover {
+  0%, 100% { transform: rotate(0deg) translate(0, 0) scale(1); }
+  25% { transform: rotate(-8deg) translate(-.25px, .2px) scale(1.03); }
+  55% { transform: rotate(7deg) translate(.3px, -.2px) scale(1.07); }
+  78% { transform: rotate(-3deg) translate(-.1px, .1px) scale(1.02); }
+}
 .q-chat-search-dialog {
   width: min(620px, calc(100vw - 32px));
   max-width: none;

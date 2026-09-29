@@ -81,6 +81,14 @@
 }
 
 .q-thread-header-actions .q-thread-header-action > svg { width: 18px; height: 18px; }
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .q-thread-header-actions .q-thread-header-action > [data-slot="codex-icon"] {
+    transition: transform 160ms ease-out;
+  }
+  .q-thread-header-actions .q-thread-header-action:is(:hover, :focus-visible) > [data-slot="codex-icon"] {
+    transform: translateY(-1px) scale(1.08);
+  }
+}
 
 .q-thread-header-actions .q-thread-header-action:disabled {
   cursor: default;

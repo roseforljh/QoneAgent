@@ -19,6 +19,7 @@ export interface MessagePairProps extends Omit<
   userAttachmentContent?: ReactNode;
   userActions?: ReactNode;
   userContentIsSurface?: boolean;
+  betweenContent?: ReactNode;
   assistantContent?: ReactNode;
   actions?: ReactNode;
   showUser?: boolean;
@@ -34,6 +35,7 @@ export function MessagePair({
   userAttachmentContent,
   userActions,
   userContentIsSurface = false,
+  betweenContent,
   assistantContent,
   actions,
   showUser = true,
@@ -70,6 +72,7 @@ export function MessagePair({
           )}
         </div>
       )}
+      {betweenContent}
       <div className="group/message flex flex-col items-start">
         {assistantContent ?? (
           <p className="min-h-[4.25rem] text-sm leading-relaxed">

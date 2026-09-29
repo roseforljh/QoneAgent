@@ -34,6 +34,10 @@
 .q-model-picker-list-head { display: flex; min-height: 29px; align-items: center; justify-content: space-between; padding: 0 9px; color: var(--muted-foreground); font-size: 13px; font-weight: var(--q-ui-weight); line-height: 18px; }
 .q-model-picker-list-head > button, .q-model-picker-search button { display: grid; width: 23px; height: 23px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
 .q-model-picker-list-head button:hover { background: var(--q-hover); color: var(--foreground); }
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .q-model-picker-list-head > button > [data-slot="codex-icon"] { transition: transform 180ms cubic-bezier(.2, .7, .2, 1); }
+  .q-model-picker-list-head > button:is(:hover, :focus-visible) > [data-slot="codex-icon"] { transform: translate(1px, -1px) rotate(-10deg) scale(1.1); }
+}
 .q-model-picker-search { display: flex; width: 100%; align-items: center; gap: 6px; }
 .q-model-picker-search input, .q-model-picker-search input:focus-visible { min-width: 0; flex: 1; padding: 0; border: 0 !important; outline: 0 !important; box-shadow: none !important; background: transparent; color: var(--foreground); font: inherit; }
 .q-model-picker-list { max-height: min(316px, calc(100dvh - 120px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }

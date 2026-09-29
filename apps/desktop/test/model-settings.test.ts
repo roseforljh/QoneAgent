@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { defaultModelSettings, mergeFetchedModel, modelSettingsFromMetadata, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings } from "../src/lib/model-settings";
+import { defaultModelSettings, mergeFetchedModel, modelSettingsFromMetadata, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withProviderInputDefaults, withResolvedModelSettings } from "../src/lib/model-settings";
 
 test("provider model list metadata becomes saved model settings", () => {
   const [listed] = parseModelsResponse({ data: [{ id: "gemini-demo", context_length: 64_000, modalities: { input: ["text", "image"], output: ["text"] } }] });
@@ -18,8 +18,20 @@ test("refresh keeps explicit user settings while retaining the enriched metadata
   expect(merged.settings).toMatchObject({ maxContext: 32_000, maxOutput: 8_000, output: ["audio"], modelMetadata: metadata });
 });
 
+test("provider refresh preserves speech voice and explicit video API format", () => {
+  const existing = { id: "media", label: "media", settings: { ...defaultModelSettings(), speechGeneration: { voice: "Kore" }, videoGeneration: { format: "openai-videos" as const, baseUrl: "https://gateway.example/v1beta/openai" } } };
+  const fetched = { id: "media", label: "media", settings: modelSettingsFromMetadata({ output: ["audio", "video"] }) };
+  const merged = mergeFetchedModel(existing, fetched);
+  expect(merged.settings?.speechGeneration).toEqual({ voice: "Kore" });
+  expect(merged.settings?.videoGeneration).toEqual({ format: "openai-videos", baseUrl: "https://gateway.example/v1beta/openai" });
+});
+
 test("unknown models do not claim unverified media capabilities", () => {
   expect(defaultModelSettings()).toMatchObject({ thinking: "none", input: ["text"], output: ["text"] });
+  expect(defaultModelSettings("google").input).toEqual(["text", "image", "video", "audio"]);
+  expect(withProviderInputDefaults({ ...defaultModelSettings(), input: ["text"] }, "google").input).toEqual(["text", "image", "video", "audio"]);
+  expect(withProviderInputDefaults({ ...defaultModelSettings(), input: ["text"], metadataOverrides: { input: true } }, "google").input).toEqual(["text"]);
+  expect(withProviderInputDefaults({ ...defaultModelSettings(), input: ["text"], autoMetadata: false }, "google").input).toEqual(["text"]);
   expect(modelSettingsFromMetadata({ reasoning: true }).thinking).toBe("none");
   expect(modelSettingsFromMetadata({ reasoning: false }).thinking).toBe("none");
 });

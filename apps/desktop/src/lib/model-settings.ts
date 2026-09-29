@@ -47,6 +47,8 @@ export type ModelSettings = {
   metadataOverrides?: Partial<Record<"maxOutput" | "maxContext" | "thinking" | "input" | "output", boolean>>;
   imageApiFormat?: ImageApiFormat;
   imageGeneration?: ImageGenerationSettings;
+  speechGeneration?: { voice?: string };
+  videoGeneration?: { format?: "openai-videos" | "google-veo"; baseUrl?: string };
 };
 
 export type ProviderModel = { id: string; label: string; settings?: ModelSettings };
@@ -66,8 +68,14 @@ export function normalizeThinkingLevel(value: unknown, apiType?: ProviderApiType
   return normalizeThinkingLevelForApi(value, apiType);
 }
 
-export function defaultModelSettings(): ModelSettings {
-  return { maxOutput: 8192, maxContext: 128000, thinking: "none", input: ["text"], output: ["text"], autoMetadata: true, metadataSources: { maxOutput: "default", maxContext: "default", thinking: "default", input: "default", output: "default" } };
+export function defaultModelSettings(apiType?: ProviderApiType): ModelSettings {
+  return { maxOutput: 8192, maxContext: 128000, thinking: "none", input: apiType === "google" ? [...capabilities] : ["text"], output: ["text"], autoMetadata: true, metadataSources: { maxOutput: "default", maxContext: "default", thinking: "default", input: "default", output: "default" } };
+}
+
+export function withProviderInputDefaults(settings: ModelSettings, apiType: ProviderApiType): ModelSettings {
+  return apiType === "google" && settings.autoMetadata !== false && settings.metadataOverrides?.input !== true
+    ? { ...settings, input: [...capabilities] }
+    : settings;
 }
 
 export function modelSettingsFromMetadata(metadata?: ModelMetadata, sources?: ModelMetadataSources): ModelSettings {
@@ -103,7 +111,7 @@ export function parseModelsResponse(data: unknown): ProviderModel[] {
 }
 
 export function withResolvedModelSettings(model: ProviderModel, metadata: ModelMetadata, sources: ModelMetadataSources): ProviderModel {
-  return { ...model, settings: { ...modelSettingsFromMetadata(metadata, sources), ...(model.settings?.apiType ? { apiType: model.settings.apiType } : {}), ...(model.settings?.imageApiFormat ? { imageApiFormat: model.settings.imageApiFormat } : {}), ...(model.settings?.imageGeneration ? { imageGeneration: model.settings.imageGeneration } : {}), modelMetadata: model.settings?.modelMetadata } };
+  return { ...model, settings: { ...modelSettingsFromMetadata(metadata, sources), ...(model.settings?.apiType ? { apiType: model.settings.apiType } : {}), ...(model.settings?.imageApiFormat ? { imageApiFormat: model.settings.imageApiFormat } : {}), ...(model.settings?.imageGeneration ? { imageGeneration: model.settings.imageGeneration } : {}), ...(model.settings?.speechGeneration ? { speechGeneration: model.settings.speechGeneration } : {}), ...(model.settings?.videoGeneration ? { videoGeneration: model.settings.videoGeneration } : {}), modelMetadata: model.settings?.modelMetadata } };
 }
 
 function sameValue<T>(left: T, right: T): boolean {
@@ -138,6 +146,8 @@ export function mergeFetchedModel(existing: ProviderModel, fetched: ProviderMode
       output: refreshedValue(current.output, hasFetched("output") ? incoming.output : undefined, cached?.output?.length ? cachedSettings?.output : undefined, defaults.output, overrides.output),
       ...(current.imageApiFormat ? { imageApiFormat: current.imageApiFormat } : {}),
       ...(current.imageGeneration ? { imageGeneration: current.imageGeneration } : {}),
+      ...(current.speechGeneration ? { speechGeneration: current.speechGeneration } : {}),
+      ...(current.videoGeneration ? { videoGeneration: current.videoGeneration } : {}),
       modelMetadata: metadata,
       metadataSources: incoming.metadataSources,
       autoMetadata: true,

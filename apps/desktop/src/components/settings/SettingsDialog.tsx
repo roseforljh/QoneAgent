@@ -1,9 +1,9 @@
-import { detectImageModel, isBuiltinSubagentId, modelListUrl, modelNamesEqual, supportsExtendedImageQuality, type ImageApiFormat, type ProviderApiType } from "@qone/protocol";
+import { detectImageModel, isBuiltinSubagentId, modelListUrl, modelNamesEqual, REMOVED_BUILTIN_SUBAGENT_IDS, supportsExtendedImageQuality, type ImageApiFormat, type ProviderApiType } from "@qone/protocol";
 import { NumberField } from "@base-ui/react/number-field";
 import { Switch } from "@base-ui/react/switch";
 import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
 import { fetchProviderModelCatalog } from "../../lib/provider-model-catalog";
-import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withResolvedModelSettings, type Capability, type ImageGenerationSettings, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
+import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withProviderInputDefaults, withResolvedModelSettings, type Capability, type ImageGenerationSettings, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
@@ -471,13 +471,13 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
       }
       if (sequence !== fetchSequence.current) return;
       const resolvedById = new Map(result.map((model) => [model.id, model]));
-      setFetchedModels(result);
+      setFetchedModels(result.map((model) => ({ ...model, settings: withProviderInputDefaults(model.settings ?? defaultModelSettings(apiType), apiType) })));
       setModels((current) => {
         return current.map((model) => {
           const resolved = resolvedById.get(model.id);
           if (!resolved) return model;
           const merged = mergeFetchedModel(model, resolved);
-          return merged;
+          return { ...merged, settings: withProviderInputDefaults(merged.settings!, apiType) };
         });
       });
       setSyncOpen(true);
@@ -557,7 +557,7 @@ function ConfigurationSection() {
     setProfiles(next);
     window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, profile.id);
     saveProviderProfiles(next);
-    for (const model of profile.models) send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${profile.id}/${model.id}`, provider: profile.id, model: model.id, config: { apiType: profile.apiType, baseUrl: profile.baseUrl, ...(model.settings ?? defaultModelSettings()) }, enabled: true, updatedAt: Date.now() } });
+    for (const model of profile.models) send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${profile.id}/${model.id}`, provider: profile.id, model: model.id, config: { apiType: profile.apiType, baseUrl: profile.baseUrl, ...withProviderInputDefaults(model.settings ?? defaultModelSettings(profile.apiType), model.settings?.apiType ?? profile.apiType) }, enabled: true, updatedAt: Date.now() } });
   };
   const deleteProfile = (profile: ProviderProfile) => {
     const nextProfiles = profiles.filter((item) => item.id !== profile.id);
@@ -619,14 +619,14 @@ function ModelSourceSummary({ settings, isImageModel }: { settings: ModelSetting
 function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted }: { open: boolean; provider: ProviderProfile; model?: ProviderModel; onClose: () => void; onSaved: (model: ProviderModel, previousId?: string) => void; onDeleted: (model: ProviderModel) => void }) {
   const { t } = useLocale();
   const [name, setName] = useState(model?.id ?? "");
-  const [settings, setSettings] = useState<ModelSettings>(model?.settings ?? defaultModelSettings());
+  const [settings, setSettings] = useState<ModelSettings>(() => withProviderInputDefaults(model?.settings ?? defaultModelSettings(provider.apiType), model?.settings?.apiType ?? provider.apiType));
   const [fetching, setFetching] = useState(false);
   const [status, setStatus] = useState<LocalizedMessage | null>(null);
   const fetchSequence = useRef(0);
   useEffect(() => {
     fetchSequence.current++;
     if (!open) return;
-    setName(model?.id ?? ""); setSettings(model?.settings ?? defaultModelSettings()); setStatus(null); setFetching(false);
+    setName(model?.id ?? ""); setSettings(withProviderInputDefaults(model?.settings ?? defaultModelSettings(provider.apiType), model?.settings?.apiType ?? provider.apiType)); setStatus(null); setFetching(false);
   }, [open, model?.id]);
   if (!open) return null;
   const apiType = settings.apiType ?? provider.apiType;
@@ -637,6 +637,11 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
   const visibleOutput = isImageModel && !settings.metadataOverrides?.output && (settings.metadataSources?.output ?? "default") === "default" ? ["image"] as Capability[] : settings.output;
   const thinkingOptions = thinkingLevelOptionsForApi(apiType);
   const selectedThinking = normalizeThinkingLevel(settings.thinking, apiType);
+  const videoApiFormat = settings.videoGeneration?.format ?? (apiType === "google" ? "google-veo" : "");
+  const videoApiOptions = [
+    ...(apiType === "google" ? [{ value: "google-veo", label: t("model.videoApiGoogleNative") }] : [{ value: "", label: t("model.videoApiUnconfigured") }]),
+    { value: "openai-videos", label: "Sora-compatible /videos" },
+  ];
   const update = <K extends keyof ModelSettings>(key: K, value: ModelSettings[K]) => setSettings((current) => ({
     ...current,
     [key]: value,
@@ -644,11 +649,13 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
       ? { ...(current.metadataOverrides ?? {}), [key]: true }
       : current.metadataOverrides,
   }));
-  const updateApiType = (value: ProviderApiType) => setSettings((current) => ({
+  const updateApiType = (value: ProviderApiType) => setSettings((current) => withProviderInputDefaults({
     ...current,
     apiType: value,
     thinking: normalizeThinkingLevel(current.thinking, value),
-  }));
+    videoGeneration: current.videoGeneration?.format === "google-veo" && value !== "google"
+      ? { ...current.videoGeneration, format: undefined } : current.videoGeneration,
+  }, value));
   const toggleCapability = (kind: "input" | "output", value: Capability) => {
     const selected = kind === "input" ? visibleInput : visibleOutput;
     update(kind, selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
@@ -679,7 +686,7 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
       ];
       const found = (field: ModelSettingField) => sources[field] !== undefined && sources[field] !== "default";
       if (!fetchedFields.some(([field]) => found(field))) { setStatus({ key: "model.noConfiguration" }); return; }
-      setSettings((current) => ({ ...mergeFetchedModel({ id: modelId, label: modelId, settings: current }, resolved).settings!, apiType }));
+      setSettings((current) => withProviderInputDefaults({ ...mergeFetchedModel({ id: modelId, label: modelId, settings: current }, resolved).settings!, apiType }, apiType));
       const missing = fetchedFields.filter(([field]) => !found(field) && !settings.metadataOverrides?.[field]).map(([, label]) => label);
       setStatus(missing.length ? { key: "model.configurationPartial", values: { fields: missing.join(" / ") } } : { key: "model.configurationFetched" });
     } catch (error) { if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "model.fetchConfigurationFailed", values: { error: String(error) } }); }
@@ -688,7 +695,7 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
   const save = () => {
     if (!name.trim()) return;
     const imageSettings = isImageModel ? { input: visibleInput, output: visibleOutput } : {};
-    onSaved({ id: name.trim(), label: name.trim(), settings: { ...settings, ...imageSettings, apiType, thinking: selectedThinking } }, model?.id);
+    onSaved({ id: name.trim(), label: name.trim(), settings: withProviderInputDefaults({ ...settings, ...imageSettings, apiType, thinking: selectedThinking }, apiType) }, model?.id);
     onClose();
   };
   const remove = async () => { if (model && await confirmDestructiveAction(t("model.deleteConfirm", { name: model.label }))) { onDeleted(model); onClose(); } };
@@ -729,6 +736,13 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
           <CapabilityEditor title={t("model.outputCapabilities")} values={visibleOutput} onToggle={(value) => toggleCapability("output", value)} />
         </div>
         {isImageModel && <ImageGenerationEditor format={imageApiFormat ?? "openai-image"} modelName={name} value={settings.imageGeneration} onChange={(imageGeneration) => update("imageGeneration", imageGeneration)} onFormatChange={(format) => update("imageApiFormat", format)} />}
+        {!isImageModel && visibleOutput.includes("audio") && (apiType === "openai-compatible" || apiType === "google") && <div className="settings-form-grid">
+          <label className="is-wide">{t("model.speechVoice")}<input value={settings.speechGeneration?.voice ?? ""} onChange={(event) => update("speechGeneration", { voice: event.target.value })} placeholder={t("model.speechVoicePlaceholder")} /></label>
+        </div>}
+        {!isImageModel && visibleOutput.includes("video") && <div className="settings-form-grid">
+          <label className="is-wide">{t("model.videoApiFormat")}<QoneSelect value={videoApiFormat} onChange={(value) => update("videoGeneration", { ...settings.videoGeneration, format: value === "openai-videos" || value === "google-veo" ? value : undefined })} options={videoApiOptions} ariaLabel={t("model.videoApiFormat")} /></label>
+          {videoApiFormat && <label className="is-wide">{t("model.videoApiBaseUrl")}<input value={settings.videoGeneration?.baseUrl ?? ""} onChange={(event) => update("videoGeneration", { ...settings.videoGeneration, baseUrl: event.target.value })} placeholder={t(videoApiFormat === "google-veo" ? "model.videoApiBaseUrlPlaceholderGoogle" : "model.videoApiBaseUrlPlaceholder")} /></label>}
+        </div>}
         <div className="settings-subdialog-footer">
           {model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}
           <button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button>
@@ -864,7 +878,7 @@ const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 function dedupeSubagents(profiles: SubagentProfile[]): SubagentProfile[] {
   const seen = new Set<string>();
   return profiles.filter((profile) => {
-    if (!profile || typeof profile.id !== "string" || seen.has(profile.id)) return false;
+    if (!profile || typeof profile.id !== "string" || REMOVED_BUILTIN_SUBAGENT_IDS.includes(profile.id) || seen.has(profile.id)) return false;
     seen.add(profile.id);
     return true;
   });

@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState, type CSSProperties, type FC, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AssistantModalPrimitive } from "@assistant-ui/react";
-import { CheckIcon, HandIcon, ShieldCheckIcon, ShieldIcon, SnowflakeIcon } from "lucide-react";
+import { CheckIcon, SnowflakeIcon } from "lucide-react";
 import type { RunPermissionMode } from "@qone/protocol";
 import { useLocale, type MessageKey } from "../../localization";
 import { useStore } from "../../store";
 import { PermissionGrant, type GrantScope } from "./elements/permission-grant";
 import { Dialog, DialogContent } from "../ui/dialog";
 import penguinUrl from "../../assets/qone-penguin.png";
+import handIcon from "../../assets/codex-icons/hand-light-16.svg";
+import shieldCheckIcon from "../../assets/codex-icons/shield-checkmark-light-16.svg";
+import shieldIcon from "../../assets/codex-icons/shield-light-16.svg";
+import { CodexIcon } from "../ui/CodexIcon";
 import "./run-options-popover.css";
 
 const permissionModes = [
-  { value: "ask", labelKey: "composer.permissionAsk", descriptionKey: "composer.permissionAskDescription", icon: HandIcon },
-  { value: "auto", labelKey: "composer.permissionAuto", descriptionKey: "composer.permissionAutoDescription", icon: ShieldCheckIcon },
-  { value: "full", labelKey: "composer.permissionFull", descriptionKey: "composer.permissionFullDescription", icon: ShieldIcon },
+  { value: "ask", labelKey: "composer.permissionAsk", descriptionKey: "composer.permissionAskDescription", icon: handIcon },
+  { value: "auto", labelKey: "composer.permissionAuto", descriptionKey: "composer.permissionAutoDescription", icon: shieldCheckIcon },
+  { value: "full", labelKey: "composer.permissionFull", descriptionKey: "composer.permissionFullDescription", icon: shieldIcon },
 ] as const;
 
 const SNOWFLAKE_CYCLE_MS = 6400;
@@ -193,7 +197,7 @@ export const RunOptionsPopover: FC = () => {
   const [modeBeforeGrant, setModeBeforeGrant] = useState<RunPermissionMode>("ask");
   const permissionMode = options?.permissionMode ?? defaultPermissionMode;
   const modeLabel = t(permissionModes.find((mode) => mode.value === permissionMode)?.labelKey ?? "composer.permissionAsk");
-  const ModeIcon = permissionModes.find((mode) => mode.value === permissionMode)?.icon ?? HandIcon;
+  const modeIcon = permissionModes.find((mode) => mode.value === permissionMode)?.icon ?? handIcon;
 
   const choosePermissionMode = (mode: RunPermissionMode) => {
     if (mode !== "full") {
@@ -222,7 +226,7 @@ export const RunOptionsPopover: FC = () => {
     <span className="q-reveal-zone -m-1 inline-flex p-1">
       <AssistantModalPrimitive.Trigger asChild>
         <button type="button" className="q-run-options-trigger" data-state={open ? "open" : "closed"} data-open={open} data-permission-mode={permissionMode} aria-label={`${t("composer.permissions")}：${modeLabel}`} aria-expanded={open}>
-          <ModeIcon size={15} aria-hidden="true" />
+          <CodexIcon src={modeIcon} className="size-[15px] shrink-0" />
           <span>{modeLabel}</span>
         </button>
       </AssistantModalPrimitive.Trigger>
@@ -235,9 +239,8 @@ export const RunOptionsPopover: FC = () => {
       <section className="q-run-options-section" aria-label={t("composer.permissions")}>
         <div className="q-run-options-modes">
           {permissionModes.map((mode) => {
-            const Icon = mode.icon;
             return <button key={mode.value} type="button" data-mode={mode.value} className="q-run-options-mode" aria-pressed={permissionMode === mode.value && grantScope !== "pending"} onClick={() => choosePermissionMode(mode.value as RunPermissionMode)}>
-              <Icon size={17} aria-hidden="true" />
+              <CodexIcon src={mode.icon} className="size-[17px] shrink-0" />
               <span><strong>{t(mode.labelKey)}</strong><small>{t(mode.descriptionKey)}</small></span>
               {permissionMode === mode.value && grantScope !== "pending" && <CheckIcon size={16} className="q-run-options-check" aria-hidden="true" />}
             </button>;

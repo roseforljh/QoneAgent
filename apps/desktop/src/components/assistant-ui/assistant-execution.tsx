@@ -8,6 +8,7 @@ import { formatDuration } from "../../lib/utils";
 import { useStore } from "../../store";
 import type { AssistantPartRange } from "./assistant-part-ranges";
 import { executionCollapsed, useExecutionDisclosureState } from "./execution-disclosure-state";
+import "./assistant-execution.css";
 
 interface AssistantExecutionProps {
   ranges: readonly AssistantPartRange[];
@@ -78,6 +79,7 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, finalA
       ? t("chat.executionRunning", { current: activeToolIndex + 1 })
       : t("chat.executionFinishing")
     : t("chat.executionFinishing");
+  const finishing = !executionFinished && activeToolIndex < 0;
 
   const disclosureKey = JSON.stringify([sessionId, runId, runId ? toolParts[0]?.toolCallId ?? messageId : messageId]);
   const override = useExecutionDisclosureState((state) => state.overrides[disclosureKey]);
@@ -94,7 +96,7 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, finalA
           aria-label={t("chat.executionToggle")}
           className="group/execution-trigger text-foreground/55 hover:text-foreground/90 flex w-full items-center gap-1.5 rounded-md py-1 text-start text-[13.5px] tabular-nums transition-colors outline-none"
         >
-          <span>{executionLabel}</span>
+          <span>{executionLabel}{finishing && <span className="q-execution-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>}</span>
           <ChevronRightIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 group-data-[state=open]/execution-trigger:rotate-90 motion-reduce:transition-none" />
         </CollapsibleTrigger>
         <div className="pt-1"><div className="border-t border-border/60" /></div>

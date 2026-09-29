@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, RotateCcwIcon, SearchIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { CodexIcon } from "../ui/CodexIcon";
+import searchIcon from "../../assets/codex-icons/magnifying-glass-lg-light-16.svg";
 import { Popover } from "radix-ui";
 import type { ProviderApiType } from "@qone/protocol";
 import { cn } from "../../lib/utils";
@@ -170,10 +172,10 @@ export const ModelPicker: FC = () => {
         <div ref={advancedRef} className="q-model-picker-advanced" aria-hidden={view !== "advanced"} inert={view !== "advanced"} data-active={view === "advanced"}>
           <div className="q-model-picker-list-head">
             {searchOpen ? <label className="q-model-picker-search">
-              <SearchIcon size={14} aria-hidden="true" />
+              <CodexIcon src={searchIcon} className="size-3.5" />
               <input ref={searchRef} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("chat.searchModels")} aria-label={t("chat.searchModels")} />
               <button type="button" aria-label={t("chat.clearModelSearch")} onClick={() => { setSearch(""); setSearchOpen(false); }}><XIcon size={14} /></button>
-            </label> : <><span>{t("chat.selectModel")}</span><button type="button" aria-label={t("chat.searchModels")} onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchRef.current?.focus()); }}><SearchIcon size={15} /></button></>}
+            </label> : <><span>{t("chat.selectModel")}</span><button type="button" aria-label={t("chat.searchModels")} onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchRef.current?.focus()); }}><CodexIcon src={searchIcon} className="size-[15px]" /></button></>}
           </div>
           <div className="q-model-picker-list" role="listbox" aria-label={t("chat.modelsInProvider", { provider: providerSnapshot?.name || t("chat.modelProvider") })}>
             {visibleModels.map((model) => <button type="button" role="option" aria-selected={model.id === activeModel?.id} className={cn("q-model-picker-option", model.id === activeModel?.id && "is-selected")} key={model.id} onClick={() => chooseModel(model.id)}>

@@ -1,5 +1,12 @@
 import { DropdownMenu } from "radix-ui";
-import { ChevronRightIcon, MoreHorizontalIcon, PencilIcon, PinIcon, PinOffIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
+import { CodexIcon } from "../ui/CodexIcon";
+import moreIcon from "../../assets/codex-icons/ellipsis-horizontal-light-16.svg";
+import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
+import pinIcon from "../../assets/codex-icons/pin-light-16.svg";
+import pinOffIcon from "../../assets/codex-icons/pin-slash-light-16.svg";
+import pencilIcon from "../../assets/codex-icons/pencil-light-16.svg";
+import trashIcon from "../../assets/codex-icons/trash-light-16.svg";
 import { useStore } from "../../store";
 import { useLocale, type MessageKey } from "../../localization";
 import { useSidebarPreferences, type ChatSort, type SidebarLayout } from "../../lib/sidebar-preferences";
@@ -23,7 +30,7 @@ export function SidebarMenu({ trigger = "plus", onOpenChange }: { trigger?: "plu
     <DropdownMenu.Root onOpenChange={onOpenChange}>
       <DropdownMenu.Trigger asChild>
         <button type="button" className="q-sidebar-menu-trigger text-muted-foreground hover:text-foreground grid size-6 cursor-pointer place-items-center rounded-md" aria-label={t("sidebar.options")}>
-          {trigger === "plus" ? <PlusIcon className="size-3.5" /> : <MoreHorizontalIcon className="size-3.5" />}
+          <CodexIcon src={trigger === "plus" ? plusIcon : moreIcon} className="size-3.5" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
@@ -86,22 +93,22 @@ export function SidebarEntityMenu({
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button type="button" className={cn("q-sidebar-menu-trigger text-muted-foreground hover:text-foreground grid size-6 place-items-center rounded-md", triggerClassName)} aria-label={ariaLabel}>
-          <MoreHorizontalIcon className="size-3.5" />
+          <CodexIcon src={moreIcon} className="size-3.5" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content className="q-sidebar-menu" side={side} align={align} sideOffset={6} collisionPadding={8}>
           <DropdownMenu.Item className="q-sidebar-menu-item" onSelect={onTogglePinned}>
-            {pinned ? <PinOffIcon className="size-4" /> : <PinIcon className="size-4" />}
+            <CodexIcon src={pinned ? pinOffIcon : pinIcon} className="size-4" />
             <span>{t(pinned ? "sidebar.unpin" : "sidebar.pin")}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Item className="q-sidebar-menu-item" onSelect={onRename}>
-            <PencilIcon className="size-4" />
+            <CodexIcon src={pencilIcon} className="size-4" />
             <span>{t("sidebar.rename")}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-border/60 dark:bg-white/10" />
           <DropdownMenu.Item className="q-sidebar-menu-item q-sidebar-menu-item-danger" onSelect={onDelete}>
-            <TrashIcon className="size-4" />
+            <CodexIcon src={trashIcon} className="size-4" />
             <span>{t("common.delete")}</span>
           </DropdownMenu.Item>
         </DropdownMenu.Content>

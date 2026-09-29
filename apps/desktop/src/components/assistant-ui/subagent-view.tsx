@@ -10,6 +10,7 @@ import { subagentImageGenerations } from "../../lib/subagent-image-generations";
 import { SubagentLogo } from "../settings/subagent-logo";
 import { AssistantParts } from "./assistant-parts";
 import { ImageGeneration } from "./elements/image-generation";
+import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
 import "./subagent-view.css";
 
 const active = (status: SubagentRunInfo["status"]) => ["created", "running", "waiting_approval", "paused"].includes(status);
@@ -38,6 +39,19 @@ export const SubagentCapsule: FC = () => {
     () => runId ? allSubagents.filter((item) => item.parentRunId === runId) : [],
     [allSubagents, runId],
   );
+  const childRunIds = useMemo(() => {
+    if (!runId) return [];
+    const descendants = new Set([runId]);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const item of allSubagents) if (descendants.has(item.parentRunId) && !descendants.has(item.id)) {
+        descendants.add(item.id);
+        changed = true;
+      }
+    }
+    descendants.delete(runId);
+    return [...descendants];
+  }, [allSubagents, runId]);
   const imageGenerations = useMemo(() => subagentImageGenerations(subagents, runId, models), [subagents, runId, models]);
   const running = subagents.filter((item) => active(item.status));
   const queued = subagents.filter((item) => item.status === "created");
@@ -75,6 +89,7 @@ export const SubagentCapsule: FC = () => {
       error={generation.missingImage ? t("subagent.noImageGenerated") : generation.error}
       onRegenerate={!generation.generating ? () => useStore.getState().send({ type: "subagent.control", requestId: crypto.randomUUID(), runId: generation.id, action: "retry" }) : undefined}
     />)}
+    <GeneratedMediaArtifacts runIds={childRunIds} />
   </div>;
 };
 
@@ -127,6 +142,7 @@ export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
       <h2 className="q-subagent-detail-title">{selected.title}</h2>
       <div className="q-subagent-detail-meta"><span>{statusLabel(selected, locale)}</span><span>·</span><span>{model(selected.model)}</span><span>·</span><span>{duration(selected)}</span></div>
       <SubagentTranscript item={selected} />
+      <GeneratedMediaArtifacts runIds={[selected.id]} />
       {selected.error && <p className="q-subagent-error">{selected.error}</p>}
     </div> : <div className="q-subagent-panel-scroll">
       {subagents.length === 0 ? <p className="q-subagent-empty">{locale === "zh-CN" ? "暂无子代理" : "No subagents yet"}</p> : subagents.map((item) => <button

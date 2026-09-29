@@ -1,10 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { mediaMimeTypeFromName } from "@qone/protocol";
 import type { EventCallback } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import { hasTauriBridge, useStore } from "../store";
 import { useCallback, useEffect, type RefObject } from "react";
-import { createNativeAttachmentFile, INLINE_ATTACHMENT_LIMIT_BYTES, isGeminiMedia } from "./native-attachment-file";
+import { createNativeAttachmentFile, INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo } from "./native-attachment-file";
 
 type NativeFilePayload = { name: string; data: string; path?: string; size: number };
 type NativeFileInfo = { name: string; path: string; size: number };
@@ -19,19 +20,6 @@ const MIME_TYPES: Record<string, string> = {
   jpg: "image/jpeg",
   json: "application/json",
   md: "text/markdown",
-  mp3: "audio/mpeg",
-  m4a: "audio/mp4",
-  ogg: "audio/ogg",
-  flac: "audio/flac",
-  wav: "audio/wav",
-  aac: "audio/aac",
-  mp4: "video/mp4",
-  m4v: "video/x-m4v",
-  mov: "video/quicktime",
-  mkv: "video/x-matroska",
-  avi: "video/x-msvideo",
-  mpeg: "video/mpeg",
-  webm: "video/webm",
   pdf: "application/pdf",
   png: "image/png",
   ppt: "application/vnd.ms-powerpoint",
@@ -45,7 +33,7 @@ const MIME_TYPES: Record<string, string> = {
 
 const getMimeType = (name: string) => {
   const extension = name.split(".").pop()?.toLowerCase();
-  return extension ? MIME_TYPES[extension] ?? "application/octet-stream" : "application/octet-stream";
+  return mediaMimeTypeFromName(name) ?? (extension ? MIME_TYPES[extension] : undefined) ?? "application/octet-stream";
 };
 
 const decodeBase64 = (value: string) => {
@@ -68,7 +56,7 @@ const isInside = (element: HTMLElement | null, position: DropPosition) => {
 function fileFromPayload(payload: NativeFilePayload): File {
   const mimeType = getMimeType(payload.name);
   if (payload.path) {
-    if (!isGeminiMedia(mimeType)) throw new Error(`大型附件仅支持 Gemini 音频或视频：${payload.name}`);
+    if (!isAudioVideo(mimeType)) throw new Error(`本地路径仅支持音视频附件：${payload.name}`);
     return createNativeAttachmentFile(payload.name, mimeType, payload.path, payload.size);
   }
   return new File([decodeBase64(payload.data)], payload.name, { type: mimeType });
@@ -76,9 +64,13 @@ function fileFromPayload(payload: NativeFilePayload): File {
 
 export async function pickNativeAttachmentFiles(): Promise<File[]> {
   const files = await invoke<NativeFileInfo[]>("pick_attachment_files");
-  return Promise.all(files.map(async (file) => file.size > INLINE_ATTACHMENT_LIMIT_BYTES
-    ? fileFromPayload({ ...file, data: "" })
-    : fileFromPayload(await invoke<NativeFilePayload>("read_dropped_file", { path: file.path }))));
+  return Promise.all(files.map(async (file) => {
+    const mimeType = getMimeType(file.name);
+    if (isAudioVideo(mimeType)) return createNativeAttachmentFile(file.name, mimeType, file.path, file.size);
+    return fileFromPayload(file.size > INLINE_ATTACHMENT_LIMIT_BYTES
+      ? { ...file, data: "" }
+      : await invoke<NativeFilePayload>("read_dropped_file", { path: file.path }));
+  }));
 }
 
 export function useNativeFileDrop(
@@ -88,7 +80,8 @@ export function useNativeFileDrop(
   const addFiles = useCallback(async (paths: string[]) => {
     const files = await Promise.all(paths.map(async (path) => {
       try {
-        const payload = await invoke<NativeFilePayload>("read_dropped_file", { path });
+        const mimeType = getMimeType(path);
+        const payload = await invoke<NativeFilePayload>("read_dropped_file", { path, metadataOnly: isAudioVideo(mimeType) });
         return fileFromPayload(payload);
       } catch (error) {
         useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });

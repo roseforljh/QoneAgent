@@ -5,7 +5,7 @@ import type {
   PendingAttachment,
 } from "@assistant-ui/react";
 import type { NativeAttachmentFile } from "./native-attachment-file";
-import { INLINE_ATTACHMENT_LIMIT_BYTES } from "./native-attachment-file";
+import { INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo } from "./native-attachment-file";
 
 const createAttachmentId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -52,8 +52,8 @@ export class AnyFileAttachmentAdapter implements AttachmentAdapter {
   public async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
     const mimeType = attachment.contentType || "application/octet-stream";
     const nativeFile = attachment.file as NativeAttachmentFile;
-    if (!nativeFile.qoneLocalPath && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) {
-      throw new Error("超过 50 MB 的音视频请通过附件菜单选择本地文件");
+    if (!nativeFile.qoneLocalPath && !isAudioVideo(mimeType) && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) {
+      throw new Error("超过 50 MB 的文件请通过附件菜单选择本地文件");
     }
     return {
       ...attachment,

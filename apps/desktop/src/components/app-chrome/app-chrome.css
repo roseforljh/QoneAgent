@@ -5,19 +5,27 @@
 .q-app-titlebar-navigation button { display: grid; width: 30px; height: 28px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--q-sidebar-foreground); cursor: pointer; }
 .q-app-titlebar-navigation button:hover:not(:disabled), .q-app-menubar button:hover, .q-app-menubar button[data-state="open"] { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
 .q-app-titlebar-navigation button:disabled { opacity: .35; cursor: default; }
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .q-app-titlebar-navigation button > [data-slot="codex-icon"] { transition: transform 160ms ease-out; }
+  .q-app-titlebar-navigation button:first-child:is(:hover, :focus-visible):not(:disabled) > [data-slot="codex-icon"] { transform: translateX(-2px); }
+  .q-app-titlebar-navigation button:last-child:is(:hover, :focus-visible):not(:disabled) > [data-slot="codex-icon"] { transform: translateX(2px); }
+}
 .q-app-menubar { display: flex; height: 100%; flex: none; align-items: center; gap: 2px; border: 0; background: transparent; -webkit-app-region: no-drag; }
 .q-app-menubar button { height: 22px; padding: 4px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--q-app-menu-foreground); font: normal 400 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; cursor: pointer; }
 .q-app-titlebar-drag { height: 100%; min-width: 0; flex: 1; }
-.q-app-dock-toggle { display: grid; width: 46px; height: 36px; flex: none; place-items: center; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--q-sidebar-foreground); cursor: pointer; -webkit-app-region: no-drag; }
+.q-app-dock-toggle { display: grid; width: 46px; height: 36px; flex: none; place-items: center; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--q-sidebar-foreground); cursor: default; -webkit-app-region: no-drag; }
 .q-app-dock-toggle:hover { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
 .q-app-window-controls { -webkit-app-region: no-drag; }
-.q-app-window-controls button { display: grid; width: 46px; height: 36px; place-items: center; border: 0; background: transparent; color: var(--foreground); cursor: pointer; }
+.q-app-window-controls button { display: grid; width: 46px; height: 36px; place-items: center; border: 0; background: transparent; color: var(--foreground); cursor: default; }
 .q-app-window-controls button:hover { background: color-mix(in oklab, var(--foreground) 10%, transparent); }
 .q-app-window-controls .q-app-window-close:hover { background: #c42b1c; color: #fff; }
 .q-app-window-controls button:focus-visible, .q-app-dock-toggle:focus-visible { outline: none; box-shadow: none; }
 .q-app-window-glyph { position: relative; display: block; width: 10px; height: 10px; color: currentColor; }
 .q-app-window-glyph-minimize { width: 10px; height: 1.5px; background: currentColor; }
 .q-app-window-glyph-maximize { border: 1.5px solid currentColor; }
+.q-app-window-glyph-restore::before, .q-app-window-glyph-restore::after { position: absolute; box-sizing: border-box; width: 8px; height: 8px; content: ""; }
+.q-app-window-glyph-restore::before { top: 0; left: 2px; border-top: 1.5px solid currentColor; border-right: 1.5px solid currentColor; }
+.q-app-window-glyph-restore::after { top: 2px; left: 0; border: 1.5px solid currentColor; }
 .q-app-window-glyph-close::before, .q-app-window-glyph-close::after { position: absolute; top: 4px; left: -1px; width: 12px; height: 1.5px; background: currentColor; content: ""; }
 .q-app-window-glyph-close::before { transform: rotate(45deg); }
 .q-app-window-glyph-close::after { transform: rotate(-45deg); }

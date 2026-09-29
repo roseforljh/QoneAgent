@@ -59,7 +59,7 @@ test("streaming child text does not re-render the parent until images change", (
 
 test("image subagents show a parent placeholder through generation and remove it after success", () => {
   const image = { ...child("image", "run", 1, []), profileId: "builtin:imageGeneration", status: "created" as const };
-  const text = { ...child("search", "run", 2, []), profileId: "builtin:webSearch", status: "running" as const };
+  const text = { ...child("researcher", "run", 2, []), profileId: "researcher", status: "running" as const };
   const unrelated = { ...image, id: "other", parentRunId: "another-run" };
   const models = [{ id: "custom-image", provider: "custom", model: "my-model", config: { output: ["image"] }, enabled: true, updatedAt: 0 }];
   const custom = { ...child("custom", "run", 3, []), profileId: "user-profile", model: "custom-image", status: "running" as const };

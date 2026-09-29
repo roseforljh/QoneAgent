@@ -1,6 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ArrowLeft, ArrowRight, PanelRight } from "lucide-react";
+import { PanelRight } from "lucide-react";
+import { CodexIcon } from "../ui/CodexIcon";
+import backIcon from "../../assets/codex-icons/arrow-left-lg-light-16.svg";
+import forwardIcon from "../../assets/codex-icons/arrow-right-lg-light-16.svg";
 import { Dialog, Menubar } from "radix-ui";
 import { useLocale } from "../../localization";
 import { useStore } from "../../store";
@@ -20,12 +23,35 @@ export function AppChrome({ path, children }: AppChromeProps) {
   const newSession = useStore((state) => state.newSession);
   const chooseWorkspace = useStore((state) => state.chooseWorkspace);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const native = isNative();
   const windowHandle = native ? getCurrentWindow() : null;
   const close = () => { void windowHandle?.close(); };
   const minimize = () => { void windowHandle?.minimize(); };
-  const maximize = () => { void windowHandle?.toggleMaximize(); };
+  const maximize = () => {
+    if (!windowHandle) return;
+    void windowHandle.toggleMaximize().then(() => windowHandle.isMaximized()).then(setMaximized);
+  };
   const label = (chinese: string, english: string) => zh ? chinese : english;
+
+  useEffect(() => {
+    if (!native) return;
+    const currentWindow = getCurrentWindow();
+    let active = true;
+    const syncMaximized = () => {
+      void currentWindow.isMaximized().then((value) => {
+        if (active) setMaximized(value);
+      });
+    };
+    syncMaximized();
+    const resized = currentWindow.onResized(syncMaximized);
+    const moved = currentWindow.onMoved(syncMaximized);
+    return () => {
+      active = false;
+      void resized.then((unlisten) => unlisten());
+      void moved.then((unlisten) => unlisten());
+    };
+  }, [native]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -48,8 +74,8 @@ export function AppChrome({ path, children }: AppChromeProps) {
         if (event.target === event.currentTarget) maximize();
       }}>
         <div className="q-app-titlebar-navigation">
-          <button type="button" aria-label={label("后退", "Back")} title={label("后退", "Back")} disabled={!navigation.canGoBack} onClick={navigation.goBack}><ArrowLeft size={17} /></button>
-          <button type="button" aria-label={label("前进", "Forward")} title={label("前进", "Forward")} disabled={!navigation.canGoForward} onClick={navigation.goForward}><ArrowRight size={17} /></button>
+          <button type="button" aria-label={label("后退", "Back")} title={label("后退", "Back")} disabled={!navigation.canGoBack} onClick={navigation.goBack}><CodexIcon src={backIcon} className="size-[17px]" /></button>
+          <button type="button" aria-label={label("前进", "Forward")} title={label("前进", "Forward")} disabled={!navigation.canGoForward} onClick={navigation.goForward}><CodexIcon src={forwardIcon} className="size-[17px]" /></button>
         </div>
         <Menubar.Root className="q-app-menubar" aria-label={label("应用菜单", "Application menu")}>
           <Menubar.Menu>
@@ -91,7 +117,7 @@ export function AppChrome({ path, children }: AppChromeProps) {
         <button type="button" className="q-app-dock-toggle" aria-label={label("展开或收起右侧面板", "Expand or collapse right panel")} title={label("展开或收起右侧面板", "Expand or collapse right panel")} onClick={() => emit("qone-toggle-dock-panel")}><PanelRight size={16} /></button>
         {native && <div className="q-app-window-controls">
           <button type="button" aria-label={label("最小化", "Minimize")} onClick={minimize}><span aria-hidden="true" className="q-app-window-glyph q-app-window-glyph-minimize" /></button>
-          <button type="button" aria-label={label("最大化或还原", "Maximize or restore")} onClick={maximize}><span aria-hidden="true" className="q-app-window-glyph q-app-window-glyph-maximize" /></button>
+          <button type="button" aria-label={maximized ? label("还原窗口", "Restore window") : label("最大化", "Maximize")} onClick={maximize}><span aria-hidden="true" className={`q-app-window-glyph q-app-window-glyph-${maximized ? "restore" : "maximize"}`} /></button>
           <button type="button" className="q-app-window-close" aria-label={label("关闭", "Close")} onClick={close}><span aria-hidden="true" className="q-app-window-glyph q-app-window-glyph-close" /></button>
         </div>}
       </header>

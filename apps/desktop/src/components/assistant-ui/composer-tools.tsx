@@ -1,33 +1,39 @@
-import { type FC, type ReactNode } from "react";
+import { type ComponentType, type FC, type ReactNode } from "react";
 import { useAuiState } from "@assistant-ui/react";
-import { FileTextIcon, Globe2Icon, ListCollapseIcon, PlusIcon, TargetIcon, type LucideIcon } from "lucide-react";
+import { PlugZapIcon, SparklesIcon } from "lucide-react";
 import { useLocale } from "../../localization";
+import { useStore } from "../../store";
 import type { ComposerToolId } from "../../lib/composer-tool-editor";
+import { CodexDocumentTextIcon, CodexPlusIcon, CodexTargetIcon, CodexTextSelectIcon } from "../ui/CodexIcon";
 import "./composer-tools.css";
 
-export type ComposerTool = { id: ComposerToolId | "compact"; label: string; description: string; icon: LucideIcon };
+type ToolIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+export type ComposerTool = { id: ComposerToolId | "compact"; label: string; description: string; icon: ToolIcon };
 
 export function getComposerTools(t: ReturnType<typeof useLocale>["t"]): ComposerTool[] {
   return [
-    { id: "attachment", label: t("composer.toolAttachment"), description: t("composer.toolAttachmentDescription"), icon: FileTextIcon },
-    { id: "web-search", label: t("composer.toolWebSearch"), description: t("composer.toolWebSearchDescription"), icon: Globe2Icon },
-    { id: "compact", label: t("composer.toolCompact"), description: t("composer.toolCompactDescription"), icon: ListCollapseIcon },
-    { id: "goal", label: t("composer.toolGoal"), description: t("composer.toolGoalDescription"), icon: TargetIcon },
+    { id: "attachment", label: t("composer.toolAttachment"), description: t("composer.toolAttachmentDescription"), icon: CodexDocumentTextIcon },
+    { id: "compact", label: t("composer.toolCompact"), description: t("composer.toolCompactDescription"), icon: CodexTextSelectIcon },
+    { id: "goal", label: t("composer.toolGoal"), description: t("composer.toolGoalDescription"), icon: CodexTargetIcon },
   ];
 }
 
-export type ComposerSlashEntry = {
+type ComposerSlashBase = {
   id: string;
   label: string;
   description: string;
-  kind: "skill" | "mcp";
-  icon: LucideIcon;
+  icon: ToolIcon;
 };
+export type ComposerSlashEntry = ComposerSlashBase & (
+  | { kind: "skill"; name: string }
+  | { kind: "mcp"; serverId: string }
+  | { kind: "action"; tool: ComposerTool }
+);
 
 export const ComposerSlashRow: FC<{ entry: ComposerSlashEntry }> = ({ entry }) => {
   const Icon = entry.icon;
   return <>
-    <Icon data-tool-id={entry.kind} className="q-composer-tool-icon size-4 shrink-0" aria-hidden="true" />
+    <Icon data-tool-id={entry.kind} className="q-composer-tool-icon size-4 shrink-0" aria-hidden={true} />
     <span className="q-composer-tool-copy">
       <strong>{entry.label}</strong>
       <small>{entry.description}</small>
@@ -35,16 +41,28 @@ export const ComposerSlashRow: FC<{ entry: ComposerSlashEntry }> = ({ entry }) =
   </>;
 };
 
-export const ComposerToolChip: FC<{ directiveId: string; directiveType: string; label: string }> = ({ directiveId, directiveType, label }) => (
-  <span className="q-composer-tool-chip" data-tool-id={directiveId.replace("qone-", "")} data-directive-type={directiveType} aria-label={label}>
-    {label}
-  </span>
-);
+export const ComposerToolChip: FC<{ directiveId: string; directiveType: string; label: string }> = ({ directiveId, directiveType, label }) => {
+  const mcpId = directiveType === "qone-command" && directiveId.startsWith("mcp:") ? directiveId.slice(4) : undefined;
+  let serverId: string | undefined;
+  if (mcpId) {
+    try { serverId = decodeURIComponent(mcpId); }
+    catch { serverId = mcpId; }
+  }
+  const serverName = useStore((state) => serverId ? state.mcpServers.find((server) => server.id === serverId)?.name : undefined);
+  const isSkill = directiveType === "qone-command" && directiveId.startsWith("skill:");
+  const kind = serverId ? "mcp" : isSkill ? "skill" : directiveId.startsWith("qone-") ? directiveId.slice(5) : directiveId;
+  const displayLabel = serverId ? serverName ?? serverId : isSkill ? directiveId.slice(6) : label;
+  const Icon = serverId ? PlugZapIcon : isSkill ? SparklesIcon : undefined;
+  return <span className="q-composer-tool-chip" data-tool-id={kind} data-directive-type={directiveType} aria-label={displayLabel} title={displayLabel}>
+    {Icon && <Icon className="q-composer-tool-chip-icon" aria-hidden="true" />}
+    <span className="q-composer-tool-chip-label">{displayLabel}</span>
+  </span>;
+};
 
 export const ComposerToolRow: FC<{ tool: ComposerTool; children?: ReactNode }> = ({ tool, children }) => {
   const Icon = tool.icon;
   return <>
-    <Icon data-tool-id={tool.id} className="q-composer-tool-icon size-4 shrink-0" aria-hidden="true" />
+    <Icon data-tool-id={tool.id} className="q-composer-tool-icon size-4 shrink-0" aria-hidden={true} />
     <span className="q-composer-tool-copy">
       <strong>{tool.label}</strong>
       <small>{tool.description}</small>
@@ -68,7 +86,7 @@ export const ComposerToolsPopover: FC<{ open: boolean; onToggle: () => void }> =
       title={t("composer.openTools")}
       onClick={onToggle}
     >
-      <PlusIcon className="size-4" />
+      <CodexPlusIcon className="size-4" />
     </button>
   );
 };

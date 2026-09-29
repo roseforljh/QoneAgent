@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRangeSelection, createEditor } from "lexical";
 import { DirectiveNode } from "@assistant-ui/react-lexical";
-import { $deleteComposerToolBackward, $insertComposerTool, type ComposerToolId } from "../src/lib/composer-tool-editor";
+import { $deleteComposerToolBackward, $insertComposerCommand, $insertComposerTool, type ComposerToolId } from "../src/lib/composer-tool-editor";
 
 function setup(text = "", offset = text.length) {
   const editor = createEditor({ namespace: "tools-test", nodes: [DirectiveNode], onError: (error) => { throw error; } });
@@ -78,4 +78,36 @@ test("replacing a selected range preserves the remaining suffix", () => {
     $insertComposerTool({ id: "skills", label: "Skills" });
   }, { discrete: true });
   editor.getEditorState().read(() => expect($getRoot().getTextContent()).toBe(":qone-tool[Skills]{name=qone-skills} xyz"));
+});
+
+test("skill command starts the prompt without replacing an existing draft", () => {
+  for (const draft of ["", "review this file", "first line\nsecond line"]) {
+    const editor = setup(draft);
+    editor.update(() => $insertComposerCommand({ kind: "skill", name: "example-skill" }), { discrete: true });
+    editor.getEditorState().read(() => expect($getRoot().getTextContent()).toBe(`:qone-command[skill:example-skill] ${draft}`));
+  }
+});
+
+test("MCP command starts the prompt without replacing an existing draft", () => {
+  const editor = setup("analyze this", 7);
+  editor.update(() => $insertComposerCommand({ kind: "mcp", serverId: "server id" }), { discrete: true });
+  editor.getEditorState().read(() => expect($getRoot().getTextContent()).toBe(":qone-command[mcp:server%20id] analyze this"));
+  const restored = setup();
+  restored.setEditorState(restored.parseEditorState(editor.getEditorState().toJSON()));
+  restored.getEditorState().read(() => expect($getRoot().getTextContent()).toBe(":qone-command[mcp:server%20id] analyze this"));
+});
+
+test("selecting another command replaces the first chip and its spacer", () => {
+  const editor = setup("analyze this");
+  editor.update(() => $insertComposerCommand({ kind: "skill", name: "example-skill" }), { discrete: true });
+  editor.update(() => $insertComposerCommand({ kind: "mcp", serverId: "server id" }), { discrete: true });
+  editor.getEditorState().read(() => expect($getRoot().getTextContent()).toBe(":qone-command[mcp:server%20id] analyze this"));
+});
+
+test("backspace removes a command chip as one unit", () => {
+  const editor = setup();
+  editor.update(() => $insertComposerCommand({ kind: "skill", name: "example-skill" }), { discrete: true });
+  editor.update(() => expect($deleteComposerToolBackward()).toBe(true), { discrete: true });
+  editor.update(() => expect($deleteComposerToolBackward()).toBe(true), { discrete: true });
+  editor.getEditorState().read(() => expect($getRoot().getTextContent()).toBe(""));
 });

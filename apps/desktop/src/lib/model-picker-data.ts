@@ -1,5 +1,5 @@
 import { detectImageModel, type ImageApiFormat, type ModelConfigInfo, type ModelMetadata, type ProviderApiType } from "@qone/protocol";
-import { defaultModelSettings, type ModelSettings, type ProviderModel, type ProviderProfile } from "./model-settings";
+import { defaultModelSettings, withProviderInputDefaults, type ModelSettings, type ProviderModel, type ProviderProfile } from "./model-settings";
 
 export const PROVIDERS_STORAGE_KEY = "qone-model-providers";
 export const ACTIVE_PROVIDER_STORAGE_KEY = "qone-active-provider";
@@ -35,15 +35,15 @@ export function providerProfilesFromModelConfigs(configs: ModelConfigInfo[]): Pr
     });
     const manualInput = recordBoolean(saved.metadataOverrides, "input");
     const manualOutput = recordBoolean(saved.metadataOverrides, "output");
-    const settings = {
-      ...defaultModelSettings(),
+    const settings = withProviderInputDefaults({
+      ...defaultModelSettings(current.apiType),
       ...saved,
       ...(detectedImage.isImageModel ? {
         ...(manualInput ? {} : { input: ["text", "image"] }),
         ...(manualOutput ? {} : { output: ["image"] }),
       } : {}),
       apiType: providerApiTypes.has(saved.apiType as ProviderApiType) ? saved.apiType as ProviderApiType : current.apiType,
-    } as ModelSettings;
+    } as ModelSettings, providerApiTypes.has(saved.apiType as ProviderApiType) ? saved.apiType as ProviderApiType : current.apiType);
     current.models.push({
       id: config.model,
       label: typeof saved.displayName === "string" && saved.displayName ? saved.displayName : config.model,

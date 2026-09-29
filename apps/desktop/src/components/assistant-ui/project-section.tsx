@@ -3,7 +3,11 @@ import { useStore } from "../../store";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import type { SessionInfo, WorkspaceInfo } from "@qone/protocol";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDownIcon, FolderIcon, FolderOpenIcon, PlusIcon, PinIcon } from "lucide-react";
+import { ChevronDownIcon, PinIcon } from "lucide-react";
+import { CodexIcon } from "../ui/CodexIcon";
+import folderIcon from "../../assets/codex-icons/folder-light-16.svg";
+import folderOpenIcon from "../../assets/codex-icons/folder-open-light-16.svg";
+import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import { useEffect, useRef, useState, type FC, type ReactNode } from "react";
 import { SidebarEntityMenu, SidebarMenu } from "./sidebar-menu";
 import { useLocale } from "../../localization";
@@ -104,7 +108,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
           <button type="button" className={cn(rowButtonClass, "q-sidebar-project-trigger")}
             onClick={() => { selectWorkspace(workspace.id); setExpanded((value) => !value); }}
             title={workspace.path} aria-expanded={expanded}>
-            {expanded ? <FolderOpenIcon className="text-muted-foreground size-4 shrink-0" /> : <FolderIcon className="text-muted-foreground size-4 shrink-0" />}
+            <CodexIcon src={expanded ? folderOpenIcon : folderIcon} className="text-muted-foreground size-4 shrink-0" />
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
             {pinned && <PinIcon className="q-sidebar-project-pin text-muted-foreground size-3 shrink-0" />}
           </button>
@@ -117,7 +121,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
             <button type="button" className="text-muted-foreground hover:text-foreground grid size-6 shrink-0 place-items-center rounded-md"
               aria-label={t("sidebar.newChatInProject", { name: workspace.name })} title={t("sidebar.newChat")}
               onClick={() => { setExpanded(true); newSessionInWorkspace(workspace.id); }}>
-              <PlusIcon className="size-3.5" />
+              <CodexIcon src={plusIcon} className="size-3.5" />
             </button>
           </div>
         )}
@@ -201,7 +205,7 @@ export const ProjectSection: FC = () => {
             <SidebarMenu trigger="more" onOpenChange={setSectionMenuOpen} />
             <button type="button" className="text-muted-foreground hover:text-foreground grid size-6 place-items-center rounded-md"
               aria-label={t("chat.importProject")} title={t("chat.importProject")} onClick={chooseWorkspace}>
-              <PlusIcon className="size-3.5" />
+              <CodexIcon src={plusIcon} className="size-3.5" />
             </button>
           </div>
         } />

@@ -17,6 +17,7 @@ import { assistantMessageContent } from "./lib/assistant-message-parts";
 import { isImageModel } from "./lib/image-model-config";
 import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
+import { expandComposerCommand } from "./lib/composer-command";
 import { createQoneMessageQueue, getQoneMessageQueue, setQoneMessageQueue } from "./lib/qone-message-queue";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
@@ -27,10 +28,14 @@ import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSke
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
 import { Link, useLocation } from "@tanstack/react-router";
 import { ApprovalCard } from "./components/tool-ui/ToolCard";
-import { ArrowLeft, Moon, PanelLeftIcon, PuzzleIcon, SearchIcon, Settings, Sun, X } from "lucide-react";
+import { ArrowLeft, Moon, Sun, X } from "lucide-react";
+import { CodexIcon } from "./components/ui/CodexIcon";
+import sidebarIcon from "./assets/codex-icons/sidebar-light-16.svg";
+import gearIcon from "./assets/codex-icons/gear-light-16.svg";
 import { cn } from "./lib/utils";
 import { ConfirmationDialogHost } from "./components/ui/ConfirmationDialog";
 import { confirmDestructiveAction } from "./lib/confirm-action";
+import { AnimatedSidebarIcon } from "./components/ui/AnimatedSidebarIcon";
 import { useLocale } from "./localization";
 import { QoneSelect } from "./components/ui/Select";
 import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-preferences";
@@ -85,9 +90,9 @@ const extractComposerPrompt = (message: AppendMessage): { text: string; goal: bo
   const raw = extractText(message);
   const directive = /:qone-tool\[[^\]\n]*\]\{name=qone-goal\}\s*/giu;
   const legacy = /^\s*@goal\b\s*/iu;
-  if (directive.test(raw)) return { text: raw.replace(directive, "").trim(), goal: true };
-  if (legacy.test(raw)) return { text: raw.replace(legacy, "").trim(), goal: true };
-  return { text: raw, goal: false };
+  if (directive.test(raw)) return { text: expandComposerCommand(raw.replace(directive, "").trim()), goal: true };
+  if (legacy.test(raw)) return { text: expandComposerCommand(raw.replace(legacy, "").trim()), goal: true };
+  return { text: expandComposerCommand(raw), goal: false };
 };
 
 function useQoneRuntime(pendingRun: { current: { text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null }) {
@@ -96,6 +101,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const streaming = useStore((s) => s.streaming);
   const streamingParts = useStore((s) => s.streamingParts);
   const running = useStore((s) => s.running);
+  const compacting = useStore((s) => Boolean(s.currentSessionId && s.compactionStatuses[s.currentSessionId]));
   const activeRunId = useStore((s) => s.activeRunId);
   const queueItems = useStore((s) => s.queueItems);
   const queueLoadedSessionId = useStore((s) => s.queueLoadedSessionId);
@@ -116,7 +122,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
 
   const queue = useMemo(() => currentSessionId ? createQoneMessageQueue({
     sessionId: currentSessionId,
-    isRunning: () => useStore.getState().running,
+    isRunning: () => useStore.getState().running || Boolean(useStore.getState().compactionStatuses[currentSessionId]),
     editPending: (message) => {
       const state = useStore.getState();
       if (!state.editingQueueItem || state.currentSessionId !== currentSessionId) return false;
@@ -131,7 +137,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     steer: (message, queueItemId, attachments) => {
       const state = useStore.getState();
       if (!state.activeRunId) return Promise.resolve(false);
-      return steerAgent({ sessionId: currentSessionId, runId: state.activeRunId, queueItemId, message: extractText(message), attachments });
+      return steerAgent({ sessionId: currentSessionId, runId: state.activeRunId, queueItemId, message: extractComposerPrompt(message).text, attachments });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
     onError: (message) => useStore.setState({ lastError: message }),
@@ -159,13 +165,13 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const wasRunning = useRef(false);
   useEffect(() => {
     if (!queue) return;
-    if (running && !wasRunning.current) queue.controller.notifyBusy();
-    if (!running && wasRunning.current) {
+    if ((running || compacting) && !wasRunning.current) queue.controller.notifyBusy();
+    if (!running && !compacting && wasRunning.current) {
       queue.controller.notifyIdle();
       queue.releaseIdle();
     }
-    wasRunning.current = running;
-  }, [queue, running]);
+    wasRunning.current = running || compacting;
+  }, [queue, running, compacting]);
 
   const hasStreamingAssistant = running;
   const selectedModel = modelConfigs.find((config) => config.id === selectedModelId);
@@ -356,7 +362,7 @@ function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOp
           collapsed ? "w-8 justify-center px-0" : "w-full px-2",
         )}
       >
-        <Settings className="size-3.5 shrink-0" />
+        <CodexIcon src={gearIcon} className="size-3.5 shrink-0" />
         <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", collapsed ? "max-w-0" : "max-w-24")}>设置</span>
       </button>
     </div>
@@ -430,7 +436,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
               className="size-8 shrink-0"
             >
-              <PanelLeftIcon className="size-4" />
+              <CodexIcon src={sidebarIcon} className="size-4" />
             </TooltipIconButton>
             <Logo collapsed={sidebarCollapsed} />
             <TooltipIconButton
@@ -439,16 +445,16 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               tooltip={t("sidebar.searchChats")}
               side="right"
               onClick={() => setSearchOpen(true)}
-              className="q-sidebar-search-trigger ml-auto size-8 shrink-0"
+              className="q-sidebar-search-trigger ml-auto size-8 shrink-0 p-2"
             >
-              <SearchIcon className="size-4" />
+              <AnimatedSidebarIcon kind="search" />
             </TooltipIconButton>
           </div>
           <ThreadListRoot className="relative min-h-0 w-full flex-1 gap-0 overflow-hidden">
             <div className="flex shrink-0 flex-col gap-0.5 px-2 pb-2">
               <ThreadListNew
                 className={cn(
-                  "h-[30px] overflow-hidden transition-all duration-200",
+                  "group h-[30px] overflow-hidden transition-all duration-200",
                   sidebarCollapsed ? "w-8 gap-0 px-2" : "w-full gap-2 px-2.5",
                 )}
                 labelClassName={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}
@@ -456,12 +462,13 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               <Link
                 to="/plugins"
                 aria-label="应用"
+                data-slot="q-sidebar-app-link"
                 className={cn(
-                  "hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
+                  "group hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
                   sidebarCollapsed ? "w-8 justify-center gap-0 px-2" : "w-full",
                 )}
               >
-                <PuzzleIcon className="size-4 shrink-0" />
+                <AnimatedSidebarIcon kind="plugins" />
                 <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}>应用</span>
               </Link>
             </div>

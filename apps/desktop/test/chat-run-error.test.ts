@@ -201,6 +201,106 @@ test("failed reply stays with its user message and retry replaces that turn once
   expect(useStore.getState().running).toBe(false);
 });
 
+test("stopping the first run clears a title spinner even when title generation never replies", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({
+      currentSessionId: "session-1",
+      sessions: [{ id: "session-1", title: "New session", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
+      workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }],
+      messages: [],
+      runs: [],
+      running: false,
+      activeRunId: undefined,
+      titleGeneratingSessionIds: [],
+    });
+    useStore.getState().runAgent("hello");
+    expect(useStore.getState().titleGeneratingSessionIds).toContain("session-1");
+    emit({ type: "agent.event", event: event("agent.started", { runId: "run-1" }) });
+    emit({ type: "agent.event", event: event("agent.cancelled", {}) });
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().titleGeneratingSessionIds).not.toContain("session-1");
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("a failed title request clears its spinner", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({
+      currentSessionId: "session-1",
+      sessions: [{ id: "session-1", title: "New session", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
+      workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }],
+      messages: [],
+      running: false,
+      titleGeneratingSessionIds: [],
+    });
+    useStore.getState().runAgent("hello");
+    const titleRequest = commands.filter((command) => command.type === "session.generate-title").at(-1);
+    expect(titleRequest?.type).toBe("session.generate-title");
+    if (titleRequest?.type !== "session.generate-title") return;
+    emit({ type: "error", requestId: titleRequest.requestId, message: "title unavailable" });
+    expect(useStore.getState().titleGeneratingSessionIds).not.toContain("session-1");
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("an active run snapshot fills in the run id while the optimistic UI is already running", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ currentSessionId: "session-1", running: true, activeRunId: undefined, runs: [] });
+    emit({ type: "session.runs", sessionId: "session-1", runs: [{ id: "run-1", sessionId: "session-1", status: "running", startedAt: 1 }] });
+    expect(useStore.getState().activeRunId).toBe("run-1");
+    expect(useStore.getState().running).toBe(true);
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("accepted agent run requests a run snapshot when the start event is missed", () => {
+  const previous = useStore.getState();
+  const start = commands.length;
+  try {
+    useStore.setState({
+      currentSessionId: "session-1",
+      sessions: [{ id: "session-1", title: "Test", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
+      workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }],
+      messages: [], running: false, activeRunId: undefined,
+    });
+    useStore.getState().runAgent("hello");
+    const runCommand = commands.slice(start).find((command) => command.type === "agent.run");
+    expect(runCommand?.type).toBe("agent.run");
+    if (runCommand?.type !== "agent.run") return;
+    emit({ type: "pong", requestId: runCommand.requestId });
+    expect(commands.slice(start)).toContainEqual(expect.objectContaining({ type: "session.runs", sessionId: "session-1" }));
+    emit({ type: "session.runs", sessionId: "session-1", runs: [{ id: "run-1", sessionId: "session-1", status: "running", startedAt: 1 }] });
+    expect(useStore.getState().activeRunId).toBe("run-1");
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("stop requested before run id arrives is sent once the run starts", async () => {
+  const previous = useStore.getState();
+  const start = commands.length;
+  try {
+    useStore.setState({ currentSessionId: "session-1", running: true, activeRunId: undefined, runs: [] });
+    useStore.getState().stopAgent();
+    expect(commands.slice(start)).toContainEqual(expect.objectContaining({ type: "session.runs", sessionId: "session-1" }));
+    emit({ type: "agent.event", event: event("agent.started", { runId: "run-1" }) });
+    emit({ type: "session.runs", sessionId: "session-1", runs: [{ id: "run-1", sessionId: "session-1", status: "running", startedAt: 1 }] });
+    await Promise.resolve();
+    expect(commands.slice(start).filter((command) => command.type === "agent.stop")).toEqual([
+      expect.objectContaining({ runId: "run-1" }),
+    ]);
+    emit({ type: "agent.event", event: event("agent.cancelled", {}) });
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
 test("live assistant parts and reloaded parts keep the same Pi order", async () => {
   const sessionId = "session-order";
   const runId = "run-order";
