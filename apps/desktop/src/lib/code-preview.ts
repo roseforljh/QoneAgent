@@ -59,10 +59,10 @@ export async function createCodePreviewHtml(language: string | undefined, code: 
     return htmlDocument(renderMermaidSVG(code));
   }
   if (kind === "markdown") {
-    const [{ default: Markdown }, { renderToStaticMarkup }, { default: remarkGfm }] = await Promise.all([
-      import("react-markdown"), import("react-dom/server"), import("remark-gfm"),
+    const [{ default: Markdown }, { renderToStaticMarkup }, { remarkQoneGfm }] = await Promise.all([
+      import("react-markdown"), import("react-dom/server"), import("./markdown-gfm"),
     ]);
-    const markup = renderToStaticMarkup(createElement(Markdown, { remarkPlugins: [remarkGfm], children: code }));
+    const markup = renderToStaticMarkup(createElement(Markdown, { remarkPlugins: [remarkQoneGfm], children: code }));
     return htmlDocument(markup);
   }
 

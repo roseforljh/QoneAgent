@@ -1,4 +1,9 @@
 export const zh = {
+  "chat.toolGroupOperation": "{operation} {count} 项",
+  "chat.reasoning": "思考过程",
+  "chat.reasoningActive": "正在思考",
+  "chat.preparingRequest": "准备请求",
+  "chat.waitingResponse": "等待模型响应",
   "nav.general": "通用",
   "nav.personalization": "个性化",
   "nav.configuration": "配置",

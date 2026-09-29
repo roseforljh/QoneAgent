@@ -5,7 +5,48 @@ import { executionCollapsed } from "../src/components/assistant-ui/execution-dis
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 import type { AssistantMessagePart } from "@qone/protocol";
 
-test("render input preserves Pi text/tool order and splits tool groups at message boundaries", () => {
+test("reasoning remains visible after reload and never counts as a final answer", () => {
+  const parts: AssistantMessagePart[] = [
+    { type: "reasoning", text: "分析", messageSequence: 1, contentIndex: 0, complete: true },
+    { type: "text", text: "回答", messageSequence: 1 },
+  ];
+  const live = assistantMessageContent({ content: "", parts }, [], true);
+  expect(assistantMessageContent({ content: "回答", parts: JSON.parse(JSON.stringify(parts)) }, [], false)).toEqual(live);
+  const ranges = assistantPartRanges(live as PartState[]);
+  expect(ranges).toEqual([{ type: "reasoning", index: 0 }, { type: "text", index: 1 }]);
+  expect(hasVisibleAnswer(live as PartState[], ranges.slice(0, 1))).toBe(false);
+  expect(hasVisibleAnswer(live as PartState[], ranges)).toBe(true);
+});
+
+test("reasoning settles at block end before the answer and on interrupted history", () => {
+  const part: AssistantMessagePart = { type: "reasoning", text: "分析", messageSequence: 1 };
+  expect(assistantMessageContent({ content: "", parts: [part] }, [], true)[0]).toMatchObject({ status: { type: "running" } });
+  expect(assistantMessageContent({ content: "", parts: [{ ...part, complete: true }] }, [], true)[0]).toMatchObject({ status: { type: "complete" } });
+  expect(assistantMessageContent({ content: "", parts: [part] }, [], false)[0]).toMatchObject({ status: { type: "complete" } });
+});
+
+test("reasoning before, between and after tools stays inside the execution disclosure in order", () => {
+  const parts: AssistantMessagePart[] = [
+    { type: "reasoning", text: "思考", messageSequence: 1, complete: true },
+    { type: "tool-call", toolCallId: "a", toolName: "read", args: {}, messageSequence: 1 },
+    { type: "reasoning", text: "继续", messageSequence: 2, complete: true },
+    { type: "tool-call", toolCallId: "b", toolName: "grep", args: {}, messageSequence: 2 },
+    { type: "reasoning", text: "整理", messageSequence: 3, complete: true },
+    { type: "text", text: "答案", messageSequence: 3 },
+  ];
+  const converted = assistantMessageContent({ content: "", parts }, [], false) as PartState[];
+  const sections = assistantRangeSections(assistantPartRanges(converted));
+  expect(sections.leading).toEqual([]);
+  expect(sections.persistent).toEqual([]);
+  expect(sections.activity).toEqual([
+    { type: "reasoning", index: 0 }, { type: "tools", startIndex: 1, endIndex: 2 },
+    { type: "reasoning", index: 2 }, { type: "tools", startIndex: 3, endIndex: 4 },
+    { type: "reasoning", index: 4 },
+  ]);
+  expect(sections.answer).toEqual([{ type: "text", index: 5 }]);
+});
+
+test("render input preserves order and groups contiguous tools across model message boundaries", () => {
   const parts: AssistantMessagePart[] = [
     { type: "text", text: "旁白一", messageSequence: 10 },
     { type: "tool-call", toolCallId: "a", toolName: "read", args: {}, messageSequence: 10 },
@@ -22,8 +63,7 @@ test("render input preserves Pi text/tool order and splits tool groups at messag
     { type: "text", index: 0 },
     { type: "tools", startIndex: 1, endIndex: 3 },
     { type: "text", index: 3 },
-    { type: "tools", startIndex: 4, endIndex: 5 },
-    { type: "tools", startIndex: 5, endIndex: 6 },
+    { type: "tools", startIndex: 4, endIndex: 6 },
     { type: "text", index: 6 },
   ]);
 });
@@ -134,4 +174,12 @@ test("image before activity and a presentation within activity stay outside the 
   expect(sections.persistent).toEqual([{ type: "presentation", index: 3 }]);
   expect(sections.answer).toEqual([{ type: "text", index: 5 }]);
   expect(assistantRangeSections(assistantPartRanges(parts.slice(0, 2))).answer).toHaveLength(2);
+});
+
+
+test("reasoning without tools creates an execution region before the final answer", () => {
+  const sections = assistantRangeSections([{ type: "reasoning", index: 0 }, { type: "text", index: 1 }]);
+  expect(sections.activity).toEqual([{ type: "reasoning", index: 0 }]);
+  expect(sections.answer).toEqual([{ type: "text", index: 1 }]);
+  expect(assistantRangeSections([{ type: "text", index: 0 }]).activity).toEqual([]);
 });

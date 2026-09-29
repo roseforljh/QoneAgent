@@ -1,6 +1,11 @@
 import type { Messages } from "./zh-CN";
 
 export const en: Messages = {
+  "chat.toolGroupOperation": "{operation} ×{count}",
+  "chat.reasoning": "Reasoning",
+  "chat.reasoningActive": "Thinking",
+  "chat.preparingRequest": "Preparing request",
+  "chat.waitingResponse": "Waiting for model response",
   "nav.general": "General",
   "nav.personalization": "Personalization",
   "nav.configuration": "Configuration",

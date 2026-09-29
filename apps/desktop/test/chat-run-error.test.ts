@@ -3,11 +3,16 @@ import type { AgentEvent, RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 
 const commands: RuntimeCommand[] = [];
+let sendFailure: ((command: RuntimeCommand) => Promise<void>) | undefined;
 let onRuntimeEvent: ((event: { payload: string }) => void) | undefined;
 
 mock.module("@tauri-apps/api/core", () => ({
   invoke: async (command: string, args?: { cmd?: string; key?: string }) => {
-    if (command === "runtime_send" && args?.cmd) commands.push(JSON.parse(args.cmd));
+    if (command === "runtime_send" && args?.cmd) {
+      const parsed = JSON.parse(args.cmd) as RuntimeCommand;
+      commands.push(parsed);
+      await sendFailure?.(parsed);
+    }
     if (command === "secret_get" && args?.key === "mcp.env:mcp-key-restore/TEST_API_KEY") return "restored-test-key";
   },
 }));
@@ -101,7 +106,7 @@ test("shows an install hint when an MCP preset cannot find Node.js/npm", async (
   }
 });
 
-test("session creation requires an imported selected workspace at every entry", () => {
+test("session creation requires an imported selected workspace and stays available during another run", () => {
   const previous = useStore.getState();
   const start = commands.length;
   const workspace = { id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 };
@@ -119,11 +124,11 @@ test("session creation requires an imported selected workspace at every entry", 
 
     useStore.setState({ currentWorkspaceId: workspace.id, running: true });
     useStore.getState().newSession();
-    expect(commands).toHaveLength(start);
+    expect(commands.slice(start)).toContainEqual(expect.objectContaining({ type: "session.create", workspaceId: workspace.id }));
 
     useStore.setState({ running: false });
     useStore.getState().newSession();
-    expect(commands.slice(start)).toEqual([expect.objectContaining({ type: "session.create", workspaceId: workspace.id })]);
+    expect(commands.slice(start).at(-1)).toEqual(expect.objectContaining({ type: "session.create", workspaceId: workspace.id }));
 
     useStore.getState().newSessionInWorkspace(workspace.id);
     expect(useStore.getState().draftWorkspaceId).toBe(workspace.id);
@@ -132,6 +137,38 @@ test("session creation requires an imported selected workspace at every entry", 
       expect.objectContaining({ workspaceId: workspace.id }),
       expect.objectContaining({ workspaceId: workspace.id }),
     ]);
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("switching sessions while one is running keeps the run alive", () => {
+  const previous = useStore.getState();
+  const start = commands.length;
+  try {
+    useStore.setState({
+      currentSessionId: "session-1",
+      currentWorkspaceId: "workspace-1",
+      sessions: [
+        { id: "session-1", title: "Running", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 },
+        { id: "session-2", title: "Other", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 },
+      ],
+      running: true,
+      activeRunId: "run-1",
+    });
+
+    useStore.getState().selectSession("session-2");
+
+    expect(useStore.getState().currentSessionId).toBe("session-2");
+    expect(useStore.getState().running).toBe(false);
+    expect(commands.slice(start)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "session.messages", sessionId: "session-2" }),
+      expect.objectContaining({ type: "session.runs", sessionId: "session-2" }),
+    ]));
+
+    emit({ type: "agent.event", event: { ...event("agent.completed", {}), sessionId: "session-1", runId: "run-1" } });
+    expect(useStore.getState().currentSessionId).toBe("session-2");
+    expect(useStore.getState().running).toBe(false);
   } finally {
     useStore.setState(previous, true);
   }
@@ -594,4 +631,220 @@ test("streaming tool arguments update one preview without entering prose or comp
   send("tool.updated", 409, { toolCallId: "live-edit", update: "late update" });
   expect(useStore.getState().toolCalls[0]).toMatchObject({ result: "done", status: "success" });
   expect(useStore.getState().streamingParts).toHaveLength(1);
+});
+
+
+test("reasoning streams separately, settles at block end and survives completed message reload", async () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ currentSessionId: "session-1", activeRunId: "run-1", running: true, streaming: "", streamingParts: [], messages: [], activeMessageSequence: undefined });
+    const send = (type: string, payload: unknown) => emit({ type: "agent.event", event: event(type, payload) });
+    send("model.request.started", {});
+    expect(useStore.getState().modelRequest?.runId).toBe("run-1");
+    send("message.started", { message: { role: "assistant" } });
+    send("message.block.started", { blockType: "reasoning", contentIndex: 0 });
+    send("message.reasoning.delta", { delta: "分析", contentIndex: 0 });
+    send("message.reasoning.delta", { delta: "视频", contentIndex: 0 });
+    await Bun.sleep(45);
+    expect(useStore.getState().streaming).toBe("");
+    expect(useStore.getState().streamingParts).toMatchObject([{ type: "reasoning", text: "分析视频" }]);
+    send("message.block.completed", { blockType: "reasoning", contentIndex: 0 });
+    expect(useStore.getState().streamingParts[0]).toMatchObject({ complete: true });
+    send("message.block.started", { blockType: "text", contentIndex: 1 });
+    send("message.delta", { delta: "结果" });
+    await Bun.sleep(45);
+    expect(useStore.getState().streaming).toBe("结果");
+    send("message.completed", { message: { role: "assistant", content: [{ type: "thinking", thinking: "分析视频" }, { type: "text", text: "结果" }] } });
+    const parts = useStore.getState().streamingParts;
+    expect(parts.map(p => p.type)).toEqual(["reasoning", "text"]);
+    const live = assistantMessageContent({ content: "", parts }, [], true);
+    expect(assistantMessageContent({ content: "结果", parts: JSON.parse(JSON.stringify(parts)) }, [], false)).toEqual(live);
+    send("agent.cancelled", { message: { id: "reason-cancelled", content: "结果", parts } });
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().messages.at(-1)?.parts).toEqual(parts);
+  } finally { useStore.setState(previous, true); }
+});
+
+function setupConcurrentSessions() {
+  const sessions = ["background-a", "background-b"].map((id) => ({ id, title: id, workspaceId: "concurrent-workspace", createdAt: 0, updatedAt: 0 }));
+  useStore.setState({
+    ...useStore.getInitialState(), connected: true, sessions,
+    workspaces: [{ id: "concurrent-workspace", name: "Project", path: "C:/project", createdAt: 0, updatedAt: 0 }],
+    currentWorkspaceId: "concurrent-workspace",
+  });
+  useStore.getState().selectSession(sessions[0]!.id);
+}
+
+function emitFor(sessionId: string, type: string, payload: unknown = {}) {
+  emit({ type: "agent.event", event: { ...event(type, payload), sessionId, runId: `${sessionId}-run`, sequence: 10 } });
+}
+
+function startConcurrentRun(sessionId: string) {
+  useStore.getState().selectSession(sessionId);
+  useStore.getState().runAgent(`work on ${sessionId}`);
+  emitFor(sessionId, "agent.started");
+  emitFor(sessionId, "message.started", { message: { role: "assistant" } });
+}
+
+test("interleaved background text, reasoning, tools and approvals survive switching and creation", async () => {
+  const previous = useStore.getState();
+  const start = commands.length;
+  try {
+    setupConcurrentSessions();
+    startConcurrentRun("background-a");
+    emitFor("background-a", "message.delta", { delta: "A-before" });
+    startConcurrentRun("background-b");
+    emitFor("background-a", "message.delta", { delta: "-after" });
+    emitFor("background-b", "message.delta", { delta: "B-only" });
+    emitFor("background-a", "message.reasoning.delta", { delta: "A-reasoning", contentIndex: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(useStore.getState().streaming).toBe("B-only");
+    expect(useStore.getState().backgroundSessions["background-a"]?.streaming).toBe("A-before-after");
+    expect(useStore.getState().runningSessionIds).toEqual(expect.arrayContaining(["background-a", "background-b"]));
+    emitFor("background-a", "tool.started", { toolCallId: "a-tool", toolName: "read", args: { path: "a.txt" } });
+    emitFor("background-a", "approval.requested", { approvalId: "a-approval", toolName: "read" });
+    expect(useStore.getState().approvals).toEqual([]);
+    useStore.getState().selectSession("background-a");
+    expect(useStore.getState().running).toBe(true);
+    expect(useStore.getState().activeRunId).toBe("background-a-run");
+    expect(useStore.getState().toolCalls[0]?.toolCallId).toBe("a-tool");
+    expect(useStore.getState().approvals[0]?.id).toBe("a-approval");
+    expect(useStore.getState().streamingParts).toContainEqual(expect.objectContaining({ type: "text", text: "A-before-after" }));
+    expect(JSON.stringify(useStore.getState().streamingParts)).toContain("A-reasoning");
+    useStore.getState().newSession();
+    emit({ type: "session.created", session: { id: "created-c", title: "New", workspaceId: "concurrent-workspace", createdAt: 1, updatedAt: 1 } });
+    expect(useStore.getState().currentSessionId).toBe("created-c");
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().approvals).toEqual([]);
+    emitFor("background-a", "tool.completed", { toolCallId: "a-tool", result: "ok" });
+    useStore.getState().selectSession("background-b");
+    expect(useStore.getState().streaming).toBe("B-only");
+    expect(commands.slice(start).filter((command) => command.type === "agent.stop")).toEqual([]);
+    useStore.getState().stopAgent();
+    expect(commands.at(-1)).toMatchObject({ type: "agent.stop", runId: "background-b-run" });
+    emitFor("background-b", "agent.cancelled");
+    useStore.getState().selectSession("background-a");
+    expect(useStore.getState().toolCalls[0]).toMatchObject({ status: "success", result: "ok" });
+    expect(useStore.getState().running).toBe(true);
+    emitFor("background-a", "agent.completed");
+  } finally { useStore.setState(previous, true); }
+});
+
+test("a background completion saves its answer without stopping the foreground run", () => {
+  const previous = useStore.getState();
+  try {
+    setupConcurrentSessions();
+    startConcurrentRun("background-a");
+    startConcurrentRun("background-b");
+    emitFor("background-a", "agent.completed", { message: { id: "a-answer", role: "assistant", content: "A finished", runId: "background-a-run" } });
+    expect(useStore.getState().currentSessionId).toBe("background-b");
+    expect(useStore.getState().running).toBe(true);
+    expect(useStore.getState().messages.some((message) => message.id === "a-answer")).toBe(false);
+    expect(useStore.getState().runningSessionIds).not.toContain("background-a");
+    useStore.getState().selectSession("background-a");
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().messages.at(-1)?.content).toBe("A finished");
+    emitFor("background-b", "agent.failed", { message: "B failed" });
+    expect(useStore.getState().chatRunError).toBeUndefined();
+    useStore.getState().selectSession("background-b");
+    expect(useStore.getState().chatRunError?.detail).toBe("B failed");
+  } finally { useStore.setState(previous, true); }
+});
+
+test("overlapping pending run requests keep errors and acknowledgements with their sessions", () => {
+  const previous = useStore.getState();
+  const start = commands.length;
+  try {
+    setupConcurrentSessions();
+    useStore.getState().runAgent("A pending");
+    useStore.getState().selectSession("background-b");
+    useStore.getState().runAgent("B pending");
+    const runs = commands.slice(start).filter((command) => command.type === "agent.run");
+    expect(runs).toHaveLength(2);
+    emit({ type: "error", requestId: runs[0]!.requestId, message: "A rejected" });
+    expect(useStore.getState().running).toBe(true);
+    expect(useStore.getState().chatRunError).toBeUndefined();
+    useStore.getState().selectSession("background-a");
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().chatRunError?.detail).toBe("A rejected");
+    emit({ type: "pong", requestId: runs[1]!.requestId });
+    emit({ type: "session.runs", sessionId: "background-b", runs: [{ id: "background-b-run", sessionId: "background-b", status: "running", startedAt: 0 }] });
+    useStore.getState().selectSession("background-b");
+    expect(useStore.getState().activeRunId).toBe("background-b-run");
+    emitFor("background-b", "agent.completed");
+  } finally { useStore.setState(previous, true); }
+});
+
+test("a queued follow-up stays with its background session and starts after completion", async () => {
+  const { createQoneMessageQueue } = await import("../src/lib/qone-message-queue");
+  const { bindSessionQueue } = await import("../src/lib/session-queue-lifecycle");
+  const { sessionStore } = await import("../src/lib/session-execution-state");
+  const previous = useStore.getState();
+  const start = commands.length;
+  try {
+    setupConcurrentSessions();
+    startConcurrentRun("background-a");
+    const queue = createQoneMessageQueue({
+      sessionId: "background-a",
+      isRunning: () => sessionStore(useStore, "background-a").getState().running,
+      send: (_message, queueItemId) => useStore.getState().runAgent("queued for A", undefined, undefined, queueItemId, false, "background-a"),
+      steer: async () => false, sync: () => {},
+    });
+    bindSessionQueue("background-a", queue);
+    queue.adapter.enqueue({ role: "user", parentId: null, sourceId: null, runConfig: {}, createdAt: new Date(), metadata: { custom: {} }, content: [{ type: "text", text: "queued for A" }], attachments: [] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    startConcurrentRun("background-b");
+    expect(commands.slice(start).filter((cmd) => cmd.type === "agent.run")).toHaveLength(2);
+    emitFor("background-a", "agent.completed");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const last = commands.slice(start).filter((cmd) => cmd.type === "agent.run").at(-1);
+    expect(last).toMatchObject({ sessionId: "background-a", message: "queued for A" });
+    expect(useStore.getState().currentSessionId).toBe("background-b");
+    expect(useStore.getState().activeRunId).toBe("background-b-run");
+    expect(useStore.getState().messages.at(-1)?.content).toBe("work on background-b");
+    useStore.setState({ connected: false });
+  } finally { useStore.setState(previous, true); }
+});
+
+test("a delayed transport failure clears only the pending background run", async () => {
+  const previous = useStore.getState();
+  let rejectSend: ((error: Error) => void) | undefined;
+  try {
+    setupConcurrentSessions();
+    sendFailure = (command) => command.type === "agent.run" && command.sessionId === "background-a"
+      ? new Promise<void>((_resolve, reject) => { rejectSend = reject; }) : Promise.resolve();
+    useStore.getState().runAgent("A will fail");
+    startConcurrentRun("background-b");
+    rejectSend!(new Error("transport down"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useStore.getState().running).toBe(true);
+    expect(useStore.getState().activeRunId).toBe("background-b-run");
+    expect(useStore.getState().runningSessionIds).not.toContain("background-a");
+    useStore.getState().selectSession("background-a");
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().chatRunError?.detail).toContain("transport down");
+    emitFor("background-b", "agent.completed");
+  } finally { sendFailure = undefined; useStore.setState(previous, true); }
+});
+
+test("late snapshots preserve a pending user turn and live background tools", () => {
+  const previous = useStore.getState();
+  try {
+    setupConcurrentSessions();
+    useStore.getState().runAgent("optimistic A");
+    useStore.getState().newSessionInWorkspace("concurrent-workspace");
+    expect(useStore.getState().currentSessionId).toBeUndefined();
+    expect(useStore.getState().running).toBe(false);
+    emit({ type: "session.messages", sessionId: "background-a", messages: [] });
+    emit({ type: "session.runs", sessionId: "background-a", runs: [] });
+    expect(useStore.getState().runningSessionIds).toContain("background-a");
+    emitFor("background-a", "agent.started");
+    emitFor("background-a", "tool.started", { toolCallId: "live-background-tool", toolName: "read" });
+    emit({ type: "session.toolCalls", sessionId: "background-a", toolCalls: [] });
+    useStore.getState().selectSession("background-a");
+    expect(useStore.getState().messages.at(-1)?.content).toBe("optimistic A");
+    expect(useStore.getState().toolCalls[0]?.toolCallId).toBe("live-background-tool");
+    expect(useStore.getState().running).toBe(true);
+    emitFor("background-a", "agent.completed");
+  } finally { useStore.setState(previous, true); }
 });

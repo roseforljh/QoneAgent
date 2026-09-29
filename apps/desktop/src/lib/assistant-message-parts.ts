@@ -14,8 +14,13 @@ function stringifyToolValue(value: unknown): string {
   try { return JSON.stringify(value ?? {}) ?? "{}"; } catch { return "{}"; }
 }
 
-function orderedPart(part: AssistantMessagePart, parentId: string): ThreadAssistantMessagePart {
+function orderedPart(part: AssistantMessagePart, parentId: string, streaming: boolean): ThreadAssistantMessagePart {
   if (part.type === "text") return { type: "text", text: part.text, parentId };
+  if (part.type === "reasoning") return {
+    type: "reasoning", text: part.text,
+    parentId: `${parentId}:reasoning:${part.contentIndex ?? 0}`,
+    status: { type: streaming && !part.complete ? "running" : "complete" },
+  };
   if (part.type === "image") return { type: "image", image: part.image, filename: part.filename };
   return {
     type: "tool-call",
@@ -39,13 +44,13 @@ export function assistantMessageContent(
     let toolGroupStart = -1;
     const content: ThreadAssistantMessagePart[] = parts.map((part, index) => {
       const previous = parts[index - 1];
-      if (part.type === "tool-call" && (previous?.type !== "tool-call" || previous.messageSequence !== part.messageSequence)) {
+      if (part.type === "tool-call" && previous?.type !== "tool-call") {
         toolGroupStart = index;
       }
       const parentId = part.type === "tool-call"
-        ? `pi:${part.messageSequence}:tools:${toolGroupStart}`
+        ? `pi:tools:${toolGroupStart}`
         : `pi:${part.messageSequence}`;
-      return orderedPart(part, parentId);
+      return orderedPart(part, parentId, streaming);
     });
     if (streaming && message.content) content.push({ type: "text", text: message.content, parentId: "pi:pending" });
     if (!streaming && content.length === 0 && message.content) content.push({ type: "text", text: message.content });

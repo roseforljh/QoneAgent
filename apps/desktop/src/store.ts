@@ -1,12 +1,11 @@
+import { initRuntimeBridge } from "./store-bridge";
+import { sessionStore, switchSessionState, type SessionExecutionState } from "./lib/session-execution-state";
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageInfo, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
+import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate } from "./localization";
-import { getQoneMessageQueue } from "./lib/qone-message-queue";
 
 const displayRuntimeError = (message: string) => message === "MCP_NPX_UNAVAILABLE"
   ? translate(resolveLocale(getLanguageSetting()), "mcp.nodeRequired")
@@ -72,14 +71,15 @@ function alignToolCallIds(calls: readonly ToolCall[], messages: readonly ChatMes
   });
 }
 
-interface AgentState {
+export interface AgentState {
+  backgroundSessions: Record<string, SessionExecutionState>;
   connected: boolean;
   sessionsLoaded: boolean;
   workspacesLoaded: boolean;
   lastError?: string;
   chatRunError?: ChatRunError;
   compactionStatuses: Record<string, { requestId: string; throughMessageId: string; startedAt: number }>;
-  autoCompactionStatuses: Record<string, { id: string; runId: string; throughMessageId: string; startedAt: number }>;
+  autoCompactionStatuses: Record<string, { id: string; runId: string; throughMessageId: string; partIndex?: number; startedAt: number }>;
   compactions: CompactionMarkerInfo[];
   contextUsage?: { sessionId: string; model: string; tokens: number; contextWindow: number };
   contextUsageRequestId?: string;
@@ -118,12 +118,14 @@ interface AgentState {
   queueItems: QueueItemInfo[];
   queueLoadedSessionId?: string;
   editingQueueItem?: QueueItemInfo;
+  modelRequest?: { runId: string; startedAt: number };
   streaming: string;
   streamingParts: AssistantMessagePart[];
   activeMessageSequence?: number;
   /** Tool calls whose Pi arguments are complete but execution has not started yet. */
   preparedToolCallIds: string[];
   running: boolean;
+  runningSessionIds: string[];
   activeRunId?: string;
   approvals: PendingApproval[];
   toolCalls: ToolCall[];
@@ -158,7 +160,7 @@ interface AgentState {
   selectWorkspace: (id: string) => void;
   selectSession: (id: string) => void;
   searchSessions: (query: string) => void;
-  runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean) => void;
+  runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean, sessionId?: string) => void;
   pauseGoal: () => void;
   resumeGoal: () => void;
   clearGoal: () => void;
@@ -213,7 +215,7 @@ function rememberBrowserConnection(): void {
   catch { /* Local storage may be unavailable in a restricted preview. */ }
 }
 
-let pendingAgentRun: { requestId: string; sessionId: string; userMessageId: string } | undefined;
+const pendingAgentRuns = new Map<string, { requestId: string; sessionId: string; userMessageId: string }>();
 const stopRequestedSessionIds = new Set<string>();
 const stopRequests = new Map<string, { sessionId: string; runId: string }>();
 function stopRun(sessionId: string, runId: string) {
@@ -305,6 +307,7 @@ export function requestSkillMutation(command: SkillMutationInput): Promise<Skill
 }
 
 export const useStore = create<AgentState>((set, get) => ({
+  backgroundSessions: {},
   connected: false,
   sessionsLoaded: !hasTauriBridge(),
   workspacesLoaded: !hasTauriBridge(),
@@ -345,6 +348,7 @@ export const useStore = create<AgentState>((set, get) => ({
   activeMessageSequence: undefined,
   preparedToolCallIds: [],
   running: false,
+  runningSessionIds: [],
   draftWorkspaceId: undefined,
   creatingSession: false,
   pendingMessage: undefined,
@@ -400,21 +404,23 @@ export const useStore = create<AgentState>((set, get) => ({
       console.error("runtime_send failed", error);
       if (cmd.type === "mcp.connect") finishMcpConnection(cmd.config.id);
       if (cmd.type === "secret.set" && cmd.key.startsWith("mcp.env:")) restoredMcpSecrets.delete(cmd.key);
-      if (cmd.type === "agent.run") {
-        if (!cmd.messageId || get().currentSessionId !== cmd.sessionId || pendingAgentRun?.requestId !== cmd.requestId) return false;
-        pendingAgentRun = undefined;
+      if (cmd.type === "agent.run" || cmd.type === "goal.start") {
+        if (!cmd.messageId || !pendingAgentRuns.has(cmd.requestId)) return false;
+        pendingAgentRuns.delete(cmd.requestId);
         finishStopRequest(cmd.sessionId);
-        clearDelta();
-        set({
-          chatRunError: { sessionId: cmd.sessionId, userMessageId: cmd.messageId, detail: String(error) },
-          running: false,
-          streaming: "",
-          streamingParts: [],
-          activeMessageSequence: undefined,
-          preparedToolCallIds: [],
-          activeRunId: undefined,
-        });
-        set((state) => ({ titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
+        {
+          clearDelta(cmd.sessionId);
+          sessionStore(useStore, cmd.sessionId).setState({
+            chatRunError: { sessionId: cmd.sessionId, userMessageId: cmd.messageId, detail: String(error) },
+            running: false,
+            streaming: "",
+            streamingParts: [],
+            activeMessageSequence: undefined,
+            preparedToolCallIds: [],
+            activeRunId: undefined,
+          });
+        }
+        set((state) => ({ runningSessionIds: state.runningSessionIds.filter((id) => id !== cmd.sessionId), titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
       } else if (cmd.type === "session.generate-title") {
         pendingTitleRequests.delete(cmd.requestId);
         set((state) => ({ titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
@@ -429,7 +435,6 @@ export const useStore = create<AgentState>((set, get) => ({
 
   newSession: () => {
     const state = get();
-    if (state.running) return;
     const workspaceId = state.currentWorkspaceId;
     if (!workspaceId || !state.workspaces.some((workspace) => workspace.id === workspaceId)) {
       set({ lastError: "请先导入项目，再创建会话。" });
@@ -440,14 +445,14 @@ export const useStore = create<AgentState>((set, get) => ({
   },
 
   newSessionInWorkspace: (workspaceId) => {
-    if (get().running || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
-    clearDelta();
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], lastError: undefined, chatRunError: undefined });
+    if (!get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
+    flushNow();
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(get()) });
     get().refreshWorkspace(workspaceId);
   },
 
   createSessionForWorkspace: (workspaceId) => {
-    if (get().running || get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
+    if (get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
     set({ creatingSession: true, currentWorkspaceId: workspaceId, draftWorkspaceId: workspaceId, lastError: undefined });
     get().send({ type: "session.create", requestId: rid(), title: "New session", workspaceId });
   },
@@ -516,12 +521,11 @@ export const useStore = create<AgentState>((set, get) => ({
   },
 
   selectSession: (id) => {
-    if (get().running && get().currentSessionId !== id) return;
-    clearDelta();
-    pendingMessageReplacements.delete(id);
+    if (get().currentSessionId === id) return;
+    flushNow();
     const workspaceId = get().sessions.find((session) => session.id === id)?.workspaceId;
     const workspaceChanged = workspaceId !== undefined && workspaceId !== get().currentWorkspaceId;
-    set({ currentSessionId: id, messagesLoadingSessionId: id, queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], chatRunError: undefined });
+    set({ currentSessionId: id, queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], chatRunError: undefined, ...switchSessionState(get(), id), messagesLoadingSessionId: id });
     get().send({ type: "session.messages", requestId: rid(), sessionId: id });
     get().send({ type: "goal.get", requestId: rid(), sessionId: id });
     get().send({ type: "session.queue.list", requestId: rid(), sessionId: id });
@@ -544,7 +548,8 @@ export const useStore = create<AgentState>((set, get) => ({
     });
   },
 
-  runAgent: (message, replaceFromMessageId, attachments, queueItemId, goal) => {
+  runAgent: (message, replaceFromMessageId, attachments, queueItemId, goal, sessionId) => {
+    const { getState: get, setState: set } = sessionStore(useStore, sessionId);
     const mcpCommand = parseMcpCommand(message);
     if (mcpCommand) {
       const server = get().mcpServers.find((item) => item.id === mcpCommand.serverId);
@@ -582,7 +587,7 @@ export const useStore = create<AgentState>((set, get) => ({
     const keptMessages = replaceIndex >= 0 ? history.slice(0, replaceIndex) : history;
     const keptRunIds = new Set(keptMessages.flatMap((item) => item.runId ? [item.runId] : []));
     const messageId = rid();
-    clearDelta();
+    clearDelta(sid);
     set((s) => ({
       messages: [...keptMessages, { id: messageId, role: "user", content: message, attachments, goalId: goal ? "__pending_goal__" : undefined, createdAt: Date.now() }],
       compactions: replaceIndex >= 0 ? s.compactions.filter((marker) => keptMessages.some((item) => item.id === marker.throughMessageId)) : s.compactions,
@@ -591,6 +596,7 @@ export const useStore = create<AgentState>((set, get) => ({
       activeMessageSequence: undefined,
       preparedToolCallIds: [],
       running: true,
+      runningSessionIds: s.runningSessionIds.includes(sid) ? s.runningSessionIds : [...s.runningSessionIds, sid],
       contextUsage: undefined,
       contextUsageRequestId: undefined,
       creatingSession: false,
@@ -613,7 +619,7 @@ export const useStore = create<AgentState>((set, get) => ({
     const requestedThinking = model ? options?.thinkingByModel?.[model] : undefined;
     const thinking = requestedThinking === undefined ? undefined : normalizeThinkingLevel(requestedThinking, apiType);
     const requestId = rid();
-    pendingAgentRun = { requestId, sessionId: sid, userMessageId: messageId };
+    pendingAgentRuns.set(requestId, { requestId, sessionId: sid, userMessageId: messageId });
     get().send(goal
       ? { type: "goal.start", requestId, sessionId: sid, objective: message, attachments, messageId, replaceFromMessageId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking }
       : { type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId, queueItemId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking, mcpServerId: mcpCommand?.serverId });
@@ -735,36 +741,40 @@ export const useStore = create<AgentState>((set, get) => ({
   }),
 }));
 
-// Buffer message deltas and flush at ~30fps so React doesn't rerender per token.
-let deltaBuf = "";
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-function queueDelta(d: string) {
-  deltaBuf += d;
-  if (!flushTimer) {
-    flushTimer = setTimeout(() => {
-      flushTimer = null;
-      const chunk = deltaBuf;
-      deltaBuf = "";
-      useStore.setState((st) => ({ streaming: st.streaming + chunk }));
-    }, 32);
-  }
+// Flush each session independently so navigation cannot redirect buffered tokens.
+const deltas = new Map<string, { text: string; reasoning?: { delta: string; contentIndex?: number }; timer?: ReturnType<typeof setTimeout> }>();
+function bufferFor(sessionId: string) {
+  let buffer = deltas.get(sessionId);
+  if (!buffer) { buffer = { text: "" }; deltas.set(sessionId, buffer); }
+  if (!buffer.timer) buffer.timer = setTimeout(() => flushNow(sessionId), 32);
+  return buffer;
 }
-function flushNow() {
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-  }
-  if (deltaBuf) {
-    const chunk = deltaBuf;
-    deltaBuf = "";
-    useStore.setState((st) => ({ streaming: st.streaming + chunk }));
-  }
+function queueDelta(delta: string, sessionId = useStore.getState().currentSessionId) {
+  if (sessionId) bufferFor(sessionId).text += delta;
 }
-
-function clearDelta() {
-  if (flushTimer) clearTimeout(flushTimer);
-  flushTimer = null;
-  deltaBuf = "";
+function queueReasoning(delta: string, contentIndex?: number, sessionId = useStore.getState().currentSessionId) {
+  if (!sessionId) return;
+  if (deltas.get(sessionId)?.reasoning?.contentIndex !== contentIndex) flushNow(sessionId);
+  const buffer = bufferFor(sessionId);
+  buffer.reasoning = { delta: (buffer.reasoning?.delta ?? "") + delta, contentIndex };
+}
+function flushNow(sessionId = useStore.getState().currentSessionId) {
+  if (!sessionId) return;
+  const buffer = deltas.get(sessionId);
+  if (!buffer) return;
+  clearDelta(sessionId);
+  const { text, reasoning } = buffer;
+  sessionStore(useStore, sessionId).setState((st) => ({
+    streaming: st.streaming + text,
+    streamingParts: reasoning && st.activeMessageSequence !== undefined
+      ? applyReasoningDelta(st.streamingParts, reasoning, st.activeMessageSequence) : st.streamingParts,
+  }));
+}
+function clearDelta(sessionId = useStore.getState().currentSessionId) {
+  if (!sessionId) return;
+  const buffer = deltas.get(sessionId);
+  if (buffer?.timer) clearTimeout(buffer.timer);
+  deltas.delete(sessionId);
 }
 
 function ensureStreamingToolPart(
@@ -790,897 +800,14 @@ function ensureStreamingToolPart(
   return applyAssistantToolEvent(next, "tool.started", payload);
 }
 
-let wired = false;
-let lastSequence = -1;
 // A reload removes the selected user turn in the runtime database. Ignore an
 // older session.messages response that still contains that turn, otherwise a
 // delayed response can restore the old bubble beside the replacement.
 const pendingMessageReplacements = new Map<string, string>();
 const pendingTitleRequests = new Map<string, string>();
-export function initBridge() {
-  if (wired) return;
-  if (!hasTauriBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
-  wired = true;
 
-  const ready = listen<string>("runtime-event", (e) => {
-    if (e.payload.includes('"type":"runtime.exited"')) {
-      clearDelta();
-      metadataLookupSupported = false;
-      pendingAgentRun = undefined;
-      stopRequestedSessionIds.clear();
-      stopRequests.clear();
-      pendingTitleRequests.clear();
-      mcpConnectRequests.clear();
-      restoredMcpSecrets.clear();
-      for (const request of metadataRequests.values()) request.reject(new Error("Runtime exited"));
-      useStore.setState((st) => {
-        const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
-        return {
-          connected: false,
-          compactionStatuses: {},
-          autoCompactionStatuses: {},
-          browserStatus: st.browserStatus ? { ...st.browserStatus, targetConnected: false, phase: "error", lastError: "浏览器运行时已退出" } : undefined,
-          mcpConnectingIds: [],
-          githubDeviceAuthorization: undefined,
-          running: false,
-          titleGeneratingSessionIds: [],
-          activeRunId: undefined,
-          approvals: [],
-          streaming: "",
-          streamingParts: [],
-          activeMessageSequence: undefined,
-          preparedToolCallIds: [],
-          queueItems: [],
-          queueLoadedSessionId: undefined,
-          editingQueueItem: undefined,
-          ...(st.running && st.currentSessionId && userMessage ? {
-            chatRunError: { sessionId: st.currentSessionId, userMessageId: userMessage.id, detail: "Runtime exited" },
-          } : {}),
-        };
-      });
-      invoke("runtime_restart")
-        .then(() => useStore.getState().send({ type: "ping", requestId: rid() }))
-        .catch((error) => console.error("runtime restart failed", error));
-      return;
-    }
-    let msg: RuntimeEvent;
-    try {
-      msg = JSON.parse(e.payload);
-    } catch {
-      return;
-    }
-    if (msg.type === "model.metadata-resolved") {
-      const pending = metadataRequests.get(msg.requestId);
-      if (msg.models.every((model) => model.sources && ["contextWindow", "maxTokens", "reasoning", "input", "output"].every((field) => typeof model.sources[field as keyof typeof model.sources] === "string"))) pending?.resolve(msg.models);
-      else pending?.reject(new Error("MODEL_METADATA_UNSUPPORTED"));
-      return;
-    }
-    if (msg.type === "error" && msg.requestId && metadataRequests.has(msg.requestId)) {
-      metadataRequests.get(msg.requestId)?.reject(new Error(msg.message));
-      return;
-    }
-    const s = useStore.getState();
-    switch (msg.type) {
-      case "pong":
-        if (stopRequests.has(msg.requestId)) break;
-        if (steerRequests.has(msg.requestId)) {
-          steerRequests.get(msg.requestId)?.resolve(true);
-          break;
-        }
-        if (pendingAgentRun?.requestId === msg.requestId) {
-          const sessionId = pendingAgentRun.sessionId;
-          pendingAgentRun = undefined;
-          void s.send({ type: "session.runs", requestId: rid(), sessionId });
-          break;
-        }
-        if (!handshakeRequests.delete(msg.requestId)) break;
-        metadataLookupSupported = Boolean(msg.capabilities?.includes("model.resolve-metadata") && msg.capabilities?.includes("model.metadata-sources"));
-        useStore.setState({ connected: true, runtimeCapabilities: msg.capabilities ?? [], ...(msg.compaction ?? {}) });
-        s.send({ type: "session.list", requestId: rid() });
-        s.send({ type: "workspace.list", requestId: rid() });
-        s.send({ type: "model.list", requestId: rid() });
-        s.send({ type: "mcp.list", requestId: rid() });
-        s.send({ type: "subagent.list", requestId: rid() });
-        if (msg.capabilities?.includes("reach.channels")) s.send({ type: "reach.channels", requestId: rid() });
-        if (msg.capabilities?.includes("browser.connect")) {
-          s.send({ type: "browser.status", requestId: rid() });
-          if (browserAutoReconnectEnabled()) {
-            void s.send({ type: "browser.connect", requestId: rid() });
-          }
-        }
-        s.send({ type: "permission.list", requestId: rid() });
-        s.send({ type: "global-prompt.get", requestId: rid() });
-        s.send({ type: "events.replay", requestId: rid(), sessionId: useStore.getState().currentSessionId, afterSequence: lastSequence });
-        break;
-      case "global-prompt":
-        useStore.setState({ globalPrompt: msg.content, globalPromptPath: msg.path, globalPromptDirectory: msg.directory, globalPromptLoaded: true });
-        break;
-      case "session.created":
-        clearDelta();
-        useStore.setState((st) => ({
-          runOptionsBySession: {
-            ...st.runOptionsBySession,
-            [msg.session.id]: {
-              ...(st.runOptionsBySession[msg.session.id] ?? {}),
-              ...(st.creatingSession ? st.draftRunOptions : {}),
-              ...(!st.runOptionsBySession[msg.session.id]?.modelId && !st.draftRunOptions.modelId && st.selectedModelId ? { modelId: st.selectedModelId } : {}),
-            },
-          },
-          selectedModelId: st.draftRunOptions.modelId ?? st.runOptionsBySession[msg.session.id]?.modelId ?? st.selectedModelId,
-          draftRunOptions: {},
-          sessions: [msg.session, ...st.sessions],
-          currentSessionId: msg.session.id,
-          currentWorkspaceId: msg.session.workspaceId ?? st.currentWorkspaceId,
-          draftWorkspaceId: undefined,
-          messagesLoadingSessionId: undefined,
-          messages: [],
-          compactions: [],
-          streaming: "",
-          streamingParts: [],
-          activeMessageSequence: undefined,
-          preparedToolCallIds: [],
-          toolCalls: [],
-          runs: [],
-          subagents: [],
-          artifacts: [],
-        }));
-        saveRunOptions(useStore.getState().runOptionsBySession);
-        if (useStore.getState().creatingSession && useStore.getState().pendingMessage !== undefined) {
-          queueMicrotask(() => {
-            const state = useStore.getState();
-            if (state.currentSessionId === msg.session.id && state.pendingMessage !== undefined) state.runAgent(state.pendingMessage, undefined, state.pendingAttachments, undefined, state.pendingGoal);
-          });
-        }
-        break;
-      case "session.list": {
-        const state = useStore.getState();
-        const cur = state.currentSessionId;
-        const selected = msg.sessions.find((session) => session.id === cur) ?? msg.sessions[0];
-        const selectionChanged = selected?.id !== cur;
-        if (selectionChanged) clearDelta();
-        const storedModelId = selected ? state.runOptionsBySession[selected.id]?.modelId : undefined;
-        useStore.setState({
-          sessions: msg.sessions,
-          sessionsLoaded: true,
-          currentSessionId: selected?.id,
-          currentWorkspaceId: selected?.workspaceId ?? state.currentWorkspaceId,
-          ...(selected?.workspaceId && selected.workspaceId !== state.currentWorkspaceId ? { workspaceLoadingId: selected.workspaceId } : {}),
-          selectedModelId: storedModelId,
-          ...(selectionChanged ? {
-            messages: [],
-            compactions: [],
-            messagesLoadingSessionId: selected?.id,
-             queueItems: [],
-             queueLoadedSessionId: undefined,
-             editingQueueItem: undefined,
-            streaming: "",
-            streamingParts: [],
-            activeMessageSequence: undefined,
-            preparedToolCallIds: [],
-            toolCalls: [],
-            runs: [],
-            subagents: [],
-            artifacts: [],
-          } : {}),
-        });
-        if (selected) {
-          s.send({ type: "session.messages", requestId: rid(), sessionId: selected.id });
-          s.send({ type: "goal.get", requestId: rid(), sessionId: selected.id });
-          s.send({ type: "session.queue.list", requestId: rid(), sessionId: selected.id });
-          s.send({ type: "session.toolCalls", requestId: rid(), sessionId: selected.id });
-          s.send({ type: "session.runs", requestId: rid(), sessionId: selected.id });
-          s.send({ type: "session.subagents", requestId: rid(), sessionId: selected.id });
-          s.send({ type: "artifact.list", requestId: rid(), sessionId: selected.id });
-          if (selected.workspaceId) useStore.getState().refreshWorkspace(selected.workspaceId);
-        }
-        break;
-      }
-      case "session.search":
-        if (msg.query === useStore.getState().activeSearchQuery) useStore.setState({ searchResults: msg.results, searchLoading: false });
-        break;
-      case "session.renamed":
-        for (const [requestId, sessionId] of pendingTitleRequests) {
-          if (sessionId === msg.session.id) pendingTitleRequests.delete(requestId);
-        }
-        useStore.setState((st) => ({
-          sessions: st.sessions.map((session) => session.id === msg.session.id ? msg.session : session),
-          titleGeneratingSessionIds: st.titleGeneratingSessionIds.filter((id) => id !== msg.session.id),
-        }));
-        break;
-      case "session.messages":
-        if (msg.sessionId === useStore.getState().currentSessionId) {
-          const replacedMessageId = pendingMessageReplacements.get(msg.sessionId);
-          if (replacedMessageId && msg.messages.some((message) => message.id === replacedMessageId)) break;
-          if (replacedMessageId) pendingMessageReplacements.delete(msg.sessionId);
-          const messages = msg.messages.map((m: MessageInfo) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            parts: m.parts,
-            attachments: m.attachments,
-            runId: m.runId,
-            createdAt: m.createdAt,
-            goalId: m.goalId,
-          }));
-          useStore.setState((st) => ({ messagesLoadingSessionId: undefined, messages, compactions: msg.compactions ?? [], toolCalls: alignToolCallIds(st.toolCalls, messages) }));
-        }
-        break;
-      case "goal.current":
-        if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ goal: msg.goal });
-        break;
-      case "goal.updated":
-        if (msg.goal.sessionId === useStore.getState().currentSessionId) useStore.setState({ goal: msg.goal });
-        break;
-      case "goal.cleared":
-        if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ goal: undefined });
-        break;
-      case "session.queue":
-        if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ queueItems: msg.items, queueLoadedSessionId: msg.sessionId });
-        break;
-      case "session.toolCalls":
-        if (msg.sessionId === useStore.getState().currentSessionId) {
-          useStore.setState((st) => {
-            const calls = msg.toolCalls.map((t) => ({
-                toolCallId: t.id.startsWith(`${t.runId}:`) ? t.id.slice(t.runId.length + 1) : t.id,
-                runId: t.runId, toolName: t.toolName,
-                status: t.status === "failed" || t.status === "cancelled" ? "failed" : t.status === "running" ? "running" : t.status === "waiting_approval" ? "waiting" : "success",
-                args: (() => { try { return t.arguments ? JSON.parse(t.arguments) : undefined; } catch { return undefined; } })(),
-                argsText: t.arguments ?? undefined,
-                result: (() => { try { return t.resultSummary ? JSON.parse(t.resultSummary) : undefined; } catch { return t.resultSummary; } })(),
-                summary: t.resultSummary,
-                startedAt: t.startedAt,
-                completedAt: t.completedAt,
-              } satisfies ToolCall));
-            return { toolCalls: alignToolCallIds(calls, st.messages) };
-          });
-        }
-        break;
-      case "session.runs":
-        if (msg.sessionId === useStore.getState().currentSessionId) {
-          const activeRun = msg.runs.find((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));
-          useStore.setState((st) => ({
-            runs: msg.runs,
-            ...(activeRun
-              ? { running: true, activeRunId: activeRun.id }
-              // A snapshot requested before a queued agent.run reached the
-              // runtime cannot see that run yet; only clear a run nobody started.
-              : !activeRun && st.running && st.activeRunId === undefined && pendingAgentRun?.sessionId !== msg.sessionId
-                ? { running: false }
-                : {}),
-          }));
-          if (activeRun && stopRequestedSessionIds.has(msg.sessionId)) stopRun(msg.sessionId, activeRun.id);
-        }
-        break;
-      case "session.subagents":
-        if (msg.sessionId === useStore.getState().currentSessionId) {
-          useStore.setState((st) => {
-            // The initial list request can race with a live subagent.updated
-            // event. Merge the snapshot so a newly created run is not erased
-            // by a response that was produced just before it was created.
-            const byId = new Map(st.subagents.map((item) => [item.id, item]));
-            for (const item of msg.subagents) {
-              const live = byId.get(item.id);
-              byId.set(item.id, live?.streaming ? live : item);
-            }
-            return { subagents: [...byId.values()].sort((a, b) => a.startedAt - b.startedAt) };
-          });
-        }
-        break;
-      case "subagent.updated":
-        if (msg.subagent.parentSessionId === useStore.getState().currentSessionId) {
-          useStore.setState((st) => ({ subagents: [...st.subagents.filter((item) => item.id !== msg.subagent.id), msg.subagent].sort((a, b) => a.startedAt - b.startedAt) }));
-        }
-        break;
-      case "subagent.query":
-      case "subagent.controlled":
-        if (msg.subagent.parentSessionId === useStore.getState().currentSessionId) {
-          useStore.setState((st) => ({ subagents: [...st.subagents.filter((item) => item.id !== msg.subagent.id), msg.subagent].sort((a, b) => a.startedAt - b.startedAt) }));
-        }
-        break;
-      case "artifact.list":
-        if (msg.sessionId === useStore.getState().currentSessionId) useStore.setState({ artifacts: msg.artifacts });
-        break;
-      case "workspace.list": {
-        useStore.setState({ workspaces: msg.workspaces, workspacesLoaded: true });
-        const current = useStore.getState().currentWorkspaceId;
-        const selected = current && msg.workspaces.some((workspace) => workspace.id === current) ? current : msg.workspaces[0]?.id;
-        if (selected) {
-          useStore.setState({ currentWorkspaceId: selected, workspaceLoadingId: selected, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined });
-          useStore.getState().refreshWorkspace(selected);
-        }
-        break;
-      }
-      case "workspace.updated":
-        clearDelta();
-        useStore.setState((st) => ({
-          workspaces: [msg.workspace, ...st.workspaces.filter((w) => w.id !== msg.workspace.id)],
-          currentWorkspaceId: msg.workspace.id,
-          workspaceLoadingId: msg.workspace.id,
-          workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined,
-        }));
-        useStore.getState().refreshWorkspace(msg.workspace.id);
-        useStore.setState({ draftWorkspaceId: msg.workspace.id, currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [] });
-        break;
-      case "workspace.renamed":
-        useStore.setState((st) => ({ workspaces: st.workspaces.map((workspace) => workspace.id === msg.workspace.id ? msg.workspace : workspace) }));
-        break;
-      case "workspace.deleted":
-        if (useStore.getState().currentWorkspaceId === msg.workspaceId) clearDelta();
-        useStore.setState((st) => {
-          const workspaces = st.workspaces.filter((workspace) => workspace.id !== msg.workspaceId);
-          const wasCurrent = st.currentWorkspaceId === msg.workspaceId;
-          const nextWorkspaceId = wasCurrent ? workspaces[0]?.id : st.currentWorkspaceId;
-          return {
-            workspaces,
-            currentWorkspaceId: nextWorkspaceId,
-            ...(wasCurrent ? { currentSessionId: undefined, workspaceLoadingId: nextWorkspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [] } : {}),
-          };
-        });
-        if (useStore.getState().currentWorkspaceId) useStore.getState().refreshWorkspace();
-        s.send({ type: "session.list", requestId: rid() });
-        break;
-      case "workspace.files":
-        if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        if (msg.workspaceId === useStore.getState().currentWorkspaceId) useStore.setState((st) => ({
-          workspaceFiles: [
-            ...st.workspaceFiles.filter((file) => msg.path
-              ? !file.path.startsWith(`${msg.path}/`)
-              : !file.path.includes("/")),
-            ...msg.files,
-          ],
-          workspaceLoadingId: undefined,
-          workspaceError: undefined,
-        }));
-        break;
-      case "workspace.git":
-        if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        if (msg.workspaceId === useStore.getState().currentWorkspaceId) useStore.setState({ gitStatus: msg.status, gitEntries: msg.entries ?? [], gitLoaded: true, workspaceError: undefined });
-        break;
-      case "model.list":
-        useStore.setState((st) => ({
-          modelConfigs: msg.configs,
-          selectedModelId: st.selectedModelId ?? (st.currentSessionId ? st.runOptionsBySession[st.currentSessionId]?.modelId : st.draftRunOptions.modelId) ?? msg.configs[0]?.id,
-        }));
-        for (const config of msg.configs) {
-          invoke<string | null>("secret_get", { key: `model.apiKey:${config.provider}` })
-            .then((value) => {
-              if (value) useStore.getState().send({ type: "secret.set", requestId: rid(), key: `model.apiKey:${config.provider}`, value });
-            })
-            .catch((error) => console.error("credential restore failed", error));
-        }
-        break;
-      case "model.updated":
-        useStore.setState((st) => ({
-          modelConfigs: [msg.config, ...st.modelConfigs.filter((c) => c.id !== msg.config.id)],
-          selectedModelId: st.selectedModelId ?? msg.config.id,
-        }));
-        break;
-      case "skills.list":
-        useStore.setState({ skills: msg.skills });
-        break;
-      case "skills.cloud.list":
-        cloudRequests.get(msg.requestId)?.resolve(msg);
-        break;
-      case "skills.cloud.installed":
-        useStore.setState((state) => ({ skills: [...state.skills.filter((skill) => skill.id !== msg.skill.id), msg.skill] }));
-        cloudRequests.get(msg.requestId)?.resolve(msg);
-        break;
-      case "skills.imported":
-      case "skills.created":
-        useStore.setState((state) => ({ skills: [...state.skills.filter((skill) => skill.id !== msg.skill.id), msg.skill] }));
-        skillMutationRequests.get(msg.requestId)?.resolve(msg);
-        break;
-      case "plugins.list":
-        useStore.setState({ plugins: msg.plugins });
-        break;
-      case "browser.status":
-        if (msg.status.targetConnected) rememberBrowserConnection();
-        useStore.setState({ browserStatus: msg.status });
-        break;
-      case "reach.channels":
-        useStore.setState({ reachChannels: msg.channels });
-        break;
-      case "subagent.list":
-        useStore.setState({ subagentConfig: msg.config });
-        try {
-          window.localStorage.setItem(SUBAGENTS_STORAGE_KEY, JSON.stringify(msg.config.profiles));
-          window.localStorage.setItem(CAPABILITY_ROUTING_STORAGE_KEY, JSON.stringify(msg.config.routing));
-          window.localStorage.setItem(SUBAGENT_RUNTIME_STORAGE_KEY, JSON.stringify(msg.config.runtime));
-        } catch (error) {
-          console.error("subagent configuration cache failed", error);
-        }
-        break;
-      case "mcp.list":
-        useStore.setState({ mcpServers: msg.servers });
-        for (const server of msg.servers) {
-          const oauthKeys = server.authMode === "oauth"
-            ? [`mcp.oauth:${server.id}.client`, `mcp.oauth:${server.id}.tokens`]
-            : [server.oauth?.tokenSecretKey ?? `mcp.oauth:${server.id}`];
-          const keys = [...oauthKeys, ...Object.values(server.env ?? {})
-            .filter((value) => value.startsWith("$mcp.env:"))
-            .map((value) => value.slice(1))];
-          void (async () => {
-            for (const key of keys) {
-              if (restoredMcpSecrets.has(key)) continue;
-              restoredMcpSecrets.add(key);
-              try {
-                const value = await invoke<string | null>("secret_get", { key });
-                if (value) await useStore.getState().send({ type: "secret.set", requestId: rid(), key, value });
-              } catch (error) {
-                restoredMcpSecrets.delete(key);
-                console.error("MCP credential restore failed", error);
-              }
-            }
-          })();
-        }
-        break;
-      case "mcp.connected":
-        finishMcpConnection(msg.serverId);
-        useStore.setState((st) => ({
-          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connected: true, toolCount: msg.toolCount } : server),
-          githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === msg.serverId ? undefined : st.githubDeviceAuthorization,
-          oauthAuthorization: st.oauthAuthorization?.serverId === msg.serverId ? undefined : st.oauthAuthorization,
-        }));
-        break;
-      case "mcp.oauth.authorization":
-        useStore.setState({ oauthAuthorization: { requestId: msg.requestId, serverId: msg.serverId, url: msg.url, state: msg.state } });
-        openUrl(msg.url).catch((error) => {
-          console.error("OAuth browser launch failed", error);
-          useStore.setState({ lastError: String(error) });
-          finishMcpConnection(msg.serverId);
-        });
-        break;
-      case "mcp.github.device":
-        useStore.setState({ githubDeviceAuthorization: msg });
-        if (new URL(msg.verificationUri).hostname === "github.com") openUrl(msg.verificationUri).catch((error) => {
-          console.error("GitHub login launch failed", error);
-          useStore.setState({ lastError: String(error) });
-        });
-        break;
-      case "mcp.oauth.saved":
-        if (msg.key.endsWith(".tokens") || !msg.key.endsWith(".client")) useStore.setState({ oauthAuthorization: undefined });
-        break;
-      case "mcp.oauth.invalidated":
-        // Do not restore a rejected token while native deletion/list updates arrive.
-        restoredMcpSecrets.add(msg.key);
-        useStore.setState((st) => ({
-          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connected: false, toolCount: 0 } : server),
-        }));
-        break;
-      case "mcp.oauth.token":
-        useStore.setState({ lastError: "OAuth token was not intercepted by the native credential bridge" });
-        break;
-      case "permission.list":
-        useStore.setState({ permissionRules: msg.rules });
-        break;
-      case "permission.updated":
-        useStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
-        break;
-      case "error":
-        if (msg.requestId && stopRequests.has(msg.requestId)) {
-          const request = stopRequests.get(msg.requestId)!;
-          stopRequests.delete(msg.requestId);
-          stopRequestedSessionIds.delete(request.sessionId);
-          useStore.setState({ lastError: displayRuntimeError(msg.message) });
-          break;
-        }
-        if (msg.requestId && pendingTitleRequests.has(msg.requestId)) {
-          const sessionId = pendingTitleRequests.get(msg.requestId)!;
-          pendingTitleRequests.delete(msg.requestId);
-          useStore.setState((state) => ({ titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== sessionId) }));
-          break;
-        }
-        if (msg.requestId && msg.requestId === useStore.getState().contextUsageRequestId) {
-          useStore.setState({ contextUsageRequestId: undefined, contextUsage: undefined });
-          break;
-        }
-        const compactingSessionId = msg.requestId && Object.entries(useStore.getState().compactionStatuses).find(([, status]) => status.requestId === msg.requestId)?.[0];
-        if (compactingSessionId) {
-          useStore.setState((state) => {
-            const compactionStatuses = { ...state.compactionStatuses };
-            delete compactionStatuses[compactingSessionId];
-            return { compactionStatuses, lastError: displayRuntimeError(msg.message) };
-          });
-          break;
-        }
-        if (msg.requestId && steerRequests.has(msg.requestId)) {
-          steerRequests.get(msg.requestId)?.resolve(false);
-          break;
-        }
-        if (msg.requestId && skillMutationRequests.has(msg.requestId)) {
-          skillMutationRequests.get(msg.requestId)?.reject(new Error(msg.message));
-          break;
-        }
-        if (msg.requestId && cloudRequests.has(msg.requestId)) {
-          cloudRequests.get(msg.requestId)?.reject(new Error(msg.message));
-          break;
-        }
-        if (msg.requestId) {
-          const serverId = mcpConnectRequests.get(msg.requestId);
-          if (serverId) {
-            finishMcpConnection(serverId);
-            useStore.setState((st) => ({
-              githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === serverId ? undefined : st.githubDeviceAuthorization,
-              oauthAuthorization: st.oauthAuthorization?.serverId === serverId ? undefined : st.oauthAuthorization,
-            }));
-          }
-        }
-        const workspaceRequest = msg.requestId ? workspaceRequests.get(msg.requestId) : undefined;
-        if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        if (pendingAgentRun && pendingAgentRun.requestId === msg.requestId) {
-          const pending = pendingAgentRun;
-          pendingAgentRun = undefined;
-          finishStopRequest(pending.sessionId);
-          if (pending.sessionId === useStore.getState().currentSessionId) {
-            clearDelta();
-            useStore.setState({
-              chatRunError: { sessionId: pending.sessionId, userMessageId: pending.userMessageId, detail: msg.message },
-              running: false,
-              streaming: "",
-              streamingParts: [],
-              activeMessageSequence: undefined,
-              preparedToolCallIds: [],
-              activeRunId: undefined,
-              titleGeneratingSessionIds: useStore.getState().titleGeneratingSessionIds.filter((id) => id !== pending.sessionId),
-            });
-          }
-          break;
-        }
-        useStore.setState((st) => ({
-          lastError: displayRuntimeError(msg.message),
-          ...(workspaceRequest ? { workspaceError: msg.message } : {}),
-          ...(st.creatingSession ? { creatingSession: false, pendingMessage: undefined } : {}),
-          ...(st.running && !st.activeRunId && !pendingAgentRun ? { running: false } : {}),
-        }));
-        break;
-      case "session.compacted":
-      case "session.compactionInterrupted":
-        useStore.setState((state) => {
-          const pending = state.compactionStatuses[msg.sessionId];
-          if (pending?.requestId !== msg.requestId) return state;
-          // A runtime started before the marker protocol change can still
-          // finish an in-flight compaction after the frontend hot reloads.
-          const marker: CompactionMarkerInfo = isCompactionMarker(msg.marker) ? msg.marker : {
-            id: msg.requestId,
-            throughMessageId: pending.throughMessageId,
-            createdAt: Date.now(),
-            status: msg.type === "session.compacted" ? "completed" : "interrupted",
-            source: "manual",
-          };
-          const compactionStatuses = { ...state.compactionStatuses };
-          delete compactionStatuses[msg.sessionId];
-          return {
-            compactionStatuses,
-            ...(msg.type === "session.compactionInterrupted" ? { lastError: displayRuntimeError(msg.message) } : {}),
-            ...(state.currentSessionId === msg.sessionId
-              ? { compactions: [...state.compactions.filter((item) => item.id !== marker.id), marker] }
-              : {}),
-          };
-        });
-        break;
-      case "session.context":
-        useStore.setState((state) => state.contextUsageRequestId === msg.requestId &&
-          state.currentSessionId === msg.sessionId && state.selectedModelId === msg.model
-          ? { contextUsageRequestId: undefined, contextUsage: { sessionId: msg.sessionId, model: msg.model, tokens: msg.tokens, contextWindow: msg.contextWindow } }
-          : state);
-        break;
-      case "agent.event": {
-        const ev = msg.event;
-        lastSequence = Math.max(lastSequence, ev.sequence);
-        if (ev.sessionId && ev.runId && ev.type === "context.compaction.started") {
-          const p = ev.payload as { id?: unknown; throughMessageId?: unknown; startedAt?: unknown; source?: unknown } | null;
-          if (p?.source === "automatic" && typeof p.id === "string" && typeof p.throughMessageId === "string" && typeof p.startedAt === "number") {
-            const { id, throughMessageId, startedAt } = p;
-            const { sessionId, runId } = ev;
-            useStore.setState((state) => ({ autoCompactionStatuses: { ...state.autoCompactionStatuses, [sessionId]: { id, runId, throughMessageId, startedAt } } }));
-          }
-        } else if (ev.sessionId && ev.runId && (ev.type === "context.compacted" || ev.type === "context.compaction.interrupted")) {
-          const p = ev.payload as { id?: unknown; throughMessageId?: unknown; createdAt?: unknown; source?: unknown } | null;
-          if (p?.source === "automatic" && typeof p.id === "string" && typeof p.throughMessageId === "string" && typeof p.createdAt === "number") {
-            const sessionId = ev.sessionId;
-            const marker: CompactionMarkerInfo = { id: p.id, throughMessageId: p.throughMessageId, createdAt: p.createdAt, status: ev.type === "context.compacted" ? "completed" : "interrupted", source: "automatic" };
-            useStore.setState((state) => {
-              const autoCompactionStatuses = { ...state.autoCompactionStatuses };
-              if (autoCompactionStatuses[sessionId]?.runId === ev.runId) delete autoCompactionStatuses[sessionId];
-              return {
-                autoCompactionStatuses,
-                ...(state.currentSessionId === sessionId ? { compactions: [...state.compactions.filter((item) => item.id !== marker.id), marker] } : {}),
-              };
-            });
-          }
-        }
-        if ((ev.type === "agent.steer.delivered" || ev.type === "agent.steer.undelivered") && ev.sessionId) {
-          const queueItemId = (ev.payload as { queueItemId?: unknown } | undefined)?.queueItemId;
-          if (typeof queueItemId === "string") getQoneMessageQueue(ev.sessionId)?.settleSteer(queueItemId, ev.type === "agent.steer.delivered");
-          if (ev.type === "agent.steer.delivered" && ev.sessionId === useStore.getState().currentSessionId) {
-            clearDelta();
-            useStore.setState({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [] });
-          }
-        }
-        if (ev.sessionId && ev.sessionId !== useStore.getState().currentSessionId) {
-          if (["agent.completed", "agent.cancelled", "agent.failed"].includes(ev.type)) finishStopRequest(ev.sessionId, ev.runId);
-          if (["agent.completed", "agent.cancelled", "agent.failed"].includes(ev.type) && ev.runId === useStore.getState().activeRunId) {
-            useStore.setState({ running: false, activeRunId: undefined });
-          }
-          if (ev.type === "agent.cancelled") useStore.setState((st) => ({ titleGeneratingSessionIds: st.titleGeneratingSessionIds.filter((id) => id !== ev.sessionId) }));
-          break;
-        }
-        if (ev.runId && ev.type === "agent.started") {
-          useStore.setState((st) => ({
-            activeRunId: ev.runId,
-            runs: st.runs.some((run) => run.id === ev.runId)
-              ? st.runs
-              : [{ id: ev.runId!, sessionId: ev.sessionId ?? st.currentSessionId ?? "", status: "running", startedAt: ev.timestamp }, ...st.runs],
-          }));
-          if (ev.sessionId && stopRequestedSessionIds.has(ev.sessionId)) stopRun(ev.sessionId, ev.runId);
-        }
-        const p = ev.payload as Record<string, unknown> | undefined;
-
-        if (ev.type === "artifact.created" && p && typeof p.id === "string" && ev.sessionId === useStore.getState().currentSessionId) {
-          useStore.setState((st) => ({ artifacts: st.artifacts.some((artifact) => artifact.id === p.id) ? st.artifacts : [p as unknown as ArtifactInfo, ...st.artifacts] }));
-        }
-
-        if (ev.type === "run.status" && ev.runId && typeof p?.status === "string") {
-          useStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status: p.status as RunInfo["status"] } : run) }));
-        }
-
-        // Product protocol event; Pi event names never cross into this reducer.
-        if (ev.type === "message.started" && ev.runId === useStore.getState().activeRunId && (p?.message as { role?: unknown } | undefined)?.role === "assistant") {
-          clearDelta();
-          useStore.setState({ activeMessageSequence: ev.sequence, streaming: "" });
-        }
-
-        else if (ev.type === "message.block.started" && ev.runId === useStore.getState().activeRunId) {
-          flushNow();
-          useStore.setState((st) => {
-            const messageSequence = st.activeMessageSequence;
-            if (messageSequence === undefined) return st;
-            const priorText: AssistantMessagePart[] = st.streaming
-              ? [{ type: "text", text: st.streaming, messageSequence }]
-              : [];
-            const newTool: AssistantMessagePart[] = p?.blockType === "tool-call"
-              ? [{
-                  type: "tool-call",
-                  toolCallId: typeof p.toolCallId === "string" && p.toolCallId
-                    ? p.toolCallId
-                    : `pi-${messageSequence}-${p.contentIndex ?? st.streamingParts.length}`,
-                  toolName: String(p.toolName ?? "tool"),
-                  args: p.args ?? {},
-                  messageSequence,
-                }]
-              : [];
-            return { streaming: "", streamingParts: [...st.streamingParts, ...priorText, ...newTool] };
-          });
-        }
-
-        else if ((ev.type === "message.block.completed" || ev.type === "message.delta") && ev.runId === useStore.getState().activeRunId && p?.blockType === "tool-call") {
-          useStore.setState((st) => {
-            const fallbackId = st.activeMessageSequence !== undefined && typeof p.contentIndex === "number"
-              ? `pi-${st.activeMessageSequence}-${p.contentIndex}`
-              : undefined;
-            const toolCallId = typeof p.toolCallId === "string" && p.toolCallId ? p.toolCallId : fallbackId;
-            const parts = st.streamingParts.map((part): AssistantMessagePart =>
-              part.type === "tool-call" && part.toolCallId === fallbackId && toolCallId
-                ? { ...part, toolCallId }
-                : part
-            );
-            if (!toolCallId) return { streamingParts: parts };
-            const hasStartedCall = st.toolCalls.some((call) => call.runId === ev.runId && call.toolCallId === toolCallId);
-            return {
-              streamingParts: applyAssistantToolEvent(parts, "tool.started", { ...p, toolCallId }),
-              preparedToolCallIds: ev.type !== "message.block.completed" || hasStartedCall || st.preparedToolCallIds.includes(toolCallId)
-                ? st.preparedToolCallIds
-                : [...st.preparedToolCallIds, toolCallId],
-            };
-          });
-        }
-
-        else if (ev.type === "message.delta" && ev.runId === useStore.getState().activeRunId && typeof p?.delta === "string") {
-          queueDelta(p.delta);
-        }
-
-        else if (ev.type === "message.completed" && ev.runId === useStore.getState().activeRunId && (p?.message as { role?: unknown } | undefined)?.role === "assistant") {
-          clearDelta();
-          useStore.setState((st) => {
-            const messageSequence = st.activeMessageSequence ?? ev.sequence;
-            const completedParts = assistantPartsFromPiMessage(p, messageSequence);
-            const activeToolCallIds = new Set(
-              st.toolCalls
-                .filter((call) => call.runId === ev.runId)
-                .map((call) => call.toolCallId),
-            );
-            const newlyPrepared = completedParts.flatMap((part) =>
-              part.type === "tool-call" && !activeToolCallIds.has(part.toolCallId)
-                ? [part.toolCallId]
-                : [],
-            );
-            return {
-              streaming: "",
-              activeMessageSequence: undefined,
-              streamingParts: [
-                ...st.streamingParts.filter((part) => part.messageSequence !== messageSequence),
-                ...completedParts,
-              ],
-              preparedToolCallIds: [...new Set([...st.preparedToolCallIds, ...newlyPrepared])],
-            };
-          });
-        }
-
-        else if (ev.type === "tool.started") {
-          const toolCallId = typeof p?.toolCallId === "string" && p.toolCallId ? p.toolCallId : rid();
-          const toolPayload: Record<string, unknown> & { toolCallId: string } = { ...(p ?? {}), toolCallId };
-          const activeRun = ev.runId === useStore.getState().activeRunId;
-          if (activeRun) flushNow();
-          const tc: ToolCall = {
-            toolCallId,
-            runId: ev.runId ?? "",
-            toolName: String(toolPayload.toolName ?? "tool"),
-            status: "running",
-            startedAt: ev.timestamp,
-            args: toolPayload.input ?? toolPayload.args,
-            argsText: (() => {
-              const value = toolPayload.input ?? toolPayload.args;
-              if (typeof value === "string") return value;
-              try { return JSON.stringify(value ?? {}); } catch { return "{}"; }
-            })(),
-          };
-          useStore.setState((st) => {
-            const lastPart = st.streamingParts.at(-1);
-            const messageSequence = st.activeMessageSequence
-              ?? (lastPart?.type === "tool-call" ? lastPart.messageSequence : ev.sequence);
-            const existing = st.toolCalls.find((t) => t.toolCallId === toolCallId);
-            return {
-              toolCalls: existing
-                ? st.toolCalls.map((t) => t.toolCallId === toolCallId
-                    ? { ...t, ...tc, startedAt: t.startedAt ?? tc.startedAt, completedAt: undefined }
-                    : t)
-                : [...st.toolCalls, tc],
-              preparedToolCallIds: st.preparedToolCallIds.filter((id) => id !== toolCallId),
-              ...(ev.runId === st.activeRunId ? {
-                streaming: "",
-                streamingParts: ensureStreamingToolPart(
-                  st.streaming
-                    ? [...st.streamingParts, { type: "text", text: st.streaming, messageSequence: st.activeMessageSequence ?? ev.sequence }]
-                    : st.streamingParts,
-                  toolPayload,
-                  messageSequence,
-                ),
-              } : {}),
-            };
-          });
-        } else if (ev.type === "tool.updated" && ev.runId === useStore.getState().activeRunId) {
-          useStore.setState((st) => ({
-            toolCalls: st.toolCalls.map((call) =>
-              call.runId === ev.runId && call.toolCallId === p?.toolCallId && (call.status === "running" || call.status === "waiting")
-                ? { ...call, status: "running", result: p.update }
-                : call
-            ),
-          }));
-        } else if (ev.type === "tool.completed" || ev.type === "tool.failed") {
-          const id = String(p?.toolCallId ?? "");
-          const isErr = ev.type === "tool.failed" || Boolean(p?.isError ?? p?.error);
-          useStore.setState((st) => ({
-            toolCalls: st.toolCalls.map((t) =>
-              t.toolCallId === id
-                ? {
-                    ...t,
-                    status: isErr ? "failed" : "success",
-                    result: p?.content ?? p?.result,
-                    summary: JSON.stringify(p?.content ?? p?.result ?? "").slice(0, 20_000),
-                    completedAt: ev.timestamp,
-                  }
-                : t
-            ),
-            preparedToolCallIds: st.preparedToolCallIds.filter((preparedId) => preparedId !== id),
-            streamingParts: ev.runId === st.activeRunId
-              ? applyAssistantToolEvent(st.streamingParts, ev.type === "tool.failed" ? "tool.failed" : "tool.completed", p)
-              : st.streamingParts,
-          }));
-        }
-
-        // Approval requests from the permission layer
-        else if (ev.type === "approval.requested") {
-          if (ev.runId) {
-            useStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status: "waiting_approval" } : run) }));
-          }
-          useStore.setState((st) => ({
-            toolCalls: st.toolCalls.map((tool) => tool.toolName === String(p?.toolName ?? "") && tool.status === "running" ? { ...tool, status: "waiting" } : tool),
-            approvals: [
-              ...st.approvals,
-              {
-                id: String(p?.approvalId ?? ""),
-                toolName: String(p?.toolName ?? "tool"),
-                args: p?.args,
-              },
-            ],
-          }));
-        }
-
-        else if (
-          ev.type === "agent.completed" ||
-          ev.type === "agent.cancelled" ||
-          ev.type === "agent.failed"
-        ) {
-          const isActiveRun = !ev.runId || ev.runId === useStore.getState().activeRunId;
-          if (isActiveRun) clearDelta();
-          const completedMessage = p?.message;
-          if (
-            completedMessage &&
-            typeof completedMessage === "object" &&
-            typeof (completedMessage as { id?: unknown }).id === "string" &&
-            typeof (completedMessage as { content?: unknown }).content === "string"
-          ) {
-            const message = completedMessage as { id: string; role?: string; content: string; parts?: AssistantMessagePart[]; runId?: string; createdAt?: number };
-            useStore.setState((st) => ({
-              messages: st.messages.some((item) => item.id === message.id)
-                ? st.messages
-                : [...st.messages, {
-                    id: message.id,
-                    role: message.role ?? "assistant",
-                    content: message.content,
-                    parts: message.parts,
-                    runId: message.runId,
-                    createdAt: message.createdAt,
-                  }],
-            }));
-          }
-          if (ev.type === "agent.failed" && isActiveRun) {
-            useStore.setState((st) => {
-              const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
-              return userMessage && st.currentSessionId ? {
-                chatRunError: {
-                  sessionId: st.currentSessionId,
-                  userMessageId: userMessage.id,
-                  detail: typeof p?.message === "string" ? p.message : "",
-                },
-              } : { lastError: typeof p?.message === "string" ? p.message : "Agent failed" };
-            });
-          }
-          if (ev.runId) {
-            if (ev.sessionId) finishStopRequest(ev.sessionId, ev.runId);
-            const status = ev.type === "agent.completed" ? "completed" : ev.type === "agent.cancelled" ? "cancelled" : "failed";
-            useStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status, completedAt: Date.now() } : run) }));
-          }
-          if (isActiveRun) {
-            useStore.setState({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], running: false, activeRunId: undefined, approvals: [] });
-          }
-          if (ev.type === "agent.cancelled") {
-            const cancelledSessionId = ev.sessionId ?? useStore.getState().currentSessionId;
-            useStore.setState((st) => ({ titleGeneratingSessionIds: st.titleGeneratingSessionIds.filter((id) => id !== cancelledSessionId) }));
-          }
-          const sessionId = ev.sessionId ?? useStore.getState().currentSessionId;
-          if (sessionId) {
-            const state = useStore.getState();
-            state.send({ type: "session.messages", requestId: rid(), sessionId });
-            state.send({ type: "session.toolCalls", requestId: rid(), sessionId });
-            state.send({ type: "session.runs", requestId: rid(), sessionId });
-            state.send({ type: "artifact.list", requestId: rid(), sessionId });
-          }
-        }
-        break;
-      }
-      case "file.read":
-        if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        useStore.setState({ openFile: { workspaceId: msg.workspaceId, path: msg.path, content: msg.content }, workspaceError: undefined });
-        break;
-      case "workspace.gitDiff":
-        if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        useStore.setState({ gitDiffView: { workspaceId: msg.workspaceId, path: msg.path, diff: msg.diff }, workspaceError: undefined });
-        break;
-      case "events.replay":
-        for (const ev of msg.events) {
-          lastSequence = Math.max(lastSequence, ev.sequence);
-          // Feed replayed events through the same reducer on the next reconnect.
-          // Current UI state is intentionally not rebuilt from stale tool cards;
-          // persisted messages/runs are authoritative and are loaded above.
-        }
-        break;
-    }
-  });
-  void ready
-    .then(() => useStore.getState().send({ type: "ping", requestId: rid() }))
-    .catch((error) => {
-      wired = false;
-      console.error("runtime listener setup failed", error);
-    });
+export function bridgeDependencies() {
+  return { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, pendingMessageReplacements, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
 }
+
+export function initBridge() { initRuntimeBridge(bridgeDependencies()); }

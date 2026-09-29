@@ -14,6 +14,7 @@ export function subagentMessages(item: SubagentRunInfo): ThreadMessage[] {
         : item.status === "cancelled" || item.status === "interrupted" ? { type: "incomplete" as const, reason: "cancelled" as const }
           : { type: "complete" as const, reason: "stop" as const };
     const transcript: ThreadMessage[] = item.messages.flatMap((message): ThreadMessage[] => {
+      if (message.internal) return [];
       if (message.role === "user") return [{
         id: message.id, role: "user" as const, createdAt: new Date(message.createdAt),
         content: [{ type: "text" as const, text: message.sequence === 0 ? item.task : message.content }], attachments: [], metadata: { custom: {} },
@@ -28,7 +29,7 @@ export function subagentMessages(item: SubagentRunInfo): ThreadMessage[] {
       }];
     });
     if (isRunning || unsavedParts.length || item.streaming) {
-      const converted = assistantMessageContent({ content: unsavedParts.length ? "" : item.streaming || "", parts: unsavedParts.length ? unsavedParts : undefined }, [], isRunning);
+      const converted = assistantMessageContent({ content: item.streaming || "", parts: unsavedParts.length ? unsavedParts : undefined }, [], isRunning);
       transcript.push({
         id: `${item.id}:live`, role: "assistant", createdAt: new Date(),
         content: typeof converted === "string" ? [{ type: "text", text: converted }] : converted as readonly ThreadAssistantMessagePart[],
@@ -59,7 +60,7 @@ export function subagentMessages(item: SubagentRunInfo): ThreadMessage[] {
     ...messageParts.map(({ id, parts, last }): ThreadMessage => ({
       id, role: "assistant", createdAt: new Date(item.startedAt),
       content: (() => {
-        const converted = assistantMessageContent({ content: parts.length ? "" : item.streaming || item.content, parts: parts.length ? parts : undefined }, [], isRunning && last);
+        const converted = assistantMessageContent({ content: last && item.streaming ? item.streaming : parts.length ? "" : item.content, parts: parts.length ? parts : undefined }, [], isRunning && last);
         return typeof converted === "string" ? [{ type: "text" as const, text: converted }] : converted as readonly ThreadAssistantMessagePart[];
       })(),
       status: last ? finalStatus : { type: "complete", reason: "stop" },
