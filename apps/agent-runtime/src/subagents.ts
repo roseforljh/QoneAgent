@@ -1,4 +1,4 @@
-import { builtinSubagentId, builtinSubagentLogo, CAPABILITY_IDS, DEFAULT_SUBAGENT_RUNTIME, isBuiltinSubagentId, SUBAGENT_LOGO_IDS, type CapabilityId, type CapabilityRouting, type SubagentConfigInfo, type SubagentProfileInfo, type SubagentRuntimeConfig, type RunPermissionMode } from "@qone/protocol";
+import { builtinSubagentId, builtinSubagentLogo, CAPABILITY_IDS, DEFAULT_SUBAGENT_RUNTIME, isBuiltinSubagentId, REMOVED_BUILTIN_SUBAGENT_IDS, SUBAGENT_LOGO_IDS, type CapabilityId, type CapabilityRouting, type SubagentConfigInfo, type SubagentProfileInfo, type SubagentRuntimeConfig, type RunPermissionMode } from "@qone/protocol";
 
 export interface ResolvedSubagent {
   id: string;
@@ -12,17 +12,17 @@ export interface ResolvedSubagent {
 }
 
 const capabilityInstructions: Record<CapabilityId, string> = {
-  webSearch: "你负责联网搜索。先使用可用的搜索工具或已配置的搜索 MCP 获取最新资料，再基于检索结果回答。不要凭记忆冒充实时信息；明确区分事实、推断和未找到的内容。",
   videoRecognition: "你负责视频内容识别。读取用户提供的视频或相关文件，提取时间线、画面、字幕和声音中的关键信息，按用户要求给出结构化结论。无法读取的媒体必须明确说明。",
   imageGeneration: "你负责图像生成。理解用户要生成的画面内容、风格和用途，并调用可用的图像生成能力完成；如果当前模型不能产出图像，要清楚说明限制。",
+  videoGeneration: "你负责视频生成。按用户要求生成视频，说明实际使用的生成能力，并返回可访问的结果。当前 API 格式没有可用的视频生成接口时必须明确报错，不得把文字描述冒充生成结果。",
   stt: "你负责语音转文字。识别用户提供的音频内容，尽量保留说话人、时间顺序和原话；听不清的部分用标记说明，不要臆造。",
-  tts: "你负责文字转语音。理解用户要朗读或生成语音的文本和风格要求，并调用可用的语音能力完成；如果当前模型不能产出音频，要清楚说明限制。",
+  tts: "你负责文字转语音。父代理委派给语音模型时，任务文本应只包含需要朗读的原文；声线由模型参数中的 voice 决定。生成后返回可访问的文件结果；如果当前 API 格式不能产出音频，要清楚说明限制。",
 };
 
 const capabilityNames: Record<CapabilityId, string> = {
-  webSearch: "联网搜索",
   videoRecognition: "视频识别",
   imageGeneration: "图像生成",
+  videoGeneration: "视频生成",
   stt: "语音转文字",
   tts: "文字转语音",
 };
@@ -37,7 +37,7 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
   const profiles = Array.isArray(record.profiles) ? record.profiles.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const profile = item as Record<string, unknown>;
-    if (typeof profile.id !== "string" || typeof profile.name !== "string" || typeof profile.instructions !== "string" || typeof profile.modelId !== "string") return [];
+    if (typeof profile.id !== "string" || REMOVED_BUILTIN_SUBAGENT_IDS.includes(profile.id) || typeof profile.name !== "string" || typeof profile.instructions !== "string" || typeof profile.modelId !== "string") return [];
     return [{
       id: profile.id.slice(0, 128), name: profile.name.trim().slice(0, 120),
       instructions: profile.instructions.trim().slice(0, 32_000), modelId: profile.modelId,
@@ -86,7 +86,7 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
       logo: builtinSubagentLogo(capability),
       tools: legacyProfile?.tools,
       permissionMode: legacyProfile?.permissionMode ?? "ask",
-      enabled: true,
+      enabled: Boolean(legacyRoute),
       updatedAt: Date.now(),
     } satisfies SubagentProfileInfo;
   });
@@ -138,7 +138,7 @@ export function resolveSubagent(config: SubagentConfigInfo, capability: Capabili
   return {
     id: `capability:${capability}`,
     name: `${capability} capability agent`,
-    instructions: [capabilityInstructions[capability], mcpServerId ? `本次联网搜索指定使用 MCP ${mcpServerId}；优先使用该 MCP 提供的工具。` : ""].filter(Boolean).join("\n\n"),
+    instructions: [capabilityInstructions[capability], mcpServerId ? `本次任务优先使用 MCP ${mcpServerId} 提供的工具。` : ""].filter(Boolean).join("\n\n"),
     modelId: route.startsWith("model:") ? route.slice("model:".length) : undefined,
     route,
     mcpServerId,
@@ -150,7 +150,7 @@ export function subagentCatalog(config: SubagentConfigInfo) {
   return {
     capabilities: CAPABILITY_IDS.flatMap((capability) => {
       const agent = resolveSubagent(config, capability);
-      return agent ? [{ capability, model: agent.modelId, route: agent.route }] : [];
+      return agent ? [{ capability, name: agent.name, description: agent.instructions, model: agent.modelId, route: agent.route }] : [];
     }),
     unconfiguredCapabilities: CAPABILITY_IDS.filter((capability) => !resolveSubagent(config, capability)),
     profiles: config.profiles.filter((profile) => profile.enabled).map((profile) => ({ id: profile.id, name: profile.name, instructions: profile.instructions.slice(0, 500) })),

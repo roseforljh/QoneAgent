@@ -6,7 +6,10 @@ import { unlinkSync, writeFileSync } from "node:fs";
 import { closeDb, MessageRepo, openDb, SessionRepo } from "@qone/database";
 import { decodeCommand, type MessageAttachmentInfo } from "@qone/protocol";
 import { createPiSessionEntries, imageContent, promptWithAttachments } from "../src/pi-adapter";
-import { googleMediaContent, prepareGooglePayload, youtubeUrlsFromText } from "../src/google-media";
+import { googleMediaContent, localMediaMarker, prepareGooglePayload, youtubeUrlsFromText } from "../src/google-media";
+import { canProcessMediaAttachment, configuredCapabilities } from "../src/media-capabilities";
+import { convertMessages as convertGoogleMessages } from "@earendil-works/pi-ai/api/google-shared";
+import { normalizeContext, type Model } from "@earendil-works/pi-ai";
 
 const attachments: MessageAttachmentInfo[] = [
   { type: "file", name: "notes.txt", mimeType: "text/plain", data: "data:text/plain;base64,aGVsbG8=" },
@@ -51,6 +54,148 @@ test("Gemini converts YouTube links to native fileData parts", async () => {
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
   } as never, "test-key");
   expect(payload.contents?.[0]?.parts?.at(-1)).toEqual({ fileData: { mimeType: "video/*", fileUri: "https://youtu.be/abc123" } });
+  const unavailable = await prepareGooglePayload({ contents: [{ role: "user", parts: [{ text: "分析 https://youtu.be/abc123" }] }] }, {
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+  } as never, "test-key", undefined, false);
+  expect(unavailable.contents?.[0]?.parts).toEqual([{ text: "分析 https://youtu.be/abc123" }]);
+});
+
+test("unconfigured media input remains an attachment reference for delegation", () => {
+  const media: MessageAttachmentInfo = { type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "", localPath: join(tmpdir(), "clip.mp4") };
+  const prompt = promptWithAttachments("分析", [media], true, ["text"]);
+  expect(prompt).toContain("需交给能处理该媒体的子代理");
+  expect(prompt).not.toContain("QONE_MEDIA");
+  expect(googleMediaContent([media], ["text"])).toEqual([]);
+});
+
+test("an audio-capable agent can extract a video's sound without claiming its picture", () => {
+  const media: MessageAttachmentInfo = { type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "", localPath: join(tmpdir(), "clip.mp4") };
+  for (const native of [true, "audio"] as const) {
+    const prompt = promptWithAttachments("听视频声音", [media], native, ["text", "audio"]);
+    expect(prompt).toContain("qone_media_extract_audio");
+    expect(prompt).toContain("若任务需要画面，请委派原始附件");
+    expect(prompt).not.toContain("QONE_MEDIA");
+  }
+});
+
+test("media routing uses the API format and configured inputs together", () => {
+  const video: MessageAttachmentInfo = { type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "" };
+  const audio: MessageAttachmentInfo = { type: "file", name: "voice.mp3", mimeType: "audio/mpeg", data: "" };
+  expect(canProcessMediaAttachment("google-generative-ai", ["video"], video)).toBe(true);
+  expect(canProcessMediaAttachment("openai-responses", ["video"], video)).toBe(false);
+  expect(canProcessMediaAttachment("openai-responses", ["video", "image"], video)).toBe(true);
+  expect(canProcessMediaAttachment("anthropic-messages", ["audio"], audio)).toBe(false);
+  expect(canProcessMediaAttachment("openai-completions", ["audio"], audio)).toBe(true);
+});
+
+test("image MIME type routes correctly even when the transport labels it as a file", () => {
+  const image: MessageAttachmentInfo = { type: "file", name: "plot.png", mimeType: "image/png", data: "data:image/png;base64,aGVsbG8=" };
+  expect(canProcessMediaAttachment("openai-responses", ["image"], image)).toBe(true);
+  expect(canProcessMediaAttachment("openai-responses", ["text"], image)).toBe(false);
+  expect(imageContent([image], ["image"])).toEqual([{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }]);
+  expect(promptWithAttachments("看图", [image], false, ["image"])).toBe("看图");
+  expect(googleMediaContent([image], ["image"])).toEqual([{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }]);
+});
+
+test("Gemini automatic input defaults to four capabilities but manual selection wins", () => {
+  const base = { id: "provider/gemini", provider: "provider", model: "gemini", enabled: true, updatedAt: 1 };
+  expect(configuredCapabilities([{ ...base, config: { apiType: "google", input: ["text"], output: ["text"] } }], "provider/gemini").input)
+    .toEqual(["text", "image", "video", "audio"]);
+  expect(configuredCapabilities([{ ...base, config: { apiType: "google", input: ["text"], output: ["text"], metadataOverrides: { input: true } } }], "provider/gemini").input)
+    .toEqual(["text"]);
+  expect(configuredCapabilities([{ ...base, config: { apiType: "google", input: ["text"], output: ["text"], autoMetadata: false } }], "provider/gemini").input)
+    .toEqual(["text"]);
+});
+
+test("Gemini attaches a downloaded tool video to the next request and ignores it after cleanup", async () => {
+  const path = join(tmpdir(), `qone-tool-video-${crypto.randomUUID()}.mp4`);
+  writeFileSync(path, Buffer.from([0, 1, 2]));
+  const marker = promptWithAttachments("", [{ type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "", localPath: path }], true);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => String(input).includes("/upload/")
+    ? new Response(null, { status: 200, headers: { "x-goog-upload-url": "https://upload.test/video" } })
+    : new Response(JSON.stringify({ file: { name: "files/video", uri: "https://files.test/video", state: "ACTIVE" } }), { status: 200 })) as typeof fetch;
+  const toolPart = { functionResponse: { name: "qone_video_download", response: { output: `已下载 ${marker}` } } };
+  try {
+    const payload = await prepareGooglePayload({ contents: [{ role: "user", parts: [toolPart] }] }, {
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    } as never, "test-key");
+    expect(payload.contents?.[0]?.parts?.[1]).toEqual({ fileData: { mimeType: "video/mp4", fileUri: "https://files.test/video" } });
+    unlinkSync(path);
+    const replay = await prepareGooglePayload({ contents: [{ role: "user", parts: [toolPart] }] }, {
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    } as never, "test-key");
+    expect(replay.contents?.[0]?.parts).toHaveLength(1);
+    expect(replay.contents?.[0]?.parts?.[0]?.functionResponse?.response?.output).toContain("临时文件已清理");
+  } finally {
+    globalThis.fetch = originalFetch;
+    try { unlinkSync(path); } catch { /* already removed */ }
+  }
+});
+
+test("Gemini rewrites the actual Pi tool-result payload into a native file part", async () => {
+  const file = join(tmpdir(), `qone-real-tool-video-${crypto.randomUUID()}.mp4`);
+  writeFileSync(file, Buffer.from([0, 1, 2]));
+  const marker = localMediaMarker(file, "video/mp4", true);
+  const model = { id: "gemini-3-pro", provider: "google", api: "google-generative-ai", baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    name: "Gemini", reasoning: false, input: ["text", "image"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100_000, maxTokens: 1024 } as Model<"google-generative-ai">;
+  const context = normalizeContext({ messages: [
+    { role: "user", content: "看视频", timestamp: 1 },
+    { role: "assistant", api: "google-generative-ai", provider: "google", model: model.id,
+      content: [{ type: "toolCall", id: "call-1", name: "qone_video_download", arguments: { url: "https://example.test/clip.mp4" } }],
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 2 },
+    { role: "toolResult", toolCallId: "call-1", toolName: "qone_video_download", content: [{ type: "text", text: `下载完成 ${marker}` }], isError: false, timestamp: 3 },
+  ] as never });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => String(input).includes("/upload/")
+    ? new Response(null, { status: 200, headers: { "x-goog-upload-url": "https://upload.test/actual" } })
+    : new Response(JSON.stringify({ file: { name: "files/actual", uri: "https://files.test/actual", state: "ACTIVE" } }), { status: 200 })) as typeof fetch;
+  try {
+    const payload = { contents: convertGoogleMessages(model, context) };
+    expect(payload.contents.at(-1)?.parts?.[0]?.functionResponse?.response).toEqual({ output: `下载完成 ${marker}` });
+    const prepared = await prepareGooglePayload(payload, model, "test-key", undefined, false, ["text", "video"]);
+    const parts = prepared.contents?.at(-1)?.parts;
+    expect(parts?.[0]?.functionResponse?.response?.output).toContain("媒体文件已附在工具结果后");
+    expect(parts?.[1]).toEqual({ fileData: { mimeType: "video/mp4", fileUri: "https://files.test/actual" } });
+  } finally {
+    globalThis.fetch = originalFetch;
+    unlinkSync(file);
+  }
+});
+
+test("Gemini replay skips a cleaned temporary audio attachment", async () => {
+  const missing = join(tmpdir(), `qone-deleted-${crypto.randomUUID()}.m4a`);
+  const payload = await prepareGooglePayload({ contents: [{ role: "user", parts: [{ text: localMediaMarker(missing, "audio/mp4", true) }] }] }, {
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+  } as never, "test-key");
+  expect(payload.contents?.[0]?.parts).toEqual([{ text: "[先前处理的媒体临时文件已清理；如需再次分析，请重新获取]" }]);
+});
+
+test("Gemini replay ignores an invalid media marker instead of reading its path", async () => {
+  const marker = localMediaMarker(join(tmpdir(), "old-session.mp4"), "video/mp4");
+  const tampered = marker.replace(/([a-f0-9])\]\]$/, (match, digit: string) => `${digit === "a" ? "b" : "a"}]]`);
+  const payload = await prepareGooglePayload({ contents: [{ role: "user", parts: [{ text: tampered }] }] }, {
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+  } as never, "test-key");
+  expect(payload.contents?.[0]?.parts).toEqual([{ text: "[先前会话的媒体引用已失效；如需分析，请重新提供]" }]);
+});
+
+test("Gemini payload rejects historical media when the current model lacks that input", async () => {
+  const path = join(tmpdir(), `qone-history-${crypto.randomUUID()}.mp4`);
+  writeFileSync(path, Buffer.from([0, 1, 2]));
+  try {
+    const payload = await prepareGooglePayload({ contents: [{ role: "user", parts: [
+      { text: localMediaMarker(path, "video/mp4") },
+      { inlineData: { mimeType: "audio/mpeg", data: "AAAA" } },
+    ] }] }, { baseUrl: "https://generativelanguage.googleapis.com/v1beta" } as never, "test-key", undefined, false, ["text"]);
+    expect(payload.contents?.[0]?.parts).toEqual([
+      { text: "[当前模型未配置对应媒体输入能力；请委派子代理]" },
+      { text: "[当前模型未配置对应媒体输入能力；请委派子代理]" },
+    ]);
+  } finally {
+    unlinkSync(path);
+  }
 });
 
 test("Gemini keeps audio and video attachments as native media parts", () => {
@@ -114,6 +259,22 @@ test("local Gemini media is referenced without base64 and uploaded from disk", a
       { text: "分析\n\n" },
       { fileData: { mimeType: "video/mp4", fileUri: "https://generativelanguage.googleapis.com/v1beta/files/local" } },
     ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    unlinkSync(path);
+  }
+});
+
+test("Gemini file upload surfaces the provider response", async () => {
+  const path = join(tmpdir(), `qone-media-${crypto.randomUUID()}.mp4`);
+  writeFileSync(path, Buffer.from([0, 1, 2, 3]));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("provider rejected the file", { status: 413 })) as typeof fetch;
+  try {
+    const prompt = promptWithAttachments("分析", [{ type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "", localPath: path }], true);
+    await expect(prepareGooglePayload({ contents: [{ role: "user", parts: [{ text: prompt }] }] }, {
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    } as never, "test-key")).rejects.toThrow("Gemini 文件接口 HTTP 413: provider rejected the file");
   } finally {
     globalThis.fetch = originalFetch;
     unlinkSync(path);

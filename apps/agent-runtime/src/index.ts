@@ -1,12 +1,14 @@
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, SessionSearchResult } from "@qone/protocol";
-import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi } from "@qone/protocol";
+import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi, parseMcpCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
 import { existsSync, mkdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { GeneratedArtifacts } from "./generated-artifacts.js";
 import { createLocalSkill, createResourceLoader, installLocalSkill } from "./skills.js";
 import { installCloudSkill, listCloudSkills } from "./skill-catalog.js";
 import { containsSecretConfig } from "./secrets.js";
@@ -20,6 +22,7 @@ import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } fr
 import { normalizeSubagentConfig } from "./subagents.js";
 import { restoreCompactedContext, type SessionCompactionCheckpoint } from "./session-compaction.js";
 import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
+import { generatedSessionTitle, provisionalSessionTitle } from "./session-title.js";
 import { ensureGlobalInstructions, globalInstructionsDirectory, globalInstructionsPath, readGlobalInstructions, writeGlobalInstructions } from "./global-instructions.js";
 
 const log = createLogger("runtime");
@@ -64,9 +67,14 @@ const queueRepo = new QueueRepo(settingsRepo);
 const compactionPreferences: PiCompactionPreferences = normalizePiCompactionPreferences(
   settingsRepo.get("compaction.settings") ?? DEFAULT_PI_COMPACTION_PREFERENCES,
 );
-let subagentConfig: SubagentConfigInfo = normalizeSubagentConfig(settingsRepo.get("subagents.config"));
+const storedSubagentConfig = settingsRepo.get<SubagentConfigInfo>("subagents.config");
+let subagentConfig: SubagentConfigInfo = normalizeSubagentConfig(storedSubagentConfig);
+if (Array.isArray(storedSubagentConfig?.profiles) && storedSubagentConfig.profiles.some((profile) => profile && REMOVED_BUILTIN_SUBAGENT_IDS.includes(profile.id))) {
+  settingsRepo.set("subagents.config", subagentConfig);
+}
 const eventRepo = new EventRepo(db);
 const artifactRepo = new ArtifactRepo(db);
+const generatedArtifacts = new GeneratedArtifacts(artifactRepo, dbPath === ":memory:" ? tmpdir() : dbDir);
 const permissionRepo = new PermissionRepo(db);
 const skillRepo = new SkillRepo(db);
 const eventJournal = new SequencedEventJournal<AgentEvent>(settingsRepo.get<number>("event.sequence") ?? 0);
@@ -179,6 +187,22 @@ eventBus.subscribe((busEvent) => {
     if (initialUserMessageSeen.has(agentEvent.runId)) deliverSteer(agentEvent.sessionId, agentEvent.runId);
     else initialUserMessageSeen.add(agentEvent.runId);
   }
+  if ((agentEvent.type === "compaction_start" || agentEvent.type === "compaction_end") && agentEvent.sessionId && agentEvent.runId && !subagentRunRepo.get(agentEvent.runId)) {
+    const payload = agentEvent.payload as { reason?: string; result?: unknown };
+    if (payload.reason === "threshold" || payload.reason === "overflow") {
+      const history = messageRepo.listBySession(agentEvent.sessionId);
+      const throughMessageId = history.find((message) => message.role === "user" && message.runId === agentEvent.runId)?.id ?? history.at(-1)?.id;
+      if (throughMessageId) {
+        if (agentEvent.type === "compaction_start") {
+          emit("context.compaction.started", { id: agentEvent.eventId, throughMessageId, startedAt: agentEvent.timestamp, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
+        } else {
+          const status = payload.result ? "completed" : "interrupted";
+          emit(status === "completed" ? "context.compacted" : "context.compaction.interrupted", { id: agentEvent.eventId, throughMessageId, createdAt: agentEvent.timestamp, status, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
+          flushEvents();
+        }
+      }
+    }
+  }
 });
 const assistantBuffers = new Map<string, string>();
 // Raw streamed deltas per run; survives aborts so partial answers can be saved.
@@ -190,6 +214,7 @@ const persistedAssistantRuns = new Set<string>();
 const initialUserMessageSeen = new Set<string>();
 const toolCallIds = new Map<string, string>();
 const cancelledRuns = new Set<string>();
+const titleControllers = new Map<string, AbortController>();
 const startingRunSessions = new Set<string>();
 const goalContinuationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -274,6 +299,12 @@ const adapter = new PiAdapter((event) => eventBus.emit({
         toolCallIds.delete(`${runId}:${toolCallId}`);
       }
     }
+  },
+  onGeneratedMedia: async (executionSessionId, runId, data, mimeType, extension, signal) => {
+    const sessionId = subagentRunRepo.getByExecutionSession(executionSessionId)?.parentSessionId ?? executionSessionId;
+    const saved = await generatedArtifacts.save({ sessionId, runId, data, mimeType, extension, signal });
+    emit("artifact.created", { ...saved, runId: saved.runId ?? undefined, mimeType: saved.mimeType ?? undefined, size: saved.size ?? undefined }, sessionId, runId);
+    return saved.path;
   },
 }, permissionRepo, (sessionId, currentRunId) => {
   const subagent = subagentRunRepo.getByExecutionSession(sessionId);
@@ -486,15 +517,19 @@ function sendQueue(sessionId: string) {
 }
 
 function sendMessages(sessionId: string) {
+  const history = messageRepo.listBySession(sessionId);
+  const messageIds = new Set(history.map((message) => message.id));
+  const compactions = eventRepo.listCompactions(sessionId).filter((marker) => messageIds.has(marker.throughMessageId));
   send({
     type: "session.messages", sessionId,
-    messages: messageRepo.listBySession(sessionId).map((m) => ({
+    messages: history.map((m) => ({
       id: m.id, sessionId: m.sessionId, runId: m.runId ?? undefined,
       role: m.role, content: m.content,
       parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
       attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
       model: m.model ?? undefined, goalId: m.goalId ?? undefined, createdAt: m.createdAt,
     })),
+    compactions,
   });
 }
 
@@ -595,12 +630,28 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     }
 
     case "session.generate-title": {
-      const fallback = cmd.prompt.replace(/\s+/g, " ").trim().slice(0, 40) || "New session";
+      const provisional = provisionalSessionTitle(cmd.prompt);
+      const current = sessionRepo.get(cmd.sessionId);
+      if (!current) {
+        send({ type: "error", requestId: cmd.requestId, message: `unknown session ${cmd.sessionId}` });
+        return;
+      }
+      if (current.title !== "New session") {
+        send({ type: "session.renamed", session: toInfo(current) });
+        return;
+      }
+      send({ type: "session.renamed", session: toInfo(sessionRepo.rename(cmd.sessionId, provisional)) });
+      const controller = new AbortController();
+      titleControllers.set(cmd.sessionId, controller);
       try {
-        const title = await adapter.generateTitle(cmd.prompt, cmd.model).catch(() => fallback);
-        send({ type: "session.renamed", session: toInfo(sessionRepo.rename(cmd.sessionId, title)) });
+        const title = generatedSessionTitle(await adapter.generateTitle(cmd.prompt, cmd.model, controller.signal));
+        if (!controller.signal.aborted && title && sessionRepo.get(cmd.sessionId)?.title === provisional && title !== provisional) {
+          send({ type: "session.renamed", session: toInfo(sessionRepo.rename(cmd.sessionId, title)) });
+        }
       } catch (error) {
-        send({ type: "error", requestId: cmd.requestId, message: String(error) });
+        if (!controller.signal.aborted) log.warn("title generation failed", { sessionId: cmd.sessionId, error: String(error) });
+      } finally {
+        if (titleControllers.get(cmd.sessionId) === controller) titleControllers.delete(cmd.sessionId);
       }
       return;
     }
@@ -634,7 +685,9 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       await adapter.disposeSession(cmd.sessionId);
       const deletedGoalTimer = goalContinuationTimers.get(cmd.sessionId);
       if (deletedGoalTimer) { clearTimeout(deletedGoalTimer); goalContinuationTimers.delete(cmd.sessionId); }
+      const generatedFiles = artifactRepo.listBySession(cmd.sessionId);
       sessionRepo.delete(cmd.sessionId);
+      await generatedArtifacts.removeFiles(generatedFiles);
       send({ type: "pong", requestId: cmd.requestId });
       return;
 
@@ -807,7 +860,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
 
     case "artifact.list":
       send({ type: "artifact.list", sessionId: cmd.sessionId, artifacts: artifactRepo.listBySession(cmd.sessionId).map((artifact) => ({
-        id: artifact.id, sessionId: artifact.sessionId, type: artifact.type, name: artifact.name,
+        id: artifact.id, sessionId: artifact.sessionId, runId: artifact.runId ?? undefined, type: artifact.type, name: artifact.name,
         path: artifact.path, mimeType: artifact.mimeType ?? undefined, size: artifact.size ?? undefined, createdAt: artifact.createdAt,
       })) });
       return;
@@ -1125,9 +1178,15 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           throw error;
         }
         sessionRepo.touch(cmd.sessionId);
-        send({ type: "session.compacted", requestId: cmd.requestId, sessionId: cmd.sessionId });
+        const marker = { id: cmd.requestId, throughMessageId: history.at(-1)!.id, createdAt: Date.now(), status: "completed" as const, source: "manual" as const };
+        emit("context.compacted", marker, cmd.sessionId);
+        flushEvents();
+        send({ type: "session.compacted", requestId: cmd.requestId, sessionId: cmd.sessionId, marker });
       } catch (error) {
-        send({ type: "error", requestId: cmd.requestId, message: error instanceof Error ? error.message : String(error) });
+        const marker = { id: cmd.requestId, throughMessageId: history.at(-1)!.id, createdAt: Date.now(), status: "interrupted" as const, source: "manual" as const };
+        emit("context.compaction.interrupted", marker, cmd.sessionId);
+        flushEvents();
+        send({ type: "session.compactionInterrupted", requestId: cmd.requestId, sessionId: cmd.sessionId, marker, message: error instanceof Error ? error.message : String(error) });
       }
       return;
     }
@@ -1271,6 +1330,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         send({ type: "error", requestId: cmd.requestId, message: "select a workspace before running the agent" });
         return;
       }
+      if (cmd.mcpServerId && (!mcp.isConnected(cmd.mcpServerId) || mcp.toolCount(cmd.mcpServerId) === 0)) {
+        send({ type: "error", requestId: cmd.requestId, message: "selected MCP server is not connected or has no tools" });
+        return;
+      }
       if (startingRunSessions.has(cmd.sessionId) || adapter.isRunning(cmd.sessionId) ||
           runRepo.listBySession(cmd.sessionId).some((run) => !subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
         send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
@@ -1286,11 +1349,21 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           const history = messageRepo.listBySession(cmd.sessionId);
           const index = history.findIndex(message => message.id === cmd.replaceFromMessageId && message.role === "user");
           if (index < 0) throw new Error("user message not found in session");
-          await subagentController.dispose(cmd.sessionId, history.slice(index).flatMap(message => message.runId ? [message.runId] : []));
+          const removedRunIds = new Set(history.slice(index).flatMap(message => message.runId ? [message.runId] : []));
+          const childRuns = subagentRunRepo.listBySession(cmd.sessionId);
+          for (let changed = true; changed;) {
+            changed = false;
+            for (const child of childRuns) if (removedRunIds.has(child.parentRunId) && !removedRunIds.has(child.runId)) {
+              removedRunIds.add(child.runId);
+              changed = true;
+            }
+          }
+          await subagentController.dispose(cmd.sessionId, [...removedRunIds]);
           // Pi keeps an in-memory conversation; it must be rebuilt from the trimmed DB history.
           await adapter.disposeSession(cmd.sessionId);
           flushEvents();
           messageRepo.truncateFrom(cmd.sessionId, cmd.replaceFromMessageId);
+          await generatedArtifacts.removeRuns(cmd.sessionId, [...removedRunIds]);
           eventJournal.restore(eventRepo.list());
         } catch (error) {
           send({ type: "error", requestId: cmd.requestId, message: String(error) });
@@ -1324,8 +1397,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         return;
       }
 
+      const mcpCommand = cmd.mcpServerId ? parseMcpCommand(cmd.message) : undefined;
+      const routedMessage = mcpCommand && mcpCommand.serverId === cmd.mcpServerId ? mcpCommand.text : cmd.message;
       Promise.resolve()
-        .then(() => adapter.run(cmd.sessionId, cmd.message, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
+        .then(() => adapter.run(cmd.sessionId, routedMessage, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments, mcpServerId: cmd.mcpServerId, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
           emit(type, payload, cmd.sessionId, run.id)
         ))
         .then(async () => {
@@ -1440,6 +1515,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         return;
       }
       cancelledRuns.add(cmd.runId);
+      if (stoppedRun) titleControllers.get(stoppedRun.sessionId)?.abort();
       if (stoppedRun?.goalId) {
         const goal = goalRepo.get(stoppedRun.goalId);
         if (goal?.status === "active") {

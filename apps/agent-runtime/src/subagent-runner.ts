@@ -65,7 +65,7 @@ export function registerSubagentDispatcher(options: {
   activeSubagents: Set<string>;
   contextProvider?: (sessionId: string, limit: number) => string;
   subagentContextProvider?: (runId: string, limit: number) => string;
-  /** Attachments the user sent with a parent run, so a capability subagent can read the media the main model cannot. */
+  /** Original attachments from the root user run, shared by reference with delegated agents. */
   attachmentsProvider?: (sessionId: string, runId: string) => MessageAttachmentInfo[];
   runtime?: () => SubagentConfigInfo["runtime"];
   publish: (runId: string) => void;
@@ -86,6 +86,15 @@ export function registerSubagentDispatcher(options: {
     if (!info) throw new Error(`Unknown subagent ${id}`);
     return info;
   };
+  const sourceRunId = (runId: string): string => {
+    let source = runId;
+    for (let current = repo.get(runId); current; current = repo.get(current.parentRunId)) {
+      source = current.parentRunId;
+    }
+    return source;
+  };
+  const originalAttachments = (sessionId: string, runId: string): MessageAttachmentInfo[] =>
+    options.attachmentsProvider?.(sessionId, sourceRunId(runId)) ?? [];
   const interrupt = (id: string, failure?: Error) => {
     const job = jobs.get(id);
     if (!job) return;
@@ -216,7 +225,9 @@ export function registerSubagentDispatcher(options: {
     const prompt = buildSubagentPrompt(agent
       ? { id: agent.id, name: agent.name, instructions: agent.instructions }
       : { id: "delegate", name: input.title, instructions: "完成委派任务；父级上下文仅供参考。" }, input.task, context);
-    const attachments = capabilityAgent && !inherited ? options.attachmentsProvider?.(parentSessionId, input.parentRunId) : undefined;
+    const inheritedAttachments = originalAttachments(parentSessionId, input.parentRunId);
+    const attachments = input.mediaAttachment && !inheritedAttachments.some((item) => item.localPath === input.mediaAttachment?.localPath)
+      ? [...inheritedAttachments, input.mediaAttachment] : inheritedAttachments;
     const child = runRepo.create(parentSessionId);
     const rank = { ask: 0, auto: 1, full: 2 };
     const ceiling = (inherited?.permissionMode as "ask" | "auto" | "full" | null) ?? input.permissionMode;
@@ -232,7 +243,8 @@ export function registerSubagentDispatcher(options: {
       permissionMode, tools, contextMode: policy().contextMode, contextMessageCount: count,
     });
     const work = async () => {
-      const job = start(child.id, model && detectImageModel({ model }).isImageModel ? input.task : prompt, true, true, input.signal, attachments);
+      const directGeneration = model && (adapter.isDirectGenerationModel?.(model) ?? detectImageModel({ model }).isImageModel);
+      const job = start(child.id, directGeneration ? input.task : prompt, true, true, input.signal, attachments);
       if (input.background) return `Subagent started in background. runId=${child.id}`;
       await job.done;
       const info = requireInfo(child.id);
@@ -294,7 +306,8 @@ export function registerSubagentDispatcher(options: {
       } else {
         if ((action === "steer" || action === "follow_up") && !message?.trim()) throw new Error(`${action} requires a message`);
         if (action === "retry") repo.incrementRetry(id);
-        await start(id, message?.trim() || (action === "retry" ? row.task : "继续完成之前的任务，并说明本轮新增结果。"), false, action !== "retry").done;
+        const attachments = originalAttachments(row.parentSessionId, id);
+        await start(id, message?.trim() || (action === "retry" ? row.task : "继续完成之前的任务，并说明本轮新增结果。"), false, action !== "retry", undefined, attachments).done;
       }
       return requireInfo(id);
     },

@@ -7,6 +7,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Db } from "@qone/database";
 import { BrowserLibrary } from "./browser-library.js";
 import { resolveStdioLaunch } from "@qone/mcp";
+import { ffmpegExecutable, ytDlpExecutable } from "./reach-channels.js";
 
 const OPENCLI_PACKAGE = "@jackwener/opencli@1.8.8";
 const SESSION = "qone";
@@ -49,21 +50,22 @@ type OpenCliFormat = "json" | "yaml" | "table" | "plain" | "md" | "csv";
 const OPENCLI_CATALOG_TTL = 5 * 60_000;
 const MAX_TOOL_OUTPUT = 80_000;
 
-export function runOpenCli(args: string[], timeout = COMMAND_TIMEOUT): Promise<CommandResult> {
+export function runOpenCli(args: string[], timeout = COMMAND_TIMEOUT, signal?: AbortSignal): Promise<CommandResult> {
   const launch = bundledOpenCli(args) ?? resolveStdioLaunch("npx", ["--yes", OPENCLI_PACKAGE, ...args]);
+  const toolDirectories = [...new Set([ytDlpExecutable(), ffmpegExecutable()].filter((value): value is string => Boolean(value)).map((value) => path.dirname(value)))];
   return new Promise((resolve, reject) => {
     const child = spawn(launch.command, launch.args, {
-      cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" }, windowsHide: true,
+      cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1", PATH: [...toolDirectories, process.env.PATH].filter(Boolean).join(path.delimiter) }, windowsHide: true, signal,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    const timer = setTimeout(() => { child.kill(); reject(new Error("OpenCLI 操作超时")); }, timeout);
+    const timer = timeout > 0 ? setTimeout(() => { child.kill(); reject(new Error("OpenCLI 操作超时")); }, timeout) : undefined;
     child.stdout.on("data", (chunk) => { stdout += String(chunk); });
     child.stderr.on("data", (chunk) => { stderr += String(chunk); });
-    child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    child.once("error", (error) => { if (timer) clearTimeout(timer); reject(error); });
     child.once("close", (code) => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (code === 0) resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
       else reject(new OpenCliError((stderr || stdout || `OpenCLI 退出码 ${code}`).trim(), code));
     });

@@ -16,15 +16,15 @@ const GOOGLE_API_VERSION = "/v1beta";
 const LARGE_MEDIA_BYTES = 4 * 1024 * 1024;
 const FILE_PROCESSING_TIMEOUT_MS = 30 * 60_000;
 const FILE_PROCESSING_POLL_MS = 1_000;
-const MAX_GOOGLE_FILE_BYTES = 2_000_000_000;
 const UPLOAD_CACHE_AGE_MS = 47 * 60 * 60_000;
 const markerSecret = randomBytes(32);
-const MEDIA_MARKER = /\[\[QONE_MEDIA:([A-Za-z0-9_-]+):([a-f0-9]{64})\]\]/g;
+export const MEDIA_MARKER = /\[\[QONE_MEDIA:([A-Za-z0-9_-]+):([a-f0-9]{64})\]\]/g;
 
 type GooglePart = {
   text?: string;
   inlineData?: { mimeType: string; data: string };
   fileData?: { mimeType: string; fileUri: string };
+  functionResponse?: { response?: Record<string, unknown> };
 };
 
 type GooglePayload = {
@@ -40,20 +40,24 @@ type GoogleFile = {
 
 const uploadedFiles = new Map<string, { file: Promise<GoogleFile>; expiresAt: number }>();
 
-export function localMediaMarker(path: string, mimeType: string): string {
-  const encoded = Buffer.from(JSON.stringify({ path, mimeType })).toString("base64url");
+export function localMediaMarker(path: string, mimeType: string, temporary = false): string {
+  const encoded = Buffer.from(JSON.stringify({ path, mimeType, temporary })).toString("base64url");
   const signature = createHmac("sha256", markerSecret).update(encoded).digest("hex");
   return `[[QONE_MEDIA:${encoded}:${signature}]]`;
 }
 
-function decodeLocalMedia(encoded: string, signature: string): { path: string; mimeType: string } {
+function decodeLocalMedia(encoded: string, signature: string): { path: string; mimeType: string; temporary: boolean } {
   const expected = createHmac("sha256", markerSecret).update(encoded).digest("hex");
   if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"))) throw new Error("无效的本地媒体附件引用");
-  const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as { path?: unknown; mimeType?: unknown };
+  const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as { path?: unknown; mimeType?: unknown; temporary?: unknown };
   if (typeof value.path !== "string" || !isAbsolute(value.path) || typeof value.mimeType !== "string" || !/^(?:audio|video)\//i.test(value.mimeType)) {
     throw new Error("无效的本地媒体附件路径或类型");
   }
-  return { path: value.path, mimeType: value.mimeType };
+  return { path: value.path, mimeType: value.mimeType, temporary: value.temporary === true };
+}
+
+export function verifiedLocalMedia(encoded: string, signature: string): ReturnType<typeof decodeLocalMedia> | undefined {
+  try { return decodeLocalMedia(encoded, signature); } catch { return undefined; }
 }
 
 function dataBytes(base64: string): number {
@@ -118,7 +122,6 @@ async function waitForActiveFile(file: GoogleFile, baseUrl: string, apiKey: stri
 async function uploadGoogleFile(baseUrl: string, apiKey: string, mimeType: string, data: string | { path: string; size: number }, displayName: string, signal?: AbortSignal): Promise<GoogleFile> {
   const bytes = typeof data === "string" ? Buffer.from(data, "base64") : undefined;
   const byteLength = bytes?.byteLength ?? (data as { size: number }).size;
-  if (byteLength > MAX_GOOGLE_FILE_BYTES) throw new Error("Gemini Files API 单文件不能超过 2 GB");
   const start = await fetch(withApiKey(filesEndpoint(baseUrl), apiKey), {
     method: "POST",
     headers: {
@@ -164,7 +167,6 @@ function cachedUpload(baseUrl: string, apiKey: string, part: { mimeType: string;
 async function uploadLocalMedia(path: string, mimeType: string, model: Model<any>, apiKey: string, signal?: AbortSignal): Promise<GoogleFile> {
   const info = await stat(path);
   if (!info.isFile()) throw new Error("本地媒体附件已不是文件");
-  if (info.size > MAX_GOOGLE_FILE_BYTES) throw new Error("Gemini Files API 单文件不能超过 2 GB");
   return cachedUpload(model.baseUrl, apiKey, { mimeType, data: { path, size: info.size, modified: info.mtimeMs }, name: path.split(/[\\/]/).at(-1) ?? "media" }, signal);
 }
 
@@ -178,26 +180,42 @@ export function youtubeUrlsFromText(value: string): string[] {
   return result;
 }
 
-export function googleMediaContent(attachments: readonly MessageAttachmentInfo[] = []): ImageContent[] {
+export function googleMediaContent(attachments: readonly MessageAttachmentInfo[] = [], allowedInput?: readonly string[]): ImageContent[] {
   return attachments.flatMap((attachment) => {
+    const capability = attachment.mimeType.startsWith("video/") ? "video"
+      : attachment.mimeType.startsWith("audio/") ? "audio"
+        : attachment.mimeType.startsWith("image/") || attachment.type === "image" ? "image" : undefined;
+    if (capability && allowedInput && !allowedInput.includes(capability)) return [];
     const match = /^data:([^,;]+);base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
     if (!match) return [];
     const mimeType = (attachment.mimeType || match[1]!).toLowerCase();
-    if (attachment.localPath || !(attachment.type === "image" || /^(?:audio|video)\//.test(mimeType) || mimeType === "application/pdf")) return [];
+    if (attachment.localPath || !(/^(?:image|audio|video)\//.test(mimeType) || mimeType === "application/pdf")) return [];
     return [{ type: "image" as const, data: match[2]!, mimeType }];
   });
 }
 
-export async function prepareGooglePayload(payload: unknown, model: Model<any>, apiKey: string | undefined, signal?: AbortSignal): Promise<GooglePayload> {
+export async function prepareGooglePayload(payload: unknown, model: Model<any>, apiKey: string | undefined, signal?: AbortSignal, allowYouTube = true, allowedInput?: readonly string[]): Promise<GooglePayload> {
   const next = payload as GooglePayload;
   if (!Array.isArray(next.contents)) return next;
   const seenYouTube = new Set<string>();
   const mediaUploads: Array<{ part: GooglePart; data: string; name: string }> = [];
   const localUploads: Array<{ part: GooglePart; path: string; mimeType: string }> = [];
   for (const content of next.contents) {
-    if (!Array.isArray(content.parts)) continue;
+    if (content.role !== "user" || !Array.isArray(content.parts)) continue;
     const rewrittenParts: GooglePart[] = [];
     for (const part of content.parts) {
+      const inline = part.inlineData;
+      if (inline && /^(?:audio|video)\//.test(inline.mimeType) && allowedInput
+        && !allowedInput.includes(inline.mimeType.startsWith("video/") ? "video" : "audio")) {
+        rewrittenParts.push({ text: "[当前模型未配置对应媒体输入能力；请委派子代理]" });
+        continue;
+      }
+      const fileData = part.fileData;
+      if (fileData && /^(?:audio|video)\//.test(fileData.mimeType) && allowedInput
+        && !allowedInput.includes(fileData.mimeType.startsWith("video/") ? "video" : "audio")) {
+        rewrittenParts.push({ text: "[当前模型未配置对应媒体输入能力；请委派子代理]" });
+        continue;
+      }
       if (part.text) {
         const sourceText = part.text;
         const markers = [...sourceText.matchAll(MEDIA_MARKER)];
@@ -206,23 +224,57 @@ export async function prepareGooglePayload(payload: unknown, model: Model<any>, 
           for (const marker of markers) {
             const before = sourceText.slice(offset, marker.index);
             if (before) rewrittenParts.push({ text: before });
-            const media = decodeLocalMedia(marker[1]!, marker[2]!);
-            const localPart: GooglePart = {};
-            rewrittenParts.push(localPart);
-            localUploads.push({ part: localPart, ...media });
+            const media = verifiedLocalMedia(marker[1]!, marker[2]!);
+            const mediaCapability = media?.mimeType.startsWith("video/") ? "video" : "audio";
+            if (!media) {
+              rewrittenParts.push({ text: "[先前会话的媒体引用已失效；如需分析，请重新提供]" });
+            } else if (allowedInput && !allowedInput.includes(mediaCapability)) {
+              rewrittenParts.push({ text: "[当前模型未配置对应媒体输入能力；请委派子代理]" });
+            } else if (media.temporary && !await stat(media.path).then((info) => info.isFile()).catch(() => false)) {
+              rewrittenParts.push({ text: "[先前处理的媒体临时文件已清理；如需再次分析，请重新获取]" });
+            } else {
+              const localPart: GooglePart = {};
+              rewrittenParts.push(localPart);
+              localUploads.push({ part: localPart, ...media });
+            }
             offset = marker.index! + marker[0].length;
           }
           const after = sourceText.slice(offset);
           if (after) rewrittenParts.push({ text: after });
         } else rewrittenParts.push(part);
-        for (const url of youtubeUrlsFromText(sourceText)) {
+        for (const url of allowYouTube ? youtubeUrlsFromText(sourceText) : []) {
           if (!seenYouTube.has(url)) {
             seenYouTube.add(url);
             rewrittenParts.push({ fileData: { mimeType: "video/*", fileUri: url } });
           }
         }
+      } else if (typeof part.functionResponse?.response?.output === "string") {
+        const output = part.functionResponse.response.output;
+        const markers = [...output.matchAll(MEDIA_MARKER)];
+        if (markers.length) {
+          const available: Array<{ path: string; mimeType: string }> = [];
+          let rejected = false;
+          for (const marker of markers) {
+            const media = verifiedLocalMedia(marker[1]!, marker[2]!);
+            if (!media) continue;
+            const mediaCapability = media.mimeType.startsWith("video/") ? "video" : "audio";
+            if (allowedInput && !allowedInput.includes(mediaCapability)) { rejected = true; continue; }
+            if (await stat(media.path).then((info) => info.isFile()).catch(() => false)) available.push(media);
+          }
+          rewrittenParts.push({ ...part, functionResponse: {
+            ...part.functionResponse,
+            response: { ...part.functionResponse.response, output: output.replace(MEDIA_MARKER,
+              available.length ? "[媒体文件已附在工具结果后]" : rejected
+                ? "[当前模型未配置对应媒体输入能力；请委派子代理]"
+                : "[先前下载的媒体临时文件已清理；如需再次分析，请重新下载]") },
+          } });
+          for (const media of available) {
+            const localPart: GooglePart = {};
+            rewrittenParts.push(localPart);
+            localUploads.push({ part: localPart, ...media });
+          }
+        } else rewrittenParts.push(part);
       } else rewrittenParts.push(part);
-      const inline = part.inlineData;
       if (inline && /^(?:audio|video)\//.test(inline.mimeType) && dataBytes(inline.data) >= LARGE_MEDIA_BYTES) {
         if (!apiKey) throw new Error("Gemini 音视频上传需要 API Key");
         mediaUploads.push({ part, data: inline.data, name: `qone-${inline.mimeType.replace(/[^a-z0-9]+/gi, "-")}` });
@@ -254,12 +306,14 @@ export function googleStreamSimple(
   model: Model<any>,
   context: TranscriptContext,
   options?: SimpleStreamOptions,
+  allowYouTube = true,
+  allowedInput?: readonly string[],
 ): AssistantMessageEventStream {
   const onPayload = options?.onPayload;
   return streamGoogle(model as never, context, {
     ...options,
     onPayload: async (payload, requestModel) => {
-      const rewritten = await prepareGooglePayload(payload, requestModel as Model<any>, options?.apiKey, options?.signal);
+      const rewritten = await prepareGooglePayload(payload, requestModel as Model<any>, options?.apiKey, options?.signal, allowYouTube, allowedInput);
       return onPayload ? (await onPayload(rewritten, requestModel)) ?? rewritten : rewritten;
     },
   });

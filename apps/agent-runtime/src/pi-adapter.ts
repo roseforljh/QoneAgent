@@ -11,54 +11,38 @@ import {
   SettingsManager,
   estimateTokens,
   type AgentSession,
-  type FileEntry,
   type ToolDefinition,
   type ResourceLoader,
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import { streamSimple as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
+import { streamSimple as streamOpenAIResponses } from "@earendil-works/pi-ai/api/openai-responses";
+import { streamSimple as streamCodexResponses } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { Type } from "typebox";
+import { rm } from "node:fs/promises";
+import path from "node:path";
 import { CAPABILITY_IDS, detectImageModel, modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type CapabilityId, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ModelMetadata, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
 import { generateImage } from "./image-generation.js";
+import { generateSpeech } from "./speech-generation.js";
+import { generateVideo } from "./video-generation.js";
 import { subagentResultForModel, subagentWorkflowResultForModel } from "./subagent-result.js";
-import { googleMediaContent, googleStreamSimple, localMediaMarker } from "./google-media.js";
+import { googleMediaContent, googleStreamSimple } from "./google-media.js";
+import { openAICompletionsStreamSimple } from "./openai-audio.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
+import { canProcessMediaAttachment, configuredCapabilities } from "./media-capabilities.js";
+import { createPiSessionEntries, imageContent, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
+import { createAttachmentAudioTool, createAttachmentFrameTool, createVideoDownloadTool, createVideoFallbackTools } from "./media-tool.js";
+import { extractTextContent, splitModelName } from "./pi-message-utils.js";
+import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
 
 const log = createLogger("pi-adapter");
 const MODEL_TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
-const MIN_COMPACTION_THRESHOLD = 50;
-const MAX_COMPACTION_THRESHOLD = 95;
-
-export interface PiCompactionPreferences {
-  autoCompactionEnabled: boolean;
-  compactionThreshold: number;
-}
-
-export const DEFAULT_PI_COMPACTION_PREFERENCES: PiCompactionPreferences = {
-  autoCompactionEnabled: true,
-  compactionThreshold: 80,
-};
-
-export function normalizePiCompactionPreferences(value: unknown): PiCompactionPreferences {
-  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const threshold = typeof record.compactionThreshold === "number" && Number.isInteger(record.compactionThreshold)
-    ? Math.min(MAX_COMPACTION_THRESHOLD, Math.max(MIN_COMPACTION_THRESHOLD, record.compactionThreshold))
-    : DEFAULT_PI_COMPACTION_PREFERENCES.compactionThreshold;
-  return {
-    autoCompactionEnabled: typeof record.autoCompactionEnabled === "boolean"
-      ? record.autoCompactionEnabled
-      : DEFAULT_PI_COMPACTION_PREFERENCES.autoCompactionEnabled,
-    compactionThreshold: threshold,
-  };
-}
-
-export function compactionReserveTokens(contextWindow: number, threshold: number): number {
-  return Math.max(1, Math.ceil(contextWindow * (1 - threshold / 100)));
-}
+export { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences } from "./pi-compaction.js";
+export type { PiCompactionPreferences } from "./pi-compaction.js";
 
 function assertModelToolNames(names: Iterable<string>): void {
   const seen = new Set<string>();
@@ -71,7 +55,7 @@ function assertModelToolNames(names: Iterable<string>): void {
 
 type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
-type DelegateSubagent = (input: { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; subagentId?: string; capability?: CapabilityId; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
+type DelegateSubagent = (input: { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; subagentId?: string; capability?: CapabilityId; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
 type WorkflowStep = { id: string; title: string; task: string; subagentId?: string; dependsOn?: string[] };
 type SubagentController = import("./subagent-runner.js").SubagentController;
 
@@ -82,136 +66,14 @@ export interface GoalRuntimeBridge {
   wait(sessionId: string, goalId: string, epoch: number, runId: string, reason: string, resumeAfterMs?: number): unknown;
 }
 
-export interface PersistedPiMessage {
-  role: string;
-  content: string;
-  attachments?: MessageAttachmentInfo[];
-  createdAt: number;
-  rawMessage?: unknown;
-}
-
-function isPiTranscriptMessage(value: unknown): value is { role: string; [key: string]: unknown } {
-  if (!value || typeof value !== "object") return false;
-  const role = (value as { role?: unknown }).role;
-  return typeof role === "string" && [
-    "user", "assistant", "toolResult", "bashExecution", "custom",
-    "branchSummary", "compactionSummary",
-  ].includes(role);
-}
-
-export function imageContent(attachments: readonly MessageAttachmentInfo[] = []): ImageContent[] {
-  return attachments.flatMap((attachment) => {
-    if (attachment.type !== "image") return [];
-    const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
-    return match ? [{ type: "image" as const, data: match[2]!, mimeType: match[1]!.toLowerCase() }] : [];
-  });
-}
-
-export function promptWithAttachments(message: string, attachments: readonly MessageAttachmentInfo[] = [], nativeMedia = false): string {
-  const escapeName = (name: string) => name.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-  const files = attachments.flatMap((attachment) => {
-    if (attachment.type !== "file") return [];
-    if (nativeMedia && attachment.localPath) return [localMediaMarker(attachment.localPath, attachment.mimeType)];
-    if (/^(?:audio|video)\//i.test(attachment.mimeType)) return nativeMedia
-      ? []
-      : [`[媒体附件 ${escapeName(attachment.name)}（${escapeName(attachment.mimeType)}）：当前模型无法直接读取，需要交给能处理该媒体的子代理]`];
-    const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
-    if (!match) return [];
-    const body = Buffer.from(match[1]!, "base64").toString("utf8");
-    return [`<attachment name="${escapeName(attachment.name)}">\n${body}\n</attachment>`];
-  });
-  return [message.trim(), ...files].filter(Boolean).join("\n\n") || "请分析附件图片。";
-}
-
-/**
- * Rebuild the Pi transcript from the product database. Pi's own session files
- * are deliberately not the product source of truth, so a runtime restart must
- * recreate the in-memory SessionManager from the SQLite messages.
- */
-export function createPiSessionEntries(
-  cwd: string,
-  messages: PersistedPiMessage[],
-  model?: { api: string; provider: string; id: string },
-): FileEntry[] {
-  const header: FileEntry = {
-    type: "session",
-    version: 3,
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    cwd,
-  };
-  let parentId: string | null = null;
-  const entries: FileEntry[] = [header];
-  for (const message of messages) {
-    if (isPiTranscriptMessage(message.rawMessage)) {
-      const id = crypto.randomUUID();
-      entries.push({ type: "message", id, parentId, timestamp: new Date(message.createdAt).toISOString(), message: message.rawMessage } as FileEntry);
-      parentId = id;
-      continue;
-    }
-    if (message.role !== "user" && message.role !== "assistant") continue;
-    // Assistant messages require provider metadata in Pi's transcript format.
-    // When no model is configured yet, keep the user side of the conversation;
-    // the first configured run will establish the assistant model metadata.
-    if (message.role === "assistant" && !model) continue;
-    const id = crypto.randomUUID();
-    const base = { type: "message" as const, id, parentId, timestamp: new Date(message.createdAt).toISOString() };
-    const isGoogle = model?.api === "google-generative-ai";
-    const images = isGoogle ? googleMediaContent(message.attachments) : imageContent(message.attachments);
-    const prompt = promptWithAttachments(message.content, message.attachments, isGoogle);
-    const value = message.role === "user"
-      ? { ...base, message: { role: "user" as const, content: images.length ? [
-          { type: "text" as const, text: prompt },
-          ...images,
-        ] : prompt, timestamp: message.createdAt } }
-      : {
-          ...base,
-          message: {
-            role: "assistant" as const,
-            content: [{ type: "text" as const, text: message.content }],
-            api: model!.api,
-            provider: model!.provider,
-            model: model!.id,
-            usage: {
-              input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
-            stopReason: "stop" as const,
-            timestamp: message.createdAt,
-          },
-        };
-    entries.push(value as FileEntry);
-    parentId = id;
-  }
-  return entries;
-}
-
-function splitModelName(name: string): [string, string] {
-  const slash = name.indexOf("/");
-  const colon = name.indexOf(":");
-  const cut = slash < 0 ? colon : colon < 0 ? slash : Math.min(slash, colon);
-  return cut < 0 ? [name, ""] : [name.slice(0, cut), name.slice(cut + 1)];
-}
-
-function extractTextContent(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") return "";
-  const record = value as { content?: unknown; message?: unknown; text?: unknown };
-  if (typeof record.text === "string") return record.text;
-  if (record.message && record.message !== value) return extractTextContent(record.message);
-  if (!Array.isArray(record.content)) return "";
-  return record.content.map((part) => {
-    if (typeof part === "string") return part;
-    if (!part || typeof part !== "object") return "";
-    const text = (part as { text?: unknown }).text;
-    return typeof text === "string" ? text : "";
-  }).join("");
-}
+export { imageContent, promptWithAttachments, createPiSessionEntries } from "./pi-attachments.js";
+export type { PersistedPiMessage } from "./pi-attachments.js";
 
 interface PiAdapterHooks {
   onMessage?: (sessionId: string, runId: string, role: "assistant" | "tool", content: string) => void;
   onAssistantFinal?: (sessionId: string, runId: string, content: string) => void;
   onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string) => void;
+  onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
 }
 
 // Wraps pi-coding-agent sessions and re-emits their events as our
@@ -242,7 +104,24 @@ export class PiAdapter {
   private modelApiKeys = new Map<string, string>();
   private configuredModelConfigs: ModelConfigInfo[] = [];
   private imageModelConfigs = new Map<string, ModelConfigInfo>();
-  private imageRunControllers = new Map<string, AbortController>();
+  private speechModelConfigs = new Map<string, ModelConfigInfo>();
+  private videoModelConfigs = new Map<string, ModelConfigInfo>();
+  private generationRunControllers = new Map<string, AbortController>();
+  private videoTempDirs = new Map<string, Set<string>>();
+  private downloadedVideoPaths = new Map<string, Map<string, string>>();
+  private mediaAttachmentRefs = new Map<string, Map<string, MessageAttachmentInfo>>();
+  private mediaRunControllers = new Map<string, AbortController>();
+  private registerMediaDirectory(runId: string, directory: string): void {
+    const directories = this.videoTempDirs.get(runId) ?? new Set<string>();
+    directories.add(directory);
+    this.videoTempDirs.set(runId, directories);
+  }
+  private rememberVideoAttachments(runId: string, attachments: readonly MessageAttachmentInfo[] | undefined): string {
+    const refs = this.mediaAttachmentRefs.get(runId) ?? new Map<string, MessageAttachmentInfo>();
+    const notice = videoAttachmentNotice(attachments, refs);
+    if (notice) this.mediaAttachmentRefs.set(runId, refs);
+    return notice;
+  }
   private goalBridge?: GoalRuntimeBridge;
   private modelConfigurationQueue: Promise<void> = Promise.resolve();
   private readonly sessionSettingsManagers = new Map<string, SettingsManager>();
@@ -383,6 +262,8 @@ export class PiAdapter {
     this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
     this.configuredModelConfigs = configs;
     this.imageModelConfigs = new Map();
+    this.speechModelConfigs = new Map();
+    this.videoModelConfigs = new Map();
     const grouped = new Map<string, ModelConfigInfo[]>();
     this.modelApiTypes = new Map(configs.filter((item) => item.enabled).map((item) => [`${item.provider}/${item.model}`, item.config.apiType as ProviderApiType]));
     this.thinkingLevels = new Map(configs.filter((item) => item.enabled).map((item) => {
@@ -417,6 +298,10 @@ export class PiAdapter {
           // Keep the resolved provider capability in the transient config so
           // the run path uses the same detection result before the UI saves it.
           this.imageModelConfigs.set(item.id, { ...item, config: { ...raw, modelMetadata: metadata } });
+        } else if (configuredCapabilities(configs, `${item.provider}/${item.model}`).output.includes("video")) {
+          this.videoModelConfigs.set(item.id, { ...item, config: { ...raw, modelMetadata: metadata } });
+        } else if (configuredCapabilities(configs, `${item.provider}/${item.model}`).output.includes("audio")) {
+          this.speechModelConfigs.set(item.id, { ...item, config: { ...raw, modelMetadata: metadata } });
         }
       }
       const firstResolved = resolved[0];
@@ -424,16 +309,28 @@ export class PiAdapter {
         name: provider,
         baseUrl: firstResolved.baseUrl,
         api: firstResolved.api as never,
-        ...(firstResolved.api === "google-generative-ai" ? { streamSimple: googleStreamSimple as never } : {}),
+        streamSimple: ((model: Parameters<typeof googleStreamSimple>[0], context: Parameters<typeof googleStreamSimple>[1], options: Parameters<typeof googleStreamSimple>[2]) => {
+          const input = configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input;
+          if (model.api === "google-generative-ai") return googleStreamSimple(model, context, options, input.includes("video"), input);
+          if (model.api === "openai-completions") return openAICompletionsStreamSimple(model, context, options, input);
+          if (model.api === "anthropic-messages") return streamAnthropic(model as never, context, options);
+          if (model.api === "openai-responses") return streamOpenAIResponses(model as never, context, options);
+          if (model.api === "openai-codex-responses") return streamCodexResponses(model as never, context, options);
+          throw new Error(`Unsupported model API: ${model.api}`);
+        }) as never,
         models: models.map((item, index) => {
           const model = resolved[index];
+          const configuredInput = configuredCapabilities(this.configuredModelConfigs, `${item.provider}/${item.model}`).input;
+          const hasConfiguredMedia = configuredInput.some((capability) => capability !== "text");
           return {
             id: item.model,
             name: model.name,
             api: model.api as never,
             baseUrl: model.baseUrl,
             reasoning: model.reasoning,
-            input: model.input,
+            input: model.api === "google-generative-ai" || hasConfiguredMedia
+              ? (hasConfiguredMedia ? ["text", "image"] as ("text" | "image")[] : ["text"] as ("text" | "image")[])
+              : model.input,
             cost: model.cost,
             contextWindow: model.contextWindow,
             maxTokens: model.maxTokens,
@@ -486,6 +383,10 @@ export class PiAdapter {
 
   isRunning(sessionId: string): boolean {
     return this.compactingSessions.has(sessionId) || this.executionSessionFor(sessionId) !== undefined;
+  }
+
+  isDirectGenerationModel(modelName: string): boolean {
+    return this.imageModelConfigs.has(modelName) || this.videoModelConfigs.has(modelName) || this.speechModelConfigs.has(modelName);
   }
 
   async compactSession(sessionId: string, cwd: string, modelName: string): Promise<unknown[]> {
@@ -544,16 +445,16 @@ export class PiAdapter {
     }
   }
 
-  async generateTitle(prompt: string, modelName?: string): Promise<string> {
+  async generateTitle(prompt: string, modelName?: string, signal?: AbortSignal): Promise<string> {
     this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
     const model = modelName
       ? this.modelRuntime.getModel(...splitModelName(modelName))
       : this.modelRuntime.getModels()[0];
     if (!model) throw new Error("no configured model available for title generation");
     const response = await this.modelRuntime.completeSimple(model, {
-      systemPrompt: "Generate a concise conversation title from the user's first message. Output only the title, with no quotes, punctuation, explanation, or markdown. Keep it under 8 words when writing in English and under 20 Chinese characters when writing in Chinese.",
+      systemPrompt: "Generate a concise conversation title from the user's first message. Return only valid JSON with one string field named title. The title must be a short topic, never an answer to the user. Keep it under 8 words in English or 20 Chinese characters.",
       messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-    }, { maxTokens: 32, temperature: 0.2 });
+    }, { maxTokens: 32, temperature: 0.2, signal });
     const title = extractTextContent(response)
       .replace(/[\r\n]+/g, " ")
       .replace(/^['"“”‘’`]+|['"“”‘’`]+$/g, "")
@@ -582,7 +483,8 @@ export class PiAdapter {
     const thinking = override ? (override === "none" ? "off" : override) : modelName ? this.thinkingLevelForModel(modelName) : undefined;
     const existing = this.sessions.get(sessionId);
     if (existing) {
-      if (this.staleSessions.has(sessionId) && existing.isIdle) {
+      if (mcpServerId && !existing.isIdle) throw new Error("session is busy");
+      if ((mcpServerId || this.staleSessions.has(sessionId)) && existing.isIdle) {
         await existing.dispose();
         this.sessions.delete(sessionId);
         this.sessionSettingsManagers.delete(sessionId);
@@ -700,8 +602,8 @@ export class PiAdapter {
     const delegateTool: ToolDefinition[] = canDelegate ? [{
       name: "list_subagents",
       label: "List subagents",
-      description: "List the subagents the user has configured: capability subagents (image generation, speech-to-text, text-to-speech, video recognition, web search) and saved subagent profiles. Call this when the task needs an ability you do not have yourself, before telling the user you cannot do it.",
-      promptSnippet: "If a task needs something you cannot do yourself (for example producing an image or audio, or reading audio/video you cannot perceive), call list_subagents, then dispatch_subagent with the matching capability or subagentId. If nothing suitable is configured, tell the user plainly that it cannot be done and which setting is missing; never pretend to have done it.",
+      description: "List the subagents the user has configured: capability subagents (video recognition, image/video generation, speech-to-text, text-to-speech) and saved subagent profiles. Call this when the task needs an ability you do not have yourself, before telling the user you cannot do it.",
+      promptSnippet: "If a task needs something you cannot do yourself (for example generating an image, audio, or video, or reading audio/video you cannot perceive), call list_subagents, then dispatch_subagent with the matching capability or subagentId. If nothing suitable is configured, tell the user plainly that it cannot be done and which setting is missing; never pretend to have done it.",
       parameters: Type.Object({}),
       execute: async () => {
         const result = this.subagentController!.catalog();
@@ -710,23 +612,28 @@ export class PiAdapter {
     }, {
       name: "dispatch_subagent",
       label: "Delegate to subagent",
-      description: `Run one independent task with a subagent. Set capability to hand the task to the subagent the user configured for that capability (the user's current attachments are forwarded to it); set subagentId to use a saved profile; set neither for a temporary subagent whose model is configured in Settings > Subagents > Temporary agent. When the user asks for N tasks or asks to start another subagent, call this tool once for each task, including in a later turn; do not stop at three. Multiple calls in one turn execute in parallel. The configured maximum of ${policy?.maxConcurrent ?? "the current"} is a simultaneous running limit, not a total task limit: completed tasks release capacity and extra tasks wait in the FIFO queue. Returns the subagent's final result, or its status and error when it fails; the runtime never retries on its own, so read the error and decide yourself whether a retry via control_subagent makes sense. The full transcript is available in the side panel.`,
-      promptSnippet: "Use dispatch_subagent once per requested task. Unless a capability or saved subagent profile is selected, the temporary agent uses the model configured in Settings > Subagents > Temporary agent. If the user asks to start another subagent after earlier tasks, dispatch it too. Do not assume a total limit of three; maxConcurrent limits simultaneous execution only, and overflow is queued.",
+      description: `Run one independent task with a subagent. The user's original attachments are forwarded by reference to any selected subagent; do not download or copy them before delegation. If this agent already downloaded a video and needs a separate audio subagent, pass its returned local path as mediaPath; the child will extract the audio. Set capability to hand the task to the subagent the user configured for that capability; set subagentId to use a saved profile; set neither for a temporary subagent whose model is configured in Settings > Subagents > Temporary agent. When the user asks for N tasks or asks to start another subagent, call this tool once for each task, including in a later turn; do not stop at three. Multiple calls in one turn execute in parallel. The configured maximum of ${policy?.maxConcurrent ?? "the current"} is a simultaneous running limit, not a total task limit: completed tasks release capacity and extra tasks wait in the FIFO queue. Returns the subagent's final result, or its status and error when it fails; the runtime never retries on its own, so read the error and decide yourself whether a retry via control_subagent makes sense. The full transcript is available in the side panel.`,
+      promptSnippet: "Use dispatch_subagent once per requested task. For a text-to-speech subagent backed by a direct speech model, put only the exact words to be spoken in task; voice is configured in that model's settings. Unless a capability or saved subagent profile is selected, the temporary agent uses the model configured in Settings > Subagents > Temporary agent. If the user asks to start another subagent after earlier tasks, dispatch it too. Do not assume a total limit of three; maxConcurrent limits simultaneous execution only, and overflow is queued.",
       parameters: Type.Object({
         title: Type.String({ minLength: 1, maxLength: 120 }),
         task: Type.String({ minLength: 1, maxLength: 32_000 }),
         capability: Type.Optional(Type.Union(CAPABILITY_IDS.map((id) => Type.Literal(id)))),
         subagentId: Type.Optional(Type.String({ maxLength: 128 })),
+        mediaPath: Type.Optional(Type.String()),
         background: Type.Optional(Type.Boolean()),
       }),
       executionMode: "parallel",
       execute: async (toolCallId, params, signal) => {
-        const input = params as { title: string; task: string; capability?: CapabilityId; subagentId?: string; background?: boolean };
+        const input = params as { title: string; task: string; capability?: CapabilityId; subagentId?: string; mediaPath?: string; background?: boolean };
         const parentRunId = this.activeRunIds.get(sessionId);
         if (!parentRunId || !this.delegateSubagent) throw new Error("No active parent run");
+        if (input.mediaPath && input.background) throw new Error("传递临时视频文件的子代理必须等待完成，不能在后台运行");
+        const mediaMimeType = input.mediaPath ? this.downloadedVideoPaths.get(parentRunId)?.get(input.mediaPath) : undefined;
+        if (input.mediaPath && !mediaMimeType) throw new Error("mediaPath 必须是当前子代理刚取得的媒体路径");
         const result = await this.delegateSubagent({
           parentSessionId: eventSessionId, parentRunId, parentSubagentId: subagentRunId, depth: subagentDepth + 1, toolCallId,
           title: input.title.trim(), task: input.task.trim(), subagentId: input.subagentId, capability: input.capability,
+          mediaAttachment: input.mediaPath ? { type: "file", name: input.mediaPath.split(/[\\/]/).at(-1) ?? "video", mimeType: mediaMimeType!, data: "", localPath: input.mediaPath, temporary: true } : undefined,
           fallbackModel: modelName, permissionMode: this.runModes.get(sessionId) ?? "ask", background: input.background, signal,
         });
         const completed = (() => {
@@ -736,6 +643,28 @@ export class PiAdapter {
         return info ? subagentResultForModel(info) : { content: [{ type: "text", text: result }], details: {} };
       },
     }] : [];
+    const mediaToolOptions = {
+      active: () => {
+        const runId = this.activeRunIds.get(sessionId);
+        const model = this.sessions.get(sessionId)?.agent.state.model;
+        return runId && model ? { runId, model } : undefined;
+      },
+      configs: () => this.configuredModelConfigs,
+      registerMedia: (runId: string, mediaPath: string, mimeType: string, directory?: string) => {
+        if (directory) this.registerMediaDirectory(runId, directory);
+        const paths = this.downloadedVideoPaths.get(runId) ?? new Map<string, string>();
+        paths.set(mediaPath, mimeType);
+        this.downloadedVideoPaths.set(runId, paths);
+      },
+      registerDirectory: (runId: string, directory: string) => this.registerMediaDirectory(runId, directory),
+      attachment: (runId: string, attachmentId: string) => this.mediaAttachmentRefs.get(runId)?.get(attachmentId),
+      hasMedia: (runId: string, mediaPath: string) => this.downloadedVideoPaths.get(runId)?.has(mediaPath) ?? false,
+      isTemporary: (runId: string, filePath: string) => [...this.videoTempDirs.get(runId) ?? []].some((directory) => {
+        const relative = path.relative(directory, filePath);
+        return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+      }),
+    };
+    const mediaTools = [createVideoDownloadTool(mediaToolOptions), createAttachmentAudioTool(mediaToolOptions), createAttachmentFrameTool(mediaToolOptions), ...createVideoFallbackTools(mediaToolOptions)];
     const goalTools: ToolDefinition[] = goalId && goalEpoch !== undefined && goalRunId && this.goalBridge ? [{
       name: "get_goal", label: "Get goal", description: "Read the current goal and its execution state.",
       parameters: Type.Object({}),
@@ -754,7 +683,7 @@ export class PiAdapter {
       execute: async (_toolCallId, params) => { const input = params as { reason: string; resume_after_ms?: number }; return { content: [{ type: "text", text: JSON.stringify(this.goalBridge!.wait(eventSessionId, goalId, goalEpoch, goalRunId, input.reason, input.resume_after_ms)) }], details: {} }; },
     }] : [];
     const goalToolNames = new Set(goalTools.map((tool) => tool.name));
-    const wrapped = [...builtinTools, ...customTools, ...inspectTools, ...delegateTool, ...goalTools].map((t) =>
+    const wrapped = [...builtinTools, ...customTools, ...inspectTools, ...delegateTool, ...mediaTools, ...goalTools].map((t) =>
       withPermission(t, {
         queue: this.approvals,
         workspacePath,
@@ -788,7 +717,8 @@ export class PiAdapter {
     const sessionManager = SessionManager.inMemory(
       workspacePath,
       undefined,
-      createPiSessionEntries(workspacePath, this.restoreMessages?.(sessionId, this.activeRunIds.get(sessionId)) ?? [], model),
+      createPiSessionEntries(workspacePath, this.restoreMessages?.(sessionId, this.activeRunIds.get(sessionId)) ?? [], model,
+        model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined),
     );
     const sessionSettings = SettingsManager.inMemory();
     sessionSettings.applyOverrides(this.compactionOverrides());
@@ -922,12 +852,29 @@ export class PiAdapter {
     if (this.activeRunIds.has(sessionId) || this.compactingSessions.has(sessionId)) throw new Error(`session ${sessionId} already has an active run or compaction`);
     const runId = opts.runId ?? crypto.randomUUID();
     this.activeRunIds.set(sessionId, runId);
+    const mediaController = new AbortController();
+    this.mediaRunControllers.set(runId, mediaController);
     this.runModes.set(sessionId, opts.permissionMode ?? "ask");
     const configuredImageModel = opts.model ? this.imageModelConfigs.get(opts.model) : undefined;
+    const configuredSpeechModel = opts.model ? this.speechModelConfigs.get(opts.model) : undefined;
+    const configuredVideoModel = opts.model ? this.videoModelConfigs.get(opts.model) : undefined;
     let session: AgentSession | undefined;
     try {
       if (configuredImageModel) {
+        if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
         await this.runImageGeneration(sessionId, runId, message, opts.attachments, configuredImageModel);
+        runEmit("agent.prompt_done", { runId });
+        return;
+      }
+      if (configuredSpeechModel) {
+        if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
+        await this.runSpeechGeneration(opts.eventSessionId ?? sessionId, runId, message, configuredSpeechModel);
+        runEmit("agent.prompt_done", { runId });
+        return;
+      }
+      if (configuredVideoModel) {
+        if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
+        await this.runVideoGeneration(opts.eventSessionId ?? sessionId, runId, message, configuredVideoModel);
         runEmit("agent.prompt_done", { runId });
         return;
       }
@@ -939,8 +886,28 @@ export class PiAdapter {
         ? this.modelRuntime?.getModel(...splitModelName(opts.model))
         : session.agent.state.model;
       const isGoogle = selectedModel?.api === "google-generative-ai";
-      await session.prompt(promptWithAttachments(message, opts.attachments, isGoogle), {
-        images: isGoogle ? googleMediaContent(opts.attachments) : imageContent(opts.attachments),
+      const isCompletions = selectedModel?.api === "openai-completions";
+      const capabilities = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`) : undefined;
+      const attachments = opts.attachments;
+      const videoAttachmentNotice = this.rememberVideoAttachments(runId, attachments);
+      const capabilityNotice = capabilities
+        ? `<runtime-media-capabilities input="${capabilities.input.join(",")}" output="${capabilities.output.join(",")}">按这些勾选项判断能否处理媒体。缺少能力时先按已启用子代理的描述委派原始链接或附件；不要提前下载。没有合适子代理则说明缺少的能力并停止，不能假装已识别。</runtime-media-capabilities>`
+        : "";
+      const missingAttachmentInput = capabilities && attachments?.some((attachment) => !canProcessMediaAttachment(selectedModel!.api, capabilities.input, attachment));
+      const delegationPolicy = this.subagentPolicy?.();
+      const canDelegate = this.delegateSubagent && (!opts.subagentRunId || (delegationPolicy?.allowNested ?? true))
+        && (opts.subagentDepth ?? 0) < (delegationPolicy?.maxDepth ?? 3);
+      const routingCandidates = missingAttachmentInput && canDelegate ? this.subagentController?.catalog() : undefined;
+      const routingNotice = routingCandidates
+        ? `<media-routing-candidates>${JSON.stringify(routingCandidates)}</media-routing-candidates>\n当前模型不能直接读取部分附件。仅在任务需要其内容时，按上述已启用子代理的描述选择合适代理，委派原始附件；没有合适代理则明确说明无法完成，不要猜测附件内容。`
+        : missingAttachmentInput && !canDelegate
+          ? "当前模型不能直接读取部分附件，且当前执行层级无法继续委派。任务需要这些附件内容时须明确说明无法完成，不要猜测。"
+          : "";
+      const unsupportedVideoNotice = !isGoogle && capabilities?.input.includes("video") && !capabilities.input.includes("image")
+        ? "当前 API 格式没有通用的视频文件字段，且当前模型未配置图像输入；需要画面时请委派原始视频附件。" : "";
+      await session.prompt([capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
+        images: isGoogle ? googleMediaContent(attachments, capabilities?.input)
+          : [...imageContent(attachments, capabilities?.input), ...(isCompletions ? googleMediaContent(attachments?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
       });
       const assistantMessages = session.messages.slice(previousLength).filter((item) => item.role === "assistant");
       const final = assistantMessages.at(-1);
@@ -957,11 +924,19 @@ export class PiAdapter {
       if (String(error).includes("Cannot continue from message role: assistant")) this.staleSessions.add(sessionId);
       throw error;
     } finally {
+      const directories = this.videoTempDirs.get(runId);
+      this.videoTempDirs.delete(runId);
+      this.downloadedVideoPaths.delete(runId);
+      this.mediaAttachmentRefs.delete(runId);
+      this.mediaRunControllers.delete(runId);
+      if (directories) await Promise.all([...directories].map((directory) => rm(directory, { recursive: true, force: true }).catch((error) => log.warn("failed to clean downloaded video", { directory, error: String(error) }))));
       this.runs.delete(runId);
       this.runModes.delete(sessionId);
       this.stoppedRuns.delete(runId);
       if (this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
-      if (session && this.staleSessions.has(sessionId) && session.isIdle) {
+      if (session && opts.mcpServerId) {
+        await this.disposeSession(sessionId);
+      } else if (session && this.staleSessions.has(sessionId) && session.isIdle) {
         await session.dispose();
         this.sessions.delete(sessionId);
         this.sessionSettingsManagers.delete(sessionId);
@@ -987,13 +962,49 @@ export class PiAdapter {
     const apiKey = this.modelApiKeys.get(config.provider);
     if (!apiKey) throw new Error(`No API key configured for image provider ${config.provider}`);
     const controller = new AbortController();
-    this.imageRunControllers.set(runId, controller);
+    this.generationRunControllers.set(runId, controller);
     this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
     try {
       const parts = await generateImage({ config, format: detected.format, prompt, attachments, apiKey, signal: controller.signal });
       this.push("message.completed", { message: { role: "assistant", content: parts } }, sessionId, runId);
     } finally {
-      this.imageRunControllers.delete(runId);
+      this.generationRunControllers.delete(runId);
+    }
+  }
+
+  private async runSpeechGeneration(sessionId: string, runId: string, text: string, config: ModelConfigInfo): Promise<void> {
+    const apiKey = this.modelApiKeys.get(config.provider);
+    if (!apiKey) throw new Error(`语音生成渠道 ${config.provider} 没有配置 API Key`);
+    if (!this.hooks.onGeneratedMedia) throw new Error("语音结果保存功能未初始化");
+    const controller = new AbortController();
+    this.generationRunControllers.set(runId, controller);
+    this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
+    try {
+      const speech = await generateSpeech({ config, text, apiKey, signal: controller.signal });
+      controller.signal.throwIfAborted();
+      const savedPath = await this.hooks.onGeneratedMedia(sessionId, runId, speech.bytes, speech.mimeType, speech.extension, controller.signal);
+      controller.signal.throwIfAborted();
+      this.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: `已生成语音：${savedPath}` }] } }, sessionId, runId);
+    } finally {
+      this.generationRunControllers.delete(runId);
+    }
+  }
+
+  private async runVideoGeneration(sessionId: string, runId: string, prompt: string, config: ModelConfigInfo): Promise<void> {
+    const apiKey = this.modelApiKeys.get(config.provider);
+    if (!apiKey) throw new Error(`视频生成渠道 ${config.provider} 没有配置 API Key`);
+    if (!this.hooks.onGeneratedMedia) throw new Error("视频结果保存功能未初始化");
+    const controller = new AbortController();
+    this.generationRunControllers.set(runId, controller);
+    this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
+    try {
+      const video = await generateVideo({ config, prompt, apiKey, signal: controller.signal });
+      controller.signal.throwIfAborted();
+      const savedPath = await this.hooks.onGeneratedMedia(sessionId, runId, video.stream, video.mimeType, video.extension, controller.signal);
+      controller.signal.throwIfAborted();
+      this.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: `已生成视频：${savedPath}` }] } }, sessionId, runId);
+    } finally {
+      this.generationRunControllers.delete(runId);
     }
   }
 
@@ -1007,7 +1018,8 @@ export class PiAdapter {
     const session = this.runs.get(runId);
     if (!session && ![...this.activeRunIds.values()].includes(runId)) return false;
     this.stoppedRuns.add(runId);
-    this.imageRunControllers.get(runId)?.abort();
+    this.mediaRunControllers.get(runId)?.abort();
+    this.generationRunControllers.get(runId)?.abort();
     if (session) void session.abort();
     log.info("run aborted", { runId });
     return true;
@@ -1031,14 +1043,17 @@ export class PiAdapter {
     if (!session || !session.isStreaming) return false;
     const selectedModel = session.agent.state.model;
     const isGoogle = selectedModel?.api === "google-generative-ai";
-    const prompt = promptWithAttachments(message, attachments, isGoogle);
-    const images = isGoogle ? googleMediaContent(attachments) : imageContent(attachments);
+    const isCompletions = selectedModel?.api === "openai-completions";
+    const input = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`).input : undefined;
+    const runId = executionSessionId ? this.activeRunIds.get(executionSessionId) : undefined;
+    const videoAttachmentNotice = runId ? this.rememberVideoAttachments(runId, attachments) : "";
+    const prompt = [videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, input)].filter(Boolean).join("\n");
+    const images = isGoogle ? googleMediaContent(attachments, input)
+      : [...imageContent(attachments, input), ...(isCompletions ? googleMediaContent(attachments?.filter((item) => item.mimeType.startsWith("audio/")), input) : [])];
     if (mode === "steer") await session.steer(prompt, images);
     else await session.followUp(prompt, images);
     return true;
   }
 
-  clearSessionQueue(sessionId: string): void {
-    this.sessions.get(sessionId)?.clearQueue();
-  }
+  clearSessionQueue(sessionId: string): void { this.sessions.get(sessionId)?.clearQueue(); }
 }

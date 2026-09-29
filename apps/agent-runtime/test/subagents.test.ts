@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeCommand, type SubagentConfigInfo } from "@qone/protocol";
+import { decodeCommand, isBuiltinSubagentId, type SubagentConfigInfo } from "@qone/protocol";
 import { buildSubagentPrompt, normalizeSubagentConfig, resolveSubagent, subagentCatalog } from "../src/subagents";
 import { Database } from "bun:sqlite";
 import { closeDb, MessageRepo, openDb, RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
@@ -10,7 +10,7 @@ import type { PiAdapter } from "../src/pi-adapter";
 
 const config: SubagentConfigInfo = {
   profiles: [{ id: "researcher", name: "研究员", instructions: "只输出有来源的结论。", modelId: "provider/research", enabled: true, updatedAt: 1 }],
-  routing: { webSearch: "subagent:researcher", stt: "model:provider/audio", videoRecognition: "mcp:search" },
+  routing: { stt: "model:provider/audio", videoRecognition: "mcp:search" },
   runtime: {
     temporaryModelId: "", maxConcurrent: 4, timeoutMs: 1800000, tokenBudget: 0,
     contextMode: "snapshot", contextMessages: 20, allowNested: true,
@@ -20,19 +20,21 @@ const config: SubagentConfigInfo = {
 };
 
 describe("capability subagent routing", () => {
-  test("normalizes the five capability agents as built-in profiles", () => {
+  test("normalizes the five supported capability agents as built-in profiles", () => {
     const normalized = normalizeSubagentConfig({});
     const logos = normalized.profiles.map((profile) => profile.logo).filter(Boolean);
     expect(new Set(logos).size).toBe(logos.length);
     expect(normalized.profiles.map((profile) => profile.id).filter((id) => id.startsWith("builtin:"))).toEqual([
-      "builtin:webSearch",
       "builtin:videoRecognition",
       "builtin:imageGeneration",
+      "builtin:videoGeneration",
       "builtin:stt",
       "builtin:tts",
     ]);
-    expect(resolveSubagent(normalized, "webSearch")?.name).toBe("联网搜索");
-    expect(resolveSubagent(normalized, "imageGeneration")?.instructions).toContain("图像生成");
+    expect(normalized.profiles.find((item) => item.id === "builtin:videoRecognition")?.name).toBe("视频识别");
+    expect(normalized.profiles.find((item) => item.id === "builtin:imageGeneration")?.instructions).toContain("图像生成");
+    expect(normalized.profiles.find((item) => item.id === "builtin:videoGeneration")?.instructions).toContain("视频生成");
+    expect(subagentCatalog(normalized).unconfiguredCapabilities).toContain("videoRecognition");
   });
 
   test("keeps normalization idempotent and does not duplicate built-ins", () => {
@@ -56,14 +58,18 @@ describe("capability subagent routing", () => {
   });
 
   test("resolves only what the user configured and reports the rest as unavailable", () => {
-    expect(resolveSubagent(config, "webSearch")?.modelId).toBe("provider/research");
     expect(resolveSubagent(config, "stt")?.modelId).toBe("provider/audio");
     expect(resolveSubagent(config, "videoRecognition")?.mcpServerId).toBe("search");
     expect(resolveSubagent(config, "imageGeneration")).toBeUndefined();
+    expect(resolveSubagent(config, "videoGeneration")).toBeUndefined();
+    const videoGenerator = normalizeSubagentConfig({ routing: { videoGeneration: "model:provider/video-generator" } });
+    expect(resolveSubagent(videoGenerator, "videoGeneration")?.modelId).toBe("provider/video-generator");
+    expect(subagentCatalog(videoGenerator).capabilities.map((item) => item.capability)).toContain("videoGeneration");
     expect(resolveSubagent({ ...config, routing: { tts: "auto" } }, "tts")).toBeUndefined();
     const catalog = subagentCatalog(config);
-    expect(catalog.capabilities.map((item) => item.capability)).toEqual(["webSearch", "videoRecognition", "stt"]);
-    expect(catalog.unconfiguredCapabilities).toEqual(["imageGeneration", "tts"]);
+    expect(catalog.capabilities.map((item) => item.capability)).toEqual(["videoRecognition", "stt"]);
+    expect(catalog.capabilities.find((item) => item.capability === "videoRecognition")?.description).toContain("视频内容识别");
+    expect(catalog.unconfiguredCapabilities).toEqual(["imageGeneration", "videoGeneration", "tts"]);
     expect(catalog.profiles.map((item) => item.id)).toEqual(["researcher"]);
   });
 
@@ -72,7 +78,23 @@ describe("capability subagent routing", () => {
     expect(normalized.profiles[0]).toMatchObject({ name: "X", instructions: "do", enabled: false });
     expect(normalized.runtime.temporaryModelId).toBe("");
     expect(normalizeSubagentConfig({ runtime: { temporaryModelId: " provider/temp " } }).runtime.temporaryModelId).toBe("provider/temp");
-    expect(buildSubagentPrompt(resolveSubagent(config, "webSearch")!, "查资料")).toContain("<subagent-task");
+    expect(buildSubagentPrompt(resolveSubagent(config, "videoRecognition")!, "识别视频")).toContain("<subagent-task");
+  });
+
+  test("removes the retired search built-in from saved profiles without deleting custom agents", () => {
+    const normalized = normalizeSubagentConfig({
+      profiles: [
+        { id: "builtin:webSearch", name: "联网搜索", instructions: "旧提示词", modelId: "provider/search", enabled: true },
+        { id: "researcher", name: "研究员", instructions: "查资料", modelId: "provider/research", enabled: true },
+      ],
+      routing: { webSearch: "subagent:researcher" },
+    });
+    expect(normalized.profiles.some((profile) => profile.id === "builtin:webSearch")).toBe(false);
+    expect(isBuiltinSubagentId("builtin:webSearch")).toBe(false);
+    expect(normalized.profiles.some((profile) => profile.id === "researcher")).toBe(true);
+    expect(normalized.profiles.filter((profile) => profile.id.startsWith("builtin:"))).toHaveLength(5);
+    expect(subagentCatalog(normalized).capabilities.some((item) => item.capability === "webSearch")).toBe(false);
+    expect(normalizeSubagentConfig(normalized).profiles.some((profile) => profile.id === "builtin:webSearch")).toBe(false);
   });
 
   test("accepts atomic settings synchronization over the protocol", () => {
@@ -210,7 +232,7 @@ test("capability dispatch uses the configured model with the parent's attachment
     const session = sessionRepo.create("capability", workspace.id);
     const runRepo = new RunRepo(db);
     const parent = runRepo.create(session.id);
-    const audio = { type: "file" as const, name: "voice.mp3", mimeType: "audio/mpeg", data: "data:audio/mpeg;base64,AA==" };
+    const audio = { type: "file" as const, name: "voice.mp3", mimeType: "audio/mpeg", data: "", localPath: "C:\\Media\\voice.mp3" };
     const repo = new SubagentRunRepo(db);
     let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
     const calls: { model?: string; attachments?: unknown[] }[] = [];
@@ -224,7 +246,7 @@ test("capability dispatch uses the configured model with the parent's attachment
       stop: () => true,
       disposeSession: async () => undefined,
     } as unknown as PiAdapter;
-    registerSubagentDispatcher({
+    const controller = registerSubagentDispatcher({
       adapter, sessionRepo, workspaceRepo: new WorkspaceRepo(db), runRepo, subagentRunRepo: repo,
       config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(),
       assistantBuffers, streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(),
@@ -234,8 +256,20 @@ test("capability dispatch uses the configured model with the parent's attachment
     const input = { parentSessionId: session.id, parentRunId: parent.id, task: "转写", title: "转写", toolCallId: "call", fallbackModel: "provider/main", permissionMode: "ask" as const };
     await dispatch({ ...input, capability: "stt" });
     expect(calls).toEqual([{ model: "provider/audio", attachments: [audio] }]);
+    expect(calls[0]?.attachments?.[0]).toBe(audio);
+    await dispatch({ ...input, toolCallId: "call-profile", subagentId: "researcher" });
+    expect(calls.at(-1)).toEqual({ model: "provider/research", attachments: [audio] });
+    const firstChild = repo.listBySession(session.id)[0]!;
+    await controller.control(firstChild.runId, "retry");
+    expect(calls.at(-1)).toEqual({ model: "provider/audio", attachments: [audio] });
+    await dispatch({ ...input, parentSessionId: firstChild.executionSessionId!, parentRunId: firstChild.runId, toolCallId: "call-nested", capability: "stt" });
+    expect(calls.at(-1)).toEqual({ model: "provider/audio", attachments: [audio] });
+    const downloaded = { type: "file" as const, name: "video.mp4", mimeType: "video/mp4", data: "", localPath: "C:\\temp\\video.mp4" };
+    await dispatch({ ...input, parentSessionId: firstChild.executionSessionId!, parentRunId: firstChild.runId,
+      toolCallId: "call-nested-video", capability: "stt", mediaAttachment: downloaded });
+    expect(calls.at(-1)).toEqual({ model: "provider/audio", attachments: [audio, downloaded] });
     await expect(dispatch({ ...input, toolCallId: "call-2", capability: "imageGeneration" })).rejects.toThrow("No subagent is configured for imageGeneration");
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(5);
   } finally {
     closeDb(db);
   }

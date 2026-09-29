@@ -27,6 +27,18 @@ export function ffmpegExecutable(): string | undefined {
   return configured && existsSync(configured) ? configured : executable("ffmpeg");
 }
 
+export function biliExecutable(): string | undefined {
+  const configured = process.env.QONE_BILI_CLI;
+  return configured && existsSync(configured) ? configured : executable("bili");
+}
+
+export function biliLaunch(): { command: string; prefix: string[] } | undefined {
+  const installed = biliExecutable();
+  if (installed) return { command: installed, prefix: [] };
+  const uvx = executable("uvx");
+  return uvx ? { command: uvx, prefix: ["--quiet", "--from", "bilibili-cli[audio]==0.6.2", "bili"] } : undefined;
+}
+
 interface ChannelContext { browserConnected: boolean; mcpConnected: (id: string) => boolean; hasXueqiuCookie?: boolean; podcastConfigured?: boolean; hasGroqKey?: boolean }
 
 export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
