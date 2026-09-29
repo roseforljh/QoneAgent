@@ -1,6 +1,7 @@
 /** Visible Pi assistant content, in event and content-block order. */
 export type AssistantMessagePart =
   | { type: "text"; text: string; messageSequence: number }
+  | { type: "reasoning"; text: string; messageSequence: number; contentIndex?: number; complete?: boolean }
   | { type: "image"; image: string; filename?: string; messageSequence: number }
   | {
       type: "tool-call";
@@ -24,6 +25,9 @@ export function assistantPartsFromPiMessage(payload: unknown, messageSequence: n
 
   return message.content.flatMap((value: unknown, index: number): AssistantMessagePart[] => {
     const block = asRecord(value);
+    if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking) {
+      return [{ type: "reasoning", text: block.thinking, messageSequence, contentIndex: index, complete: true }];
+    }
     if (block?.type === "text" && typeof block.text === "string" && block.text) {
       return [{ type: "text", text: block.text, messageSequence }];
     }
@@ -41,6 +45,17 @@ export function assistantPartsFromPiMessage(payload: unknown, messageSequence: n
     }
     return [];
   });
+}
+
+/** Keep provider reasoning separate from answer text, including interrupted turns. */
+export function applyReasoningDelta(parts: readonly AssistantMessagePart[], payload: unknown, messageSequence: number): AssistantMessagePart[] {
+  const event = asRecord(payload);
+  if (!event || (event.complete !== true && (typeof event.delta !== "string" || !event.delta))) return [...parts];
+  const delta = typeof event.delta === "string" ? event.delta : "";
+  const contentIndex = typeof event.contentIndex === "number" ? event.contentIndex : undefined;
+  const index = parts.findIndex((part) => part.type === "reasoning" && part.messageSequence === messageSequence && part.contentIndex === contentIndex);
+  if (index < 0) return delta ? [...parts, { type: "reasoning", text: delta, messageSequence, contentIndex }] : [...parts];
+  return parts.map((part, i) => i === index && part.type === "reasoning" ? { ...part, text: part.text + delta, ...(event.complete === true ? { complete: true } : {}) } : part);
 }
 
 // Match the existing persisted tool-result limit so live and reloaded parts agree.

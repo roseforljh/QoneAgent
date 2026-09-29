@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { ModelMetadata, ProviderApiType } from "./model-metadata";
 import type { AssistantMessagePart } from "./assistant-parts";
 
-export { assistantPartsFromPiMessage, applyAssistantToolEvent } from "./assistant-parts";
+export { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta } from "./assistant-parts";
 export {
   detectImageModel,
   imageApiFormatForModelName,
@@ -162,6 +162,9 @@ export interface CompactionSettingsInfo {
 export interface CompactionMarkerInfo {
   id: string;
   throughMessageId: string;
+  /** Ordered visible assistant-part boundary within this run. */
+  runId?: string;
+  partIndex?: number;
   createdAt: number;
   status: "completed" | "interrupted";
   source: "manual" | "automatic";
@@ -372,6 +375,8 @@ export interface SubagentRunInfo {
 }
 
 export interface SubagentMessageInfo {
+  /** Runtime-expanded input; the original task or follow-up is shown instead. */
+  internal?: boolean;
   id: string;
   sequence: number;
   role: "user" | "assistant" | "tool" | "system";

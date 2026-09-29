@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { sessions, messages, runs, subagentRuns, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
 import type { Db } from "./index.js";
-import type { AssistantMessagePart, GoalInfo, GoalStatus, MessageAttachmentInfo, QueueItemInfo, RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
+import type { CompactionMarkerInfo, AssistantMessagePart, GoalInfo, GoalStatus, MessageAttachmentInfo, QueueItemInfo, RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
 
 export class SessionRepo {
   constructor(private db: Db) {}
@@ -122,9 +122,10 @@ export class MessageRepo {
 export class SubagentRunRepo {
   constructor(private db: Db) {}
 
-  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; profileId?: string; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number }) {
+  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; profileId?: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number }) {
     this.db.insert(subagentRuns).values({
       runId: input.runId, parentSessionId: input.parentSessionId, parentRunId: input.parentRunId,
+      mediaAttachment: input.mediaAttachment ? JSON.stringify(input.mediaAttachment) : null,
       parentSubagentId: input.parentSubagentId ?? null, depth: input.depth ?? 0, toolCallId: input.toolCallId,
       executionSessionId: input.executionSessionId ?? null, profileId: input.profileId ?? null, title: input.title, task: input.task,
       model: input.model ?? null, permissionMode: input.permissionMode ?? null, tools: input.tools ? JSON.stringify(input.tools) : null,
@@ -605,16 +606,30 @@ export class EventRepo {
     });
   }
 
-  listCompactions(sessionId: string): { id: string; throughMessageId: string; createdAt: number; status: "completed" | "interrupted"; source: "manual" | "automatic" }[] {
+  listCompactions(sessionId: string): CompactionMarkerInfo[] {
+    // Older markers only stored a user-message anchor. Recover their position
+    // from persisted parts' event sequences, without rewriting chat history.
+    const partsByRun = new Map<string, AssistantMessagePart[]>();
+    for (const message of new MessageRepo(this.db).listBySession(sessionId)) {
+      if (message.role !== "assistant" || !message.runId || !message.parts) continue;
+      try {
+        const parts = JSON.parse(message.parts);
+        if (Array.isArray(parts)) partsByRun.set(message.runId, parts);
+      } catch { /* Legacy messages can lack structured content. */ }
+    }
     return this.db.select().from(events)
       .where(and(eq(events.sessionId, sessionId), inArray(events.type, ["context.compacted", "context.compaction.interrupted"])))
       .orderBy(events.sequence).all().flatMap((row) => {
         try {
           const payload: unknown = JSON.parse(row.payload);
           if (!payload || typeof payload !== "object") return [];
-          const { id, throughMessageId, createdAt, source } = payload as { id?: unknown; throughMessageId?: unknown; createdAt?: unknown; source?: unknown };
+          const { id, throughMessageId, createdAt, source, partIndex } = payload as { id?: unknown; throughMessageId?: unknown; createdAt?: unknown; source?: unknown; partIndex?: unknown };
+          const legacyParts = row.runId && source === "automatic" ? partsByRun.get(row.runId) : undefined;
+          const position = typeof partIndex === "number" && Number.isInteger(partIndex) && partIndex >= 0
+            ? partIndex
+            : legacyParts?.filter((part) => part.type !== "reasoning" && part.messageSequence < row.sequence).length;
           return typeof id === "string" && typeof throughMessageId === "string"
-            ? [{ id, throughMessageId, createdAt: typeof createdAt === "number" ? createdAt : row.timestamp, status: row.type === "context.compacted" ? "completed" as const : "interrupted" as const, source: source === "automatic" ? "automatic" as const : "manual" as const }]
+            ? [{ id, throughMessageId, ...(row.runId ? { runId: row.runId } : {}), ...(position !== undefined ? { partIndex: position } : {}), createdAt: typeof createdAt === "number" ? createdAt : row.timestamp, status: row.type === "context.compacted" ? "completed" as const : "interrupted" as const, source: source === "automatic" ? "automatic" as const : "manual" as const }]
             : [];
         } catch { return []; }
       });

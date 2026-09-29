@@ -60,6 +60,7 @@ export const subagentRuns = sqliteTable("subagent_runs", {
   toolCallId: text("tool_call_id").notNull(),
   executionSessionId: text("execution_session_id"),
   profileId: text("profile_id"),
+  mediaAttachment: text("media_attachment"),
   title: text("title").notNull(),
   task: text("task").notNull(),
   model: text("model"),

@@ -292,6 +292,7 @@ function migrate(sqlite: Database) {
   `);
   const subagentColumns = new Set(sqlite.query("PRAGMA table_info(subagent_runs)").all().map((column) => (column as { name: string }).name));
   const additions: [string, string][] = [
+    ["media_attachment", "TEXT"],
     ["parent_subagent_id", "TEXT"], ["depth", "INTEGER NOT NULL DEFAULT 0"],
     ["execution_session_id", "TEXT"], ["profile_id", "TEXT"], ["turn_count", "INTEGER NOT NULL DEFAULT 1"],
     ["retry_count", "INTEGER NOT NULL DEFAULT 0"], ["workflow_id", "TEXT"],
