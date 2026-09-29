@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { ModelConfigInfo } from "@qone/protocol";
 import { createAttachmentAudioTool, createAttachmentFrameTool, createVideoDownloadTool, createVideoFallbackTools, type MediaToolOptions } from "../src/media-tool";
-import { bilibiliCliResultText } from "../src/bilibili-fallback";
+import { bilibiliCliResultText, readBilibiliVideoData } from "../src/bilibili-fallback";
 import { ffmpegExecutable, ytDlpExecutable } from "../src/reach-channels";
 import { extractVideoFrames, videoDuration } from "../src/video-frames";
 import { convertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
@@ -237,6 +237,19 @@ if (ffmpeg && ytDlpExecutable()) test("audio mode gets sound from a combined vid
 test("Bilibili CLI error envelope cannot masquerade as analysis data", () => {
   expect(bilibiliCliResultText('{"ok":true,"data":{"title":"example"}}')).toContain("example");
   expect(() => bilibiliCliResultText('{"ok":false,"error":{"message":"login required"}}')).toThrow("login required");
+});
+
+test("Bilibili subtitle JSON failure falls back to metadata and cancellation does not retry", async () => {
+  const calls: boolean[] = [];
+  const read = async (subtitles: boolean) => {
+    calls.push(subtitles);
+    return JSON.stringify(subtitles ? { ok: false, error: "login required" } : { ok: true, data: { title: "video" } });
+  };
+  expect(await readBilibiliVideoData(read)).toContain('"title":"video"');
+  expect(calls).toEqual([true, false]);
+  calls.length = 0;
+  await expect(readBilibiliVideoData(read, AbortSignal.abort())).rejects.toThrow("login required");
+  expect(calls).toEqual([true]);
 });
 
 test("site fallback uses only a file in this run's staging directory", async () => {

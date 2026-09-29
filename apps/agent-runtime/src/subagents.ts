@@ -148,6 +148,12 @@ export function resolveSubagent(config: SubagentConfigInfo, capability: Capabili
 /** What the main model can delegate to right now; read at call time so settings changes apply without a new session. */
 export function subagentCatalog(config: SubagentConfigInfo) {
   return {
+    temporary: {
+      id: "temporary",
+      name: "临时通用代理",
+      description: "处理普通代码审查、文件分析、研究和其他不需要专门媒体能力的独立任务。选择此项时不要填写 capability 或 subagentId。",
+      model: config.runtime.temporaryModelId || "follow-parent-model",
+    },
     capabilities: CAPABILITY_IDS.flatMap((capability) => {
       const agent = resolveSubagent(config, capability);
       return agent ? [{ capability, name: agent.name, description: agent.instructions, model: agent.modelId, route: agent.route }] : [];

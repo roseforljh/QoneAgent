@@ -33,6 +33,15 @@ export function isBilibiliUrl(value: string): boolean {
   } catch { return false; }
 }
 
+export async function readBilibiliVideoData(read: (subtitles: boolean) => Promise<string>, signal?: AbortSignal): Promise<string> {
+  try {
+    return bilibiliCliResultText(await read(true));
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return bilibiliCliResultText(await read(false));
+  }
+}
+
 async function firstMediaFile(directory: string, mime: (file: string) => string | undefined): Promise<{ path: string; mimeType: string } | undefined> {
   const pending = [directory];
   for (const current of pending) {
@@ -63,18 +72,12 @@ export async function readBilibiliFallback(url: string, signal?: AbortSignal): P
   const errors: string[] = [];
   if (launch) {
     try {
-      let text: string;
-      try {
-        ({ stdout: text } = await execFileAsync(launch.command, [...launch.prefix, "video", reference, "--subtitle-timeline", "--json"], {
+      const text = await readBilibiliVideoData(async (subtitles) => {
+        const result = await execFileAsync(launch.command, [...launch.prefix, "video", reference, ...(subtitles ? ["--subtitle-timeline"] : []), "--json"], {
           ...pythonOptions, signal, maxBuffer: 16 * 1024 * 1024,
-        }));
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        ({ stdout: text } = await execFileAsync(launch.command, [...launch.prefix, "video", reference, "--json"], {
-          ...pythonOptions, signal, maxBuffer: 16 * 1024 * 1024,
-        }));
-      }
-      text = bilibiliCliResultText(text);
+        });
+        return result.stdout;
+      }, signal);
       if (text) {
         const directory = await mkdtemp(path.join(tmpdir(), "qone-bili-audio-"));
         try {

@@ -2,6 +2,23 @@ import { expect, test } from "bun:test";
 import type { SubagentRunInfo } from "@qone/protocol";
 import { subagentResultForModel, subagentWorkflowResultForModel } from "../src/subagent-result";
 
+test("inspection can retrieve previous replies without serializing transcript media parts", () => {
+  const child = {
+    id: "child", status: "completed", content: "latest", parts: [],
+    messages: [
+      { sequence: 1, role: "user", content: "question" },
+      { sequence: 2, role: "assistant", content: "earlier reply", parts: [{ type: "image", image: "data:image/png;base64,AAAA" }] },
+    ],
+  } as unknown as SubagentRunInfo;
+  expect(subagentResultForModel(child).details).not.toHaveProperty("messages");
+  const result = subagentResultForModel(child, true);
+  expect(result.details.messages).toEqual([
+    { sequence: 1, role: "user", content: "question" },
+    { sequence: 2, role: "assistant", content: "earlier reply" },
+  ]);
+  expect(result.content[0]!.text).not.toContain("base64");
+});
+
 test("generated image reaches the parent as an image block without base64 in text", () => {
   const image = "data:image/png;base64," + "AAAA".repeat(100_000);
   const child = {

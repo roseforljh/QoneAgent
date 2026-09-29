@@ -280,3 +280,59 @@ test("Gemini file upload surfaces the provider response", async () => {
     unlinkSync(path);
   }
 });
+
+test("Gemini rejects an HTML gateway page instead of claiming video upload succeeded", async () => {
+  const file = join(tmpdir(), `qone-gateway-${crypto.randomUUID()}.mp4`);
+  writeFileSync(file, Buffer.from([0, 1, 2, 3]));
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = (async () => {
+    requests++;
+    return new Response("<!doctype html><html>Gateway</html>", { headers: { "Content-Type": "text/html" } });
+  }) as typeof fetch;
+  try {
+    await expect(prepareGooglePayload({ contents: [{ role: "user", parts: [{ text: localMediaMarker(file, "video/mp4") }] }] }, {
+      baseUrl: "https://gateway.test/v1beta",
+    } as never, "test-key")).rejects.toThrow("HTTP 200 HTML");
+    expect(requests).toBe(1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    unlinkSync(file);
+  }
+});
+
+test("Gemini reports the provider body when upload initialization has no URL", async () => {
+  const file = join(tmpdir(), `qone-no-upload-url-${crypto.randomUUID()}.mp4`);
+  writeFileSync(file, Buffer.from([0, 1]));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("proxy did not enable resumable uploads", { status: 200 })) as typeof fetch;
+  try {
+    await expect(prepareGooglePayload({ contents: [{ role: "user", parts: [{ text: localMediaMarker(file, "video/mp4") }] }] }, {
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    } as never, "test-key")).rejects.toThrow("proxy did not enable resumable uploads");
+  } finally {
+    globalThis.fetch = originalFetch;
+    unlinkSync(file);
+  }
+});
+
+test("Gemini stops immediately when upload already reports processing failure", async () => {
+  const file = join(tmpdir(), `qone-failed-${crypto.randomUUID()}.mp4`);
+  writeFileSync(file, Buffer.from([0, 1]));
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = (async () => {
+    requests++;
+    return requests === 1
+      ? new Response(null, { headers: { "x-goog-upload-url": "https://upload.test/failed" } })
+      : new Response(JSON.stringify({ file: { name: "files/failed", uri: "https://files.test/failed", state: "FAILED", error: { message: "unsupported codec" } } }));
+  }) as typeof fetch;
+  try {
+    await expect(prepareGooglePayload({ contents: [{ role: "user", parts: [{ text: localMediaMarker(file, "video/mp4") }] }] },
+      { baseUrl: "https://generativelanguage.googleapis.com/v1beta" } as never, "test-key")).rejects.toThrow("unsupported codec");
+    expect(requests).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    unlinkSync(file);
+  }
+});

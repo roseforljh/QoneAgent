@@ -36,6 +36,7 @@ type GoogleFile = {
   uri?: string;
   mimeType?: string;
   state?: string;
+  error?: { message?: string };
 };
 
 const uploadedFiles = new Map<string, { file: Promise<GoogleFile>; expiresAt: number }>();
@@ -104,7 +105,15 @@ async function readResponseError(response: Response): Promise<string> {
   return body ? `Gemini 文件接口 HTTP ${response.status}: ${body.slice(0, 500)}` : `Gemini 文件接口 HTTP ${response.status}`;
 }
 
+async function readUploadSession(response: Response): Promise<{ url?: string; body: string }> {
+  const headerUrl = response.headers.get("x-goog-upload-url");
+  if (headerUrl?.trim()) return { url: headerUrl.trim(), body: "" };
+  const body = await response.text().catch(() => "");
+  return { body };
+}
+
 async function waitForActiveFile(file: GoogleFile, baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<GoogleFile> {
+  if (file.state === "FAILED") throw new Error(`Gemini 无法处理这个音视频文件${file.error?.message ? `：${file.error.message}` : ""}`);
   if (!file.state || file.state === "ACTIVE") return file;
   const startedAt = Date.now();
   while (Date.now() - startedAt < FILE_PROCESSING_TIMEOUT_MS) {
@@ -112,7 +121,7 @@ async function waitForActiveFile(file: GoogleFile, baseUrl: string, apiKey: stri
     const response = await fetch(withApiKey(fileResourceUrl(baseUrl, file.name!), apiKey), { headers: { Accept: "application/json" }, signal });
     if (!response.ok) throw new Error(await readResponseError(response));
     const next = responseFile(await response.json());
-    if (next.state === "FAILED") throw new Error("Gemini 无法处理这个音视频文件");
+    if (next.state === "FAILED") throw new Error(`Gemini 无法处理这个音视频文件${next.error?.message ? `：${next.error.message}` : ""}`);
     if (!next.state || next.state === "ACTIVE") return next;
     file = next;
   }
@@ -135,9 +144,17 @@ async function uploadGoogleFile(baseUrl: string, apiKey: string, mimeType: strin
     signal,
   });
   if (!start.ok) throw new Error(await readResponseError(start));
-  const uploadUrl = start.headers.get("x-goog-upload-url");
-  if (!uploadUrl) throw new Error("Gemini 文件接口未返回上传地址");
-  const finish = await fetch(uploadUrl, {
+  const uploadSession = await readUploadSession(start);
+  if (!uploadSession.url) {
+    const endpoint = filesEndpoint(baseUrl);
+    const location = `${endpoint.origin}${endpoint.pathname}`;
+    if (/text\/html/i.test(start.headers.get("content-type") ?? "") || /^\s*(?:<!doctype html|<html)/i.test(uploadSession.body)) {
+      throw new Error(`Gemini 视频尚未上传：Files API ${location} 返回 HTTP ${start.status} HTML 网页，未返回上传会话。请核实网关是否支持 Gemini Files API 及上传路由；支持文本或 YouTube 链接不代表支持文件上传。`);
+    }
+    const detail = uploadSession.body ? `：${uploadSession.body.slice(0, 500)}` : "";
+    throw new Error(`Gemini 文件接口未返回上传地址（${location}，HTTP ${start.status}，Content-Type: ${start.headers.get("content-type") ?? "未提供"}）${detail}`);
+  }
+  const finish = await fetch(uploadSession.url, {
     method: "POST",
     headers: {
       "Content-Length": String(byteLength),

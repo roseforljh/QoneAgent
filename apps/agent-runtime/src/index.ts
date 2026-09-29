@@ -1,6 +1,7 @@
+import { CompactionPositions } from "./compaction-position.js";
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, SessionSearchResult } from "@qone/protocol";
-import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, thinkingLevelsForApi, parseMcpCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
+import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, thinkingLevelsForApi, parseMcpCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
@@ -121,6 +122,7 @@ const queueEventPersistence = (event: AgentEvent) => {
   else if (!eventFlushTimer) eventFlushTimer = setTimeout(flushEvents, 32);
 };
 
+const compactionPositions = new CompactionPositions();
 eventBus.subscribe((busEvent) => {
   if (busEvent.type === "approval.requested" && busEvent.runId) {
     runRepo.setStatus(busEvent.runId, "waiting_approval");
@@ -151,8 +153,13 @@ eventBus.subscribe((busEvent) => {
         assistantMessageSequenceByRun.set(agentEvent.runId, agentEvent.sequence);
       } else if (agentEvent.type === "message.completed" && messageRole === "assistant") {
         const messageSequence = assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence;
-        parts.push(...assistantPartsFromPiMessage(agentEvent.payload, messageSequence));
+        assistantPartsByRun.set(agentEvent.runId, [
+          ...parts.filter((part) => part.messageSequence !== messageSequence),
+          ...assistantPartsFromPiMessage(agentEvent.payload, messageSequence),
+        ]);
         assistantMessageSequenceByRun.delete(agentEvent.runId);
+      } else if (agentEvent.type === "message.reasoning.delta") {
+        assistantPartsByRun.set(agentEvent.runId, applyReasoningDelta(parts, agentEvent.payload, completedMessageSequence));
       } else if (agentEvent.type === "tool.started" || agentEvent.type === "tool.completed" || agentEvent.type === "tool.failed") {
         assistantPartsByRun.set(agentEvent.runId, applyAssistantToolEvent(parts, agentEvent.type, agentEvent.payload));
       }
@@ -177,7 +184,7 @@ eventBus.subscribe((busEvent) => {
         subagentRunRepo.save(agentEvent.runId, assistantBuffers.get(agentEvent.runId) ?? "", parts);
       }
       subagentController?.recordEvent(agentEvent.runId, agentEvent.type, agentEvent.payload, completedMessageSequence);
-      if (agentEvent.type === "message.delta") scheduleSubagentPublish(agentEvent.runId);
+      if (agentEvent.type === "message.delta" || agentEvent.type === "message.reasoning.delta") scheduleSubagentPublish(agentEvent.runId);
       else publishSubagent(agentEvent.runId);
     }
   }
@@ -193,11 +200,12 @@ eventBus.subscribe((busEvent) => {
       const history = messageRepo.listBySession(agentEvent.sessionId);
       const throughMessageId = history.find((message) => message.role === "user" && message.runId === agentEvent.runId)?.id ?? history.at(-1)?.id;
       if (throughMessageId) {
+        const position = compactionPositions.update(agentEvent.runId, agentEvent.eventId, agentEvent.timestamp, agentEvent.type === "compaction_start", assistantPartsByRun.get(agentEvent.runId) ?? []);
         if (agentEvent.type === "compaction_start") {
-          emit("context.compaction.started", { id: agentEvent.eventId, throughMessageId, startedAt: agentEvent.timestamp, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
+          emit("context.compaction.started", { ...position, throughMessageId, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
         } else {
           const status = payload.result ? "completed" : "interrupted";
-          emit(status === "completed" ? "context.compacted" : "context.compaction.interrupted", { id: agentEvent.eventId, throughMessageId, createdAt: agentEvent.timestamp, status, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
+          emit(status === "completed" ? "context.compacted" : "context.compaction.interrupted", { ...position, throughMessageId, createdAt: position.startedAt, status, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
           flushEvents();
         }
       }

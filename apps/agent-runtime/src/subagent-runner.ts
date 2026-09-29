@@ -5,6 +5,7 @@ import { buildSubagentPrompt, resolveSubagent, subagentCatalog } from "./subagen
 import { SubagentScheduler } from "./subagent-scheduler.js";
 
 export interface SubagentController {
+  list(sessionId: string, ownerId?: string): { runId: string; title: string; task: string; status: string; profileId: string | null; model: string | null }[];
   query(runId: string): SubagentRunInfo | undefined;
   catalog(): ReturnType<typeof subagentCatalog>;
   control(runId: string, action: "stop" | "resume" | "retry" | "steer" | "follow_up", message?: string): Promise<SubagentRunInfo>;
@@ -42,6 +43,7 @@ export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo
     messages: repo.listMessages(runId).map((message) => ({
       id: message.id, sequence: message.sequence,
       role: message.role as "user" | "assistant" | "tool" | "system", content: message.content,
+      internal: message.role === "user" && Boolean(message.rawMessage),
       parts: message.parts ? (JSON.parse(message.parts) as AssistantMessagePart[]).map(part => part.type === "tool-call"
         ? parts.find(current => current.type === "tool-call" && current.toolCallId === part.toolCallId) ?? part : part) : undefined,
       createdAt: message.createdAt,
@@ -93,8 +95,15 @@ export function registerSubagentDispatcher(options: {
     }
     return source;
   };
-  const originalAttachments = (sessionId: string, runId: string): MessageAttachmentInfo[] =>
-    options.attachmentsProvider?.(sessionId, sourceRunId(runId)) ?? [];
+  const originalAttachments = (sessionId: string, runId: string): MessageAttachmentInfo[] => {
+    const attachments = [...(options.attachmentsProvider?.(sessionId, sourceRunId(runId)) ?? [])];
+    for (let current = repo.get(runId); current; current = repo.get(current.parentRunId)) {
+      if (!current.mediaAttachment) continue;
+      const media = JSON.parse(current.mediaAttachment) as MessageAttachmentInfo;
+      if (!attachments.some((item) => item.localPath === media.localPath)) attachments.push(media);
+    }
+    return attachments;
+  };
   const interrupt = (id: string, failure?: Error) => {
     const job = jobs.get(id);
     if (!job) return;
@@ -261,6 +270,26 @@ export function registerSubagentDispatcher(options: {
 
   const controller: SubagentController = {
     query,
+    list: (sessionId, ownerId) => {
+      const owner = ownerId ? repo.get(ownerId) : undefined;
+      if (ownerId && owner?.executionSessionId !== sessionId) return [];
+      const rows = repo.listBySession(owner?.parentSessionId ?? sessionId);
+      const visible = new Set(ownerId ? [ownerId] : rows.map(row => row.runId));
+      if (ownerId) {
+        for (let changed = true; changed;) {
+          changed = false;
+          for (const row of rows) if (row.parentSubagentId && visible.has(row.parentSubagentId) && !visible.has(row.runId)) {
+            visible.add(row.runId);
+            changed = true;
+          }
+        }
+        visible.delete(ownerId);
+      }
+      return rows.filter(row => visible.has(row.runId)).map(row => ({
+        runId: row.runId, title: row.title, task: row.task,
+        status: runRepo.get(row.runId)?.status ?? "failed", profileId: row.profileId, model: row.model,
+      }));
+    },
     catalog: () => subagentCatalog(options.config()),
     recordEvent: (id, type, payload, sequence) => {
       if (!jobs.has(id)) return;
@@ -268,7 +297,7 @@ export function registerSubagentDispatcher(options: {
       if (type === "message.completed" && raw?.role) {
         const text = typeof raw.content === "string" ? raw.content
           : Array.isArray(raw.content) ? raw.content.filter(p => p?.type === "text").map(p => p.text).join("") : "";
-        const last = repo.listMessages(id).at(-1);
+        const last = repo.listMessages(id).reverse().find(message => message.role !== "system");
         if (raw.role === "user" && last?.role === "user") return;
         const parts = raw.role === "assistant" ? (partsByRun.get(id) ?? []).filter(p => p.messageSequence === sequence) : undefined;
         repo.appendMessage(id, raw.role === "toolResult" ? "tool" : raw.role, text, parts, raw);

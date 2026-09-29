@@ -2,7 +2,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SubagentRunInfo } from "@qone/protocol";
 
 /** Present child output to the parent without putting base64 image bytes in JSON text. */
-export function subagentResultForModel(info: SubagentRunInfo) {
+export function subagentResultForModel(info: SubagentRunInfo, includeMessages = false) {
   const images: ImageContent[] = [];
   const imageRefs = info.parts.flatMap((part): Array<{ filename?: string; attached?: true; url?: string; unsupported?: true }> => {
     if (part.type !== "image") return [];
@@ -22,12 +22,13 @@ export function subagentResultForModel(info: SubagentRunInfo) {
     streaming: info.streaming,
     children: info.children,
     images: imageRefs,
+    ...(includeMessages ? { messages: info.messages?.map(({ sequence, role, content }) => ({ sequence, role, content })) } : {}),
   };
   return { content: [{ type: "text" as const, text: JSON.stringify(summary) }, ...images], details: summary };
 }
 
 export function subagentWorkflowResultForModel(results: SubagentRunInfo[]) {
-  const summaries = results.map(subagentResultForModel);
+  const summaries = results.map(result => subagentResultForModel(result));
   return {
     content: [
       { type: "text" as const, text: JSON.stringify(summaries.map((result) => result.details)) },

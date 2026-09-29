@@ -24,6 +24,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { CAPABILITY_IDS, detectImageModel, modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type CapabilityId, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ModelMetadata, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
+import { ModelResponseTiming } from "./model-response-timing.js";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
 import { generateImage } from "./image-generation.js";
@@ -534,15 +535,15 @@ export class PiAdapter {
     const inspectTools: ToolDefinition[] = this.subagentController ? [{
       name: "inspect_subagent",
       label: "Inspect subagent",
-      description: "Read a subagent's status, text result, generated images, streaming output and child IDs by run ID. The full transcript remains in the side panel.",
-      promptSnippet: "Use inspect_subagent when you need to check a delegated task before it finishes.",
-      parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }) }),
+      description: "Read a subagent's status, text result, generated images, streaming output and child IDs by run ID. Set includeMessages to read previous conversation text as well as the latest result.",
+      promptSnippet: "Use inspect_subagent to read current progress or previous replies before following up with an existing agent.",
+      parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }), includeMessages: Type.Optional(Type.Boolean()) }),
       execute: async (_toolCallId, params) => {
         const runId = (params as { runId: string }).runId;
         checkChild(runId);
         const result = this.subagentController!.query(runId);
         if (!result) throw new Error(`Unknown subagent ${runId}`);
-        return subagentResultForModel(result);
+        return subagentResultForModel(result, (params as { includeMessages?: boolean }).includeMessages);
       },
     }, {
       name: "run_subagent_workflow",
@@ -585,7 +586,7 @@ export class PiAdapter {
       name: "control_subagent",
       label: "Control subagent",
       description: "Stop, resume, retry, steer or send a follow-up to an existing subagent session.",
-      promptSnippet: "Use control_subagent to continue, correct, retry or stop a delegated task.",
+      promptSnippet: "For follow-up questions about the same task or media, reuse the existing runId with follow_up, including after completion and in later user turns. Use steer to correct an active task. This retains the child conversation; do not dispatch a new agent merely because the previous turn completed.",
       parameters: Type.Object({
         runId: Type.String({ minLength: 1, maxLength: 128 }),
         action: Type.Union([Type.Literal("stop"), Type.Literal("resume"), Type.Literal("retry"), Type.Literal("steer"), Type.Literal("follow_up")]),
@@ -602,18 +603,18 @@ export class PiAdapter {
     const delegateTool: ToolDefinition[] = canDelegate ? [{
       name: "list_subagents",
       label: "List subagents",
-      description: "List the subagents the user has configured: capability subagents (video recognition, image/video generation, speech-to-text, text-to-speech) and saved subagent profiles. Call this when the task needs an ability you do not have yourself, before telling the user you cannot do it.",
-      promptSnippet: "If a task needs something you cannot do yourself (for example generating an image, audio, or video, or reading audio/video you cannot perceive), call list_subagents, then dispatch_subagent with the matching capability or subagentId. If nothing suitable is configured, tell the user plainly that it cannot be done and which setting is missing; never pretend to have done it.",
+      description: "List existing agent sessions and available delegation targets. The temporary target is the default for ordinary code review, file analysis, research, and other tasks without a special media ability. Capability targets are only for their named media ability.",
+      promptSnippet: "For an ordinary code, file, research, or read-only task, use the temporary general agent: leave capability and subagentId unset. Only choose videoRecognition or stt when the task includes media to read; only choose imageGeneration or videoGeneration when the user asks to create media; only choose tts for speech output. For follow-ups, reuse an existing runId.",
       parameters: Type.Object({}),
       execute: async () => {
-        const result = this.subagentController!.catalog();
+        const result = { ...this.subagentController!.catalog(), existing: this.subagentController!.list(eventSessionId, subagentRunId) };
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       },
     }, {
       name: "dispatch_subagent",
       label: "Delegate to subagent",
-      description: `Run one independent task with a subagent. The user's original attachments are forwarded by reference to any selected subagent; do not download or copy them before delegation. If this agent already downloaded a video and needs a separate audio subagent, pass its returned local path as mediaPath; the child will extract the audio. Set capability to hand the task to the subagent the user configured for that capability; set subagentId to use a saved profile; set neither for a temporary subagent whose model is configured in Settings > Subagents > Temporary agent. When the user asks for N tasks or asks to start another subagent, call this tool once for each task, including in a later turn; do not stop at three. Multiple calls in one turn execute in parallel. The configured maximum of ${policy?.maxConcurrent ?? "the current"} is a simultaneous running limit, not a total task limit: completed tasks release capacity and extra tasks wait in the FIFO queue. Returns the subagent's final result, or its status and error when it fails; the runtime never retries on its own, so read the error and decide yourself whether a retry via control_subagent makes sense. The full transcript is available in the side panel.`,
-      promptSnippet: "Use dispatch_subagent once per requested task. For a text-to-speech subagent backed by a direct speech model, put only the exact words to be spoken in task; voice is configured in that model's settings. Unless a capability or saved subagent profile is selected, the temporary agent uses the model configured in Settings > Subagents > Temporary agent. If the user asks to start another subagent after earlier tasks, dispatch it too. Do not assume a total limit of three; maxConcurrent limits simultaneous execution only, and overflow is queued.",
+      description: `Create a NEW agent session. For ordinary code, file, research, or read-only work, leave capability unset so the configured temporary general agent is used. Use capability only for a task that explicitly needs that named media ability; use subagentId only for a saved profile. For follow-up questions, reuse the existing runId. The user's original attachments are forwarded by reference; do not download them before delegation. The configured maximum of ${policy?.maxConcurrent ?? "the current"} is a simultaneous running limit.`,
+      promptSnippet: "Use dispatch_subagent with neither capability nor subagentId for ordinary code or research work. Use capability only for the matching media task. Before creating an agent for a follow-up, recover existing runIds and use control_subagent follow_up.",
       parameters: Type.Object({
         title: Type.String({ minLength: 1, maxLength: 120 }),
         task: Type.String({ minLength: 1, maxLength: 32_000 }),
@@ -743,6 +744,7 @@ export class PiAdapter {
     }
 
     let lastToolDeltaAt = 0;
+    const responseTiming = new ModelResponseTiming();
     session.subscribe((e) => {
       const runId = [...this.runs.entries()].find(([, s]) => s === session)?.[0];
       const raw = e as unknown as Record<string, unknown>;
@@ -761,13 +763,16 @@ export class PiAdapter {
         const block = Array.isArray(content) && typeof messageEvent?.contentIndex === "number"
           ? content[messageEvent.contentIndex] as { id?: string; name?: string; arguments?: unknown } | undefined
           : undefined;
-        if (messageEvent?.type === "text_delta") {
+        if (messageEvent?.type === "thinking_delta") {
+          protocolType = "message.reasoning.delta";
+          protocolPayload = { delta: messageEvent.delta ?? "", contentIndex: messageEvent.contentIndex };
+        } else if (messageEvent?.type === "text_delta") {
           protocolType = "message.delta";
           protocolPayload = { delta: messageEvent.delta ?? "", contentIndex: messageEvent.contentIndex };
-        } else if (messageEvent?.type === "text_start" || messageEvent?.type === "toolcall_start") {
+        } else if (messageEvent?.type === "thinking_start" || messageEvent?.type === "text_start" || messageEvent?.type === "toolcall_start") {
           protocolType = "message.block.started";
-          protocolPayload = messageEvent.type === "text_start"
-            ? { blockType: "text", contentIndex: messageEvent.contentIndex }
+          protocolPayload = messageEvent.type !== "toolcall_start"
+            ? { blockType: messageEvent.type === "thinking_start" ? "reasoning" : "text", contentIndex: messageEvent.contentIndex }
             : {
                 blockType: "tool-call", contentIndex: messageEvent.contentIndex,
                 toolCallId: block?.id,
@@ -787,6 +792,9 @@ export class PiAdapter {
             toolName: toolNameByModelName.get(String(block?.name ?? "")) ?? block?.name,
             args: block?.arguments,
           };
+        } else if (messageEvent?.type === "thinking_end") {
+          protocolType = "message.block.completed";
+          protocolPayload = { blockType: "reasoning", contentIndex: messageEvent.contentIndex };
         } else if (messageEvent?.type === "toolcall_end") {
           const toolCall = messageEvent.toolCall as { id?: string; name?: string; arguments?: unknown } | undefined ?? block;
           protocolType = "message.block.completed";
@@ -798,6 +806,7 @@ export class PiAdapter {
           };
         } else return;
       } else if (e.type === "message_end") protocolType = "message.completed";
+      else if (e.type === "turn_start") protocolType = "model.request.started";
       else if (e.type === "tool_execution_start") {
         protocolType = "tool.started";
         protocolPayload = { toolCallId: raw.toolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, args: raw.args ?? raw.input };
@@ -811,6 +820,11 @@ export class PiAdapter {
       } else if (e.type === "agent_start") protocolType = "turn.started";
       else if (e.type === "agent_end") protocolType = "turn.completed";
       this.push(protocolType, protocolPayload, eventSessionId, runId);
+      const timing = responseTiming.record(protocolType, protocolPayload);
+      if (timing) {
+        this.push("model.response.timing", timing, eventSessionId, runId);
+        log.info("model response timing", { sessionId: eventSessionId, runId, ...timing });
+      }
       if (!runId) return;
       const p = normalized as { type?: string; assistantMessageEvent?: { type?: string; delta?: string }; message?: unknown; toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
       const toolPayload = protocolPayload as { toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };

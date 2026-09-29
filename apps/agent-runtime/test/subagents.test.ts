@@ -20,6 +20,16 @@ const config: SubagentConfigInfo = {
 };
 
 describe("capability subagent routing", () => {
+  test("always lists the temporary general agent with its configured or inherited model", () => {
+    const empty = normalizeSubagentConfig({});
+    expect(subagentCatalog(empty).temporary).toMatchObject({
+      id: "temporary", name: "临时通用代理", model: "follow-parent-model",
+    });
+    expect(subagentCatalog(empty).capabilities).toEqual([]);
+    const configured = normalizeSubagentConfig({ runtime: { temporaryModelId: "provider/general" } });
+    expect(subagentCatalog(configured).temporary.model).toBe("provider/general");
+  });
+
   test("normalizes the five supported capability agents as built-in profiles", () => {
     const normalized = normalizeSubagentConfig({});
     const logos = normalized.profiles.map((profile) => profile.logo).filter(Boolean);
@@ -70,6 +80,7 @@ describe("capability subagent routing", () => {
     expect(catalog.capabilities.map((item) => item.capability)).toEqual(["videoRecognition", "stt"]);
     expect(catalog.capabilities.find((item) => item.capability === "videoRecognition")?.description).toContain("视频内容识别");
     expect(catalog.unconfiguredCapabilities).toEqual(["imageGeneration", "videoGeneration", "tts"]);
+    expect(catalog.temporary).toMatchObject({ id: "temporary", name: "临时通用代理" });
     expect(catalog.profiles.map((item) => item.id)).toEqual(["researcher"]);
   });
 
@@ -197,9 +208,11 @@ test("persists the initial child turn exactly once", async () => {
     const repo = new SubagentRunRepo(db);
     let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
     const assistantBuffers = new Map<string, string>();
+    const executionSessions: string[] = [];
     const adapter = {
       setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
       run: async (_sessionId: string, _prompt: string, opts: { runId?: string }) => {
+        executionSessions.push(_sessionId);
         if (opts.runId) assistantBuffers.set(opts.runId, "完成");
       },
       stop: () => true,
@@ -218,7 +231,17 @@ test("persists the initial child turn exactly once", async () => {
     expect(repo.listMessages(row.runId).map((message) => message.role)).toEqual(["user", "assistant", "assistant"]);
     await controller.control(row.runId, "follow_up", "补充检查");
     expect(repo.listMessages(row.runId).map((message) => message.role)).toEqual(["user", "assistant", "assistant", "user", "assistant"]);
+    repo.appendMessage(row.runId, "system", "", undefined, { role: "system" });
+    repo.appendMessage(row.runId, "user", "expanded runtime input", undefined, { role: "user" });
+    expect(controller.query(row.runId)?.messages?.at(-1)?.internal).toBe(true);
     expect(child).toContain(row.runId);
+    await controller.control(row.runId, "follow_up", "继续核验");
+    expect(new Set(executionSessions).size).toBe(1);
+    expect(repo.listBySession(session.id)).toHaveLength(1);
+    expect(controller.list(session.id)).toMatchObject([{ runId: row.runId, status: "completed", title: "任务" }]);
+    expect(controller.list("another-conversation")).toEqual([]);
+    expect(controller.list("another-conversation", row.runId)).toEqual([]);
+    expect(controller.query(row.runId)?.messages?.filter(message => message.role === "user").at(-1)?.content).toBe("继续核验");
   } finally {
     closeDb(db);
   }
@@ -268,8 +291,21 @@ test("capability dispatch uses the configured model with the parent's attachment
     await dispatch({ ...input, parentSessionId: firstChild.executionSessionId!, parentRunId: firstChild.runId,
       toolCallId: "call-nested-video", capability: "stt", mediaAttachment: downloaded });
     expect(calls.at(-1)).toEqual({ model: "provider/audio", attachments: [audio, downloaded] });
+    const mediaChild = repo.listBySession(session.id).find((row) => row.toolCallId === "call-nested-video")!;
+    expect(JSON.parse(mediaChild.mediaAttachment!)).toEqual(downloaded);
+    await controller.control(mediaChild.runId, "retry");
+    expect(calls.at(-1)).toEqual({ model: "provider/audio", attachments: [audio, downloaded] });
+    await controller.control(mediaChild.runId, "follow_up", "再检查声音");
+    expect(calls.at(-1)).toEqual({ model: "provider/audio", attachments: [audio, downloaded] });
+    await dispatch({ ...input, parentSessionId: mediaChild.executionSessionId!, parentRunId: mediaChild.runId,
+      toolCallId: "call-inherited-media", capability: "stt" });
+    expect(calls.at(-1)).toEqual({ model: "provider/audio", attachments: [audio, downloaded] });
     await expect(dispatch({ ...input, toolCallId: "call-2", capability: "imageGeneration" })).rejects.toThrow("No subagent is configured for imageGeneration");
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(8);
+    const descendants = controller.list(firstChild.executionSessionId!, firstChild.runId);
+    expect(descendants).toHaveLength(3);
+    expect(descendants.some(child => child.runId === firstChild.runId)).toBe(false);
+    expect(controller.list(mediaChild.executionSessionId!, mediaChild.runId)).toHaveLength(1);
   } finally {
     closeDb(db);
   }
