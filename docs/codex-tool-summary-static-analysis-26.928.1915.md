@@ -45,3 +45,15 @@ ASAR 解析：前 16 字节中的 uint32LE(12) 为 JSON 索引长度，资源数
 - 知识图谱用 `graphify.watch._rebuild_code` 重建，遵守项目忽略配置。
 
 不生成 exe 或安装包。静态渲染和尺寸桩测试不能代替实际 WebView 视觉验收；界面效果由用户启动开发环境确认。
+
+## 工具标题状态与文案补查（2026-09-30）
+
+同一 ASAR 的 `active-tool-activity-label-2105b6ba5d7a.js` 从后往前选最近的执行中项目，按已解析的命令类型给出 Reading / Searching / Listing / Running 等进行时标题；命令结束才改成 Ran。`sites-end-resource-e2d7df4c9a5f.js` 的 `ZD` 按 thinking / active / summary 分支渲染标题，完成分支将 `summaryParts` 组成自然语言摘要，失败的动态工具调用还有专门的 failed 文案。`tool-activity-disclosure-d79714dd490d.js` 在 status 为 running 时默认展开明细，完成后按完成态的开合状态显示，用户可分别切换。
+
+Qone 对应修复：工具组运行标题跟随最后一个实际在执行的工具；仅有待执行项时选最后一个待执行项；这一组完成即切到完成摘要，不再受整个 assistant 消息的运行状态牵连。运行中命令使用进行时；失败操作不再计入“已编辑 / 已运行”摘要。活动组默认展开，完成后默认折叠，两种状态各自保留手动开合选择。取证是桌面包静态代码，交互视觉仍由开发环境验收。
+
+### 工具已完成、模型仍在运行时的光波
+
+`inline-followup-markdown-81008ccffed3.js` 的 `Ye` 用“最新可见活动组 + 整轮仍在进行 + 活动片段尚未关闭”决定是否继续显示动态标题。它从后往前找未完成的活动项；如果找不到，返回 `kind: thinking`。`sites-end-resource-e2d7df4c9a5f.js` 的 `ZD` 随后把 thinking 分支交给带光波的标题渲染。已完成的工具项仍保留完成态，光波由模型等待态承接。
+
+Qone 此前在 `AgentPreparation` 中只要最后一个 part 是工具就压掉等待提示，工具返回后便出现既无活动工具光波、也无模型等待光波的空档。现改为仅在工具实际未结束时压掉等待提示；工具全结束但 assistant 消息仍运行时，在工具行后显示“正在思考”光波。文本开始、推理开始或整轮结束即撤下该提示。
