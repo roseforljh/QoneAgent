@@ -44,9 +44,9 @@ body {
   scroll-padding-top: 2rem;
   scrollbar-gutter: stable;
 }
-/* Keep the bubble below the viewport edge while preserving assistant-ui's layout anchor. */
+/* Keep the bubble cleanly spaced below the viewport edge. */
 .aui-thread-root [data-aui-top-anchor-user] {
-  padding-block-start: 4rem;
+  padding-block-start: 0.5rem;
 }
 .aui-thread-root .q-message-root { overflow: visible; }
 .aui-thread-root .q-user-message-bubble {
