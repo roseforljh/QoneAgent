@@ -1,21 +1,24 @@
-.q-reasoning { min-width: 0; padding-block: .25rem; color: var(--muted-foreground); }
+.q-reasoning { min-width: 0; padding-block: .125rem; color: var(--muted-foreground); }
 .q-reasoning-trigger {
-  width: 100%;
-  display: flex; align-items: center; gap: .375rem; padding-block: .25rem;
-  font-size: 13.5px; background: transparent; text-align: start;
-  transition: color 160ms ease; cursor: pointer;
+  width: fit-content;
+  display: inline-flex; align-items: center; gap: .375rem; padding: .125rem 0;
+  font-size: 13px; font-weight: 500; background: transparent; text-align: start;
+  transition: color 150ms ease; cursor: pointer;
   user-select: none; -webkit-user-select: none;
 }
 /* Text and decorative glyphs belong to the trigger's single click target. */
 .q-reasoning-trigger * { pointer-events: none; }
 .q-reasoning-trigger:hover { color: var(--foreground); }
-.q-reasoning-trigger:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: .25rem; }
+.q-reasoning-trigger:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .q-reasoning-content {
-  margin: .375rem 0 .125rem;
+  margin: .375rem 0 .25rem;
+  padding-left: .75rem;
   padding-inline-end: .5rem;
-  font-size: 13px; line-height: 1.6;
+  border-left: 2px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-size: 13px; line-height: 1.65;
+  color: color-mix(in srgb, var(--muted-foreground) 90%, transparent);
   overflow-x: hidden; overflow-wrap: anywhere;
-  overscroll-behavior-y: contain;
+  overscroll-behavior-y: auto;
 }
 .q-reasoning-content p { margin: 0; font: inherit; color: inherit; }
 .q-reasoning-content p + p { margin-top: .5em; }

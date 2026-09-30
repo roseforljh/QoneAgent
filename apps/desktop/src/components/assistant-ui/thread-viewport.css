@@ -8,18 +8,3 @@
   content-visibility: auto;
   contain-intrinsic-size: auto 280px;
 }
-
-.q-chat-footer::before {
-  content: "";
-  position: absolute;
-  inset: -4rem 0 0;
-  z-index: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    transparent 0,
-    rgb(0 0 0 / 8%) 28%,
-    rgb(0 0 0 / 32%) 62%,
-    var(--q-chat-bg) 100%
-  );
-}

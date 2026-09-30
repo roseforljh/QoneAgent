@@ -1,37 +1,16 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { getThreadScrollState, pruneThreadScrollStates } from "../src/lib/thread-scroll-state";
 
 class ElementStub {
   scrollTop = 0;
   scrollHeight = 1000;
   clientHeight = 400;
-  listeners: Record<string, ((e: any) => void)[]> = {};
   calls: { top: number; behavior: string }[] = [];
-
-  addEventListener(event: string, fn: (e: any) => void) {
-    this.listeners[event] = this.listeners[event] || [];
-    this.listeners[event].push(fn);
-  }
-
-  removeEventListener(event: string, fn: (e: any) => void) {
-    if (!this.listeners[event]) return;
-    this.listeners[event] = this.listeners[event].filter((item) => item !== fn);
-  }
-
-  dispatchEvent(event: string, data: any = {}) {
-    const handlers = this.listeners[event] || [];
-    for (const handler of handlers) handler(data);
-  }
 
   scrollTo(options: { top: number; behavior: string }) {
     this.calls.push(options);
     this.scrollTop = Math.max(0, Math.min(options.top, this.scrollHeight - this.clientHeight));
   }
-}
-
-class ContentStub {
-  scrollHeight = 600;
-  offsetHeight = 600;
 }
 
 test("scroll restoration remembers and restores scroll position per session", () => {
@@ -53,43 +32,41 @@ test("scroll restoration remembers and restores scroll position per session", ()
   expect(getThreadScrollState("session-b")?.current?.scrollTop).toBe(720);
 });
 
-test("follow bottom logic detects bottom distance and respects user upward scroll", () => {
+test("respects user message top-anchoring initially and follows bottom only when content overflows", () => {
   const viewport = new ElementStub();
-  viewport.scrollHeight = 1200;
-  viewport.clientHeight = 400;
-  viewport.scrollTop = 800; // precisely at bottom: 1200 - 400 - 800 = 0 <= 48
-
-  const isAtBottom = (vp: ElementStub) => vp.scrollHeight - vp.clientHeight - vp.scrollTop <= 48;
-  expect(isAtBottom(viewport)).toBe(true);
-
-  // User scrolls up by 200px
-  viewport.scrollTop = 600;
-  expect(isAtBottom(viewport)).toBe(false);
-
-  // Content expands while user was at bottom
-  viewport.scrollTop = 800;
   let isFollowingBottom = true;
 
-  // Wheel up event
-  const wheelUpEvent = { deltaY: -50 };
-  if (wheelUpEvent.deltaY < 0) {
-    isFollowingBottom = false;
-  }
-  expect(isFollowingBottom).toBe(false);
+  // Case 1: New user message sent and anchored at top.
+  // Content height is small (within visible viewport).
+  const availableBottom = 500;
+  let contentBottom = 320; // 320 < 500, within visible bounds
 
-  // Wheel down event back to bottom
-  viewport.scrollTop = 800;
-  const wheelDownEvent = { deltaY: 50 };
-  if (wheelDownEvent.deltaY > 0 && isAtBottom(viewport)) {
-    isFollowingBottom = true;
-  }
-  expect(isFollowingBottom).toBe(true);
+  const checkAndFollow = () => {
+    if (contentBottom > availableBottom + 8 && isFollowingBottom) {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "instant" });
+    }
+  };
 
-  // New content causes scroll to bottom
-  viewport.scrollHeight = 1600;
-  if (isFollowingBottom) {
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "instant" });
-  }
-  expect(viewport.scrollTop).toBe(1200);
-  expect(viewport.calls.at(-1)?.top).toBe(1600);
+  // Content is within viewport: should NOT scroll to bottom, preserving top anchoring!
+  checkAndFollow();
+  expect(viewport.calls.length).toBe(0);
+  expect(viewport.scrollTop).toBe(0);
+
+  // Case 2: Tools generate, collapsible sections expand, content grows past available bottom
+  contentBottom = 680; // 680 > 500 + 8: now overflowing!
+  viewport.scrollHeight = 1200;
+  checkAndFollow();
+
+  // Now that content overflows the visible area, it automatically scrolls to follow!
+  expect(viewport.calls.length).toBe(1);
+  expect(viewport.scrollTop).toBe(800); // 1200 - 400
+
+  // Case 3: User scrolls up to view top-anchored question
+  isFollowingBottom = false;
+  contentBottom = 800;
+  viewport.scrollHeight = 1400;
+  checkAndFollow();
+
+  // When user is reading history, follow is paused
+  expect(viewport.calls.length).toBe(1);
 });

@@ -10,7 +10,6 @@ interface ThreadScrollFollowerProps {
 export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef }) => {
   const currentSessionId = useStore((state) => state.currentSessionId);
   const isRunning = useAuiState((s) => s.thread.isRunning);
-  const messageCount = useAuiState((s) => s.thread.messages.length);
   const threadViewportStore = useThreadViewportStore();
 
   const isFollowingBottomRef = useRef(true);
@@ -22,8 +21,8 @@ export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef
     return threadViewportStore.getState().element.viewport;
   }, [threadViewportStore]);
 
-  const isAtBottom = useCallback((viewport: HTMLElement) => {
-    return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 48;
+  const isNearBottom = useCallback((viewport: HTMLElement) => {
+    return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 64;
   }, []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "instant") => {
@@ -37,7 +36,7 @@ export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef
     });
   }, [getViewport]);
 
-  // Handle wheel events: detect if user deliberately scrolled up
+  // Handle wheel events: detect if user deliberately scrolled up to read history
   useEffect(() => {
     const vp = getViewport();
     if (!vp) return;
@@ -47,15 +46,15 @@ export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef
         // User scrolled up: pause auto-following
         isFollowingBottomRef.current = false;
       } else if (e.deltaY > 0) {
-        // User scrolled down: if near bottom, resume following
-        if (isAtBottom(vp)) {
+        // User scrolled down: resume following if near bottom
+        if (isNearBottom(vp)) {
           isFollowingBottomRef.current = true;
         }
       }
     };
 
     const handleTouchMove = () => {
-      if (isAtBottom(vp)) {
+      if (isNearBottom(vp)) {
         isFollowingBottomRef.current = true;
       }
     };
@@ -67,7 +66,7 @@ export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef
       vp.removeEventListener("wheel", handleWheel);
       vp.removeEventListener("touchmove", handleTouchMove);
     };
-  }, [getViewport, isAtBottom]);
+  }, [getViewport, isNearBottom]);
 
   // Handle scroll events: check scroll direction and bottom proximity
   useEffect(() => {
@@ -84,10 +83,10 @@ export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef
         return;
       }
 
-      if (isAtBottom(vp)) {
+      if (isNearBottom(vp)) {
         isFollowingBottomRef.current = true;
-      } else if (currentScrollTop < lastScrollTopRef.current - 10) {
-        // User scrolled up by more than 10px: pause following
+      } else if (currentScrollTop < lastScrollTopRef.current - 12) {
+        // User scrolled up by more than 12px: pause following
         isFollowingBottomRef.current = false;
       }
 
@@ -96,7 +95,7 @@ export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef
 
     vp.addEventListener("scroll", handleScroll, { passive: true });
     return () => vp.removeEventListener("scroll", handleScroll);
-  }, [getViewport, isAtBottom]);
+  }, [getViewport, isNearBottom]);
 
   // Restore and persist scroll position per conversation
   useEffect(() => {
@@ -107,7 +106,7 @@ export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef
       programmaticScrollRef.current = true;
       vp.scrollTo({ top: state.current.scrollTop, behavior: "instant" });
       lastScrollTopRef.current = state.current.scrollTop;
-      isFollowingBottomRef.current = isAtBottom(vp);
+      isFollowingBottomRef.current = isNearBottom(vp);
       requestAnimationFrame(() => {
         programmaticScrollRef.current = false;
       });
@@ -124,43 +123,69 @@ export const ThreadScrollFollower: FC<ThreadScrollFollowerProps> = ({ contentRef
         };
       }
     };
-  }, [currentSessionId, getViewport, isAtBottom]);
+  }, [currentSessionId, getViewport, isNearBottom]);
 
-  // When run starts or new messages appear: ensure follow mode is active
+  // Reset follow mode on new runs while preserving initial top-anchoring
   useEffect(() => {
     if (isRunning) {
       isFollowingBottomRef.current = true;
-      scrollToBottom("instant");
     }
-  }, [isRunning, scrollToBottom]);
+  }, [isRunning]);
 
+  // Pause auto-following when user interacts with collapsible execution details
   useEffect(() => {
-    isFollowingBottomRef.current = true;
-    scrollToBottom("instant");
-  }, [messageCount, scrollToBottom]);
+    const vp = getViewport();
+    if (!vp) return;
 
-  // Listen for content height changes with ResizeObserver (handles tool expansions, collapsible triggers, markdown streams)
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-slot="collapsible"], [data-slot="collapsible-trigger"], [data-slot="assistant-execution"], [data-slot="tool-timeline"], [data-slot="tool-call"], [data-slot="reasoning"], [data-slot="sources"]')) {
+        isFollowingBottomRef.current = false;
+      }
+    };
+
+    vp.addEventListener("pointerdown", handlePointerDown, { passive: true });
+    return () => vp.removeEventListener("pointerdown", handlePointerDown);
+  }, [getViewport]);
+
+  // Listen for content height changes with ResizeObserver.
+  // CRITICAL: Respect initial top-anchoring of new user messages.
+  // Only scroll down when content actually overflows the visible area of the viewport.
   useEffect(() => {
     const contentEl = contentRef.current;
     if (!contentEl) return;
 
     lastContentHeightRef.current = contentEl.scrollHeight;
 
+    const checkAndFollowBottom = () => {
+      const vp = getViewport();
+      if (!vp || !isFollowingBottomRef.current || !isRunning) return;
+
+      const vpRect = vp.getBoundingClientRect();
+      const footer = vp.querySelector(".q-chat-footer");
+      const footerRect = footer?.getBoundingClientRect();
+      const availableBottom = footerRect ? footerRect.top : vpRect.bottom;
+      const contentBottom = contentEl.getBoundingClientRect().bottom;
+
+      // Only scroll when content actually exceeds the available viewport area (plus a small threshold)
+      if (contentBottom > availableBottom + 8) {
+        scrollToBottom("instant");
+      }
+    };
+
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const height = entry.borderBoxSize?.[0]?.blockSize ?? contentEl.scrollHeight;
         if (height !== lastContentHeightRef.current) {
           lastContentHeightRef.current = height;
-          if (isFollowingBottomRef.current) {
-            scrollToBottom("instant");
-          }
+          checkAndFollowBottom();
         }
       }
     });
 
     resizeObserver.observe(contentEl);
     return () => resizeObserver.disconnect();
-  }, [contentRef, scrollToBottom]);
+  }, [contentRef, getViewport, scrollToBottom, isRunning]);
 
   // Also listen on threadViewport onScrollToBottom (e.g. clicking the "Scroll to bottom" button)
   useEffect(() => {
