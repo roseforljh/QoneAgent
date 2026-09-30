@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { sessions, messages, runs, subagentRuns, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
 import type { Db } from "./index.js";
-import type { CompactionMarkerInfo, AssistantMessagePart, GoalInfo, GoalStatus, MessageAttachmentInfo, QueueItemInfo, RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
+import { persistedToolResult, type CompactionMarkerInfo, type AssistantMessagePart, type GoalInfo, type GoalStatus, type MessageAttachmentInfo, type QueueItemInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 
 export class SessionRepo {
   constructor(private db: Db) {}
@@ -372,7 +372,7 @@ export class ToolCallRepo {
       .update(toolCalls)
       .set({
         status,
-        resultSummary: result === undefined ? null : JSON.stringify(result).slice(0, 20_000),
+        resultSummary: result === undefined ? null : JSON.stringify(persistedToolResult(result)),
         completedAt: Date.now(),
       })
       .where(eq(toolCalls.id, id))

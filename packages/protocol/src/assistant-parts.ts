@@ -1,3 +1,5 @@
+import { persistedToolResult } from "./file-changes";
+
 /** Visible Pi assistant content, in event and content-block order. */
 export type AssistantMessagePart =
   | { type: "text"; text: string; messageSequence: number }
@@ -58,18 +60,6 @@ export function applyReasoningDelta(parts: readonly AssistantMessagePart[], payl
   return parts.map((part, i) => i === index && part.type === "reasoning" ? { ...part, text: part.text + delta, ...(event.complete === true ? { complete: true } : {}) } : part);
 }
 
-// Match the existing persisted tool-result limit so live and reloaded parts agree.
-function displayToolResult(value: unknown): unknown {
-  if (value === undefined) return "";
-  try {
-    const serialized = JSON.stringify(value);
-    if (serialized === undefined) return "";
-    return serialized.length > 20_000 ? serialized.slice(0, 20_000) : value;
-  } catch {
-    return String(value);
-  }
-}
-
 export function applyAssistantToolEvent(
   parts: readonly AssistantMessagePart[],
   type: "tool.started" | "tool.completed" | "tool.failed",
@@ -86,7 +76,7 @@ export function applyAssistantToolEvent(
     };
     return {
       ...part,
-      result: displayToolResult(event.result ?? event.content),
+      result: persistedToolResult(event.result ?? event.content),
       isError: type === "tool.failed" || event.isError === true,
     };
   });
