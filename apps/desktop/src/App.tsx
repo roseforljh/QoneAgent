@@ -13,6 +13,7 @@ import {
 } from "@assistant-ui/react";
 import { type MessageAttachmentInfo, type PluginInfo } from "@qone/protocol";
 import { assistantMessageContent } from "./lib/assistant-message-parts";
+import { insertChatRunErrorMessage } from "./lib/chat-run-error-message";
 import { isImageModel } from "./lib/image-model-config";
 import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
@@ -155,11 +156,13 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const imageGenerationError = !hasStreamingAssistant && chatRunError && chatRunError.sessionId === currentSessionId && chatRunError.userMessageId && isImageModel(selectedModel)
     ? messages.find((message) => message.id === chatRunError.userMessageId)
     : undefined;
+  const answerError = !hasStreamingAssistant && chatRunError?.sessionId === currentSessionId && !imageGenerationError ? chatRunError : undefined;
   const runtimeMessages = useMemo(() => {
     if (hasStreamingAssistant) return [...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts.length ? streamingParts : undefined, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }];
-    if (!imageGenerationError) return messages;
-    return [...messages, { id: `image-error:${imageGenerationError.id}`, role: "assistant", content: "", createdAt: Date.now() }];
-  }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError]);
+    if (imageGenerationError) return [...messages, { id: `image-error:${imageGenerationError.id}`, role: "assistant", content: "", createdAt: Date.now() }];
+    if (answerError) return insertChatRunErrorMessage(messages, answerError, `${t("chat.runFailed")}\n${answerError.detail || t("chat.runFailedDetail")}`);
+    return messages;
+  }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError, answerError, t]);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   useEffect(() => {
     const paths = [...new Set(messages.flatMap((message) => message.attachments?.flatMap((attachment) =>

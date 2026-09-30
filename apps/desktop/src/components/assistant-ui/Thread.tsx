@@ -11,7 +11,7 @@ import { AssistantParts } from "./assistant-parts";
 import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
 import { MessagePair } from "./elements/message-pair";
 import { DaySeparatorMarker } from "./elements/day-separator";
-import { ErrorState } from "./elements/error-state";
+import { chatRunErrorMessageId } from "../../lib/chat-run-error-message";
 import { pairMessageIds } from "./message-pairing";
 import { messageDaySeparators } from "./message-day-separators";
 import { MessageSourcesView } from "./message-sources-view";
@@ -80,6 +80,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     if (sessionsLoaded) pruneThreadScrollStates(sessions.map((session) => session.id));
   }, [sessions, sessionsLoaded]);
   const threadMessages = useAuiState((state) => state.thread.messages);
+  const chatRunError = useStore((state) => state.chatRunError);
   const compactions = useStore((state) => state.compactions);
   const compactionStatus = useStore((state) => state.currentSessionId ? state.compactionStatuses[state.currentSessionId] : undefined);
   const autoCompactionStatus = useStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
@@ -110,9 +111,10 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     }
     return { after, between };
   }, [compactions, compactionStatus, autoCompactionStatus, pairedUserIdByAssistant, threadMessages]);
+  const errorMessageId = chatRunError && chatRunError.sessionId === currentSessionId ? chatRunErrorMessageId(chatRunError.userMessageId) : undefined;
   const latestAssistantId = useMemo(
-    () => [...threadMessages].reverse().find((message) => message.role === "assistant")?.id,
-    [threadMessages],
+    () => [...threadMessages].reverse().find((message) => message.role === "assistant" && message.id !== errorMessageId)?.id,
+    [threadMessages, errorMessageId],
   );
   const daySeparators = useMemo(() => messageDaySeparators(threadMessages, pairedUserIdByAssistant, today), [threadMessages, pairedUserIdByAssistant, today]);
   const dayFormatter = useMemo(() => new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }), [locale]);
@@ -191,7 +193,6 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
               }}
             </ThreadPrimitive.Messages>
           </div>
-          <ChatRunErrorView />
           <div className="mx-auto w-full q-thread-content empty:hidden">{children}</div>
 
           <ThreadPrimitive.ViewportFooter className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-transparent pb-2">
@@ -676,6 +677,11 @@ const PairUserActions: FC = () => {
 const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; betweenContent?: ReactNode }> = ({ userMessageId, showLatestExtras, betweenContent }) => {
   const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
+  const answerError = useStore((state) => {
+    const error = state.chatRunError;
+    if (!error || error.sessionId !== state.currentSessionId) return undefined;
+    return messageId === chatRunErrorMessageId(error.userMessageId) ? error : undefined;
+  });
   const runId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
   const runIds = useMemo(() => runId ? [runId] : [], [runId]);
   return (
@@ -708,14 +714,22 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
         betweenContent={betweenContent}
         assistantContent={
           <MessagePrimitive.Root className="q-message-root q-message-assistant relative flex w-full flex-col">
-            <AssistantParts hideSubagentCalls showSubagentCapsule />
-            <GeneratedMediaArtifacts runIds={runIds} />
-            <MessageSourcesView />
-            <AssistantMemoryChips visible={showLatestExtras} />
-            <AgentPreparation />
+            {answerError ? <div className="flex flex-col gap-1 text-sm leading-relaxed" role="alert">
+              <p className="font-medium text-foreground">{t("chat.runFailed")}</p>
+              <p className="whitespace-pre-wrap break-words text-muted-foreground">{answerError.detail || t("chat.runFailedDetail")}</p>
+              <button type="button" className="mt-1 flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground" onClick={() => retryUserMessage(answerError.userMessageId)}>
+                <RefreshCwIcon className="size-3.5" />{t("chat.retryMessage")}
+              </button>
+            </div> : <AssistantParts hideSubagentCalls showSubagentCapsule />}
+            {!answerError && <>
+              <GeneratedMediaArtifacts runIds={runIds} />
+              <MessageSourcesView />
+              <AssistantMemoryChips visible={showLatestExtras} />
+              <AgentPreparation />
+            </>}
           </MessagePrimitive.Root>
         }
-        actions={
+        actions={answerError ? <></> :
           <div className="flex items-center gap-1">
             <ActionBarPrimitive.Root hideWhenRunning autohide="never" className="flex items-center gap-0.5">
             <ActionBarPrimitive.Copy asChild>
@@ -810,29 +824,6 @@ const AgentPreparation: FC = () => {
       </ShimmerLabel>
       <EllipsisDots />
       {requestStartedAt !== undefined && <span className="ms-2 text-xs tabular-nums opacity-70" aria-hidden="true">{Math.max(0, Math.floor((now - requestStartedAt) / 1000))}s</span>}
-    </div>
-  );
-};
-
-const ChatRunErrorView: FC = () => {
-  const { t } = useLocale();
-  const error = useStore((state) => state.chatRunError);
-  const sessionId = useStore((state) => state.currentSessionId);
-  const userMessage = useStore((state) => state.messages.find(
-    (message) => message.id === error?.userMessageId && message.role === "user",
-  ));
-  if (!error || error.sessionId !== sessionId || !userMessage) return null;
-
-  return (
-    <div className="mx-auto w-full q-thread-content">
-      <ErrorState
-        className="max-w-none"
-        title={t("chat.runFailed")}
-        detail={error.detail || t("chat.runFailedDetail")}
-        retrying={false}
-        retryLabel={t("chat.retryMessage")}
-        onRetry={() => retryUserMessage(userMessage.id)}
-      />
     </div>
   );
 };
