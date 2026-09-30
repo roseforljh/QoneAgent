@@ -1,6 +1,7 @@
 "use client";
 
 import { type ComponentProps, useMemo } from "react";
+import { Tooltip } from "radix-ui";
 import {
   ArrowUpIcon,
   CheckIcon,
@@ -503,87 +504,72 @@ export function ComposerModelItem({
 export function ComposerContext({
   usage,
   label = "Context",
-  note,
   triggerLabel = "Context usage",
-  modelName,
   className,
   ...props
-}: Omit<ComponentProps<"div">, "children"> & { usage?: ComposerUsage; label?: string; note?: string; triggerLabel?: string; modelName?: string }) {
+}: Omit<ComponentProps<"div">, "children"> & { usage?: ComposerUsage; label?: string; triggerLabel?: string }) {
   const fraction = usage && usage.total > 0 ? usage.used / usage.total : 0;
   const warn = fraction > 0.85;
-  const circumference = 2 * Math.PI * 6;
+  const circumference = 2 * Math.PI * 5;
 
   return (
     <div
       data-slot="composer-context"
-      className={cn("group/ctx relative", className)}
+      className={cn("flex shrink-0 items-center", className)}
       {...props}
     >
-      <div
-        className={cn(
-          floating,
-          "absolute start-0 bottom-full z-10 mb-2 flex w-60 origin-bottom-left flex-col gap-3.5 rounded-2xl p-4",
-          "transition-[opacity,scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
-          "pointer-events-none scale-[0.97] opacity-0",
-          "group-hover/ctx:pointer-events-auto group-hover/ctx:scale-100 group-hover/ctx:opacity-100",
-          "group-focus-within/ctx:pointer-events-auto group-focus-within/ctx:scale-100 group-focus-within/ctx:opacity-100",
-        )}
-      >
-        <div className="flex items-baseline justify-between">
-          <p className="text-[13.5px] font-medium">{label}</p>
-          <p
-            className={cn(
-              mono,
-              "tabular-nums",
-              warn ? "text-red-500 dark:text-red-400" : "text-foreground/35",
-            )}
-          >
-            {usage ? `${Math.round(fraction * 100)}%` : "—"}
-          </p>
-        </div>
-        <div className="bg-foreground/[0.06] flex h-[5px] w-full gap-px overflow-hidden rounded-full">
-          <span className="h-full bg-foreground/80 transition-[width] duration-700 motion-reduce:transition-none" style={{ width: `${clamp(fraction, 0, 1) * 100}%` }} />
-        </div>
-        {modelName && <p className="truncate text-foreground/45 text-xs" title={modelName}>{modelName}</p>}
-        <div className="text-foreground/55 flex items-center justify-between text-sm">
-          <span>Total</span>
-          <span className={cn(mono, "text-foreground/40 tabular-nums")}>
-            {usage ? `${formatTokenCount(usage.used)} / ${formatTokenCount(usage.total)}` : "—"}
-          </span>
-        </div>
-        {note && <p className="text-foreground/40 text-xs leading-snug">{note}</p>}
-      </div>
-      <button
-        type="button"
-        aria-label={triggerLabel}
-        className={cn(
-          ghostButton,
-          "size-8 bg-transparent! shadow-none! hover:bg-transparent! dark:hover:bg-transparent! hover:shadow-none!",
-          warn && "text-red-500 dark:text-red-400",
-        )}
-      >
-        <svg viewBox="0 0 16 16" className="size-4 -rotate-90" aria-hidden>
-          <circle
-            cx="8"
-            cy="8"
-            r="6"
-            fill="none"
-            strokeWidth="2.5"
-            className="stroke-foreground/10"
-          />
-          <circle
-            cx="8"
-            cy="8"
-            r="6"
-            fill="none"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            className="stroke-current transition-[stroke-dashoffset] duration-700 motion-reduce:transition-none"
-            strokeDasharray={circumference}
-            strokeDashoffset={circumference * (1 - clamp(fraction, 0, 1))}
-          />
-        </svg>
-      </button>
+      <Tooltip.Provider delayDuration={0}>
+        <Tooltip.Root>
+          <Tooltip.Trigger asChild>
+            <button
+              type="button"
+              aria-label={triggerLabel}
+              className={cn(
+                ghostButton,
+                "h-7 w-3.5 bg-transparent! shadow-none! hover:bg-transparent! dark:hover:bg-transparent! hover:shadow-none!",
+                warn && "text-red-500 dark:text-red-400",
+              )}
+            >
+              <svg viewBox="0 0 12 12" className="size-3 -rotate-90" aria-hidden>
+                <circle cx="6" cy="6" r="5" fill="none" strokeWidth="2" className="stroke-current opacity-[0.16]" />
+                <circle
+                  cx="6"
+                  cy="6"
+                  r="5"
+                  fill="none"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  className="stroke-current transition-[stroke-dashoffset] duration-[120ms] motion-reduce:transition-none"
+                  opacity={fraction > 0 ? 1 : 0}
+                  strokeDasharray={circumference}
+                  strokeDashoffset={circumference * (1 - clamp(fraction, 0, 1))}
+                />
+              </svg>
+            </button>
+          </Tooltip.Trigger>
+          <Tooltip.Portal>
+            <Tooltip.Content
+              side="top"
+              align="center"
+              sideOffset={4}
+              collisionPadding={8}
+              className="z-50 rounded-2xl border border-foreground/5 bg-muted px-3 py-1.5 text-foreground shadow-lg origin-(--radix-tooltip-content-transform-origin) animate-in fade-in-0 zoom-in-95 duration-150 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 motion-reduce:animate-none"
+            >
+              <div className="flex w-38 flex-col gap-0.5 text-center text-xs leading-[18px] tabular-nums">
+                <p>
+                  <span className="text-foreground/60">{label} </span>
+                  <span className={warn ? "text-red-500 dark:text-red-400" : undefined}>
+                    {usage ? `${Math.round(fraction * 100)}%` : "—"}
+                  </span>
+                </p>
+                <p className="text-foreground/60">
+                  {usage ? `≈ ${formatTokenCount(usage.used)} / ${formatTokenCount(usage.total)} tokens` : "—"}
+                </p>
+              </div>
+            </Tooltip.Content>
+          </Tooltip.Portal>
+        </Tooltip.Root>
+      </Tooltip.Provider>
     </div>
   );
 }

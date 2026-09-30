@@ -1,0 +1,65 @@
+@import "./mention-colors.css";
+/* Mention rules from Codex 26.928; see docs/codex-input-links-26.928.md. */
+.aui-composer-input .q-composer-link {
+  --q-composer-link-color: var(--q-mention-color);
+  display: inline;
+  padding-inline: 0;
+  color: var(--q-composer-link-color);
+  font-family: inherit;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: text;
+}
+.aui-composer-input .q-composer-link[data-breakable-url] {
+  direction: ltr;
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.aui-composer-input .q-composer-link[data-link-title] {
+  font-weight: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.aui-composer-input .q-composer-link::before {
+  display: inline-block;
+  width: 16px;
+  height: 1lh;
+  margin-inline-end: 3px;
+  vertical-align: bottom;
+  background-color: currentColor;
+  mask: var(--q-composer-link-icon) center / 16px 16px no-repeat;
+  -webkit-mask: var(--q-composer-link-icon) center / 16px 16px no-repeat;
+  content: "";
+}
+.aui-composer-input .q-composer-link[data-link-multicolor="true"]::before {
+  background: var(--q-composer-link-icon) center / 16px 16px no-repeat;
+  mask: none;
+  -webkit-mask: none;
+}
+.aui-composer-input .q-composer-link::selection {
+  color: HighlightText;
+}
+@media (hover: hover) {
+  .aui-composer-input .q-composer-link:hover {
+    text-decoration: underline dashed;
+    text-decoration-thickness: 0.5px;
+    text-underline-offset: 2px;
+  }
+}
+.q-composer-link-options {
+  z-index: 50;
+  display: flex;
+  gap: 2px;
+  max-width: min(27rem, calc(100vw - 24px));
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 8px 24px #0003;
+}
+.q-composer-link-options button { border-radius: 999px; }
+.q-composer-link-options form { display: flex; flex: 1; align-items: center; gap: 6px; }
+.q-composer-link-options.is-editing { width: min(27rem, calc(100vw - 24px)); padding-inline-start: 14px; }
+.q-composer-link-options input { width: 0; min-width: 0; flex: 1; background: transparent; font-size: var(--q-text-sm); outline: none; }
