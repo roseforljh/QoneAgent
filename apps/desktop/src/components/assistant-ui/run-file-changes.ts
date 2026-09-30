@@ -1,5 +1,5 @@
 import { toolFileChanges } from "@qone/protocol";
-import { applyPatch } from "diff";
+import { applyPatch, parsePatch } from "diff";
 import type { ChatMessage, ToolCall } from "../../store";
 import { splitMutationPatch, toolDiffStats, toolMutationPresentations, type ToolPresentation } from "./tool-presentation";
 
@@ -10,6 +10,7 @@ export interface RunFileNode {
   name: string;
   depth: 0;
   kind: "file";
+  changeKind: "created" | "edited" | "deleted";
   additions: number;
   deletions: number;
   presentations: DiffPresentation[];
@@ -50,10 +51,14 @@ export function collectRunFileChanges(runId: string, calls: readonly ToolCall[],
     byId.set(call.toolCallId, saved && toolFileChanges(saved.result).length && !toolFileChanges(call.result).length
       ? { ...call, result: saved.result } : { ...saved, ...call, result: call.result ?? saved?.result });
   }
-  type Accumulated = { path: string; snapshots: boolean; oldContent?: string; newContent?: string; presentations: DiffPresentation[]; existed?: boolean; exists?: boolean };
+  return collectToolFileChanges([...byId.values()]);
+}
+
+/** The same net change calculation also serves a bounded activity group. */
+export function collectToolFileChanges(calls: readonly Pick<ToolCall, "toolName" | "result" | "args" | "status">[]): RunFileChanges {
+  type Accumulated = { path: string; snapshots: boolean; oldContent?: string; newContent?: string; presentations: DiffPresentation[]; existed?: boolean; exists?: boolean; patchKind?: RunFileNode["changeKind"] };
   const files = new Map<string, Accumulated>();
-  const ordered = [...byId.values()]; // Message part order, then not-yet-persisted calls in event order.
-  for (const call of ordered) {
+  for (const call of calls) {
     const evidence = toolFileChanges(call.result);
     if (call.status !== "success" && !(call.status === "failed" && evidence.length)) continue;
     const presentations = toolMutationPresentations(call.toolName, call.result, call.args);
@@ -65,8 +70,10 @@ export function collectRunFileChanges(runId: string, calls: readonly ToolCall[],
         let file = files.get(key);
         const isSnapshot = snapshot && "oldContent" in snapshot;
         if (!file) {
+          const patchFile = presentation.patch ? parsePatch(presentation.patch)[0] : undefined;
           file = { path: presentation.name, snapshots: Boolean(isSnapshot), oldContent: isSnapshot ? snapshot.oldContent ?? "" : undefined,
-            existed: isSnapshot ? snapshot.oldContent !== null : undefined, presentations: [] };
+            existed: isSnapshot ? snapshot.oldContent !== null : undefined,
+            patchKind: patchFile?.oldFileName === "/dev/null" ? "created" : patchFile?.newFileName === "/dev/null" ? "deleted" : "edited", presentations: [] };
           files.set(key, file);
         }
         if (isSnapshot && file.snapshots) {
@@ -99,7 +106,10 @@ export function collectRunFileChanges(runId: string, calls: readonly ToolCall[],
       deletions += stats?.removed ?? 0;
     }
     if (!file.snapshots && !additions && !deletions) continue;
-    nodes.push({ path: file.path, name: file.path.replaceAll("\\", "/").split("/").at(-1) || file.path, depth: 0, kind: "file", additions, deletions, presentations: file.presentations });
+    const changeKind = file.snapshots
+      ? !file.existed && file.exists ? "created" : file.existed && !file.exists ? "deleted" : "edited"
+      : file.patchKind ?? "edited";
+    nodes.push({ path: file.path, name: file.path.replaceAll("\\", "/").split("/").at(-1) || file.path, depth: 0, kind: "file", changeKind, additions, deletions, presentations: file.presentations });
   }
   return { nodes, totalAdditions: nodes.reduce((sum, file) => sum + file.additions, 0), totalDeletions: nodes.reduce((sum, file) => sum + file.deletions, 0) };
 }

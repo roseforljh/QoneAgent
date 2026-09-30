@@ -26,6 +26,7 @@ test("overwriting writes, creates and deletes use real baselines including empty
   const changes = collectRunFileChanges("r1", [call("1", "existing.ts", "same\nold\n", "same\nnew\n"), call("2", "deleted.ts", "gone\n", null), call("3", "empty.ts", null, "")], []);
   expect(changes.nodes).toHaveLength(3);
   expect(changes).toMatchObject({ totalAdditions: 1, totalDeletions: 2 });
+  expect(changes.nodes.map((node) => node.changeKind)).toEqual(["edited", "deleted", "created"]);
 });
 
 test("reads, plain-text patches, failed edits, unexecuted calls and legacy writes do not invent mutations", () => {
@@ -48,6 +49,7 @@ test("any custom tool may publish multi-file snapshots or patches without name i
   const patch = createTwoFilesPatch("B.ts", "B.ts", "old\n", "new\n");
   const changes = collectRunFileChanges("r1", [{ toolCallId: "patch", runId: "r1", toolName: "plugin:custom:replace", status: "success", result: { details: { fileChanges: [{ path: "A.ts", oldContent: null, newContent: "a\n" }, { path: "B.ts", patch }] } } }], []);
   expect(changes.nodes.map((node) => node.name)).toEqual(["A.ts", "B.ts"]);
+  expect(changes.nodes.map((node) => node.changeKind)).toEqual(["created", "edited"]);
   expect(changes).toMatchObject({ totalAdditions: 2, totalDeletions: 1 });
 });
 

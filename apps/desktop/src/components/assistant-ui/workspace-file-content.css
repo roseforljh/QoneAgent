@@ -1,0 +1,11 @@
+.q-workspace-file-content [data-file-selected="true"] {
+  display: inline-block;
+  min-width: 100%;
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+  box-shadow: inset 2px 0 var(--primary);
+}
+.q-workspace-file-content [data-file-line]:empty {
+  display: inline-block;
+  height: 1lh;
+  vertical-align: bottom;
+}
