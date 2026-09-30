@@ -73,17 +73,15 @@ const TOOL_PERMISSIONS: Record<string, PermissionDecision> = {
   powershell: "ask",
 };
 
+// Protect credential stores, not OS/application directories. Installation
+// paths are ordinary filesystem targets; Windows ACLs remain authoritative.
 const DENY_PREFIXES = [
-  /^[a-z]:[\\/]windows(?:[\\/]|$)/i,
-  /^[a-z]:[\\/]program files(?:[\\/]|$)/i,
   /(?:^|[/\\])\.ssh(?:[/\\]|$)/i,
   /(?:^|[/\\])\.aws(?:[/\\]|$)/i,
   /(?:^|[/\\])\.gnupg(?:[/\\]|$)/i,
 ];
 
 const DENY_PATH_TEXT = [
-  /(?:^|[\s"'`])(?:[a-z]:[\\/]windows)(?:[\\/\s"'`]|$)/i,
-  /(?:^|[\s"'`])(?:[a-z]:[\\/]program files)(?:[\\/\s"'`]|$)/i,
   /(?:^|[\s"'`])[^\s"'`]*[/\\]\.ssh[/\\][^\s"'`]*/i,
   /(?:^|[\s"'`])[^\s"'`]*[/\\]\.aws[/\\][^\s"'`]*/i,
   /(?:^|[\s"'`])[^\s"'`]*[/\\]\.gnupg[/\\][^\s"'`]*/i,
@@ -107,7 +105,6 @@ function insideWorkspace(target: string, workspacePath: string): boolean {
   return resolved === ws || resolved.startsWith(`${ws}${path.sep}`);
 }
 
-const FILE_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls"]);
 const MUTATING_FILE_TOOLS = new Set(["write", "edit"]);
 
 function pathArgument(ctx: ToolContext): string | undefined {
@@ -116,9 +113,9 @@ function pathArgument(ctx: ToolContext): string | undefined {
   return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
 }
 
-function outsideWorkspace(ctx: ToolContext): boolean {
+function writesOutsideWorkspace(ctx: ToolContext): boolean {
   const target = pathArgument(ctx);
-  return !!(target && ctx.workspacePath && FILE_TOOLS.has(ctx.toolName) && !insideWorkspace(target, ctx.workspacePath));
+  return !!(target && ctx.workspacePath && MUTATING_FILE_TOOLS.has(ctx.toolName) && !insideWorkspace(target, ctx.workspacePath));
 }
 
 function autoApprovesCapability(ctx: ToolContext, capability: string): boolean {
@@ -145,8 +142,9 @@ export function decide(ctx: ToolContext): PermissionDecision {
 
   const base = TOOL_PERMISSIONS[ctx.toolName] ?? "ask";
 
-  // Workspace boundary: file-mutating tools pointing outside the workspace ask.
-  if (outsideWorkspace(ctx)) return "ask";
+  // cwd resolves relative paths; it is not a read sandbox. Only mutations
+  // outside the workspace need boundary approval.
+  if (writesOutsideWorkspace(ctx)) return "ask";
 
   return base;
 }
@@ -180,8 +178,9 @@ export function evaluatePermission(
   if (permissions.some((permission) => rules?.get(subject, permission) === "deny")) {
     return { decision: "deny", permissions, reason: "rule" };
   }
-  // An explicit allow cannot silently widen a workspace-scoped file request.
-  if (outsideWorkspace(ctx) && profile.filesystem !== "full") return { decision: "ask", permissions, reason: "workspace" };
+  // An explicit allow cannot silently widen workspace-scoped write access.
+  // Read/search/list tools may use any path accessible to the runtime user.
+  if (writesOutsideWorkspace(ctx) && profile.filesystem !== "full") return { decision: "ask", permissions, reason: "workspace" };
 
   const needsApproval = permissions.some((permission) => {
     const rule = rules?.get(subject, permission);

@@ -52,13 +52,13 @@ describe("runtime persistence and permissions", () => {
     }
   });
 
-  test("allows workspace reads and asks for external or mutating access", () => {
+  test("allows filesystem reads and asks for shell or mutating access", () => {
     expect(decide({ toolName: "read", args: { path: "C:/work/app/a.ts" }, workspacePath: "C:/work/app" })).toBe("allow");
-    expect(decide({ toolName: "read", args: { path: "C:/other/a.ts" }, workspacePath: "C:/work/app" })).toBe("ask");
+    expect(decide({ toolName: "read", args: { path: "C:/other/a.ts" }, workspacePath: "C:/work/app" })).toBe("allow");
     expect(decide({ toolName: "powershell", args: { command: "Get-Process" }, workspacePath: "C:/work/app" })).toBe("ask");
-    expect(decide({ toolName: "read", args: { path: "C:/Windows/System32/x" }, workspacePath: "C:/work/app" })).toBe("deny");
-    expect(decide({ toolName: "read", args: { path: "D:/Program Files/app/config" }, workspacePath: "C:/work/app" })).toBe("deny");
-    expect(decide({ toolName: "powershell", args: { command: "Get-Content C:/Windows/System32/hosts" }, workspacePath: "C:/work/app" })).toBe("deny");
+    expect(decide({ toolName: "read", args: { path: "C:/Windows/System32/x" }, workspacePath: "C:/work/app" })).toBe("allow");
+    expect(decide({ toolName: "read", args: { path: "D:/Program Files/app/config" }, workspacePath: "C:/work/app" })).toBe("allow");
+    expect(decide({ toolName: "powershell", args: { command: "Get-Content C:/Windows/System32/hosts" }, workspacePath: "C:/work/app" })).toBe("ask");
     expect(decide({ toolName: "powershell", args: { command: "Get-Content $HOME/.ssh/id_rsa" }, workspacePath: "C:/work/app" })).toBe("deny");
   });
 
@@ -68,9 +68,9 @@ describe("runtime persistence and permissions", () => {
     expect(permissionProfile("full")).toEqual({ approval: "never", filesystem: "full", network: "enabled" });
     expect(evaluatePermission({ toolName: "write", args: { path: "C:/work/app/a.ts" }, workspacePath: "C:/work/app" }, "ask").decision).toBe("ask");
     expect(evaluatePermission({ toolName: "write", args: { path: "C:/work/app/a.ts" }, workspacePath: "C:/work/app" }, "auto").decision).toBe("allow");
-    expect(evaluatePermission({ toolName: "read", args: { path: "C:/other/a.ts" }, workspacePath: "C:/work/app" }, "auto").reason).toBe("workspace");
+    expect(evaluatePermission({ toolName: "read", args: { path: "C:/other/a.ts" }, workspacePath: "C:/work/app" }, "auto").decision).toBe("allow");
     expect(evaluatePermission({ toolName: "powershell", args: { command: "Get-Process" }, workspacePath: "C:/work/app" }, "full").decision).toBe("allow");
-    expect(evaluatePermission({ toolName: "powershell", args: { command: "Get-Content C:/Windows/System32/hosts" }, workspacePath: "C:/work/app" }, "full").decision).toBe("deny");
+    expect(evaluatePermission({ toolName: "powershell", args: { command: "Get-Content C:/Windows/System32/hosts" }, workspacePath: "C:/work/app" }, "full").decision).toBe("allow");
     const allowShell = { get: (_subject: string, permission: string) => permission === "shell.execute" ? "allow" as const : undefined };
     expect(evaluatePermission({ toolName: "powershell", args: { command: "Get-Process" }, workspacePath: "C:/work/app" }, "ask", allowShell).decision).toBe("allow");
     expect(evaluatePermission({ toolName: "write", args: { path: "C:/other/a.ts" }, workspacePath: "C:/work/app" }, "ask", { get: () => "allow" }).decision).toBe("ask");
@@ -161,7 +161,7 @@ describe("runtime persistence and permissions", () => {
     expect(approvalRequested).toBe(false);
   });
 
-  test("run modes change approvals while preserving explicit and protected denials", async () => {
+  test("run modes change approvals while preserving explicit and credential-store denials", async () => {
     let mode: "ask" | "auto" | "full" = "ask";
     let prompts = 0;
     let executions = 0;
@@ -186,7 +186,7 @@ describe("runtime persistence and permissions", () => {
     mode = "full";
     await write.execute("four", { path: "C:/other/file.ts" }, undefined, undefined, undefined);
     expect(prompts).toBe(2);
-    const protectedResult = await write.execute("five", { path: "C:/Windows/System32/hosts" }, undefined, undefined, undefined) as { isError?: boolean };
+    const protectedResult = await write.execute("five", { path: "C:/Users/test/.ssh/id_rsa" }, undefined, undefined, undefined) as { isError?: boolean };
     expect(protectedResult.isError).toBe(true);
     const deniedResult = await makeTool("powershell").execute("six", { path: "C:/work/app" }, undefined, undefined, undefined) as { isError?: boolean };
     expect(deniedResult.isError).toBe(true);
