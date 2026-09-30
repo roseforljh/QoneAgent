@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { toolGroupSummary } from "../src/components/assistant-ui/tool-group-summary";
 import { toolFullTarget, toolTarget } from "../src/components/assistant-ui/tool-action-summary";
+import { toolActivityCategory } from "../src/components/assistant-ui/tool-activity-category";
 
 test("completed groups describe every operation in first-occurrence order", () => {
   expect(toolGroupSummary([{ verb: "读取" }, { verb: "搜索" }, { verb: "读取" }], "zh-CN"))
@@ -39,6 +40,26 @@ test("toolGroupSummary describes mixed search and multiple file reads completely
   ];
   expect(toolGroupSummary(steps, "zh-CN"))
     .toBe("查找 2 项 (desktop、src) · 搜索 2 项 (executionFinishing in src) · 读取 3 项 (composer.tsx、assistant-context.tsx、Thread.tsx)");
+});
+
+test("Codex style group summary counts changed files once and keeps targets in detail rows", () => {
+  const steps = [
+    { verb: "编辑", target: "App.tsx", fullTarget: "apps/desktop/src/App.tsx", category: "file-change" as const },
+    { verb: "编辑", target: "App.tsx", fullTarget: "apps/desktop/src/App.tsx", category: "file-change" as const },
+    { verb: "运行", target: "bun run --cwd apps/desktop tsc --noEmit", category: "command" as const },
+  ];
+  expect(toolGroupSummary(steps, "zh-CN")).toBe("编辑了一个文件，运行了一个命令");
+  expect(toolGroupSummary(steps, "en")).toBe("Edited a file and ran a command");
+  expect(toolGroupSummary(steps.slice(2), "en")).toBe("Ran a command");
+  expect(toolGroupSummary([
+    { verb: "补丁", category: "file-change", filePaths: ["src/App.tsx", "src/Thread.tsx"] },
+    { verb: "编辑", category: "file-change", filePaths: ["src/App.tsx"] },
+  ], "en")).toBe("Edited files");
+});
+
+test("structured file changes from custom tools are classified as edits", () => {
+  expect(toolActivityCategory("custom_patch", { details: { fileChanges: [{ path: "src/App.tsx", patch: "@@ -1 +1 @@\n-a\n+b" }] } })).toBe("file-change");
+  expect(toolActivityCategory("bash", { content: [{ type: "text", text: "updated a file" }] })).toBe("command");
 });
 
 test("toolTarget preserves search pattern instead of discarding it for directory name", () => {

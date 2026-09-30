@@ -12,6 +12,7 @@ import { AssistantParts } from "./assistant-parts";
 import { SubagentThread } from "./subagent-thread";
 import { ImageGeneration } from "./elements/image-generation";
 import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
+import { subagentsForAssistantMessage } from "./subagent-capsule-ownership";
 import "./subagent-view.css";
 
 const active = (status: SubagentRunInfo["status"]) => ["created", "running", "waiting_approval", "paused"].includes(status);
@@ -26,23 +27,25 @@ function useClock(running: boolean) {
   return now;
 }
 
-export const SubagentCapsule: FC = () => {
+export const SubagentCapsule: FC<{ toolCallId: string }> = ({ toolCallId }) => {
   const { locale, t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
+  const messageParts = useAuiState((state) => state.message.parts);
   const activeRunId = useStore((state) => state.activeRunId);
   const messageRunId = useStore((state) => state.messages.find((message) => message.id === messageId)?.runId);
+  const messages = useStore((state) => state.messages);
   const allSubagents = useStore((state) => state.subagents);
   const models = useStore((state) => state.modelConfigs);
   const maxConcurrent = useStore((state) => state.subagentConfig.runtime.maxConcurrent);
   const runId = messageId === "streaming" ? activeRunId : messageRunId;
   // 侧栏保留当前会话的历史；消息胶囊只反映当前这条主 Agent 消息启动的子代理。
   const subagents = useMemo(
-    () => runId ? allSubagents.filter((item) => item.parentRunId === runId) : [],
-    [allSubagents, runId],
+    () => subagentsForAssistantMessage(allSubagents, messages, runId, messageId, messageParts).filter((item) => item.toolCallId === toolCallId),
+    [allSubagents, messages, runId, messageId, messageParts, toolCallId],
   );
   const childRunIds = useMemo(() => {
     if (!runId) return [];
-    const descendants = new Set([runId]);
+    const descendants = new Set(subagents.map((item) => item.id));
     for (let changed = true; changed;) {
       changed = false;
       for (const item of allSubagents) if (descendants.has(item.parentRunId) && !descendants.has(item.id)) {
@@ -50,9 +53,8 @@ export const SubagentCapsule: FC = () => {
         changed = true;
       }
     }
-    descendants.delete(runId);
     return [...descendants];
-  }, [allSubagents, runId]);
+  }, [allSubagents, runId, subagents]);
   const imageGenerations = useMemo(() => subagentImageGenerations(subagents, runId, models), [subagents, runId, models]);
   const running = subagents.filter((item) => active(item.status));
   const queued = subagents.filter((item) => item.status === "created");

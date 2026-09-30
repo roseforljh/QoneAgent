@@ -1,9 +1,21 @@
 import type { ThreadAssistantMessagePart, ThreadMessageLike } from "@assistant-ui/react";
-import type { AssistantMessagePart } from "@qone/protocol";
+import type { AssistantMessagePart, AssistantTextPhase } from "@qone/protocol";
 import type { ToolCall } from "../store";
 
 type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 type JsonObject = { readonly [key: string]: JsonValue };
+export type DisplayTextPhase = AssistantTextPhase | "pending";
+const TEXT_PHASE_PREFIX = "pi:phase:";
+
+function textParentId(phase: DisplayTextPhase, sequence: string | number): string {
+  return `${TEXT_PHASE_PREFIX}${phase}:${sequence}`;
+}
+
+export function textPhaseFromParentId(parentId: string | undefined): DisplayTextPhase | undefined {
+  if (!parentId?.startsWith(TEXT_PHASE_PREFIX)) return undefined;
+  const phase = parentId.slice(TEXT_PHASE_PREFIX.length).split(":", 1)[0];
+  return phase === "commentary" || phase === "final_answer" || phase === "pending" ? phase : undefined;
+}
 
 function asJsonObject(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {};
@@ -15,7 +27,7 @@ function stringifyToolValue(value: unknown): string {
 }
 
 function orderedPart(part: AssistantMessagePart, parentId: string, streaming: boolean): ThreadAssistantMessagePart {
-  if (part.type === "text") return { type: "text", text: part.text, parentId };
+  if (part.type === "text") return { type: "text", text: part.text, parentId: part.phase ? textParentId(part.phase, part.messageSequence) : parentId };
   if (part.type === "reasoning") return {
     type: "reasoning", text: part.text,
     parentId: `${parentId}:reasoning:${part.contentIndex ?? 0}`,
@@ -52,7 +64,11 @@ export function assistantMessageContent(
         : `pi:${part.messageSequence}`;
       return orderedPart(part, parentId, streaming);
     });
-    if (streaming && message.content) content.push({ type: "text", text: message.content, parentId: "pi:pending" });
+    if (streaming && message.content) content.push({
+      type: "text", text: message.content,
+      ...(parts.some((part) => part.type === "tool-call" || part.type === "reasoning" || (part.type === "text" && part.phase === "commentary"))
+        ? { parentId: textParentId("pending", "stream") } : {}),
+    });
     if (!streaming && content.length === 0 && message.content) content.push({ type: "text", text: message.content });
     return content;
   }
@@ -68,6 +84,6 @@ export function assistantMessageContent(
       ...(call.status === "success" || call.status === "failed" ? { result: call.result ?? call.summary ?? "" } : {}),
       ...(call.status === "failed" ? { isError: true } : {}),
     })),
-    ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
+    ...(message.content ? [{ type: "text" as const, text: message.content, ...(streaming && legacyCalls.length > 0 ? { parentId: textParentId("pending", "legacy") } : {}) }] : []),
   ];
 }

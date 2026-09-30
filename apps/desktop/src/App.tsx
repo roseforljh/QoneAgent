@@ -6,9 +6,6 @@ import { reportStartup } from "./lib/startup-diagnostic";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
-  CompositeAttachmentAdapter,
-  SimpleTextAttachmentAdapter,
-  SimpleImageAttachmentAdapter,
   type AppendMessage,
   type ExternalStoreThreadData,
   type ExternalStoreThreadListAdapter,
@@ -19,11 +16,12 @@ import { assistantMessageContent } from "./lib/assistant-message-parts";
 import { isImageModel } from "./lib/image-model-config";
 import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
+import { localImagePreview } from "./lib/local-image-preview";
 import { expandComposerCommand } from "./lib/composer-command";
 import { addComposerHistory } from "./lib/composer-history";
 import { useComposerDrafts } from "./lib/use-composer-drafts";
 import { createQoneMessageQueue, getQoneMessageQueue } from "./lib/qone-message-queue";
-import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
+import { QoneAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { ScopedWorkspaceDocks } from "./components/assistant-ui/scoped-workspace-docks";
 import { ThreadHeader } from "./components/assistant-ui/thread-header";
@@ -76,11 +74,7 @@ function ThemeButton({ theme, onToggle }: { theme: Theme; onToggle: () => void }
   );
 }
 
-const attachmentAdapter = new CompositeAttachmentAdapter([
-  new SimpleTextAttachmentAdapter(),
-  new SimpleImageAttachmentAdapter(),
-  new AnyFileAttachmentAdapter(),
-]);
+const attachmentAdapter = new QoneAttachmentAdapter();
 
 const extractText = (message: AppendMessage): string => {
   const partsText = message.content
@@ -166,6 +160,28 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     if (!imageGenerationError) return messages;
     return [...messages, { id: `image-error:${imageGenerationError.id}`, role: "assistant", content: "", createdAt: Date.now() }];
   }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError]);
+  const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const paths = [...new Set(messages.flatMap((message) => message.attachments?.flatMap((attachment) =>
+      attachment.type === "image" && attachment.localPath ? [attachment.localPath] : []) ?? []))];
+    let active = true;
+    void Promise.all(paths.map(async (path) => {
+      try { return [path, await localImagePreview(path)] as const; }
+      catch { return undefined; }
+    })).then((entries) => {
+      if (!active) return;
+      setImagePreviews((current) => {
+        const next = { ...current };
+        let changed = false;
+        for (const entry of entries) if (entry && next[entry[0]] !== entry[1]) {
+          next[entry[0]] = entry[1];
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    });
+    return () => { active = false; };
+  }, [messages]);
   const imageWindows = useMemo(() => {
     const windows = new Map<string, { after?: number; through?: number }>();
     const lastAssistantByRun = new Map<string, number>();
@@ -228,8 +244,8 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
         createdAt,
         content: [
           ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
-          ...(message.attachments ?? []).map((attachment) => attachment.type === "image"
-            ? { type: "image" as const, image: attachment.data, filename: attachment.name }
+          ...(message.attachments ?? []).map((attachment) => attachment.type === "image" && (attachment.localPath ? imagePreviews[attachment.localPath] : attachment.data)
+            ? { type: "image" as const, image: attachment.localPath ? imagePreviews[attachment.localPath]! : attachment.data, filename: attachment.name }
             : { type: "file" as const, filename: attachment.name, mimeType: attachment.mimeType, data: attachment.data }),
         ],
       };

@@ -85,6 +85,10 @@ test("a Pi text block separates tool groups even if assistant-ui hides whitespac
     { type: "tool-call", toolCallId: "b", toolName: "grep", args: {}, messageSequence: 10 },
   ];
   const content = assistantMessageContent({ content: "", parts }, [], false);
+  expect(assistantPartRanges(content as PartState[])).toEqual([
+    { type: "tools", startIndex: 0, endIndex: 1 },
+    { type: "tools", startIndex: 2, endIndex: 3 },
+  ]);
   const visible = content.filter((part) => part.type !== "text" || part.text.trim());
   expect(assistantPartRanges(visible as PartState[])).toEqual([
     { type: "tools", startIndex: 0, endIndex: 1 },
@@ -106,7 +110,7 @@ test("adjacent image parts form one gallery range while separated images stay in
   ]);
 });
 
-test("subagent capsule stays at the first dispatch call, before later text and images", () => {
+test("each subagent capsule stays at its dispatch call and folds with execution", () => {
   const parts = [
     { type: "text", text: "准备", status: { type: "complete" } },
     { type: "tool-call", toolName: "read", toolCallId: "read", status: { type: "complete" } },
@@ -115,13 +119,18 @@ test("subagent capsule stays at the first dispatch call, before later text and i
     { type: "text", text: "结果", status: { type: "complete" } },
     { type: "image", image: "data:image/png;base64,A", status: { type: "complete" } },
   ] as PartState[];
-  expect(visibleAssistantPartRanges(parts, true, true)).toEqual([
+  const ranges = visibleAssistantPartRanges(parts, true, true);
+  expect(ranges).toEqual([
     { type: "text", index: 0 },
     { type: "tools", startIndex: 1, endIndex: 2 },
     { type: "subagents", index: 2 },
+    { type: "subagents", index: 3 },
     { type: "text", index: 4 },
     { type: "image", index: 5 },
   ]);
+  const sections = assistantRangeSections(ranges);
+  expect(sections.activity).toEqual(ranges.slice(0, 4));
+  expect(sections.answer).toEqual(ranges.slice(4));
 });
 
 test("execution folds commentary but keeps presentations, images, and the final answer visible", () => {
@@ -182,4 +191,44 @@ test("reasoning without tools creates an execution region before the final answe
   expect(sections.activity).toEqual([{ type: "reasoning", index: 0 }]);
   expect(sections.answer).toEqual([{ type: "text", index: 1 }]);
   expect(assistantRangeSections([{ type: "text", index: 0 }]).activity).toEqual([]);
+});
+
+test("explicit phases keep commentary and pending text in activity until a final answer exists", () => {
+  const parts: AssistantMessagePart[] = [
+    { type: "text", text: "先查", messageSequence: 1, phase: "commentary" },
+    { type: "tool-call", toolCallId: "read", toolName: "read", args: {}, messageSequence: 1 },
+  ];
+  const pending = assistantMessageContent({ content: "准备继续", parts }, [], true) as PartState[];
+  const pendingRanges = assistantPartRanges(pending);
+  expect(pendingRanges.at(-1)).toMatchObject({ type: "text", phase: "pending" });
+  const active = assistantRangeSections(pendingRanges);
+  expect(active.activity).toHaveLength(3);
+  expect(active.answer).toEqual([]);
+
+  const final = assistantMessageContent({ content: "", parts: [
+    ...parts,
+    { type: "text", text: "完成", messageSequence: 2, phase: "final_answer" },
+  ] }, [], false) as PartState[];
+  const finished = assistantRangeSections(assistantPartRanges(final));
+  expect(finished.activity).toHaveLength(2);
+  expect(finished.answer).toEqual([{ type: "text", index: 2, phase: "final_answer" }]);
+  expect(hasVisibleAnswer(final, finished.answer)).toBe(true);
+});
+
+test("a text-only stream is an answer until an activity boundary is known", () => {
+  const parts = assistantMessageContent({ content: "直接回答", parts: [] }, [], true) as PartState[];
+  expect(assistantRangeSections(assistantPartRanges(parts)).answer).toEqual([{ type: "text", index: 0 }]);
+  const legacy = assistantMessageContent({ content: "旧消息" }, [], true) as PartState[];
+  expect(assistantRangeSections(assistantPartRanges(legacy)).answer).toEqual([{ type: "text", index: 0 }]);
+});
+
+test("exploration tools share a group while edits and commands form a separate group", () => {
+  const parts = ["read", "grep", "ls", "edit", "write", "read"].map((toolName, index) => ({
+    type: "tool-call" as const, toolName, toolCallId: String(index),
+  })) as PartState[];
+  expect(assistantPartRanges(parts)).toEqual([
+    { type: "tools", startIndex: 0, endIndex: 3 },
+    { type: "tools", startIndex: 3, endIndex: 5 },
+    { type: "tools", startIndex: 5, endIndex: 6 },
+  ]);
 });

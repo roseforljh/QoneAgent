@@ -3,13 +3,13 @@
 import { type ComponentProps, type CSSProperties, useMemo } from "react";
 import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
 import { cva, type VariantProps } from "class-variance-authority";
-import { diffLines } from "diff";
+import { createTwoFilesPatch } from "diff";
 import parseDiff from "parse-diff";
 import { useShikiHighlighter } from "react-shiki";
 
 import { cn } from "../../../lib/utils";
 
-type DiffLineType = "add" | "del" | "normal";
+type DiffLineType = "add" | "del" | "normal" | "skip";
 
 interface ParsedLine {
   type: DiffLineType;
@@ -37,7 +37,11 @@ function parsePatch(patch: string): ParsedFile[] {
     const lines: ParsedLine[] = [];
     let additions = 0;
     let deletions = 0;
+    let previousOldEnd = 1;
     for (const chunk of file.chunks) {
+      if (chunk.oldStart > previousOldEnd) {
+        lines.push({ type: "skip", content: "" });
+      }
       let oldLine = chunk.oldStart;
       let newLine = chunk.newStart;
       for (const change of chunk.changes) {
@@ -64,6 +68,7 @@ function parsePatch(patch: string): ParsedFile[] {
           });
         }
       }
+      previousOldEnd = oldLine;
     }
     return {
       oldName: file.from,
@@ -79,33 +84,8 @@ function computeDiff(
   oldContent: string,
   newContent: string,
 ): { lines: ParsedLine[]; additions: number; deletions: number } {
-  const changes = diffLines(oldContent, newContent);
-  const lines: ParsedLine[] = [];
-  let oldLine = 1;
-  let newLine = 1;
-  let additions = 0;
-  let deletions = 0;
-
-  for (const change of changes) {
-    const contentLines = change.value.replace(/\n$/, "").split("\n");
-    for (const content of contentLines) {
-      if (change.added) {
-        additions++;
-        lines.push({ type: "add", content, newLineNumber: newLine++ });
-      } else if (change.removed) {
-        deletions++;
-        lines.push({ type: "del", content, oldLineNumber: oldLine++ });
-      } else {
-        lines.push({
-          type: "normal",
-          content,
-          oldLineNumber: oldLine++,
-          newLineNumber: newLine++,
-        });
-      }
-    }
-  }
-  return { lines, additions, deletions };
+  const file = parsePatch(createTwoFilesPatch("old", "new", oldContent, newContent))[0];
+  return file ?? { lines: [], additions: 0, deletions: 0 };
 }
 
 function pairLinesForSplit(lines: ParsedLine[]): SplitLinePair[] {
@@ -114,7 +94,7 @@ function pairLinesForSplit(lines: ParsedLine[]): SplitLinePair[] {
 
   while (i < lines.length) {
     const line = lines[i]!;
-    if (line.type === "normal") {
+    if (line.type === "normal" || line.type === "skip") {
       pairs.push({ left: line, right: line });
       i++;
     } else if (line.type === "del") {
@@ -173,6 +153,7 @@ const diffLineVariants = cva("flex", {
       add: "bg-[var(--diff-add-bg,var(--_diff-add-bg))] shadow-[inset_2px_0_0_var(--diff-add-rule,var(--color-green-500))] [--_diff-add-bg:color-mix(in_oklab,var(--color-green-500)_8%,transparent)] dark:[--_diff-add-bg:color-mix(in_oklab,var(--color-green-500)_15%,transparent)]",
       del: "bg-[var(--diff-del-bg,var(--_diff-del-bg))] shadow-[inset_2px_0_0_var(--diff-del-rule,var(--color-red-500))] [--_diff-del-bg:color-mix(in_oklab,var(--color-red-500)_8%,transparent)] dark:[--_diff-del-bg:color-mix(in_oklab,var(--color-red-500)_15%,transparent)]",
       normal: "",
+      skip: "text-foreground/35",
       empty: "",
     },
   },
@@ -187,6 +168,7 @@ const diffLineTextVariants = cva("", {
       add: "text-[var(--diff-add-text,var(--color-green-600))] dark:text-[var(--diff-add-text-dark,var(--color-green-400))]",
       del: "text-[var(--diff-del-text,var(--color-red-600))] dark:text-[var(--diff-del-text-dark,var(--color-red-400))]",
       normal: "",
+      skip: "text-foreground/35",
       empty: "",
     },
   },
@@ -313,7 +295,7 @@ function DiffViewerLine({
   className,
   ...props
 }: DiffViewerLineProps) {
-  const indicator = line.type === "add" ? "+" : line.type === "del" ? "-" : " ";
+  const indicator = line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "skip" ? "…" : " ";
 
   return (
     <div
@@ -327,7 +309,9 @@ function DiffViewerLine({
           data-slot="diff-viewer-line-number"
           className="text-muted-foreground/40 w-10 shrink-0 px-2 text-end tabular-nums select-none"
         >
-          {line.type === "del"
+          {line.type === "skip"
+            ? ""
+            : line.type === "del"
             ? line.oldLineNumber
             : line.type === "add"
               ? line.newLineNumber
@@ -347,7 +331,7 @@ function DiffViewerLine({
         data-slot="diff-viewer-content"
         className="flex-1 pe-3.5 break-all whitespace-pre-wrap"
       >
-        <HighlightedDiffText code={line.content} language={language} />
+        {line.type === "skip" ? "" : <HighlightedDiffText code={line.content} language={language} />}
       </span>
     </div>
   );
@@ -397,7 +381,7 @@ function DiffViewerSplitLine({
       >
         {showLineNumbers && (
           <span className="text-muted-foreground/40 w-10 shrink-0 px-2 text-end tabular-nums select-none">
-            {left?.oldLineNumber ?? ""}
+            {left?.type === "skip" ? "" : left?.oldLineNumber ?? ""}
           </span>
         )}
         <span
@@ -406,10 +390,10 @@ function DiffViewerSplitLine({
             diffLineTextVariants({ type: left?.type ?? "empty" }),
           )}
         >
-          {left ? (left.type === "del" ? "-" : " ") : ""}
+          {left ? (left.type === "skip" ? "…" : left.type === "del" ? "-" : " ") : ""}
         </span>
         <span className="flex-1 pe-3.5 break-all whitespace-pre-wrap">
-          {left ? <HighlightedDiffText code={left.content} language={language} /> : ""}
+          {left && left.type !== "skip" ? <HighlightedDiffText code={left.content} language={language} /> : ""}
         </span>
       </div>
       <div
@@ -422,7 +406,7 @@ function DiffViewerSplitLine({
       >
         {showLineNumbers && (
           <span className="text-muted-foreground/40 w-10 shrink-0 px-2 text-end tabular-nums select-none">
-            {right?.newLineNumber ?? ""}
+            {right?.type === "skip" ? "" : right?.newLineNumber ?? ""}
           </span>
         )}
         <span
@@ -431,10 +415,10 @@ function DiffViewerSplitLine({
             diffLineTextVariants({ type: right?.type ?? "empty" }),
           )}
         >
-          {right ? (right.type === "add" ? "+" : " ") : ""}
+          {right ? (right.type === "skip" ? "…" : right.type === "add" ? "+" : " ") : ""}
         </span>
         <span className="flex-1 pe-3.5 break-all whitespace-pre-wrap">
-          {right ? <HighlightedDiffText code={right.content} language={language} /> : ""}
+          {right && right.type !== "skip" ? <HighlightedDiffText code={right.content} language={language} /> : ""}
         </span>
       </div>
     </div>

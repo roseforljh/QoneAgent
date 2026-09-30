@@ -12,6 +12,7 @@ import { MeasuredCollapse } from "./measured-collapse";
 import { FadeScroll, regionViewport, ShimmerLabel, SwapLabel } from "./surfaces";
 import { take } from "../utils/range";
 import { OverflowFade } from "./overflow-fade";
+import type { ToolActivityCategory } from "../tool-activity-category";
 
 export interface TimelineStep {
   id?: string;
@@ -19,6 +20,7 @@ export interface TimelineStep {
   chip: string;
   icon: ExecutionIcon;
   done?: boolean;
+  category?: ToolActivityCategory;
 }
 
 export interface TimelineStat {

@@ -10,6 +10,14 @@
 .q-reasoning-trigger * { pointer-events: none; }
 .q-reasoning-trigger:hover { color: var(--foreground); }
 .q-reasoning-trigger:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.q-reasoning-chevron {
+  opacity: 0;
+  transform: rotate(0deg);
+  transition: opacity 150ms ease-out, transform 240ms cubic-bezier(.32, .72, 0, 1);
+}
+.q-reasoning-trigger:hover .q-reasoning-chevron { opacity: .75; }
+.q-reasoning-trigger:focus-visible .q-reasoning-chevron { opacity: 1; }
+.q-reasoning-trigger[aria-expanded="true"] .q-reasoning-chevron { transform: rotate(90deg); }
 .q-reasoning-content {
   margin: .375rem 0 .25rem;
   padding-left: .75rem;
@@ -24,5 +32,5 @@
 .q-reasoning-content p + p { margin-top: .5em; }
 .q-reasoning-content:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: .25rem; }
 @media (prefers-reduced-motion: reduce) {
-  .q-reasoning-trigger { transition: none; }
+  .q-reasoning-trigger, .q-reasoning-chevron { transition: none; }
 }

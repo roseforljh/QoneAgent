@@ -1,4 +1,5 @@
 import { memo, useCallback, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { useAuiState, useThreadViewportStore, type ReasoningMessagePartComponent } from "@assistant-ui/react";
 import ReactMarkdown from "react-markdown";
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
@@ -15,6 +16,7 @@ const ReasoningText = memo(function ReasoningText({ text }: { text: string }) {
 
 export const Reasoning: ReasoningMessagePartComponent = () => {
   const { t } = useLocale();
+  const reduceMotion = useReducedMotion();
   const threadViewportStore = useThreadViewportStore({ optional: true });
   const part = useAuiState((s) => s.part.type === "reasoning" ? s.part : null);
   const messageRunning = useAuiState((s) => s.message.status?.type === "running");
@@ -35,19 +37,25 @@ export const Reasoning: ReasoningMessagePartComponent = () => {
   }} className="q-reasoning" data-slot="reasoning" data-running={running}>
     <CollapsibleTrigger className="q-reasoning-trigger group/reasoning">
       <ShimmerLabel active={running}>{t(running ? "chat.reasoningActive" : "chat.reasoning")}</ShimmerLabel>
-      <CodexChevronRightIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 group-data-[state=open]/reasoning:rotate-90 motion-reduce:transition-none" />
+      <CodexChevronRightIcon className="q-reasoning-chevron size-3.5 shrink-0" />
     </CollapsibleTrigger>
     <MeasuredCollapse open={open}>
-      <FadeScroll
-        className={`q-reasoning-content ${regionViewport}`}
-        role="region"
-        aria-label={t("chat.reasoning")}
-        tabIndex={0}
-        autoScrollToBottom={running}
-        getScrollViewport={getScrollViewport}
+      <motion.div
+        initial={false}
+        animate={{ y: open || reduceMotion ? 0 : -4 }}
+        transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.32, 0.72, 0, 1] }}
       >
-        <ReasoningText text={part.text} />
-      </FadeScroll>
+        <FadeScroll
+          className={`q-reasoning-content ${regionViewport}`}
+          role="region"
+          aria-label={t("chat.reasoning")}
+          tabIndex={0}
+          autoScrollToBottom={running}
+          getScrollViewport={getScrollViewport}
+        >
+          <ReasoningText text={part.text} />
+        </FadeScroll>
+      </motion.div>
     </MeasuredCollapse>
   </Collapsible>;
 };

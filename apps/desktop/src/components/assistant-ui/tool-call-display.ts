@@ -32,3 +32,10 @@ export function formatToolPayload(value: unknown): string {
   }
   return formatted.length > 20_000 ? `${formatted.slice(0, 20_000)}…` : formatted;
 }
+
+/** A presentation may exist even when its visible output is empty. */
+export function toolResultText(presentationText: string | undefined, result: unknown, fallback: string): string {
+  if (presentationText?.trim()) return presentationText;
+  const raw = formatToolPayload(result);
+  return raw.trim() ? raw : fallback;
+}

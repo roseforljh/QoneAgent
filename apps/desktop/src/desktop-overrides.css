@@ -1,4 +1,33 @@
 /* Desktop typography shared by chat, navigation, settings, and management. */
+.aui-attachment-tile-thumb {
+  color: color-mix(in oklab, var(--foreground) 68%, transparent);
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+.aui-attachment-tile[data-attachment-kind="pdf"] .aui-attachment-tile-thumb,
+.aui-attachment-tile[data-attachment-kind="presentation"] .aui-attachment-tile-thumb {
+  color: #e66b69;
+  background: color-mix(in oklab, #e66b69 15%, transparent);
+}
+.aui-attachment-tile[data-attachment-kind="spreadsheet"] .aui-attachment-tile-thumb {
+  color: #4ebf87;
+  background: color-mix(in oklab, #4ebf87 15%, transparent);
+}
+.aui-attachment-tile[data-attachment-kind="document"] .aui-attachment-tile-thumb,
+.aui-attachment-tile[data-attachment-kind="code"] .aui-attachment-tile-thumb {
+  color: #72a7eb;
+  background: color-mix(in oklab, #72a7eb 15%, transparent);
+}
+.aui-attachment-tile[data-attachment-kind="audio"] .aui-attachment-tile-thumb,
+.aui-attachment-tile[data-attachment-kind="video"] .aui-attachment-tile-thumb {
+  color: #bb92e7;
+  background: color-mix(in oklab, #bb92e7 15%, transparent);
+}
+.aui-attachment-tile[data-attachment-kind="archive"] .aui-attachment-tile-thumb,
+.aui-attachment-tile[data-attachment-kind="folder"] .aui-attachment-tile-thumb {
+  color: #d4aa60;
+  background: color-mix(in oklab, #d4aa60 15%, transparent);
+}
+
 html,
 body,
 button,
@@ -188,8 +217,7 @@ body {
 }
 
 .aui-thread-root [data-slot="image-preview"] img { max-height: min(28rem, 46dvh); }
-.aui-thread-root .q-message-user-attachments { scrollbar-width: thin; }
-.aui-thread-root .q-message-user-attachments > :only-child { max-width: 100%; }
+.aui-thread-root .q-message-user-attachments [data-slot="file-root"] { width: 100%; }
 .aui-thread-root .q-user-image-thumbnail [data-slot="image-preview"] {
   min-height: 0;
   max-height: 12rem;
@@ -203,12 +231,6 @@ body {
 }
 .aui-thread-root [data-slot="file-root"] { max-width: min(100%, 22rem); }
 .aui-thread-root [data-slot="generative-ui-block"] { overscroll-behavior: auto; }
-/* The agent section expands to its intrinsic height. Nested result panes own
-   their max-height and scrolling, so the execution section never becomes a
-   second scroll container. */
-.aui-thread-root .q-tool-timeline {
-  margin-bottom: 0.75rem;
-}
 /* Codex's eased scroll fade uses a 1.5rem edge, not a background-colored
    overlay. Observe actual label overflow so short rows remain fully opaque. */
 .q-inline-overflow-fade {
@@ -232,7 +254,8 @@ body {
   --q-inline-fade-direction: to left;
 }
 @media (hover: none) {
-  [data-slot="tool-disclosure-chevron"] {
+  [data-slot="tool-disclosure-chevron"],
+  .q-reasoning-chevron {
     opacity: 0.6;
   }
 }

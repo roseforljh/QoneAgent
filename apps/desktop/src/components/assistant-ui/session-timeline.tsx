@@ -6,19 +6,20 @@ import {
   type TimelineStep,
 } from "./elements/tool-timeline";
 import { ToolCall } from "./elements/tool-call";
-import { ToolError } from "./elements/tool-error";
 import { ToolResultView } from "./elements/tool-result";
-import { formatToolPayload, toolActivity } from "./tool-call-display";
+import { formatToolPayload, toolActivity, toolResultText } from "./tool-call-display";
 import { detectToolPreview } from "./tool-preview";
 import { toolActionSummary, toolFullTarget, toolTarget } from "./tool-action-summary";
 import { detectToolPresentation, toolDiffStats, toolPresentationSummary } from "./tool-presentation";
 import { useLocale } from "../../localization";
 import { toolGroupSummary } from "./tool-group-summary";
 import { useStore, type ToolCall as StoreToolCall } from "../../store";
+import { toolActivityCategory } from "./tool-activity-category";
+import { toolFileChanges } from "@qone/protocol";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
-type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string };
+type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string; filePaths?: string[] };
 const GenerativeUISurface = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUISurface }));
 
 const TOOL_META: Record<string, ToolMeta> = {
@@ -44,7 +45,12 @@ function toStep(part: ToolPartState, locale: string, call?: StoreToolCall): Sess
   const target = toolTarget(part, call);
   const fullTarget = toolFullTarget(part, call);
   const done = call?.status === "success" || (call === undefined && part.result !== undefined && !part.isError);
-  return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: meta?.icon ?? WrenchIcon, done };
+  const result = call?.result ?? part.result;
+  const category = toolActivityCategory(part.toolName, result);
+  const filePaths = category === "file-change" && result !== undefined
+    ? toolFileChanges(result).map((change) => change.path)
+    : [];
+  return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: meta?.icon ?? WrenchIcon, done, category, filePaths };
 }
 
 const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean }> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
@@ -54,7 +60,6 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
   const status = toolActivity(part, call, prepared, messageRunning);
   const failed = String(status) === "failed";
   const result = call?.result !== undefined ? call.result : part.result !== undefined ? part.result : call?.summary;
-  const formattedResult = formatToolPayload(result);
   const args = useDeferredValue(call?.args ?? part.args);
   const normalizedResult = useMemo(() => result !== undefined ? detectToolPresentation(part.toolName, result, failed ? undefined : args) : undefined, [part.toolName, result, args, failed]);
   const livePresentation = useMemo(() => detectToolPreview(part.toolName, args), [part.toolName, args]);
@@ -66,23 +71,20 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
       : status === "waiting" ? t("chat.toolApprovalPending")
         : editing ? t("chat.toolApplyingEdit") : t("chat.toolWorking");
   const preview = editing && status !== "success" && status !== "failed";
-  const resultText = presentation
-    ? toolPresentationSummary(presentation)
-    : formattedResult
-      ? formattedResult
-      : status === "waiting" ? t("chat.toolApprovalPending")
-        : status === "failed" ? t("chat.toolFailed")
-          : status === "success" ? t("chat.toolNoResult") : t("chat.toolResultPending");
+  const presentationText = presentation ? toolPresentationSummary(presentation) : undefined;
+  const resultText = toolResultText(
+    presentationText,
+    result,
+    status === "waiting" ? t("chat.toolApprovalPending")
+      : status === "failed" ? t("chat.toolFailed")
+        : status === "success" ? t("chat.toolNoResult") : t("chat.toolResultPending"),
+  );
   const stat = useMemo(() => presentation && status === "success" ? toolDiffStats(presentation) : undefined, [presentation, status]);
 
-  if (status === "failed") return (
-    <ToolError
-      name={part.toolName}
-      target={step.chip}
-      message={presentation?.kind === "diff" ? t("chat.toolFailed") : resultText}
-      className="min-w-0 max-w-none flex-1"
-    />
-  );
+  // A failed mutation must not be presented as an applied diff.
+  const visiblePresentation = failed && presentation?.kind === "diff" ? undefined : presentation;
+  const visibleResultText = failed && !visiblePresentation && presentation?.kind === "diff"
+    ? t("chat.toolFailed") : resultText;
 
   return (
     <ToolCall
@@ -93,9 +95,10 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
       fullTarget={step.fullTarget}
       stat={stat && (stat.added > 0 || stat.removed > 0) ? stat : undefined}
       request={formatToolPayload(call?.argsText || part.argsText || part.args)}
+      resultHasOwnFrame={visiblePresentation !== undefined && visiblePresentation.kind !== "text"}
       result={<>
         {preview && <p className="mb-2 text-xs text-foreground/50">{t("chat.toolPreview")}</p>}
-        {presentation ? <ToolResultView presentation={presentation} /> : <span className="px-1 py-1 text-xs text-foreground/70">{status === "success" ? resultText : activeLabel}</span>}
+        {visiblePresentation ? <ToolResultView presentation={visiblePresentation} /> : <span className="px-1 py-1 text-xs text-foreground/70">{status === "success" || failed ? visibleResultText : activeLabel}</span>}
       </>}
       running={status === "running" || status === "generating"}
       pending={status === "queued" || status === "generating"}

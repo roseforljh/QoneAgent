@@ -6,7 +6,6 @@ import {
 } from "react";
 import {
   XIcon,
-  FileText,
   PaperclipIcon,
   Loader2Icon,
   AlertCircleIcon,
@@ -24,15 +23,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../../ui/tooltip";
-import {
-  Avatar,
-  AvatarImage,
-  AvatarFallback,
-} from "../../ui/avatar";
 import { TooltipIconButton } from "../tooltip-icon-button";
 import { useAttachmentSrc } from "../../../hooks/use-attachment-src";
 import { cn } from "../../../lib/utils";
 import { Image } from "./image";
+import { CodexIcon } from "../../ui/CodexIcon";
+import { DIRECTORY_MIME_TYPE } from "@qone/protocol";
+import type { NativeAttachmentFile } from "../../../lib/native-attachment-file";
+import { useLocale } from "../../../localization";
+import { attachmentFileIcon, attachmentFileKind, attachmentFileLabel } from "../../../lib/attachment-file-kind";
 
 const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
   const src = useAttachmentSrc();
@@ -44,19 +43,15 @@ const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
 
 const AttachmentThumb: FC = () => {
   const src = useAttachmentSrc();
+  const name = useAuiState((s) => s.attachment.name);
+  const mimeType = useAuiState((s) => s.attachment.contentType ?? s.attachment.file?.type ?? "");
+  const kind = attachmentFileKind(name, mimeType);
 
-  return (
-    <Avatar className="aui-attachment-tile-avatar h-full w-full rounded-none">
-      <AvatarImage
-        src={src}
-        alt="Attachment preview"
-        className="aui-attachment-tile-image rounded-none object-cover"
-      />
-      <AvatarFallback>
-        <FileText className="aui-attachment-tile-fallback-icon text-muted-foreground/80 size-6 stroke-[1.5]" />
-      </AvatarFallback>
-    </Avatar>
-  );
+  return src
+    ? <img src={src} alt="" className="aui-attachment-tile-image size-full object-cover" />
+    : <span className="flex size-full items-center justify-center" data-attachment-kind={kind}>
+        <CodexIcon src={attachmentFileIcon(name, mimeType)} className="aui-attachment-tile-fallback-icon size-5" />
+      </span>;
 };
 
 const formatAttachmentSize = (bytes: number | undefined): string | undefined => {
@@ -68,11 +63,15 @@ const formatAttachmentSize = (bytes: number | undefined): string | undefined => 
 
 const AttachmentUI: FC = () => {
   const aui = useAui();
+  const { t } = useLocale();
   const isComposer = aui.attachment.source !== "message";
 
   const isImage = useAuiState((s) => s.attachment.type === "image");
+  const isDirectory = useAuiState((s) => (s.attachment.file as NativeAttachmentFile | undefined)?.qoneIsDirectory === true || s.attachment.contentType === DIRECTORY_MIME_TYPE);
   const attachmentName = useAuiState((s) => s.attachment.name);
-  const attachmentSize = useAuiState((s) => (s.attachment.file as (File & { qoneFileSize?: number }) | undefined)?.qoneFileSize ?? s.attachment.file?.size);
+  const mimeType = useAuiState((s) => s.attachment.contentType ?? s.attachment.file?.type ?? "");
+  const kind = attachmentFileKind(attachmentName, mimeType);
+  const attachmentSize = useAuiState((s) => (s.attachment.file as NativeAttachmentFile | undefined)?.qoneFileSize ?? s.attachment.file?.size);
   const attachmentSizeLabel = formatAttachmentSize(attachmentSize);
   const typeLabel = useAuiState((s) => {
     const type = s.attachment.type;
@@ -109,7 +108,7 @@ const AttachmentUI: FC = () => {
     ? "上传中"
     : isError
       ? "上传失败"
-      : attachmentSizeLabel;
+      : isDirectory ? t("composer.toolFolder") : [attachmentFileLabel(attachmentName, mimeType), attachmentSizeLabel].filter(Boolean).join(" · ");
 
   const errorMessage = useAuiState((s) =>
     s.attachment.status.type === "incomplete" &&
@@ -125,7 +124,7 @@ const AttachmentUI: FC = () => {
           className={cn(
             "aui-attachment-root relative",
             isComposer &&
-              "animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none",
+              "min-w-0 max-w-[min(100%,12rem)] flex-[0_1_12rem] animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none",
             isImage &&
               !isComposer &&
               "aui-attachment-root-message only:*:first:size-24",
@@ -135,20 +134,22 @@ const AttachmentUI: FC = () => {
             <TooltipTrigger asChild>
               <div
                 className={cn(
-                  "aui-attachment-tile bg-foreground/[0.04] hover:after:bg-foreground/10 focus-visible:ring-ring/50 relative flex min-w-0 max-w-[min(100%,22rem)] cursor-pointer items-center gap-2.5 overflow-hidden rounded-[14px] py-1.5 ps-1.5 pe-7 outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-black/10 after:transition-colors after:ring-inset focus-visible:ring-1 dark:bg-foreground/[0.06] dark:after:ring-white/10",
+                  "aui-attachment-tile bg-foreground/[0.04] hover:after:bg-foreground/10 focus-visible:ring-ring/50 relative flex min-w-0 max-w-[min(100%,12rem)] cursor-pointer items-center gap-2.5 overflow-hidden rounded-[14px] py-1.5 ps-1.5 pe-7 outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-black/10 after:transition-colors after:ring-inset focus-visible:ring-1 dark:bg-foreground/[0.06] dark:after:ring-white/10",
+                  isComposer && "w-full",
                   isError &&
                     "after:ring-destructive/60 dark:after:ring-destructive/60",
                 )}
                 data-state={isError ? "error" : isUploading ? "uploading" : "done"}
+                data-attachment-kind={kind}
                 aria-label={`${attachmentName || typeLabel} attachment${
                   isError ? ", upload failed" : isUploading ? ", uploading" : ""
                 }`}
               >
-                <div className="aui-attachment-tile-thumb bg-background/70 size-8 shrink-0 overflow-hidden rounded-[10px] dark:bg-white/10">
+                <div className="aui-attachment-tile-thumb size-8 shrink-0 overflow-hidden rounded-[8px]">
                   <AttachmentThumb />
                 </div>
                 <span className="aui-attachment-tile-name flex min-w-0 flex-1 flex-col text-start">
-                  <span className="max-w-36 truncate text-xs font-medium text-foreground">
+                  <span className="truncate text-xs font-medium text-foreground">
                     <AttachmentPrimitive.Name />
                   </span>
                   {attachmentMeta && (
@@ -210,7 +211,7 @@ export const UserMessageAttachments: FC = () => {
 
 export const ComposerAttachments: FC = () => {
   return (
-    <div className="aui-composer-attachments flex w-full flex-row items-center gap-2 overflow-x-auto empty:hidden">
+    <div className="aui-composer-attachments flex w-full min-w-0 flex-wrap items-center gap-2 empty:hidden">
       <ComposerPrimitive.Attachments>
         {() => <AttachmentUI />}
       </ComposerPrimitive.Attachments>

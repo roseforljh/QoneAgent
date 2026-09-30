@@ -131,8 +131,10 @@ export const ModelPicker: FC = () => {
         <span ref={openLabelRef} className="q-model-picker-trigger-measure" aria-hidden="true"><span>{openLabel}</span><ChevronDownIcon size={14} /></span>
         {open ? <span className="q-model-picker-trigger-placeholder">{openLabel}</span> : <>
           <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={16} />
-          <span className="q-model-picker-trigger-name">{displayLabel}</span>
-          {activeModel && <span className="q-model-picker-effort-label">{thinkingLabel}</span>}
+          <span className="q-model-picker-trigger-labels">
+            <span className="q-model-picker-trigger-name">{displayLabel}</span>
+            {activeModel && <span className="q-model-picker-effort-label">{thinkingLabel}</span>}
+          </span>
         </>}
         <ChevronDownIcon size={14} aria-hidden="true" />
       </button>

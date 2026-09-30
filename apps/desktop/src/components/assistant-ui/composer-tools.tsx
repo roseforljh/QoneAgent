@@ -4,7 +4,7 @@ import { PlugZapIcon, SparklesIcon } from "lucide-react";
 import { useLocale } from "../../localization";
 import { useStore } from "../../store";
 import type { ComposerToolId } from "../../lib/composer-tool-editor";
-import { CodexDocumentTextIcon, CodexPlusIcon, CodexTargetIcon, CodexTextSelectIcon } from "../ui/CodexIcon";
+import { CodexDocumentTextIcon, CodexFolderIcon, CodexPlusIcon, CodexTargetIcon, CodexTextSelectIcon } from "../ui/CodexIcon";
 import "./composer-tools.css";
 
 type ToolIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
@@ -13,6 +13,7 @@ export type ComposerTool = { id: ComposerToolId | "compact"; label: string; desc
 export function getComposerTools(t: ReturnType<typeof useLocale>["t"]): ComposerTool[] {
   return [
     { id: "attachment", label: t("composer.toolAttachment"), description: t("composer.toolAttachmentDescription"), icon: CodexDocumentTextIcon },
+    { id: "folder", label: t("composer.toolFolder"), description: t("composer.toolFolderDescription"), icon: CodexFolderIcon },
     { id: "compact", label: t("composer.toolCompact"), description: t("composer.toolCompactDescription"), icon: CodexTextSelectIcon },
     { id: "goal", label: t("composer.toolGoal"), description: t("composer.toolGoalDescription"), icon: CodexTargetIcon },
   ];

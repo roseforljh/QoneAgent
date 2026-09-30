@@ -103,8 +103,11 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           break;
         }
         if (pendingAgentRuns.has(msg.requestId)) {
-          const sessionId = pendingAgentRuns.get(msg.requestId)!.sessionId;
+          const { sessionId, userMessageId } = pendingAgentRuns.get(msg.requestId)!;
           pendingAgentRuns.delete(msg.requestId);
+          eventStore.setState((state) => state.currentSessionId === sessionId
+            ? { messages: state.messages.map((message) => message.id === userMessageId ? { ...message, persisted: true } : message) }
+            : state);
           void s.send({ type: "session.runs", requestId: rid(), sessionId });
           break;
         }
@@ -237,6 +240,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             id: m.id,
             role: m.role,
             content: m.content,
+            persisted: true,
             parts: m.parts,
             attachments: m.attachments,
             runId: m.runId,
@@ -577,6 +581,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (msg.requestId && pendingAgentRuns.has(msg.requestId)) {
           const pending = pendingAgentRuns.get(msg.requestId)!;
           pendingAgentRuns.delete(msg.requestId);
+          pendingMessageReplacements.delete(pending.sessionId);
           finishStopRequest(pending.sessionId);
           if (pending.sessionId === eventStore.getState().currentSessionId) {
             clearDelta(pending.sessionId);
@@ -667,6 +672,10 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         if (ev.runId && ev.type === "agent.started") {
           eventStore.setState((st) => ({
+            messages: ev.sessionId === st.currentSessionId
+              ? st.messages.map((message) => [...pendingAgentRuns.values()].some((pending) => pending.sessionId === ev.sessionId && pending.userMessageId === message.id)
+                ? { ...message, persisted: true } : message)
+              : st.messages,
             activeRunId: ev.runId,
             running: true,
             runningSessionIds: ev.sessionId && !st.runningSessionIds.includes(ev.sessionId) ? [...st.runningSessionIds, ev.sessionId] : st.runningSessionIds,
@@ -702,7 +711,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             const messageSequence = st.activeMessageSequence;
             if (messageSequence === undefined) return st;
             const priorText: AssistantMessagePart[] = st.streaming
-              ? [{ type: "text", text: st.streaming, messageSequence }]
+              ? [{ type: "text", text: st.streaming, messageSequence, phase: "commentary" }]
               : [];
             const newTool: AssistantMessagePart[] = p?.blockType === "tool-call"
               ? [{
@@ -815,7 +824,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
                 streaming: "",
                 streamingParts: ensureStreamingToolPart(
                   st.streaming
-                    ? [...st.streamingParts, { type: "text", text: st.streaming, messageSequence: st.activeMessageSequence ?? ev.sequence }]
+                    ? [...st.streamingParts, { type: "text", text: st.streaming, messageSequence: st.activeMessageSequence ?? ev.sequence, phase: "commentary" }]
                     : st.streamingParts,
                   toolPayload,
                   messageSequence,

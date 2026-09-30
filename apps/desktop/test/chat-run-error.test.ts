@@ -238,6 +238,36 @@ test("failed reply stays with its user message and retry replaces that turn once
   expect(useStore.getState().running).toBe(false);
 });
 
+test("retry of a rejected optimistic turn sends a new message without replacing an unsaved id", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({
+      currentSessionId: "session-1",
+      sessions: [{ id: "session-1", title: "Test", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
+      workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }],
+      messages: [], running: false, activeRunId: undefined, chatRunError: undefined,
+    });
+    useStore.getState().runAgent("queued reply");
+    const rejected = commands.filter((command) => command.type === "agent.run").at(-1);
+    expect(rejected?.type).toBe("agent.run");
+    if (rejected?.type !== "agent.run") return;
+    emit({ type: "error", requestId: rejected.requestId, message: "session already has an active run" });
+    expect(useStore.getState().messages.at(-1)?.persisted).toBe(false);
+
+    const rejectedId = useStore.getState().chatRunError?.userMessageId;
+    expect(rejectedId).toBe(rejected.messageId);
+    useStore.getState().runAgent("queued reply", rejectedId);
+    const retry = commands.filter((command) => command.type === "agent.run").at(-1);
+    expect(retry?.type).toBe("agent.run");
+    if (retry?.type !== "agent.run") return;
+    expect(retry.messageId).not.toBe(rejectedId);
+    expect(retry.replaceFromMessageId).toBeUndefined();
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual([retry.messageId]);
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
 test("stopping the first run clears a title spinner even when title generation never replies", () => {
   const previous = useStore.getState();
   try {

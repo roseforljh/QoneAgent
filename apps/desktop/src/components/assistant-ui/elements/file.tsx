@@ -2,17 +2,11 @@
 
 import { memo, type FC } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import {
-  FileIcon,
-  FileTextIcon,
-  ImageIcon,
-  MusicIcon,
-  VideoIcon,
-  BracesIcon,
-  DownloadIcon,
-} from "lucide-react";
+import { DownloadIcon } from "lucide-react";
 import type { FileMessagePartComponent } from "@assistant-ui/react";
 import { cn } from "../../../lib/utils";
+import { CodexIcon } from "../../ui/CodexIcon";
+import { attachmentFileIcon } from "../../../lib/attachment-file-kind";
 
 const fileVariants = cva(
   "aui-file-root inline-flex min-w-0 max-w-full items-center gap-3 rounded-lg transition-colors",
@@ -35,29 +29,6 @@ const fileVariants = cva(
     },
   },
 );
-
-function getMimeTypeIcon(mimeType: string): FC<{ className?: string }> {
-  const type = mimeType.toLowerCase();
-  if (type.startsWith("image/")) {
-    return ImageIcon;
-  }
-  if (type === "application/pdf") {
-    return FileTextIcon;
-  }
-  if (type === "application/json") {
-    return BracesIcon;
-  }
-  if (type.startsWith("text/")) {
-    return FileTextIcon;
-  }
-  if (type.startsWith("audio/")) {
-    return MusicIcon;
-  }
-  if (type.startsWith("video/")) {
-    return VideoIcon;
-  }
-  return FileIcon;
-}
 
 export type FileDataKind = "data-uri" | "url" | "base64" | "id";
 
@@ -151,24 +122,23 @@ function FileRoot({
 
 type FileIconDisplayProps = React.ComponentProps<"span"> & {
   mimeType?: string;
+  filename?: string;
 };
 
 function FileIconDisplay({
   mimeType,
+  filename,
   className,
   children,
   ...props
 }: FileIconDisplayProps) {
-  const IconComponent = mimeType ? getMimeTypeIcon(mimeType) : FileIcon;
-
   return (
     <span
       data-slot="file-icon"
       className={cn("text-muted-foreground shrink-0", className)}
       {...props}
     >
-      {/* eslint-disable-next-line react-hooks/static-components -- The helper only selects module-level icon components. */}
-      {children ?? <IconComponent className="size-5" />}
+      {children ?? <CodexIcon src={attachmentFileIcon(filename ?? "", mimeType ?? "")} className="size-5" />}
     </span>
   );
 }
@@ -257,7 +227,7 @@ const FileImpl: FileMessagePartComponent = ({
 
   return (
     <FileRoot>
-      <FileIconDisplay mimeType={mimeType} />
+      <FileIconDisplay mimeType={mimeType} filename={filename} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <FileName>{filename}</FileName>
         {showSize && (
@@ -302,7 +272,6 @@ export {
   FileSize,
   FileDownload,
   fileVariants,
-  getMimeTypeIcon,
   getFileDataKind,
   getBase64Size,
   formatFileSize,

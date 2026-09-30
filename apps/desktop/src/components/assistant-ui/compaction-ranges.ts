@@ -1,4 +1,4 @@
-import type { AssistantPartRange } from "./assistant-part-ranges";
+import { assistantRangeSections, type AssistantPartRange } from "./assistant-part-ranges";
 
 export interface PositionedCompaction {
   id: string;
@@ -40,4 +40,26 @@ export function compactionRangeSegments(ranges: readonly AssistantPartRange[], m
   }
   segments.push({ ranges: remaining });
   return segments;
+}
+
+/** Restore markers to the part stream so the execution disclosure owns their position. */
+export function positionedAssistantRanges(ranges: readonly AssistantPartRange[], markers: readonly PositionedCompaction[]): AssistantPartRange[] {
+  return compactionRangeSegments(ranges, markers).flatMap((segment) => segment.marker
+    ? [...segment.ranges, { type: "compaction" as const, index: segment.marker.partIndex, marker: segment.marker }]
+    : segment.ranges);
+}
+
+/** Compaction markers split the view, but disclosure and elapsed status belong to the whole reply. */
+export function executionSegmentLayout(segments: ReturnType<typeof compactionRangeSegments>) {
+  const groups = segments.map((segment) => assistantRangeSections(segment.ranges));
+  const firstActivitySegment = groups.findIndex((group) => group.activity.length > 0);
+  let lastActivitySegment = -1;
+  for (let index = 0; index < groups.length; index++) {
+    if (groups[index]?.activity.length) lastActivitySegment = index;
+  }
+  const firstActivityRange = groups.find((group) => group.activity.length > 0)?.activity[0];
+  const disclosureStartIndex = firstActivityRange && ("index" in firstActivityRange ? firstActivityRange.index : firstActivityRange.startIndex);
+  const answerSegment = groups.findIndex((group) => group.answer.length > 0);
+  const statusSegmentIndex = answerSegment > lastActivitySegment ? answerSegment : lastActivitySegment;
+  return { groups, firstActivitySegment, lastActivitySegment, statusSegmentIndex, disclosureStartIndex };
 }

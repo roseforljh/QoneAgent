@@ -20,6 +20,8 @@ export interface ChatMessage {
   id: string;
   role: string;
   content: string;
+  /** False until the runtime accepts this optimistic user turn. */
+  persisted?: boolean;
   parts?: AssistantMessagePart[];
   attachments?: MessageAttachmentInfo[];
   runId?: string;
@@ -602,13 +604,14 @@ export const useStore = create<AgentState>((set, get) => ({
       ? history.findIndex((item) => item.id === replaceFromMessageId && item.role === "user")
       : -1;
     if (replaceFromMessageId && replaceIndex < 0) return;
-    if (replaceFromMessageId) pendingMessageReplacements.set(sid, replaceFromMessageId);
+    const persistedReplaceId = replaceIndex >= 0 && history[replaceIndex]?.persisted !== false ? replaceFromMessageId : undefined;
+    if (persistedReplaceId) pendingMessageReplacements.set(sid, persistedReplaceId);
     const keptMessages = replaceIndex >= 0 ? history.slice(0, replaceIndex) : history;
     const keptRunIds = new Set(keptMessages.flatMap((item) => item.runId ? [item.runId] : []));
     const messageId = rid();
     clearDelta(sid);
     set((s) => ({
-      messages: [...keptMessages, { id: messageId, role: "user", content: message, attachments, goalId: goal ? "__pending_goal__" : undefined, createdAt: Date.now() }],
+      messages: [...keptMessages, { id: messageId, role: "user", content: message, persisted: false, attachments, goalId: goal ? "__pending_goal__" : undefined, createdAt: Date.now() }],
       compactions: replaceIndex >= 0 ? s.compactions.filter((marker) => keptMessages.some((item) => item.id === marker.throughMessageId)) : s.compactions,
       streaming: "",
       streamingParts: [],
@@ -640,8 +643,8 @@ export const useStore = create<AgentState>((set, get) => ({
     const requestId = rid();
     pendingAgentRuns.set(requestId, { requestId, sessionId: sid, userMessageId: messageId });
     get().send(goal
-      ? { type: "goal.start", requestId, sessionId: sid, objective: message, attachments, messageId, replaceFromMessageId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking }
-      : { type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId, queueItemId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking, mcpServerId: mcpCommand?.serverId });
+      ? { type: "goal.start", requestId, sessionId: sid, objective: message, attachments, messageId, replaceFromMessageId: persistedReplaceId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking }
+      : { type: "agent.run", requestId, sessionId: sid, message, attachments, messageId, replaceFromMessageId: persistedReplaceId, queueItemId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking, mcpServerId: mcpCommand?.serverId });
     if (history.length === 0) {
       const titleRequestId = rid();
       pendingTitleRequests.set(titleRequestId, sid);

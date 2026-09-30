@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AssistantRuntimeProvider, useExternalStoreRuntime, MessagePrimitive, ThreadPrimitive, type ThreadMessageLike } from "@assistant-ui/react";
 import { Reasoning } from "../src/components/assistant-ui/reasoning";
 import { AssistantParts } from "../src/components/assistant-ui/assistant-parts";
+import { assistantMessageContent } from "../src/lib/assistant-message-parts";
+import type { AssistantMessagePart } from "@qone/protocol";
 
 function Fixture({ running, complete, text = "**分析**视频", grouped = false }: { running: boolean; complete: boolean; text?: string; grouped?: boolean }) {
   const messages: ThreadMessageLike[] = [{
@@ -55,6 +57,14 @@ test("finished and interrupted messages keep their collapsed reasoning header", 
   }
 });
 
+test("reasoning disclosure chevron stays inside the interactive trigger", () => {
+  const html = renderToStaticMarkup(<Fixture running={false} complete />);
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain("q-reasoning-trigger");
+  expect(html).toContain("q-reasoning-chevron");
+  expect(html.indexOf("q-reasoning-trigger")).toBeLessThan(html.indexOf("q-reasoning-chevron"));
+});
+
 test("empty reasoning does not create a disclosure", () => {
   expect(renderToStaticMarkup(<Fixture running complete={false} text=" " />)).not.toContain('data-slot="reasoning"');
 });
@@ -76,4 +86,63 @@ test("completed reasoning folds with the outer execution region while the answer
     expect(html).not.toContain('data-slot="reasoning"');
     expect(html).toContain("最终答案");
   }
+});
+
+function PhaseFixture({ content, running = false }: { content: ThreadMessageLike["content"]; running?: boolean }) {
+  const messages: ThreadMessageLike[] = [{
+    id: "phase-test", role: "assistant", content,
+    status: running ? { type: "running" } : { type: "complete", reason: "stop" },
+  }];
+  const runtime = useExternalStoreRuntime({ messages, convertMessage: (message: ThreadMessageLike) => message, isRunning: running, onNew: async () => {} });
+  return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{
+    AssistantMessage: () => <MessagePrimitive.Root><AssistantParts /></MessagePrimitive.Root>,
+  }} /></AssistantRuntimeProvider>;
+}
+
+test("assistant-ui preserves the pending phase after a tool and does not expose the outer toggle", () => {
+  const parts: AssistantMessagePart[] = [
+    { type: "text", text: "先查", messageSequence: 1, phase: "commentary" },
+    { type: "tool-call", toolName: "read", toolCallId: "phase-read", args: {}, result: "ok", messageSequence: 1 },
+  ];
+  const content = assistantMessageContent({ content: "继续分析", parts }, [], true);
+  const html = renderToStaticMarkup(<PhaseFixture content={content} running />);
+  expect(html).toContain('data-slot="assistant-execution"');
+  expect(html).toContain("先查");
+  expect(html).toContain("继续分析");
+  expect(html).not.toContain('aria-label="Expand or collapse execution details"');
+  expect(html.indexOf('border-b border-border/50 pb-2')).toBeLessThan(html.indexOf("先查"));
+});
+
+test("a completed process without a final answer keeps its status after the activity", () => {
+  const parts: AssistantMessagePart[] = [
+    { type: "text", text: "处理过程", messageSequence: 1, phase: "commentary" },
+    { type: "tool-call", toolName: "read", toolCallId: "completed-read", args: {}, result: "ok", messageSequence: 1 },
+  ];
+  const html = renderToStaticMarkup(<PhaseFixture content={assistantMessageContent({ content: "", parts }, [], false)} />);
+  expect(html.indexOf("处理过程")).toBeLessThan(html.indexOf('border-b border-border/50 pb-2'));
+});
+
+test("the execution divider follows commentary and precedes the final answer", () => {
+  const parts: AssistantMessagePart[] = [
+    { type: "text", text: "正在检查", messageSequence: 1, phase: "commentary" },
+    { type: "tool-call", toolName: "read", toolCallId: "final-read", args: {}, result: "ok", messageSequence: 1 },
+    { type: "text", text: "检查完成", messageSequence: 2, phase: "final_answer" },
+  ];
+  const html = renderToStaticMarkup(<PhaseFixture content={assistantMessageContent({ content: "检查完成", parts }, [], false)} />);
+  expect(html).toContain('aria-label="Expand or collapse execution details"');
+  expect(html.indexOf('border-b border-border/50 pb-2')).toBeLessThan(html.indexOf("检查完成"));
+  expect(html).not.toContain("正在检查");
+});
+
+test("opening execution reveals its content below the toggle", () => {
+  const parts: AssistantMessagePart[] = [
+    { type: "text", text: "展开后的过程", messageSequence: 1, phase: "commentary" },
+    { type: "tool-call", toolName: "read", toolCallId: "expand-read", args: {}, messageSequence: 1 },
+    { type: "text", text: "展开后的答案", messageSequence: 2, phase: "final_answer" },
+  ];
+  const html = renderToStaticMarkup(<PhaseFixture content={assistantMessageContent({ content: "展开后的答案", parts }, [], false)} running />);
+  const toggleIndex = html.indexOf('aria-label="Expand or collapse execution details"');
+  expect(toggleIndex).toBeGreaterThan(-1);
+  expect(toggleIndex).toBeLessThan(html.indexOf("展开后的过程"));
+  expect(html.indexOf("展开后的过程")).toBeLessThan(html.indexOf("展开后的答案"));
 });

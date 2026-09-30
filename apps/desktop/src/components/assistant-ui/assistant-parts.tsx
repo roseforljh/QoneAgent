@@ -2,7 +2,7 @@ import { Fragment, useMemo, type FC } from "react";
 import { MessagePrimitive, useAuiState, type PartState } from "@assistant-ui/react";
 import { MarkdownText } from "./markdown-text";
 import { GenerativeUIPresentation, SessionTimeline } from "./session-timeline";
-import { assistantRangeSections, hasVisibleAnswer, visibleAssistantPartRanges, type AssistantPartRange } from "./assistant-part-ranges";
+import { assistantRangeSections, executionDisplayBlocks, hasVisibleAnswer, visibleAssistantPartRanges, type AssistantPartRange } from "./assistant-part-ranges";
 import { AssistantExecution } from "./assistant-execution";
 import { RunFileChangesAttachment } from "./run-file-changes-attachment";
 import { Image } from "./elements/image";
@@ -12,7 +12,7 @@ import { useStore } from "../../store";
 import { SubagentCapsule } from "./subagent-view";
 import { Reasoning } from "./reasoning";
 import { ContextCompactionMarker } from "./context-compaction-marker";
-import { compactionDisplayIndex, compactionRangeSegments, type PositionedCompaction } from "./compaction-ranges";
+import { compactionDisplayIndex, positionedAssistantRanges, type PositionedCompaction } from "./compaction-ranges";
 
 function regenerateCurrentTurn(messageId: string): void {
   const state = useStore.getState();
@@ -47,25 +47,28 @@ const PendingImageGeneration: FC = () => {
 export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsule?: boolean }> = ({ hideSubagentCalls = false, showSubagentCapsule = false }) => {
   const parts = useAuiState((state) => state.message.parts);
   const hasImage = parts.some((part) => part.type === "image");
-  const hasDispatch = parts.some((part) => part.type === "tool-call" && part.toolName === "dispatch_subagent");
   const ranges = useMemo(() => visibleAssistantPartRanges(parts, hideSubagentCalls, showSubagentCapsule), [hideSubagentCalls, parts, showSubagentCapsule]);
-  const sections = useMemo(() => assistantRangeSections(ranges), [ranges]);
   const messageId = useAuiState((state) => state.message.id);
+  const messageRunning = useAuiState((state) => state.message.status?.type === "running");
   const runId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
-  const isStreamingMessage = messageId === "streaming";
-  const streamingText = useStore((state) => isStreamingMessage ? state.streaming : "");
-  const toolCalls = useStore((state) => state.toolCalls);
-  const hasActiveTools = toolCalls.some((call) => call.runId === runId && (call.status === "running" || call.status === "waiting"));
-  const streamingAnswerStarted = isStreamingMessage && Boolean(streamingText.trim()) && !hasActiveTools;
-  const finalAnswerStarted = hasVisibleAnswer(parts, sections.answer) || streamingAnswerStarted;
+  const runStatus = useStore((state) => state.runs.find((run) => run.id === runId)?.status);
   const compactions = useStore((state) => state.compactions);
   const pending = useStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
-  const segments = useMemo(() => {
+  const positionedRanges = useMemo(() => {
     const markers: PositionedCompaction[] = compactions.flatMap((marker) => marker.runId === runId && marker.partIndex !== undefined
       ? [{ ...marker, partIndex: marker.partIndex, startedAt: marker.createdAt }] : []);
     if (pending?.runId === runId && pending?.partIndex !== undefined) markers.push({ ...pending, partIndex: pending.partIndex, status: "running", source: "automatic" });
-    return compactionRangeSegments(ranges, markers.map((marker) => ({ ...marker, partIndex: compactionDisplayIndex(parts, marker.partIndex) })));
+    return positionedAssistantRanges(ranges, markers.map((marker) => ({ ...marker, partIndex: compactionDisplayIndex(parts, marker.partIndex) })));
   }, [ranges, parts, compactions, pending, runId]);
+  const sections = useMemo(() => assistantRangeSections(positionedRanges), [positionedRanges]);
+  const displayBlocks = useMemo(() => executionDisplayBlocks(sections.process), [sections.process]);
+  const lastActivityBlockIndex = displayBlocks.reduce((last, block, index) => block.kind === "activity" ? index : last, -1);
+  const finalAnswerStarted = hasVisibleAnswer(parts, sections.answer);
+  const firstActivityRange = sections.activity[0];
+  const disclosureStartIndex = firstActivityRange && ("index" in firstActivityRange ? firstActivityRange.index : firstActivityRange.startIndex);
+  const statusAtStart = finalAnswerStarted && runStatus !== "cancelled" && runStatus !== "interrupted"
+    || runStatus === "created" || runStatus === "running" || runStatus === "paused" || runStatus === "waiting_approval"
+    || !runStatus && messageRunning;
 
   const renderRange = (range: AssistantPartRange) => {
     if (range.type === "reasoning") return <MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />;
@@ -75,7 +78,11 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
       </div>
     );
     if (range.type === "image") return <MessagePrimitive.PartByIndex key={`image-${range.index}`} index={range.index} components={{ Image }} />;
-    if (range.type === "subagents") return <SubagentCapsule key={`subagents-${range.index}`} />;
+    if (range.type === "subagents") {
+      const part = parts[range.index];
+      return part?.type === "tool-call" ? <SubagentCapsule key={`subagents-${range.index}`} toolCallId={part.toolCallId} /> : null;
+    }
+    if (range.type === "compaction") return <ContextCompactionMarker key={range.marker.id} {...range.marker} />;
     if (range.type === "images") {
       const imageParts = parts.slice(range.startIndex, range.endIndex).filter((part): part is VisibleImagePart => part.type === "image");
       return <AssistantImageGallery key={`images-${range.startIndex}`} parts={imageParts} />;
@@ -86,21 +93,13 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
 
   return <>
     {!hasImage && <PendingImageGeneration />}
-    {showSubagentCapsule && !hasDispatch && <SubagentCapsule />}
-    {segments.map((segment) => {
-      const group = assistantRangeSections(segment.ranges);
-      return <Fragment key={segment.marker?.id ?? "tail"}>
-        {group.leading.map(renderRange)}
-        {group.activity.length > 0 && (
-          <AssistantExecution ranges={group.activity} finalAnswerStarted={finalAnswerStarted}>
-            {group.activity.map(renderRange)}
-          </AssistantExecution>
-        )}
-        {group.persistent.map(renderRange)}
-        {group.answer.map(renderRange)}
-        {segment.marker && <ContextCompactionMarker {...segment.marker} />}
-      </Fragment>;
-    })}
+    {sections.leading.map(renderRange)}
+    {displayBlocks.map((block, index) => block.kind === "persistent"
+      ? <Fragment key={`persistent-${index}`}>{block.ranges.map(renderRange)}</Fragment>
+      : <AssistantExecution key={`activity-${index}`} ranges={block.ranges} statusRanges={sections.activity} finalAnswerStarted={finalAnswerStarted} disclosureStartIndex={disclosureStartIndex} showStatus={index === (statusAtStart ? 0 : lastActivityBlockIndex)} statusAtStart={statusAtStart}>
+          {block.ranges.map(renderRange)}
+        </AssistantExecution>)}
+    {sections.answer.map(renderRange)}
     <RunFileChangesAttachment messageId={messageId} runId={runId} />
   </>;
 };

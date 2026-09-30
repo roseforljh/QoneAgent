@@ -13,10 +13,11 @@ import { Image } from "../src/components/assistant-ui/elements/image";
 import { Sources } from "../src/components/assistant-ui/elements/sources";
 import { StreamingText } from "../src/components/assistant-ui/elements/streaming-text";
 import { GenerativeUIBlock, GenerativeUISurface } from "../src/components/assistant-ui/generative-ui-block";
+import { DIRECTORY_MIME_TYPE } from "@qone/protocol";
 
 test("official assistant elements render their real data slots", () => {
   const render = (element: ReactElement) => renderToStaticMarkup(element);
-  expect(render(createElement(ToolError, { name: "read", target: "a.ts", message: "failed", retrying: false }))).toContain('data-slot="tool-error"');
+  expect(render(createElement(ToolError, { name: "read", target: "a.ts", message: "failed", retrying: false, open: false, onOpenChange: () => {} }))).toContain('data-slot="tool-error"');
   const codeRunner = render(createElement(CodeRunner, { language: "PowerShell", code: "Get-ChildItem", state: "ok", output: ["a.ts"] }));
   expect(codeRunner).toContain('data-slot="code-runner"');
   expect(codeRunner).toContain("max-h-[min(18rem,40dvh)]");
@@ -35,4 +36,30 @@ test("official assistant elements render their real data slots", () => {
   expect(streaming).not.toContain("w-0.5");
   expect(render(createElement(GenerativeUIBlock, { code: '{"$type":"Text","children":"result"}', language: "generative-ui" } as never))).toContain('data-slot="generative-ui-block"');
   expect(render(createElement(GenerativeUISurface, { spec: { $type: "Card", title: "Summary", children: [{ $type: "Text", children: "Ready" }] } }))).toContain("Ready");
+});
+
+test("failed tool cards expose the same disclosure state as other tool rows", () => {
+  const props = { name: "powershell", target: "Get-Content a.ts", message: "command failed", onOpenChange: () => {} };
+  const closed = renderToStaticMarkup(createElement(ToolError, { ...props, open: false }));
+  const open = renderToStaticMarkup(createElement(ToolError, { ...props, open: true }));
+  expect(closed).toContain('aria-expanded="false"');
+  expect(closed).not.toContain("command failed");
+  expect(open).toContain('aria-expanded="true"');
+  expect(open).toContain('data-slot="collapsible-content"');
+  expect(open).toContain("command failed");
+});
+
+test("folder attachment renders a folder icon without a download or fake size", () => {
+  const markup = renderToStaticMarkup(createElement(File, { type: "file", data: "", mimeType: DIRECTORY_MIME_TYPE, filename: "source" } as never));
+  expect(markup).toContain('data-slot="codex-icon"');
+  expect(markup).toContain("source");
+  expect(markup).not.toContain('data-slot="file-download"');
+  expect(markup).not.toContain('data-slot="file-size"');
+});
+
+test("sent PDF and spreadsheet attachments use their own Codex icons", () => {
+  const pdf = renderToStaticMarkup(createElement(File, { type: "file", data: "", mimeType: "application/pdf", filename: "report.pdf" } as never));
+  const sheet = renderToStaticMarkup(createElement(File, { type: "file", data: "", mimeType: "application/octet-stream", filename: "sales.xlsx" } as never));
+  expect(pdf).toContain("document-pdf-light-20.svg");
+  expect(sheet).toContain("spreadsheet-light-16.svg");
 });

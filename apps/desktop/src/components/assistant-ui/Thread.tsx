@@ -31,7 +31,7 @@ import "./composer-queue.css";
 import { useStore } from "../../store";
 import { getThreadScrollState, pruneThreadScrollStates } from "../../lib/thread-scroll-state";
 import { useLocale } from "../../localization";
-import { pickNativeAttachmentFiles, useNativeFileDrop } from "../../lib/native-file-drop";
+import { pickNativeAttachmentFiles, pickNativeAttachmentFolder, useNativeFileDrop } from "../../lib/native-file-drop";
 import { hasTauriBridge } from "../../store";
 import { fileFromDataUrl, getQoneMessageQueue } from "../../lib/qone-message-queue";
 import { createNativeAttachmentFile } from "../../lib/native-attachment-file";
@@ -155,7 +155,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           turnAnchor="top"
           scrollRestoration={getThreadScrollState(currentSessionId)}
           scrollToBottomOnInitialize={false}
-          scrollToBottomOnRunStart={true}
+          scrollToBottomOnRunStart={false}
           scrollToBottomOnThreadSwitch={false}
           className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto"
         >
@@ -383,6 +383,9 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
       });
       else shellRef.current?.querySelector<HTMLButtonElement>(".aui-composer-add-attachment")?.click();
     }
+    else if (tool.id === "folder") void pickNativeAttachmentFolder().then(onNativeFiles).catch((error) => {
+      useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
+    });
     else if (tool.id === "compact") compactSession();
     else insertToolRef.current?.({ id: tool.id, label: tool.label });
   }, [compactSession, onNativeFiles]);
@@ -428,7 +431,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
               void aui.composer().clearAttachments().then(async () => {
                 for (const attachment of item.attachments ?? []) {
                   if (attachment.localPath) {
-                    await aui.composer().addAttachment(createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0));
+                    await aui.composer().addAttachment(createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0, attachment.type === "folder"));
                   } else {
                     await aui.composer().addAttachment({
                       id: crypto.randomUUID(),
@@ -635,10 +638,10 @@ const PairUserAttachments: FC = () => {
   if (!hasAttachments) return null;
 
   return (
-    <div className="q-message-user-attachments flex w-fit max-w-[75%] min-w-0 flex-nowrap items-end gap-2 self-end overflow-x-auto overscroll-x-contain pb-1">
+    <div className="q-message-user-attachments flex w-fit max-w-[75%] min-w-0 flex-wrap items-end justify-end gap-2 self-end">
       <MessagePrimitive.Parts>
         {({ part }) => {
-          if (part.type === "file") return <div className="shrink-0"><File {...part} /></div>;
+          if (part.type === "file") return <div className="w-48 max-w-full min-w-0"><File {...part} /></div>;
           if (part.type === "image") return <UserImageThumbnail {...part} />;
           return null;
         }}

@@ -11,6 +11,7 @@ import { cn } from "../../../lib/utils";
 import { MeasuredCollapse } from "./measured-collapse";
 import {
   FadeScroll,
+  detailViewport,
   mono,
   regionViewport,
   ShimmerLabel,
@@ -28,6 +29,7 @@ export interface ToolCallProps {
   /** Kept for callers that still have the serialized arguments; it is not rendered. */
   request?: string;
   result: ReactNode;
+  resultHasOwnFrame?: boolean;
   running: boolean;
   pending?: boolean;
   waiting?: boolean;
@@ -47,6 +49,7 @@ export function ToolCall({
   fullTarget,
   stat,
   result,
+  resultHasOwnFrame = false,
   running,
   pending = false,
   waiting = false,
@@ -97,8 +100,8 @@ export function ToolCall({
         )}
       </CollapsibleTrigger>
       <MeasuredCollapse id={panelId} open={open} className="outline-none">
-        <div data-slot="tool-result-panel" className="mt-1.5 overflow-hidden rounded-lg border border-border/40 bg-muted/20 dark:bg-muted/10 shadow-xs">
-          <FadeScroll className={cn(regionViewport, "p-2.5")}>{result}</FadeScroll>
+        <div data-slot="tool-result-panel" className={cn("mt-1.5", !resultHasOwnFrame && "overflow-hidden rounded-lg border border-border/40 bg-muted/20 dark:bg-muted/10 shadow-xs")}>
+          <FadeScroll className={cn(failed ? detailViewport : regionViewport, resultHasOwnFrame ? "pe-2" : "p-2.5")}>{result}</FadeScroll>
         </div>
       </MeasuredCollapse>
     </Collapsible>

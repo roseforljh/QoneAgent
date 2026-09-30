@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { getThreadScrollState, pruneThreadScrollStates } from "../src/lib/thread-scroll-state";
+import { shouldFollowThreadContent, userMessageRevealScrollTop } from "../src/components/assistant-ui/thread-scroll-follower";
 
 class ElementStub {
   scrollTop = 0;
@@ -32,41 +33,25 @@ test("scroll restoration remembers and restores scroll position per session", ()
   expect(getThreadScrollState("session-b")?.current?.scrollTop).toBe(720);
 });
 
-test("respects user message top-anchoring initially and follows bottom only when content overflows", () => {
+test("new turn stays at its user bubble while content grows, then follows after explicit bottom navigation", () => {
   const viewport = new ElementStub();
-  let isFollowingBottom = true;
-
-  // Case 1: New user message sent and anchored at top.
-  // Content height is small (within visible viewport).
   const availableBottom = 500;
-  let contentBottom = 320; // 320 < 500, within visible bounds
+  expect(shouldFollowThreadContent(true, true, true, 680, availableBottom)).toBe(false);
+  expect(shouldFollowThreadContent(true, false, true, 680, availableBottom)).toBe(false);
+  expect(viewport.calls).toHaveLength(0);
 
-  const checkAndFollow = () => {
-    if (contentBottom > availableBottom + 8 && isFollowingBottom) {
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "instant" });
-    }
-  };
-
-  // Content is within viewport: should NOT scroll to bottom, preserving top anchoring!
-  checkAndFollow();
-  expect(viewport.calls.length).toBe(0);
-  expect(viewport.scrollTop).toBe(0);
-
-  // Case 2: Tools generate, collapsible sections expand, content grows past available bottom
-  contentBottom = 680; // 680 > 500 + 8: now overflowing!
+  expect(shouldFollowThreadContent(true, true, false, 320, availableBottom)).toBe(false);
+  expect(shouldFollowThreadContent(true, true, false, 680, availableBottom)).toBe(true);
   viewport.scrollHeight = 1200;
-  checkAndFollow();
+  viewport.scrollTo({ top: viewport.scrollHeight, behavior: "instant" });
+  expect(viewport.scrollTop).toBe(800);
+  expect(shouldFollowThreadContent(true, false, false, 800, availableBottom)).toBe(false);
+  expect(shouldFollowThreadContent(false, true, false, 800, availableBottom)).toBe(false);
+});
 
-  // Now that content overflows the visible area, it automatically scrolls to follow!
-  expect(viewport.calls.length).toBe(1);
-  expect(viewport.scrollTop).toBe(800); // 1200 - 400
-
-  // Case 3: User scrolls up to view top-anchored question
-  isFollowingBottom = false;
-  contentBottom = 800;
-  viewport.scrollHeight = 1400;
-  checkAndFollow();
-
-  // When user is reading history, follow is paused
-  expect(viewport.calls.length).toBe(1);
+test("a newly sent user message is revealed above the composer in a narrowed chat", () => {
+  expect(userMessageRevealScrollTop(700, 480, 540, 100, 450)).toBe(790);
+  expect(userMessageRevealScrollTop(700, 280, 340, 100, 450)).toBeNull();
+  expect(userMessageRevealScrollTop(700, 40, 90, 100, 450)).toBe(640);
+  expect(userMessageRevealScrollTop(700, 480, 900, 100, 450)).toBe(1080);
 });

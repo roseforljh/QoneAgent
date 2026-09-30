@@ -3,6 +3,7 @@ import textSelect from "../../assets/codex-icons/text-select-light-16.svg";
 import documentText from "../../assets/codex-icons/document-text-light-16.svg";
 import target from "../../assets/codex-icons/target-light-16.svg";
 import plus from "../../assets/codex-icons/plus-md-light-16.svg";
+import folder from "../../assets/codex-icons/folder-light-16.svg";
 
 type CodexIconProps = HTMLAttributes<HTMLSpanElement> & { src: string };
 
@@ -44,4 +45,8 @@ export function CodexTargetIcon(props: Omit<CodexIconProps, "src">) {
 
 export function CodexPlusIcon(props: Omit<CodexIconProps, "src">) {
   return <CodexIcon src={plus} {...props} />;
+}
+
+export function CodexFolderIcon(props: Omit<CodexIconProps, "src">) {
+  return <CodexIcon src={folder} {...props} />;
 }

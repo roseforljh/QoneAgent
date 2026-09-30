@@ -3,6 +3,7 @@ import { translate } from "../../localization";
 import { formatDuration } from "../../lib/utils";
 import type { ToolCall } from "../../store";
 import { toolCallStatus } from "./tool-call-display";
+import { isCommandTool } from "./tool-activity-category";
 
 type ToolActionPart = {
   toolName: string;
@@ -12,11 +13,7 @@ type ToolActionPart = {
   status?: { type: string };
 };
 
-const COMMAND_TOOL_NAMES = new Set(["bash", "powershell", "shell", "sh", "exec", "run", "run_command"]);
-
-export function isCommandTool(part: Pick<ToolActionPart, "toolName">): boolean {
-  return COMMAND_TOOL_NAMES.has(part.toolName.toLowerCase());
-}
+export { isCommandTool } from "./tool-activity-category";
 
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
