@@ -28,8 +28,8 @@ export function CodeRunner({
   durationMs?: number;
   onRun?: () => void;
 }) {
-  return (
   const { t } = useLocale();
+  return (
     <div
       data-slot="code-runner"
       className={cn(
