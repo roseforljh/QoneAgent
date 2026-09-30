@@ -44,21 +44,20 @@ export function MessagePair({
 }: MessagePairProps) {
   const shown = take(words, visibleWords);
   const userSurfaceClass = cn(
-    "min-w-0 max-w-[70%] self-end break-words text-start",
+    "min-w-0 max-w-[75%] self-end break-words text-start",
     variant === "bubble"
-      ? "rounded-[22px] bg-foreground/[0.05] px-4 py-2.5 text-foreground text-sm leading-[1.5]"
+      ? "rounded-2xl bg-foreground/[0.05] dark:bg-foreground/[0.07] px-4 py-2.5 text-foreground text-[14.5px] leading-relaxed shadow-xs"
       : "text-foreground/90 text-end",
   );
 
   return (
     <div
       data-slot="message-pair"
-      className={cn("flex w-full max-w-sm flex-col gap-5", className)}
-
+      className={cn("flex w-full flex-col gap-4", className)}
       {...props}
     >
       {showUser && (
-        <div className="group/user flex flex-col items-end">
+        <div className="group/user flex w-full flex-col items-end gap-1">
           {userAttachmentContent}
           {userContent ? (
             userContentIsSurface ? userContent : <div className={userSurfaceClass}>{userContent}</div>
@@ -66,16 +65,16 @@ export function MessagePair({
             <p className={userSurfaceClass}>{userMessage}</p>
           )}
           {userActions && (
-            <div className="pointer-events-none flex items-center gap-1 pt-1 opacity-0 transition-opacity group-focus-within/user:pointer-events-auto group-focus-within/user:opacity-100 group-hover/user:pointer-events-auto group-hover/user:opacity-100 motion-reduce:transition-none">
+            <div className="pointer-events-none flex items-center gap-1 pt-0.5 opacity-0 transition-opacity duration-150 group-focus-within/user:pointer-events-auto group-focus-within/user:opacity-100 group-hover/user:pointer-events-auto group-hover/user:opacity-100 motion-reduce:transition-none">
               {userActions}
             </div>
           )}
         </div>
       )}
       {betweenContent}
-      <div className="group/message flex flex-col items-start">
+      <div className="group/message flex w-full flex-col items-start">
         {assistantContent ?? (
-          <p className="min-h-[4.25rem] text-sm leading-relaxed">
+          <p className="min-h-[4.25rem] text-[15px] leading-[1.7]">
             {shown.map((word, index) => {
               const fresh = streaming && shown.length - 1 - index < 2;
 
@@ -97,7 +96,7 @@ export function MessagePair({
             })}
           </p>
         )}
-        <div className="pointer-events-none flex items-center gap-1 pt-1 opacity-0 transition-opacity group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 group-hover/message:pointer-events-auto group-hover/message:opacity-100 motion-reduce:transition-none">
+        <div className="pointer-events-none flex items-center gap-1 pt-1.5 opacity-0 transition-opacity duration-200 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 group-hover/message:pointer-events-auto group-hover/message:opacity-100 motion-reduce:transition-none">
           {actions ?? (
             <>
               <button

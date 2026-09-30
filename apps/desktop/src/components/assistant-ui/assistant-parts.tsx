@@ -49,9 +49,14 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
   const hasDispatch = parts.some((part) => part.type === "tool-call" && part.toolName === "dispatch_subagent");
   const ranges = useMemo(() => visibleAssistantPartRanges(parts, hideSubagentCalls, showSubagentCapsule), [hideSubagentCalls, parts, showSubagentCapsule]);
   const sections = useMemo(() => assistantRangeSections(ranges), [ranges]);
-  const finalAnswerStarted = hasVisibleAnswer(parts, sections.answer);
   const messageId = useAuiState((state) => state.message.id);
   const runId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
+  const isStreamingMessage = messageId === "streaming";
+  const streamingText = useStore((state) => isStreamingMessage ? state.streaming : "");
+  const toolCalls = useStore((state) => state.toolCalls);
+  const hasActiveTools = toolCalls.some((call) => call.runId === runId && (call.status === "running" || call.status === "waiting"));
+  const streamingAnswerStarted = isStreamingMessage && Boolean(streamingText.trim()) && !hasActiveTools;
+  const finalAnswerStarted = hasVisibleAnswer(parts, sections.answer) || streamingAnswerStarted;
   const compactions = useStore((state) => state.compactions);
   const pending = useStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
   const segments = useMemo(() => {

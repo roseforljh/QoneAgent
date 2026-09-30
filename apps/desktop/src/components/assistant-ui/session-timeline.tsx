@@ -10,7 +10,7 @@ import { ToolError } from "./elements/tool-error";
 import { ToolResultView } from "./elements/tool-result";
 import { formatToolPayload, toolActivity } from "./tool-call-display";
 import { detectToolPreview } from "./tool-preview";
-import { toolActionSummary, toolTarget } from "./tool-action-summary";
+import { toolActionSummary, toolFullTarget, toolTarget } from "./tool-action-summary";
 import { detectToolPresentation, toolDiffStats, toolPresentationSummary } from "./tool-presentation";
 import { useLocale } from "../../localization";
 import { toolGroupSummary } from "./tool-group-summary";
@@ -18,7 +18,7 @@ import { useStore, type ToolCall as StoreToolCall } from "../../store";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
-type SessionTimelineStep = TimelineStep & { target: string };
+type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string };
 const GenerativeUISurface = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUISurface }));
 
 const TOOL_META: Record<string, ToolMeta> = {
@@ -42,8 +42,9 @@ function toStep(part: ToolPartState, locale: string, call?: StoreToolCall): Sess
   const meta = TOOL_META[part.toolName];
   const verb = meta?.verb[locale === "en" ? "en" : "zh"] ?? part.toolName;
   const target = toolTarget(part, call);
+  const fullTarget = toolFullTarget(part, call);
   const done = call?.status === "success" || (call === undefined && part.result !== undefined && !part.isError);
-  return { id: part.toolCallId, verb, target, chip: target, icon: meta?.icon ?? WrenchIcon, done };
+  return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: meta?.icon ?? WrenchIcon, done };
 }
 
 const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean }> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
@@ -89,6 +90,7 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
       label={status === "queued" || status === "waiting" ? activeLabel : locale === "en" ? part.toolName : step.verb}
       activeLabel={activeLabel}
       query={step.chip}
+      fullTarget={step.fullTarget}
       stat={stat && (stat.added > 0 || stat.removed > 0) ? stat : undefined}
       request={formatToolPayload(call?.argsText || part.argsText || part.args)}
       result={<>
@@ -169,9 +171,8 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
   }, [activeCall?.startedAt, activeCall?.status, activeCall?.toolCallId]);
 
   const regionOpen = messageRunning && endIndex === parts.length;
-  const summaryLabel = lastStep
-    ? toolActionSummary(lastPart!, lastStep, lastCall, false, now, locale)
-    : "";
+  const restingLabel = toolGroupSummary(steps, locale);
+  const summaryLabel = restingLabel;
   const activity = activePart ? toolActivity(activePart, activeCall, preparedIds.has(activePart.toolCallId), messageRunning) : undefined;
   const activeLabel = activePart && activeStep
     ? activity === "generating"
@@ -180,7 +181,6 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
         : activity === "waiting" ? `${t("chat.toolApprovalPending")} · ${activeStep.target}`
           : toolActionSummary(activePart, activeStep, activeCall, true, now, locale)
     : regionOpen ? summaryLabel : "";
-  const restingLabel = toolGroupSummary(steps, locale);
 
   if (steps.length === 0) return null;
 

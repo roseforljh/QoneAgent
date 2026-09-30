@@ -1,7 +1,7 @@
 import { CodexChevronRightIcon as ChevronRightIcon } from "./execution-icons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useAuiState, useScrollLock } from "@assistant-ui/react";
-import { useMemo, useRef, type FC, type ReactNode } from "react";
+import { useAuiState } from "@assistant-ui/react";
+import { useEffect, useMemo, useRef, type FC, type ReactNode } from "react";
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { useLocale } from "../../localization";
 import { formatDuration } from "../../lib/utils";
@@ -92,32 +92,43 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, finalA
   const disclosureKey = JSON.stringify([sessionId, runId ?? messageId, firstIndex]);
   const override = useExecutionDisclosureState((state) => state.overrides[disclosureKey]);
   const setCollapsed = useExecutionDisclosureState((state) => state.setCollapsed);
+
+  const hadAnswerRef = useRef(false);
+  useEffect(() => {
+    if (finalAnswerStarted) {
+      if (!hadAnswerRef.current) {
+        hadAnswerRef.current = true;
+        setCollapsed(disclosureKey, true);
+      }
+    } else {
+      hadAnswerRef.current = false;
+    }
+  }, [finalAnswerStarted, disclosureKey, setCollapsed]);
+
   const collapsed = executionCollapsed(override, finalAnswerStarted, activitySettled || !messageRunning, run?.status === "cancelled" || run?.status === "interrupted");
   const visibleOpen = !collapsed;
   const disclosureRef = useRef<HTMLDivElement>(null);
-  const lockScroll = useScrollLock(disclosureRef, reduceMotion ? 0 : 240);
 
   return (
-    <div data-slot="assistant-execution" className="q-assistant-execution w-full pb-2">
-      <Collapsible ref={disclosureRef} open={visibleOpen} onOpenChange={(nextOpen) => { lockScroll(); setCollapsed(disclosureKey, !nextOpen); }} className="w-full">
+    <div data-slot="assistant-execution" className="q-assistant-execution w-full py-1">
+      <Collapsible ref={disclosureRef} open={visibleOpen} onOpenChange={(nextOpen) => { setCollapsed(disclosureKey, !nextOpen); }} className="w-full">
         <CollapsibleTrigger
           aria-label={t("chat.executionToggle")}
-          className="group/execution-trigger text-foreground/55 hover:text-foreground/90 flex w-full items-center gap-1.5 rounded-md py-1 text-start text-[13.5px] tabular-nums transition-colors outline-none"
+          className="group/execution-trigger text-muted-foreground/75 hover:text-foreground inline-flex items-center gap-1.5 py-0.5 text-start text-[13px] font-medium tabular-nums transition-colors outline-none bg-transparent"
         >
-          <span>{executionLabel}{finishing && <span className="q-execution-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>}</span>
-          <ChevronRightIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 group-data-[state=open]/execution-trigger:rotate-90 motion-reduce:transition-none" />
+          <span>{executionLabel}{finishing && <span className="q-execution-dots text-primary/70" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>}</span>
+          <ChevronRightIcon className="size-3.5 shrink-0 opacity-50 transition-transform duration-200 group-data-[state=open]/execution-trigger:rotate-90 group-hover/execution-trigger:opacity-80 motion-reduce:transition-none" />
         </CollapsibleTrigger>
-        <div className="pt-1"><div className="border-t border-border/60" /></div>
         <AnimatePresence initial={false}>
           {visibleOpen && (
             <motion.div
-              initial={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -8 }}
+              initial={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6 }}
               animate={{ height: "auto", opacity: 1, y: 0 }}
-              exit={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -8, transition: { duration: reduceMotion ? 0 : 0.15 } }}
-              transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.32, 0.72, 0, 1] }}
+              exit={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6, transition: { duration: reduceMotion ? 0 : 0.15 } }}
+              transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.32, 0.72, 0, 1] }}
               className="overflow-hidden outline-none"
             >
-              <div className="flex flex-col gap-1 pt-2">{children}</div>
+              <div className="flex flex-col gap-1.5 pt-2 pb-1 pl-2.5 ml-1.5 border-l border-border/40 dark:border-border/30">{children}</div>
             </motion.div>
           )}
         </AnimatePresence>
