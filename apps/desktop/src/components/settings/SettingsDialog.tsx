@@ -42,7 +42,7 @@ import {
 import { useStore } from "../../store";
 import { cn } from "../../lib/utils";
 import { confirmDestructiveAction, getConfirmationRequest } from "../../lib/confirm-action";
-import { GENERAL_SETTINGS_KEY, readGeneralSettings, saveLanguageSetting, useLocale, type LanguageSetting, type LocalizedMessage, type MessageKey } from "../../localization";
+import { saveLanguageSetting, useLocale, type LanguageSetting, type LocalizedMessage, type MessageKey } from "../../localization";
 import mcpLogo from "@lobehub/icons-static-svg/icons/mcp.svg";
 import cloudflareLogo from "@lobehub/icons-static-svg/icons/cloudflare-color.svg";
 import notionLogo from "@lobehub/icons-static-svg/icons/notion.svg";
@@ -64,11 +64,11 @@ import { SkillCloudDialog } from "./SkillCloudDialog";
 import { SkillCreateDialog } from "./SkillCreateDialog";
 import { SubagentRuntimeSettings } from "./SubagentRuntimeSettings";
 import { SubagentTemporarySettings } from "./SubagentTemporarySettings";
+import { AppearanceOptions } from "./AppearanceOptions";
 import { normalizeSubagentLogos, SubagentLogo } from "./subagent-logo";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import "./model-layout.css";
 
-type Theme = "light" | "dark";
 type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents" | "compaction";
 
 type SettingsSection = {
@@ -92,22 +92,6 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
 ];
 
 const DEFAULT_ORDER = SETTINGS_SECTIONS.map((section) => section.id);
-
-type GeneralSettings = { contrast: "enhanced" | "default" | "reduced"; accent: "purple" | "blue" | "green" };
-const DEFAULT_GENERAL_SETTINGS: GeneralSettings = { contrast: "default", accent: "purple" };
-
-function loadGeneralSettings(): GeneralSettings {
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(GENERAL_SETTINGS_KEY) ?? "null") as Partial<GeneralSettings> | null;
-    return { ...DEFAULT_GENERAL_SETTINGS, ...(saved ?? {}) };
-  } catch { return DEFAULT_GENERAL_SETTINGS; }
-}
-
-function saveGeneralSettings(settings: GeneralSettings) {
-  window.localStorage.setItem(GENERAL_SETTINGS_KEY, JSON.stringify({ ...readGeneralSettings(), contrast: settings.contrast, accent: settings.accent }));
-  document.documentElement.dataset.contrast = settings.contrast;
-  document.documentElement.dataset.accent = settings.accent;
-}
 
 function loadSectionOrder(): SettingsSectionId[] {
   try {
@@ -195,13 +179,10 @@ function SettingsSelect({ value, options, onChange, prefix }: { value: string; o
   return <QoneSelect value={value} options={options} onChange={onChange} prefix={prefix} className="settings-select-wrap" triggerClassName="settings-value-button" menuClassName="settings-dropdown" align="end" ariaLabel={t("accessibility.option")} />;
 }
 
-function GeneralSection({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: () => void }) {
+function GeneralSection() {
   const { t, languageSetting } = useLocale();
   const [updateStatus, setUpdateStatus] = useState<LocalizedMessage | null>(null);
   const [checking, setChecking] = useState(false);
-  const [settings, setSettings] = useState<GeneralSettings>(loadGeneralSettings);
-  const { contrast, accent } = settings;
-  useEffect(() => { saveGeneralSettings(settings); }, [settings]);
 
   const checkForUpdates = async () => {
     setChecking(true);
@@ -226,18 +207,7 @@ function GeneralSection({ theme, onToggleTheme }: { theme: Theme; onToggleTheme:
     <>
       <SectionHeader eyebrow={t("general.eyebrow")} title={t("general.title")}>{t("general.description")}</SectionHeader>
       <div className="settings-general-options">
-        <div className="settings-option-row">
-          <strong>{t("general.appearance")}</strong>
-          <SettingsSelect value={theme} onChange={(value) => { if (value !== theme) onToggleTheme(); }} options={[{ value: "light", label: t("general.light") }, { value: "dark", label: t("general.dark") }]} />
-        </div>
-        <div className="settings-option-row">
-          <strong>{t("general.contrast")}</strong>
-          <SettingsSelect value={contrast} onChange={(value) => setSettings((current) => ({ ...current, contrast: value as GeneralSettings["contrast"] }))} options={[{ value: "enhanced", label: t("general.enhanced"), description: t("general.enhancedDescription") }, { value: "default", label: t("general.default") }, { value: "reduced", label: t("general.reduced"), description: t("general.reducedDescription") }]} />
-        </div>
-        <div className="settings-option-row">
-          <strong>{t("general.accent")}</strong>
-          <SettingsSelect value={accent} onChange={(value) => setSettings((current) => ({ ...current, accent: value as GeneralSettings["accent"] }))} prefix={<i className={cn("settings-accent-dot", `is-${accent}`)} />} options={[{ value: "purple", label: t("general.purple") }, { value: "blue", label: t("general.blue") }, { value: "green", label: t("general.green") }]} />
-        </div>
+        <AppearanceOptions />
         <div className="settings-option-row">
           <strong>{t("general.language")}</strong>
           <SettingsSelect value={languageSetting} onChange={(value) => saveLanguageSetting(value as LanguageSetting)} options={[{ value: "auto", label: t("general.auto") }, { value: "zh-CN", label: t("general.chinese") }, { value: "en", label: "English" }]} />
@@ -1504,9 +1474,9 @@ function SkillsSection() {
   );
 }
 
-function SectionContent({ activeSection, theme, onToggleTheme }: { activeSection: SettingsSectionId; theme: Theme; onToggleTheme: () => void }) {
+function SectionContent({ activeSection }: { activeSection: SettingsSectionId }) {
   switch (activeSection) {
-    case "general": return <GeneralSection theme={theme} onToggleTheme={onToggleTheme} />;
+    case "general": return <GeneralSection />;
     case "personalization": return <PersonalizationSection />;
     case "configuration": return <ConfigurationSection />;
     case "models": return <ModelsSection />;
@@ -1517,7 +1487,7 @@ function SectionContent({ activeSection, theme, onToggleTheme }: { activeSection
   }
 }
 
-export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: boolean; onClose: () => void; theme: Theme; onToggleTheme: () => void }) {
+export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useLocale();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general");
   const [sectionOrder, setSectionOrder] = useState<SettingsSectionId[]>(loadSectionOrder);
@@ -1724,7 +1694,7 @@ export function SettingsDialog({ open, onClose, theme, onToggleTheme }: { open: 
             <main className="settings-dialog-content" aria-live="polite">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div key={activeSection} className="settings-dialog-section" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -5 }} transition={{ duration: 0.14 }}>
-                  <SectionContent activeSection={activeSection} theme={theme} onToggleTheme={onToggleTheme} />
+                  <SectionContent activeSection={activeSection} />
                 </motion.div>
               </AnimatePresence>
             </main>

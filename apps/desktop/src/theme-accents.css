@@ -1,0 +1,23 @@
+/* Base and selected accent tokens live together so import order cannot reset them. */
+:root {
+  --primary: #171717;
+  --primary-foreground: #fafafa;
+  --ring: #a1a1a1;
+}
+:root[data-theme="dark"] {
+  --primary: #fafafa;
+  --primary-foreground: #171717;
+  --ring: #737373;
+}
+
+.settings-accent-dot { background: var(--q-accent-color, var(--foreground)); }
+.settings-accent-menu .qone-select-option { min-height: 28px; padding: 3px 9px; line-height: 18px; }
+.settings-accent-menu .settings-accent-dot { flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--q-border); }
+::selection { background: var(--q-selection); }
+.settings-contrast-control { display: flex; width: min(260px, 55%); align-items: center; gap: 12px; }
+.settings-contrast-control .qone-slider { min-width: 60px; flex: 1; }
+.settings-contrast-control output { min-width: 24px; text-align: end; }
+.settings-contrast-control button:disabled { color: var(--q-subtle); cursor: default; }
+.settings-accent-control { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.settings-accent-control input[type="color"] { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: transparent; cursor: pointer; }
+.settings-accent-control input[type="text"] { width: 74px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); color: var(--foreground); font: 12px var(--q-font-mono); }

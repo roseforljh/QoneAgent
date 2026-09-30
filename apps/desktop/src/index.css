@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-shimmer";
 @import "./generative-ui.css";
+@import "./theme-accents.css";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -46,8 +47,6 @@
   --card-foreground: #0a0a0a;
   --popover: #ffffff;
   --popover-foreground: #0a0a0a;
-  --primary: #171717;
-  --primary-foreground: #fafafa;
   --secondary: #f5f5f5;
   --secondary-foreground: #171717;
   --muted: #f5f5f5;
@@ -58,13 +57,12 @@
   --destructive-foreground: #fafafa;
   --border: #e5e5e5;
   --input: #e5e5e5;
-  --ring: #a1a1a1;
   --q-app-menu-foreground: color-mix(in oklab, var(--foreground) 50%, transparent);
   --q-scrollbar-color: color-mix(in oklab, var(--foreground) 30%, transparent);
   --q-scrollbar-surface-color: color-mix(in oklab, var(--foreground) 10%, transparent);
   --q-scrollbar-surface-hover-color: color-mix(in oklab, var(--foreground) 15%, transparent);
   --q-bg: var(--background);
-  --q-sidebar: #f7f7f5;
+  --q-sidebar: var(--background);
   --q-sidebar-selected-bg: color-mix(in srgb, var(--foreground) 8%, var(--q-sidebar));
   --q-surface: var(--background);
   --q-surface-muted: #f1f1ef;
@@ -119,8 +117,6 @@
   --card-foreground: var(--foreground);
   --popover: #171717;
   --popover-foreground: var(--foreground);
-  --primary: #fafafa;
-  --primary-foreground: #171717;
   --secondary: #262626;
   --secondary-foreground: var(--foreground);
   --muted: #262626;
@@ -131,12 +127,11 @@
   --destructive-foreground: #171717;
   --border: #262626;
   --input: #262626;
-  --ring: #737373;
   --q-app-menu-foreground: color-mix(in oklab, white 50%, transparent);
   --q-scrollbar-surface-color: color-mix(in oklab, var(--foreground) 12%, transparent);
   --q-scrollbar-surface-hover-color: color-mix(in oklab, var(--foreground) 20%, transparent);
   --q-bg: var(--background);
-  --q-sidebar: #0b0b0b;
+  --q-sidebar: var(--background);
   --q-sidebar-selected-bg: color-mix(in srgb, var(--foreground) 12%, var(--q-sidebar));
   --q-surface: #141414;
   --q-surface-muted: #1d1d1d;
@@ -171,10 +166,10 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
 
 /* Use the same system font stack across navigation and content. */
 .q-sidebar {
-  --q-sidebar-width: clamp(240px, 275px, min(520px, calc(100vw - 320px)));
   --q-sidebar-font: var(--q-font-sans);
   font-family: var(--q-sidebar-font);
 }
+
 .q-sidebar [data-slot="aui_thread-list-new"],
 .q-sidebar [data-slot="aui_thread-list-item-trigger"],
 .q-sidebar .q-sidebar-project-trigger,
@@ -640,9 +635,7 @@ a { text-decoration: none; }
 .settings-value-button:hover, .settings-value-button.is-open { background: var(--q-hover); color: var(--foreground); }
 .settings-select-wrap { position: relative; z-index: 1; }
 .settings-select-wrap.is-open { z-index: 30; }
-.settings-accent-dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%; background: #8b4de8; }
-.settings-accent-dot.is-blue { background: #4c8dff; }
-.settings-accent-dot.is-green { background: #49b675; }
+.settings-accent-dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%; }
 .settings-dropdown { position: absolute; z-index: 40; top: calc(100% + 5px); right: 0; isolation: isolate; width: 194px; max-height: min(280px, calc(100dvh - 24px)); padding: 4px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border: 1px solid var(--q-border); border-radius: 12px; background-color: var(--q-surface); opacity: 1; box-shadow: 0 8px 18px rgb(0 0 0 / 12%); }
 .settings-dropdown-option { display: flex; width: 100%; min-height: 41px; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border: 0; border-radius: 8px; background-color: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
 .settings-dropdown-option:hover, .settings-dropdown-option.is-selected { background-color: var(--q-hover); }
@@ -950,11 +943,6 @@ a { text-decoration: none; }
 .settings-skill-card > svg { flex: 0 0 auto; color: var(--q-subtle); }
 .settings-skill-card { width: 100%; border: 1px solid var(--border); color: inherit; text-align: left; cursor: pointer; }
 .settings-memory-info { margin-top: 7px !important; color: var(--q-subtle) !important; }
-:root[data-accent="blue"] { --primary: #4c8dff; --primary-foreground: #fff; --ring: #4c8dff; }
-:root[data-accent="green"] { --primary: #328f61; --primary-foreground: #fff; --ring: #328f61; }
-:root[data-contrast="enhanced"] { --foreground: #000; --muted-foreground: #565656; --border: #cfcfcf; }
-:root[data-theme="dark"][data-contrast="enhanced"] { --foreground: #fff; --muted-foreground: #c5c5c5; --border: #444; }
-:root[data-contrast="reduced"] { --q-subtle: color-mix(in srgb, var(--q-subtle) 82%, var(--background)); }
 
 @media (max-width: 720px) {
   .settings-dialog-layer { padding: 12px; }
@@ -985,15 +973,15 @@ a { text-decoration: none; }
   padding: 2px;
   border: 0;
   border-radius: 50%;
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--primary);
+  color: var(--primary-foreground);
   box-shadow: none;
   transition: opacity 150ms ease;
 }
 .aui-thread-root .aui-composer-send:hover,
 .aui-thread-root .aui-composer-cancel:hover {
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 .aui-thread-root .q-composer-submit-control:has(.aui-composer-send:disabled) {
   opacity: .5;
@@ -1003,7 +991,7 @@ a { text-decoration: none; }
   opacity: 1;
 }
 .aui-thread-root .q-composer-submit-glyph {
-  color: var(--background);
+  color: var(--primary-foreground);
 }
 
 @media (max-width: 680px) {
