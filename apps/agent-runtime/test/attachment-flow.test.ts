@@ -2,30 +2,109 @@ import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { closeDb, MessageRepo, openDb, SessionRepo } from "@qone/database";
 import { decodeCommand, type MessageAttachmentInfo } from "@qone/protocol";
-import { createPiSessionEntries, imageContent, promptWithAttachments } from "../src/pi-adapter";
+import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments } from "../src/pi-attachments";
 import { googleMediaContent, localMediaMarker, prepareGooglePayload, youtubeUrlsFromText } from "../src/google-media";
 import { canProcessMediaAttachment, configuredCapabilities } from "../src/media-capabilities";
 import { convertMessages as convertGoogleMessages } from "@earendil-works/pi-ai/api/google-shared";
 import { normalizeContext, type Model } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { PiAdapter } from "../src/pi-adapter";
 
 const attachments: MessageAttachmentInfo[] = [
   { type: "file", name: "notes.txt", mimeType: "text/plain", data: "data:text/plain;base64,aGVsbG8=" },
   { type: "image", name: "plot.png", mimeType: "image/png", data: "data:image/png;base64,aGVsbG8=" },
 ];
 
-test("attachment command validation and Pi transcript keep file text and image bytes", () => {
-  const command = decodeCommand(JSON.stringify({ type: "agent.run", requestId: "r", sessionId: "s", message: "", attachments }));
+test("local files keep their original paths in commands and Pi transcript", () => {
+  const zip: MessageAttachmentInfo = { type: "file", name: "report.zip", mimeType: "application/zip", data: "", localPath: "C:\\Reports\\report.zip" };
+  const image: MessageAttachmentInfo = { type: "image", name: "plot.png", mimeType: "image/png", data: "", localPath: "C:\\Reports\\plot.png" };
+  const command = decodeCommand(JSON.stringify({ type: "agent.run", requestId: "r", sessionId: "s", message: "", attachments: [zip, image] }));
   expect(command?.type).toBe("agent.run");
-  expect(imageContent(attachments)).toEqual([{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }]);
-  expect(promptWithAttachments("read", attachments)).toContain('<attachment name="notes.txt">\nhello\n</attachment>');
-  const entries = createPiSessionEntries("C:\\workspace", [{ role: "user", content: "read", attachments, createdAt: 1 }]);
-  expect((entries[1] as { message: { content: unknown[] } }).message.content).toEqual([
-    { type: "text", text: 'read\n\n<attachment name="notes.txt">\nhello\n</attachment>' },
-    { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
-  ]);
+  expect(promptWithAttachments("read", [zip, image])).toContain('<attachment name="report.zip" path="C:\\Reports\\report.zip" />');
+  expect(promptWithAttachments("read", [zip, image])).toContain('<attachment name="plot.png" path="C:\\Reports\\plot.png" />');
+  const entries = createPiSessionEntries("C:\\workspace", [{ role: "user", content: "read", attachments: [zip], createdAt: 1 }]);
+  expect((entries[1] as { message: { content: string } }).message.content).toContain('path="C:\\Reports\\report.zip"');
+});
+
+test("folder attachment gives the model only its directory path, including after transcript restore", async () => {
+  const folder: MessageAttachmentInfo = { type: "folder", name: "source.png", mimeType: "inode/directory", data: "", localPath: "C:\\Work\\source.png" };
+  expect(await materializeModelInputs([folder], true, ["image", "audio", "video"])).toEqual([folder]);
+  expect(imageContent([folder])).toEqual([]);
+  expect(googleMediaContent([folder])).toEqual([]);
+  expect(promptWithAttachments("检查", [folder])).toBe('检查\n\n<attachment type="folder" name="source.png" path="C:\\Work\\source.png" />');
+  const entries = createPiSessionEntries("C:\\Work", [{ role: "user", content: "检查", attachments: [folder], createdAt: 1 }]);
+  expect((entries[1] as { message: { content: string } }).message.content).toContain('<attachment type="folder" name="source.png" path="C:\\Work\\source.png" />');
+});
+
+test("inline files without a saved path ask for reattachment without dumping binary", () => {
+  const zip: MessageAttachmentInfo = { type: "file", name: "diagnostics.zip", mimeType: "application/zip", data: "data:application/zip;base64,UEsDBAAA/4A=" };
+  const prompt = promptWithAttachments("检查日志", [zip]);
+  expect(prompt).toContain("没有可读取的本地路径");
+  expect(prompt).not.toContain("�");
+  expect(prompt).not.toContain("UEsDB");
+});
+
+test("pasted text stays readable without creating a temporary file", () => {
+  const pasted: MessageAttachmentInfo = { type: "file", name: "pasted.txt", mimeType: "text/plain", data: "data:text/plain;charset=utf-8;base64,SGVsbG8=" };
+  expect(promptWithAttachments("summarize", [pasted])).toBe('summarize\n\n<attachment name="pasted.txt">\nHello\n</attachment>');
+  const invalid: MessageAttachmentInfo = { ...pasted, data: "data:text/plain;base64,//8=" };
+  expect(promptWithAttachments("summarize", [invalid])).toContain("没有可读取的本地路径");
+});
+
+test("local image bytes are read only for model input and its original path remains", async () => {
+  const path = join(tmpdir(), `qone-image-${crypto.randomUUID()}.png`);
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  writeFileSync(path, bytes);
+  const image: MessageAttachmentInfo = { type: "image", name: "plot.png", mimeType: "image/png", data: "", localPath: path };
+  try {
+    const [prepared] = (await materializeModelInputs([image], true, ["image"]))!;
+    expect(prepared!.localPath).toBe(path);
+    expect(prepared!.data).toBe(`data:image/png;base64,${bytes.toString("base64")}`);
+    expect(image.data).toBe("");
+    expect(imageContent([prepared!])).toEqual([{ type: "image", data: bytes.toString("base64"), mimeType: "image/png" }]);
+    expect(googleMediaContent([prepared!])).toEqual([{ type: "image", data: bytes.toString("base64"), mimeType: "image/png" }]);
+    const entries = createPiSessionEntries("C:\\workspace", [{ role: "user", content: "see", attachments: [prepared!], createdAt: 1 }]);
+    expect((entries[1] as { message: { content: unknown[] } }).message.content).toEqual([
+      { type: "text", text: `see\n\n<attachment name="plot.png" path="${path}" />` },
+      { type: "image", data: bytes.toString("base64"), mimeType: "image/png" },
+    ]);
+    expect((await materializeModelInputs([image], true, ["text"]))![0]).toBe(image);
+  } finally { unlinkSync(path); }
+});
+
+test("the adapter supplies the original ZIP path to the model and restores it from saved history", async () => {
+  const path = join(tmpdir(), `qone-report-${crypto.randomUUID()}.zip`);
+  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0x00]);
+  writeFileSync(path, bytes);
+  const zip: MessageAttachmentInfo = { type: "file", name: "report.zip", mimeType: "application/zip", data: "", localPath: path };
+  const faux = fauxProvider({ provider: "attachment-path", models: [{ id: "model" }] });
+  const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
+  runtime.registerNativeProvider(faux.provider);
+  const prompts: string[] = [];
+  const adapter = new PiAdapter(() => {}, {}, undefined, () => [{ role: "user", content: "Earlier ZIP", attachments: [zip], createdAt: 1 }]);
+  (adapter as unknown as { modelRuntime: ModelRuntime }).modelRuntime = runtime;
+  faux.setResponses([(context) => {
+    for (const item of context.messages.filter((message) => message.role === "user")) {
+      const text = typeof item.content === "string" ? item.content : item.content.filter((part) => part.type === "text").map((part) => part.text).join("");
+      prompts.push(text);
+      const match = /<attachment name="report\.zip" path="([^"]+)" \/>/.exec(text);
+      if (match) {
+        expect(match[1]).toBe(path);
+        expect(readFileSync(match[1]!)).toEqual(bytes);
+      }
+    }
+    return fauxAssistantMessage(fauxText("done"));
+  }]);
+  try {
+    await adapter.run("attachment-path-session", "Current ZIP", { cwd: process.cwd(), model: "attachment-path/model", permissionMode: "full", attachments: [zip] }, () => {});
+    expect(prompts).toHaveLength(2);
+    expect(prompts.every((prompt) => prompt.includes('<attachment name="report.zip" path="'))).toBe(true);
+    expect(prompts.every((prompt) => !prompt.includes("�"))).toBe(true);
+  } finally { await adapter.disposeSession("attachment-path-session"); unlinkSync(path); }
 });
 
 test("existing SQLite conversations migrate and persist attachments", () => {

@@ -1,8 +1,10 @@
 import { persistedToolResult } from "./file-changes";
 
 /** Visible Pi assistant content, in event and content-block order. */
+export type AssistantTextPhase = "commentary" | "final_answer";
+
 export type AssistantMessagePart =
-  | { type: "text"; text: string; messageSequence: number }
+  | { type: "text"; text: string; messageSequence: number; phase?: AssistantTextPhase }
   | { type: "reasoning"; text: string; messageSequence: number; contentIndex?: number; complete?: boolean }
   | { type: "image"; image: string; filename?: string; messageSequence: number }
   | {
@@ -24,6 +26,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 export function assistantPartsFromPiMessage(payload: unknown, messageSequence: number): AssistantMessagePart[] {
   const message = asRecord(asRecord(payload)?.message);
   if (message?.role !== "assistant" || !Array.isArray(message.content)) return [];
+  const phase: AssistantTextPhase | undefined = message.content.some((block) => asRecord(block)?.type === "toolCall")
+    || message.stopReason === "toolUse" ? "commentary"
+    : message.stopReason === "stop" ? "final_answer" : undefined;
 
   return message.content.flatMap((value: unknown, index: number): AssistantMessagePart[] => {
     const block = asRecord(value);
@@ -31,7 +36,7 @@ export function assistantPartsFromPiMessage(payload: unknown, messageSequence: n
       return [{ type: "reasoning", text: block.thinking, messageSequence, contentIndex: index, complete: true }];
     }
     if (block?.type === "text" && typeof block.text === "string" && block.text) {
-      return [{ type: "text", text: block.text, messageSequence }];
+      return [{ type: "text", text: block.text, messageSequence, ...(phase ? { phase } : {}) }];
     }
     if (block?.type === "image" && typeof block.image === "string" && block.image) {
       return [{ type: "image", image: block.image, filename: typeof block.filename === "string" ? block.filename : undefined, messageSequence }];

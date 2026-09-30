@@ -199,6 +199,7 @@ export function youtubeUrlsFromText(value: string): string[] {
 
 export function googleMediaContent(attachments: readonly MessageAttachmentInfo[] = [], allowedInput?: readonly string[]): ImageContent[] {
   return attachments.flatMap((attachment) => {
+    if (attachment.type === "folder") return [];
     const capability = attachment.mimeType.startsWith("video/") ? "video"
       : attachment.mimeType.startsWith("audio/") ? "audio"
         : attachment.mimeType.startsWith("image/") || attachment.type === "image" ? "image" : undefined;
@@ -206,7 +207,7 @@ export function googleMediaContent(attachments: readonly MessageAttachmentInfo[]
     const match = /^data:([^,;]+);base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
     if (!match) return [];
     const mimeType = (attachment.mimeType || match[1]!).toLowerCase();
-    if (attachment.localPath || !(/^(?:image|audio|video)\//.test(mimeType) || mimeType === "application/pdf")) return [];
+    if (!(/^(?:image|audio|video)\//.test(mimeType) || mimeType === "application/pdf")) return [];
     return [{ type: "image" as const, data: match[2]!, mimeType }];
   });
 }

@@ -16,7 +16,7 @@ export {
   supportsExtendedImageQuality,
 } from "./image-model";
 export type { ImageApiFormat, ImageModelDetection, ImageModelDetectionInput, ImageModelDetectionSource } from "./image-model";
-export type { AssistantMessagePart } from "./assistant-parts";
+export type { AssistantMessagePart, AssistantTextPhase } from "./assistant-parts";
 
 export const GENERATIVE_UI_COMPONENTS = [
   "Header", "Text", "Caption", "Image", "Divider", "Fact", "Card",
@@ -291,7 +291,7 @@ export interface QueueItemInfo {
 }
 
 export interface MessageAttachmentInfo {
-  type: "image" | "file";
+  type: "image" | "file" | "folder";
   name: string;
   mimeType: string;
   data: string;
@@ -669,14 +669,18 @@ const mcpConfig = z.object({
     scopes: z.array(z.string()).optional(), redirectUri: secureUrl.optional(), tokenSecretKey: z.string().optional(),
   }).optional(),
 }).refine((config) => Boolean(config.command) !== Boolean(config.url) && (!config.authMode || Boolean(config.url)));
+export const DIRECTORY_MIME_TYPE = "inode/directory";
+
 const messageAttachment = z.object({
-  type: z.enum(["image", "file"]),
+  type: z.enum(["image", "file", "folder"]),
   name: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(128),
   data: z.string(),
   localPath: z.string().min(1).max(4096).optional(),
-}).refine((attachment) => attachment.localPath
-  ? attachment.type === "file" && /^(?:audio|video)\//i.test(attachment.mimeType) && attachment.data === ""
+}).refine((attachment) => attachment.type === "folder"
+  ? attachment.mimeType === DIRECTORY_MIME_TYPE && Boolean(attachment.localPath) && attachment.data === ""
+  : attachment.localPath
+  ? attachment.data === "" && (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType))
   : (/^(?:audio|video)\//i.test(attachment.mimeType) || attachment.data.length <= 70_000_000) &&
     /^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i.test(attachment.data) &&
     attachment.data.toLowerCase().startsWith(`data:${attachment.mimeType.toLowerCase()}`) &&

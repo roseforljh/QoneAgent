@@ -9,7 +9,7 @@ test("Pi content-block order and message sequence survive a database reopen", ()
     const run = new RunRepo(db).create(session.id);
     const messages = new MessageRepo(db);
     const legacy = messages.addAssistant(session.id, "旧总结", run.id);
-    const first = assistantPartsFromPiMessage({ message: { role: "assistant", content: [
+    const first = assistantPartsFromPiMessage({ message: { role: "assistant", stopReason: "toolUse", content: [
       { type: "text", text: "先查" },
       { type: "toolCall", id: "call-a", name: "read", arguments: { path: "a" } },
       { type: "text", text: "再查" },
@@ -18,7 +18,7 @@ test("Pi content-block order and message sequence survive a database reopen", ()
     const second = assistantPartsFromPiMessage({ message: { role: "assistant", content: [
       { type: "toolCall", id: "call-c", name: "ls", arguments: {} },
     ] } }, 20);
-    const final = assistantPartsFromPiMessage({ message: { role: "assistant", content: [
+    const final = assistantPartsFromPiMessage({ message: { role: "assistant", stopReason: "stop", content: [
       { type: "text", text: "完成" },
     ] } }, 30);
     const parts = applyAssistantToolEvent([...first, ...second, ...final], "tool.completed", {
@@ -36,6 +36,7 @@ test("Pi content-block order and message sequence survive a database reopen", ()
       "先查", "call-a", "再查", "call-b", "call-c", "完成",
     ]);
     expect(parts.map((part) => part.messageSequence)).toEqual([10, 10, 10, 10, 20, 30]);
+    expect(parts.filter((part) => part.type === "text").map((part) => part.phase)).toEqual(["commentary", "commentary", "final_answer"]);
     closeDb(reopened);
 });
 

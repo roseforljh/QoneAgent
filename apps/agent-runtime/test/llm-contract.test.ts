@@ -45,12 +45,14 @@ describe("Pi model contract", () => {
         "text_start", "toolcall_start", "text_start", "toolcall_start", "text_start",
       ]);
       expect(assistantEnds).toHaveLength(2);
+      expect(assistantEnds.map((message) => (message as { stopReason?: string }).stopReason)).toEqual(["stop", "stop"]);
       const firstParts = assistantPartsFromPiMessage({ message: assistantEnds[0] }, 10);
       expect(firstParts.map((part) => part.type === "text" ? part.text : part.toolName)).toEqual([
         "before ", "echo", "between ", "echo",
       ]);
+      expect(firstParts.filter((part) => part.type === "text").map((part) => part.phase)).toEqual(["commentary", "commentary"]);
       expect(assistantPartsFromPiMessage({ message: assistantEnds[1] }, 20)).toMatchObject([
-        { type: "text", text: "after", messageSequence: 20 },
+        { type: "text", text: "after", messageSequence: 20, phase: "final_answer" },
       ]);
     } finally {
       unsubscribe();

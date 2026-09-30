@@ -35,7 +35,7 @@ import { googleMediaContent, googleStreamSimple } from "./google-media.js";
 import { openAICompletionsStreamSimple } from "./openai-audio.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
 import { canProcessMediaAttachment, configuredCapabilities } from "./media-capabilities.js";
-import { createPiSessionEntries, imageContent, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
+import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
 import { createAttachmentAudioTool, createAttachmentFrameTool, createVideoDownloadTool, createVideoFallbackTools } from "./media-tool.js";
 import { extractTextContent, splitModelName } from "./pi-message-utils.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
@@ -382,7 +382,7 @@ export class PiAdapter {
   }
 
   isRunning(sessionId: string): boolean {
-    return this.compactingSessions.has(sessionId) || this.executionSessionFor(sessionId) !== undefined;
+    return this.compactingSessions.has(sessionId) || this.activeRunIds.has(sessionId);
   }
 
   isDirectGenerationModel(modelName: string): boolean {
@@ -426,11 +426,6 @@ export class PiAdapter {
       tokens: reported ?? session.messages.reduce((total, message) => total + estimateTokens(message), 0),
       contextWindow: model.contextWindow,
     };
-  }
-
-  private executionSessionFor(sessionId: string): string | undefined {
-    if (this.activeRunIds.has(sessionId)) return sessionId;
-    return [...this.activeRunIds.keys()].find((id) => id.startsWith(`${sessionId}::subagent::`));
   }
 
   async deleteSecret(key: string): Promise<void> {
@@ -590,7 +585,7 @@ export class PiAdapter {
 
     const resourceLoader = this.resourceLoaders.get(workspacePath);
     let modelRuntime: ModelRuntime | undefined;
-    let model;
+    let model: ReturnType<ModelRuntime["getModel"]> | undefined;
     if (modelName) {
       this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
       modelRuntime = this.modelRuntime;
@@ -598,10 +593,17 @@ export class PiAdapter {
       model = modelRuntime.getModel(provider, modelId);
       if (!model) throw new Error(`configured model not found: ${modelName}`);
     }
+    const restoredMessages = this.restoreMessages?.(sessionId, this.activeRunIds.get(sessionId)) ?? [];
+    const preparedMessages = await Promise.all(restoredMessages.map(async (message) => ({
+      ...message,
+      attachments: message.role === "user"
+        ? await materializeModelInputs(message.attachments, model?.api === "google-generative-ai", model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined, true)
+        : message.attachments,
+    })));
     const sessionManager = SessionManager.inMemory(
       workspacePath,
       undefined,
-      createPiSessionEntries(workspacePath, this.restoreMessages?.(sessionId, this.activeRunIds.get(sessionId)) ?? [], model,
+      createPiSessionEntries(workspacePath, preparedMessages, model,
         model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined),
     );
     const sessionSettings = SettingsManager.inMemory();
@@ -760,7 +762,7 @@ export class PiAdapter {
     try {
       if (configuredImageModel) {
         if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
-        await this.runImageGeneration(sessionId, runId, message, opts.attachments, configuredImageModel);
+        await this.runImageGeneration(sessionId, runId, message, await materializeModelInputs(opts.attachments, true, ["image"]), configuredImageModel);
         runEmit("agent.prompt_done", { runId });
         return;
       }
@@ -803,9 +805,10 @@ export class PiAdapter {
           : "";
       const unsupportedVideoNotice = !isGoogle && capabilities?.input.includes("video") && !capabilities.input.includes("image")
         ? "当前 API 格式没有通用的视频文件字段，且当前模型未配置图像输入；需要画面时请委派原始视频附件。" : "";
+      const modelAttachments = await materializeModelInputs(attachments, isGoogle, capabilities?.input);
       await session.prompt([capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
-        images: isGoogle ? googleMediaContent(attachments, capabilities?.input)
-          : [...imageContent(attachments, capabilities?.input), ...(isCompletions ? googleMediaContent(attachments?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
+        images: isGoogle ? googleMediaContent(modelAttachments, capabilities?.input)
+          : [...imageContent(modelAttachments, capabilities?.input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
       });
       const assistantMessages = session.messages.slice(previousLength).filter((item) => item.role === "assistant");
       const final = assistantMessages.at(-1);
@@ -936,18 +939,18 @@ export class PiAdapter {
   }
 
   async sendToSession(sessionId: string, message: string, mode: "steer" | "follow_up", attachments?: MessageAttachmentInfo[]): Promise<boolean> {
-    const executionSessionId = this.executionSessionFor(sessionId);
-    const session = executionSessionId ? this.sessions.get(executionSessionId) : undefined;
+    const session = this.activeRunIds.has(sessionId) ? this.sessions.get(sessionId) : undefined;
     if (!session || !session.isStreaming) return false;
     const selectedModel = session.agent.state.model;
     const isGoogle = selectedModel?.api === "google-generative-ai";
     const isCompletions = selectedModel?.api === "openai-completions";
     const input = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`).input : undefined;
-    const runId = executionSessionId ? this.activeRunIds.get(executionSessionId) : undefined;
+    const runId = this.activeRunIds.get(sessionId);
     const videoAttachmentNotice = runId ? this.rememberVideoAttachments(runId, attachments) : "";
+    const modelAttachments = await materializeModelInputs(attachments, isGoogle, input);
     const prompt = [videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, input)].filter(Boolean).join("\n");
-    const images = isGoogle ? googleMediaContent(attachments, input)
-      : [...imageContent(attachments, input), ...(isCompletions ? googleMediaContent(attachments?.filter((item) => item.mimeType.startsWith("audio/")), input) : [])];
+    const images = isGoogle ? googleMediaContent(modelAttachments, input)
+      : [...imageContent(modelAttachments, input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), input) : [])];
     if (mode === "steer") await session.steer(prompt, images);
     else await session.followUp(prompt, images);
     return true;

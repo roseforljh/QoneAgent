@@ -1,5 +1,6 @@
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { readFile } from "node:fs/promises";
 import { parseMcpCommand, type MessageAttachmentInfo } from "@qone/protocol";
 import { googleMediaContent, localMediaMarker } from "./google-media.js";
 import { canReadAttachment, type MediaCapability } from "./media-capabilities.js";
@@ -37,17 +38,48 @@ function isPiTranscriptMessage(value: unknown): value is { role: string; [key: s
 
 export function imageContent(attachments: readonly MessageAttachmentInfo[] = [], allowedInput?: readonly MediaCapability[]): ImageContent[] {
   return attachments.flatMap((attachment) => {
+    if (attachment.type === "folder") return [];
     if (!(attachment.type === "image" || attachment.mimeType.startsWith("image/")) || (allowedInput && !allowedInput.includes("image"))) return [];
     const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
     return match ? [{ type: "image" as const, data: match[2]!, mimeType: match[1]!.toLowerCase() }] : [];
   });
 }
 
+/** Read local images only when a model request needs their bytes. Persisted attachments keep paths. */
+export async function materializeModelInputs(
+  attachments: readonly MessageAttachmentInfo[] | undefined,
+  google: boolean,
+  allowedInput?: readonly MediaCapability[],
+  skipUnavailable = false,
+): Promise<MessageAttachmentInfo[] | undefined> {
+  if (!attachments) return undefined;
+  return Promise.all(attachments.map(async (attachment) => {
+    if (attachment.type === "folder") return attachment;
+    if (!attachment.localPath || attachment.data) return attachment;
+    const image = /^image\/(?:png|jpeg|webp|gif)$/i.test(attachment.mimeType)
+      && (!allowedInput || allowedInput.includes("image"));
+    if (!image && !(google && attachment.mimeType === "application/pdf")) return attachment;
+    try {
+      const bytes = await readFile(attachment.localPath);
+      return { ...attachment, data: `data:${attachment.mimeType};base64,${bytes.toString("base64")}` };
+    } catch (error) {
+      if (skipUnavailable) return attachment;
+      throw new Error(`无法读取本地附件：${attachment.localPath}`, { cause: error });
+    }
+  }));
+}
+
 export function promptWithAttachments(message: string, attachments: readonly (MessageAttachmentInfo & { temporary?: boolean })[] = [], nativeMedia: boolean | "audio" = false, allowedInput?: readonly MediaCapability[]): string {
   const escapeName = (name: string) => name.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
   const files = attachments.flatMap((attachment) => {
-    if (attachment.type === "image" || attachment.mimeType.startsWith("image/")) return allowedInput && !canReadAttachment(allowedInput, attachment)
-      ? [`[图片附件 ${escapeName(attachment.name)}：当前模型未配置图像输入能力，需交给能处理图片的子代理]`] : [];
+    if (attachment.type === "folder") return attachment.localPath
+      ? [`<attachment type="folder" name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`]
+      : [`[文件夹附件 ${escapeName(attachment.name)}：没有可读取的本地路径，请重新附加]`];
+    if (attachment.type === "image" || attachment.mimeType.startsWith("image/")) return [
+      ...(attachment.localPath ? [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`] : []),
+      ...(allowedInput && !canReadAttachment(allowedInput, attachment)
+        ? [`[图片附件 ${escapeName(attachment.name)}：当前模型未配置图像输入能力，需交给能处理图片的子代理]`] : []),
+    ];
     if (attachment.type !== "file") return [];
     const canUseNativeMedia = nativeMedia && /^(?:audio|video)\//i.test(attachment.mimeType)
       && (nativeMedia !== "audio" || attachment.mimeType.startsWith("audio/"))
@@ -63,12 +95,24 @@ export function promptWithAttachments(message: string, attachments: readonly (Me
         : canExtractAudio
           ? "当前模型可按需调用 qone_media_extract_audio 读取声音；若任务需要画面，请委派原始附件"
           : "当前模型无法直接读取，需交给能处理该媒体的子代理";
-      return [`[媒体附件 ${escapeName(attachment.name)}（${escapeName(attachment.mimeType)}）：${action}]`];
+      return [
+        ...(attachment.localPath ? [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`] : []),
+        `[媒体附件 ${escapeName(attachment.name)}（${escapeName(attachment.mimeType)}）：${action}]`,
+      ];
     }
-    const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
-    if (!match) return [];
-    const body = Buffer.from(match[1]!, "base64").toString("utf8");
-    return [`<attachment name="${escapeName(attachment.name)}">\n${body}\n</attachment>`];
+    if (!attachment.localPath) {
+      if (/^(?:text\/|application\/(?:json|xml)(?:$|;))/i.test(attachment.mimeType)) {
+        const encoded = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data)?.[1];
+        if (encoded) {
+          try {
+            const content = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(encoded, "base64"));
+            return [`<attachment name="${escapeName(attachment.name)}">\n${content}\n</attachment>`];
+          } catch { /* Invalid text must not be inserted into the model context as replacement characters. */ }
+        }
+      }
+      return [`[附件 ${escapeName(attachment.name)}：没有可读取的本地路径，如需使用文件工具读取请从本地重新附加]`];
+    }
+    return [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`];
   });
   return [message.trim(), ...files].filter(Boolean).join("\n\n") || "请分析附件。";
 }
