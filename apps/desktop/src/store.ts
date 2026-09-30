@@ -6,6 +6,7 @@ import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate } from "./localization";
+import { trackWorkspaceRequest, untrackWorkspaceRequest, useWorkspaceViewStore } from "./lib/workspace-view-state";
 
 const displayRuntimeError = (message: string) => message === "MCP_NPX_UNAVAILABLE"
   ? translate(resolveLocale(getLanguageSetting()), "mcp.nodeRequired")
@@ -109,6 +110,7 @@ export interface AgentState {
   goal?: GoalInfo;
   messagesLoadingSessionId?: string;
   draftWorkspaceId?: string;
+  draftDockId: string;
   creatingSession: boolean;
   pendingMessage?: string;
   pendingGoal?: boolean;
@@ -328,6 +330,7 @@ export const useStore = create<AgentState>((set, get) => ({
   runOptionsBySession: loadRunOptions(),
   defaultPermissionMode: loadDefaultPermissionMode(),
   draftRunOptions: {},
+  draftDockId: crypto.randomUUID(),
   skills: [],
   plugins: [],
   mcpServers: [],
@@ -380,7 +383,16 @@ export const useStore = create<AgentState>((set, get) => ({
     // Browser previews do not expose Tauri's invoke bridge.
     if (!hasTauriBridge()) return Promise.resolve(false);
     if (cmd.type === "ping") handshakeRequests.add(cmd.requestId);
-    if (cmd.type === "workspace.files" || cmd.type === "workspace.git" || cmd.type === "workspace.gitDiff" || cmd.type === "file.read") workspaceRequests.set(cmd.requestId, cmd.type);
+    if (cmd.type === "workspace.files" || cmd.type === "workspace.git" || cmd.type === "workspace.gitDiff" || cmd.type === "file.read") {
+      workspaceRequests.set(cmd.requestId, cmd.type);
+      trackWorkspaceRequest({
+        requestId: cmd.requestId,
+        type: cmd.type,
+        workspaceId: cmd.workspaceId,
+        path: "path" in cmd ? (cmd.path as string) : undefined,
+        scope: "scope" in cmd ? (cmd.scope as "staged" | "unstaged") : undefined,
+      });
+    }
     if (cmd.type === "mcp.connect") {
       mcpConnectRequests.set(cmd.requestId, cmd.config.id);
       set((st) => ({ mcpConnectingIds: st.mcpConnectingIds.includes(cmd.config.id) ? st.mcpConnectingIds : [...st.mcpConnectingIds, cmd.config.id] }));
@@ -425,7 +437,14 @@ export const useStore = create<AgentState>((set, get) => ({
         pendingTitleRequests.delete(cmd.requestId);
         set((state) => ({ titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
       } else if (workspaceRequests.delete(cmd.requestId)) {
-        set({ lastError: String(error), workspaceError: String(error) });
+        const rec = untrackWorkspaceRequest(cmd.requestId);
+        if (rec?.ownerId) {
+          useWorkspaceViewStore.getState().setError(rec.ownerId, String(error));
+        } else if (!rec || rec.workspaceId === get().currentWorkspaceId) {
+          set({ lastError: String(error), workspaceError: String(error) });
+        } else {
+          set({ lastError: String(error) });
+        }
       } else {
         set({ lastError: String(error) });
       }
@@ -447,7 +466,7 @@ export const useStore = create<AgentState>((set, get) => ({
   newSessionInWorkspace: (workspaceId) => {
     if (!get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
     flushNow();
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(get()) });
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(get()) });
     get().refreshWorkspace(workspaceId);
   },
 
@@ -495,7 +514,7 @@ export const useStore = create<AgentState>((set, get) => ({
 
   selectWorkspace: (id) => {
     if (!get().workspaces.some((workspace) => workspace.id === id)) return;
-    set((state) => state.currentWorkspaceId === id ? {} : { currentWorkspaceId: id, workspaceLoadingId: id, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined });
+    set((state) => state.currentWorkspaceId === id ? {} : { currentWorkspaceId: id, workspaceLoadingId: id, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, ...(!state.currentSessionId ? { draftDockId: crypto.randomUUID() } : {}) });
     get().refreshWorkspace(id);
   },
 

@@ -5,6 +5,14 @@ import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDel
 import { saveRunOptions } from "./lib/run-options";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { sessionStore, switchSessionState } from "./lib/session-execution-state";
+import {
+  clearTrackedWorkspaceRequests,
+  dispatchFileRead,
+  dispatchWorkspaceError,
+  dispatchWorkspaceFiles,
+  dispatchWorkspaceGit,
+  dispatchWorkspaceGitDiff,
+} from "./lib/workspace-view-state";
 import type { ToolCall } from "./store";
 
 const rid = () => crypto.randomUUID();
@@ -29,6 +37,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       pendingTitleRequests.clear();
       mcpConnectRequests.clear();
       restoredMcpSecrets.clear();
+      clearTrackedWorkspaceRequests();
       for (const request of metadataRequests.values()) request.reject(new Error("Runtime exited"));
       useStore.setState((st) => {
         const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
@@ -347,7 +356,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined,
         }));
         eventStore.getState().refreshWorkspace(msg.workspace.id);
-        eventStore.setState({ draftWorkspaceId: msg.workspace.id, currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], ...switchSessionState(eventStore.getState()) });
+        eventStore.setState({ draftWorkspaceId: msg.workspace.id, draftDockId: crypto.randomUUID(), currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], ...switchSessionState(eventStore.getState()) });
         break;
       case "workspace.renamed":
         eventStore.setState((st) => ({ workspaces: st.workspaces.map((workspace) => workspace.id === msg.workspace.id ? msg.workspace : workspace) }));
@@ -367,23 +376,31 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (eventStore.getState().currentWorkspaceId) eventStore.getState().refreshWorkspace();
         s.send({ type: "session.list", requestId: rid() });
         break;
-      case "workspace.files":
+      case "workspace.files": {
         if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        if (msg.workspaceId === eventStore.getState().currentWorkspaceId) eventStore.setState((st) => ({
-          workspaceFiles: [
-            ...st.workspaceFiles.filter((file) => msg.path
-              ? !file.path.startsWith(`${msg.path}/`)
-              : !file.path.includes("/")),
-            ...msg.files,
-          ],
-          workspaceLoadingId: undefined,
-          workspaceError: undefined,
-        }));
+        const { shouldUpdateGlobal } = dispatchWorkspaceFiles(msg, eventStore.getState().currentWorkspaceId);
+        if (shouldUpdateGlobal) {
+          eventStore.setState((st) => ({
+            workspaceFiles: [
+              ...st.workspaceFiles.filter((file) => msg.path
+                ? !file.path.startsWith(`${msg.path}/`)
+                : !file.path.includes("/")),
+              ...msg.files,
+            ],
+            workspaceLoadingId: undefined,
+            workspaceError: undefined,
+          }));
+        }
         break;
-      case "workspace.git":
+      }
+      case "workspace.git": {
         if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        if (msg.workspaceId === eventStore.getState().currentWorkspaceId) eventStore.setState({ gitStatus: msg.status, gitEntries: msg.entries ?? [], gitLoaded: true, workspaceError: undefined });
+        const { shouldUpdateGlobal } = dispatchWorkspaceGit(msg, eventStore.getState().currentWorkspaceId);
+        if (shouldUpdateGlobal) {
+          eventStore.setState({ gitStatus: msg.status, gitEntries: msg.entries ?? [], gitLoaded: true, workspaceError: undefined });
+        }
         break;
+      }
       case "model.list":
         eventStore.setState((st) => ({
           modelConfigs: msg.configs,
@@ -555,6 +572,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         const workspaceRequest = msg.requestId ? workspaceRequests.get(msg.requestId) : undefined;
         if (msg.requestId) workspaceRequests.delete(msg.requestId);
+        const workspaceErrorDispatch = dispatchWorkspaceError(msg.requestId, msg.message, eventStore.getState().currentWorkspaceId);
+        const shouldSetGlobalWorkspaceError = workspaceErrorDispatch.shouldUpdateGlobal || (Boolean(workspaceRequest) && !workspaceErrorDispatch.handledByOwner);
         if (msg.requestId && pendingAgentRuns.has(msg.requestId)) {
           const pending = pendingAgentRuns.get(msg.requestId)!;
           pendingAgentRuns.delete(msg.requestId);
@@ -577,7 +596,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         eventStore.setState((st) => ({
           lastError: displayRuntimeError(msg.message),
-          ...(workspaceRequest ? { workspaceError: msg.message } : {}),
+          ...(shouldSetGlobalWorkspaceError ? { workspaceError: msg.message } : {}),
           ...(st.creatingSession ? { creatingSession: false, pendingMessage: undefined } : {}),
           ...(st.running && !st.activeRunId && ![...pendingAgentRuns.values()].some((pending) => pending.sessionId === st.currentSessionId) ? { running: false } : {}),
         }));
@@ -915,14 +934,22 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         break;
       }
-      case "file.read":
+      case "file.read": {
         if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        eventStore.setState({ openFile: { workspaceId: msg.workspaceId, path: msg.path, content: msg.content }, workspaceError: undefined });
+        const { shouldUpdateGlobal } = dispatchFileRead(msg, eventStore.getState().currentWorkspaceId);
+        if (shouldUpdateGlobal) {
+          eventStore.setState({ openFile: { workspaceId: msg.workspaceId, path: msg.path, content: msg.content }, workspaceError: undefined });
+        }
         break;
-      case "workspace.gitDiff":
+      }
+      case "workspace.gitDiff": {
         if (msg.requestId) workspaceRequests.delete(msg.requestId);
-        eventStore.setState({ gitDiffView: { workspaceId: msg.workspaceId, path: msg.path, diff: msg.diff }, workspaceError: undefined });
+        const { shouldUpdateGlobal } = dispatchWorkspaceGitDiff(msg, eventStore.getState().currentWorkspaceId);
+        if (shouldUpdateGlobal) {
+          eventStore.setState({ gitDiffView: { workspaceId: msg.workspaceId, path: msg.path, diff: msg.diff }, workspaceError: undefined });
+        }
         break;
+      }
       case "events.replay":
         for (const ev of msg.events) {
           lastSequence = Math.max(lastSequence, ev.sequence);

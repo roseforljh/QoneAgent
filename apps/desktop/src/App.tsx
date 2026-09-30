@@ -21,11 +21,11 @@ import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-image
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { expandComposerCommand } from "./lib/composer-command";
 import { addComposerHistory } from "./lib/composer-history";
-import { bindComposerDrafts } from "./lib/composer-drafts";
+import { useComposerDrafts } from "./lib/use-composer-drafts";
 import { createQoneMessageQueue, getQoneMessageQueue } from "./lib/qone-message-queue";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
-import { WorkspaceDock } from "./components/assistant-ui/workspace-dock";
+import { ScopedWorkspaceDocks } from "./components/assistant-ui/scoped-workspace-docks";
 import { ThreadHeader } from "./components/assistant-ui/thread-header";
 import { ProjectSection } from "./components/assistant-ui/project-section";
 import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
@@ -296,7 +296,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     adapters: { threadList, attachments: attachmentAdapter },
   });
 
-  useEffect(() => bindComposerDrafts(runtime), [runtime]);
+  useComposerDrafts(runtime);
   return runtime;
 }
 
@@ -493,7 +493,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
             </Suspense>
           </div>
         </div>
-        <WorkspaceDock onViewChange={setDockView} />
+        <ScopedWorkspaceDocks onViewChange={setDockView} />
         {settingsOpen && <Suspense fallback={null}>
           <SettingsDialog open={settingsOpen} onClose={closeSettings} theme={theme} onToggleTheme={onToggleTheme} />
         </Suspense>}

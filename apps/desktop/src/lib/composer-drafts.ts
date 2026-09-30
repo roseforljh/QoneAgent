@@ -1,73 +1,101 @@
-import type { AssistantRuntime } from "@assistant-ui/react";
+import type { Attachment, ComposerState } from "@assistant-ui/react";
 
-/** Unsent text is UI state, kept across chat-page remounts but not app restarts. */
+export type ComposerDraft = Pick<ComposerState, "text" | "attachments" | "quote">;
+type SessionId = string | undefined;
+
+/** Unsent UI state, retained across chat-page remounts, not app restarts. */
 export class ComposerDraftStore {
-  private readonly drafts = new Map<string, string>();
+  private readonly drafts = new Map<SessionId, ComposerDraft>();
+  private readonly listeners = new Map<SessionId, Set<() => void>>();
+  private readonly sources = new WeakMap<object, () => void>();
+  private readonly uploadOwners = new WeakMap<Attachment, object>();
 
-  get(threadId: string): string | undefined {
-    return this.drafts.get(threadId);
+  get(sessionId: SessionId): ComposerDraft | undefined {
+    return this.drafts.get(sessionId);
   }
 
-  set(threadId: string, text: string) {
-    // Preserve whitespace verbatim; only an actually empty draft is discarded.
-    if (text === "") this.drafts.delete(threadId);
-    else this.drafts.set(threadId, text);
+  set(sessionId: SessionId, draft: ComposerDraft) {
+    const previous = this.drafts.get(sessionId);
+    // Keep attachment-only and whitespace-only drafts; retain File references
+    // rather than serializing/copying media or losing qoneLocalPath metadata.
+    if (draft.text === "" && draft.attachments.length === 0 && draft.quote === undefined) {
+      if (!this.drafts.delete(sessionId)) return;
+    } else {
+      if (previous?.text === draft.text && previous.attachments === draft.attachments && previous.quote === draft.quote) return;
+      this.drafts.set(sessionId, draft);
+    }
+    this.notify(sessionId);
   }
 
-  delete(threadId: string) {
-    this.drafts.delete(threadId);
+  subscribe(sessionId: SessionId, callback: () => void): () => void {
+    let listeners = this.listeners.get(sessionId);
+    if (!listeners) this.listeners.set(sessionId, listeners = new Set());
+    listeners.add(callback);
+    return () => {
+      listeners.delete(callback);
+      if (listeners.size === 0) this.listeners.delete(sessionId);
+    };
+  }
+
+  /** A detached upload may update only attachments it still owns. */
+  patchAttachments(sessionId: SessionId, previous: readonly Attachment[], next: readonly Attachment[]) {
+    const draft = this.drafts.get(sessionId);
+    if (!draft || previous === next) return;
+    const before = new Map(previous.map((attachment) => [attachment.id, attachment]));
+    const after = new Map(next.map((attachment) => [attachment.id, attachment]));
+    const currentIds = new Set(draft.attachments.map((attachment) => attachment.id));
+    const attachments = draft.attachments.flatMap((attachment) => {
+      // A removed or independently replaced chip must not be resurrected by
+      // an old upload, and an old composer must never overwrite newer edits.
+      if (attachment !== before.get(attachment.id)) return [attachment];
+      const updated = after.get(attachment.id);
+      return updated ? [updated] : [];
+    });
+    for (const attachment of next) {
+      if (!before.has(attachment.id) && !currentIds.has(attachment.id)) attachments.push(attachment);
+    }
+    if (attachments.length === draft.attachments.length && attachments.every((attachment, index) => attachment === draft.attachments[index])) return;
+    this.set(sessionId, { ...draft, attachments });
+  }
+
+  observeUploads(source: object, attachments: readonly Attachment[]) {
+    for (const attachment of attachments) {
+      if (attachment.status.type === "running" && !this.uploadOwners.has(attachment)) {
+        this.uploadOwners.set(attachment, source);
+      }
+    }
+  }
+
+  hasUploads(source: object, attachments: readonly Attachment[]): boolean {
+    return attachments.some((attachment) => attachment.status.type === "running" && this.uploadOwners.get(attachment) === source);
+  }
+
+  /** Effect rebinding must not leave a second observer on the same core. */
+  stopSource(source: object) {
+    this.sources.get(source)?.();
+  }
+
+  trackSource(source: object, stop: () => void): () => void {
+    this.sources.set(source, stop);
+    return () => {
+      if (this.sources.get(source) === stop) this.sources.delete(source);
+    };
+  }
+
+  prune(sessionIds: readonly string[]) {
+    const existing = new Set(sessionIds);
+    for (const id of this.drafts.keys()) {
+      if (id !== undefined && !existing.has(id)) {
+        this.drafts.delete(id);
+        this.notify(id);
+      }
+    }
+  }
+
+  private notify(sessionId: SessionId) {
+    for (const listener of [...(this.listeners.get(sessionId) ?? [])]) listener();
   }
 }
 
-const composerDrafts = new ComposerDraftStore();
-
-type DraftRuntime = Pick<AssistantRuntime, "threads" | "thread">;
-
-/**
- * Observe runtime identity, not React's selected-session prop: external-store
- * replaces its main composer in an effect, after selection has already changed.
- * Saving in a component cleanup can therefore read the NEW empty composer and
- * overwrite the OLD draft. Capture every text change under its runtime owner.
- */
-export function bindComposerDrafts(runtime: DraftRuntime, drafts = composerDrafts): () => void {
-  let activeThreadId = runtime.threads.getState().mainThreadId;
-  let knownThreadIds = new Set(runtime.threads.getState().threadIds);
-  let restoring = false;
-
-  const restore = () => {
-    const text = drafts.get(activeThreadId);
-    if (text !== undefined) runtime.thread.composer.setText(text);
-  };
-  restore();
-
-  const sync = () => {
-    if (restoring) return;
-    const state = runtime.threads.getState();
-    const nextThreadIds = new Set(state.threadIds);
-    for (const id of knownThreadIds) {
-      if (!nextThreadIds.has(id)) drafts.delete(id);
-    }
-    knownThreadIds = nextThreadIds;
-
-    if (activeThreadId !== state.mainThreadId) {
-      activeThreadId = state.mainThreadId;
-      // Both subscriptions can fire during a switch. Do not cache the new
-      // composer's initial blank value before its own draft has been restored.
-      restoring = true;
-      try { restore(); }
-      finally { restoring = false; }
-    }
-    drafts.set(activeThreadId, runtime.thread.composer.getState().text);
-  };
-
-  // Composer subscription also follows replacement of the main runtime. This
-  // covers either notification order, including a switch to an empty thread.
-  const unsubscribeComposer = runtime.thread.composer.subscribe(sync);
-  const unsubscribeThreads = runtime.threads.subscribe(sync);
-  sync();
-  return () => {
-    sync();
-    unsubscribeComposer();
-    unsubscribeThreads();
-  };
-}
+export const composerDrafts = new ComposerDraftStore();
+export { bindComposerDrafts } from "./composer-draft-binding";
