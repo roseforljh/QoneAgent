@@ -565,6 +565,8 @@ export interface ReachChannelInfo {
   tools: string[];
   state: "available" | "unverified" | "needs-connection" | "unavailable";
   detail?: string;
+  /** Built-in display copy travels with the channel so language changes need no refetch. */
+  english?: { name: string; description: string; backend: string; detail?: string };
   action?: "opencli" | "exa" | "youtube" | "linkedin" | "podcast" | "xueqiu" | "github" | "bilibili";
 }
 
