@@ -36,6 +36,8 @@ import { hasTauriBridge } from "../../store";
 import { fileFromDataUrl, getQoneMessageQueue } from "../../lib/qone-message-queue";
 import { createNativeAttachmentFile } from "../../lib/native-attachment-file";
 import { ComposerQueueEnterPlugin } from "./composer-queue-enter";
+import { ComposerHistoryPlugin } from "./composer-history";
+import { DropdownMenu } from "radix-ui";
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -150,8 +152,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       <AuiIf condition={(s) => !s.thread.isEmpty}>
         <ThreadPrimitive.Viewport
           key={currentSessionId}
-          turnAnchor="bottom"
-          autoScroll
+          turnAnchor="top"
           scrollRestoration={getThreadScrollState(currentSessionId)}
           scrollToBottomOnInitialize={false}
           scrollToBottomOnRunStart={true}
@@ -160,14 +161,14 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
         >
           <ConversationMapAui />
           <ThreadScrollFollower contentRef={messageListRef} />
-          <div ref={messageListRef} className="q-message-list flex w-full min-w-0 flex-col gap-7 pt-6">
+          <div ref={messageListRef} className="q-message-list flex w-full min-w-0 flex-col gap-5 pt-4">
             <ThreadPrimitive.Messages>
               {({ message }) => {
                 if (message.role === "user" && pairedUserIds.has(message.id)) return null;
                 const date = daySeparators.get(message.id);
                 return (
                   <div
-                    className="q-message-block flex w-full flex-col gap-5"
+                    className="q-message-block flex w-full flex-col gap-4"
                     data-message-block
                     data-turn-id={message.role === "user" ? message.id : pairedUserIdByAssistant.get(message.id)}
                     data-static-turn={message.id !== latestAssistantId && message.id !== threadMessages.at(-1)?.id ? "" : undefined}
@@ -243,33 +244,106 @@ const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canCha
 const composerInputClass =
   "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-9 w-full resize-none bg-transparent px-2.5 py-1 text-sm leading-6 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1";
 
-const QueueIcon: FC = () => (
-  <svg className="size-4 shrink-0 text-muted-foreground/70" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M3 3v8c0 2.2 1.3 3.5 3.5 3.5H16m-3-3 3 3-3 3M7.5 5h6.5M7.5 9.5h4" />
+const CodexQueueIcon: FC<{ className?: string }> = ({ className = "size-4 shrink-0 text-muted-foreground/70" }) => (
+  <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path
+      d="M2.66797 11V3.33301C2.66797 2.96574 2.96574 2.66797 3.33301 2.66797C3.70028 2.66797 3.99805 2.96574 3.99805 3.33301V11C3.99805 11.7109 3.99894 12.2044 4.03027 12.5879C4.06098 12.9634 4.11776 13.175 4.19824 13.333L4.26856 13.459C4.44487 13.7465 4.69781 13.9808 5 14.1348L5.12988 14.1904C5.27366 14.2419 5.46311 14.2797 5.74512 14.3027C6.12864 14.3341 6.62197 14.335 7.33301 14.335H15L15.0674 14.3418L14.1123 13.3867L14.0273 13.2822C13.8571 13.0242 13.8854 12.6735 14.1123 12.4463C14.3397 12.2189 14.6911 12.1906 14.9492 12.3613L15.0537 12.4463L17.1367 14.5293C17.3964 14.7889 17.3963 15.21 17.1367 15.4697L15.0537 17.5537C14.794 17.8134 14.372 17.8134 14.1123 17.5537C13.8526 17.294 13.8526 16.872 14.1123 16.6123L15.0664 15.6582L15 15.665H7.33301C6.64392 15.665 6.08696 15.6647 5.63672 15.6279C5.23614 15.5952 4.87531 15.5309 4.53906 15.3867L4.39649 15.3193C3.87528 15.0538 3.43887 14.6502 3.13477 14.1543L3.0127 13.9365C2.82084 13.5599 2.74153 13.1541 2.7041 12.6963C2.66732 12.2461 2.66797 11.6889 2.66797 11ZM15.665 15C15.665 15.0226 15.6594 15.0444 15.6572 15.0664L15.7256 14.999L15.6572 14.9316C15.6595 14.9541 15.665 14.9769 15.665 15ZM11.666 8.91797L11.8008 8.93164C12.1036 8.99381 12.3311 9.2618 12.3311 9.58301C12.3311 9.90422 12.1036 10.1722 11.8008 10.2344L11.666 10.248H7.5C7.13273 10.248 6.83496 9.95028 6.83496 9.58301C6.83496 9.21574 7.13273 8.91797 7.5 8.91797H11.666ZM14.166 4.33496L14.3008 4.34863C14.6036 4.41083 14.8311 4.67881 14.8311 5C14.8309 5.32109 14.6035 5.58924 14.3008 5.65137L14.166 5.66504H7.5C7.13284 5.66504 6.83514 5.36712 6.83496 5C6.83496 4.63273 7.13273 4.33496 7.5 4.33496H14.166Z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
+const CodexSteerIcon: FC<{ className?: string }> = ({ className = "size-3.5 shrink-0" }) => (
+  <svg className={className} width="14" height="14" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path
+      d="M13.1293 7.34753C13.3565 7.12027 13.7081 7.09207 13.9662 7.26257L14.0707 7.34753L18.0707 11.3475C18.3304 11.6072 18.3304 12.0292 18.0707 12.2889L14.0707 16.2889C13.811 16.5486 13.389 16.5486 13.1293 16.2889C12.8696 16.0292 12.8696 15.6072 13.1293 15.3475L15.9935 12.4833H6.59998C4.57585 12.4833 2.93494 10.8424 2.93494 8.81824V5.31824C2.93494 4.95097 3.23271 4.6532 3.59998 4.6532C3.96724 4.6532 4.26501 4.95097 4.26501 5.31824V8.81824C4.26501 10.1078 5.31039 11.1532 6.59998 11.1532H15.9935L13.1293 8.28894L13.0443 8.18445C12.8738 7.92632 12.902 7.5748 13.1293 7.34753Z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
+const CodexMoreIcon: FC<{ className?: string }> = ({ className = "size-3.5 shrink-0" }) => (
+  <svg className={className} width="14" height="14" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+    <circle cx="4" cy="10" r="1.75" />
+    <circle cx="10" cy="10" r="1.75" />
+    <circle cx="16" cy="10" r="1.75" />
   </svg>
 );
 
 const QueueItemRow: FC<{ queueItem: QueueItemState; steering: boolean; onEdit: () => void }> = ({ queueItem, steering, onEdit }) => {
   const { t } = useLocale();
   return (
-    <div role="listitem" className="q-composer-queue-item flex min-h-12 min-w-0 items-center gap-2 px-3 py-1 text-sm transition-colors hover:bg-foreground/[0.03]">
-      <QueueIcon />
-      <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate text-foreground/85" title={queueItem.prompt} />
-      {steering ? <span className="shrink-0 text-muted-foreground">{t("chat.steerPending")}</span> : <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground">
-        <QueueItemPrimitive.Steer asChild>
-          <Button variant="ghost" size="icon-sm" title={t("chat.queueSteer")} aria-label={t("chat.queueSteer")} className="h-7 w-auto gap-1 rounded-md px-1.5 text-xs text-muted-foreground hover:text-foreground">
-            <CornerDownRightIcon className="size-3.5" aria-hidden />{t("chat.queueSteer")}
-          </Button>
-        </QueueItemPrimitive.Steer>
-        <QueueItemPrimitive.Remove asChild>
-          <TooltipIconButton tooltip={t("chat.queueRemove")} className="size-7 rounded-md text-muted-foreground hover:text-foreground">
-            <Trash2Icon className="size-3.5" aria-hidden />
-          </TooltipIconButton>
-        </QueueItemPrimitive.Remove>
-        <TooltipIconButton tooltip={t("chat.queueEdit")} className="size-7 rounded-md text-muted-foreground hover:text-foreground" onClick={onEdit}>
-          <PencilIcon className="size-3.5" aria-hidden />
-        </TooltipIconButton>
-      </div>}
+    <div
+      role="listitem"
+      className="q-composer-queue-item group flex min-h-[36px] min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:bg-foreground/[0.04]"
+    >
+      <div
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 overflow-hidden"
+        onClick={onEdit}
+        title={queueItem.prompt}
+      >
+        <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/70">
+          <CodexQueueIcon />
+        </span>
+        <QueueItemPrimitive.Text
+          className="min-w-0 flex-1 truncate text-xs leading-5 text-foreground/85 select-none"
+          title={queueItem.prompt}
+        />
+      </div>
+      {steering ? (
+        <span className="shrink-0 text-xs text-muted-foreground">{t("chat.steerPending")}</span>
+      ) : (
+        <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
+          <QueueItemPrimitive.Steer asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={t("chat.queueSteer")}
+              aria-label={t("chat.queueSteer")}
+              className="h-6 w-auto gap-1 rounded-md px-1.5 text-xs font-normal text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+            >
+              <CodexSteerIcon className="size-3.5 shrink-0" />
+              <span>{t("chat.queueSteer")}</span>
+            </Button>
+          </QueueItemPrimitive.Steer>
+          <QueueItemPrimitive.Remove asChild>
+            <TooltipIconButton
+              tooltip={t("chat.queueRemove")}
+              className="size-6 rounded-md text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+            >
+              <Trash2Icon className="size-3.5" aria-hidden />
+            </TooltipIconButton>
+          </QueueItemPrimitive.Remove>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                title={t("chat.queueMore")}
+                aria-label={t("chat.queueMore")}
+                className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:outline-none"
+              >
+                <CodexMoreIcon className="size-3.5" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className="q-sidebar-menu z-50 min-w-32 rounded-lg border border-border/60 bg-popover p-1 text-xs shadow-md"
+                side="top"
+                align="end"
+                sideOffset={6}
+              >
+                <DropdownMenu.Item
+                  className="q-sidebar-menu-item flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground outline-none hover:bg-foreground/10"
+                  onSelect={onEdit}
+                >
+                  <PencilIcon className="size-3.5 text-muted-foreground" />
+                  <span>{t("chat.queueEdit")}</span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </div>
+      )}
     </div>
   );
 };
@@ -392,6 +466,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
             <ComposerEditorBridge onReady={onEditorReady} onCommandReady={onCommandReady} onMentionToggleReady={onMentionToggleReady} />
             <LongPasteAttachmentPlugin />
             <ComposerQueueEnterPlugin menuOpen={mentionOpen || slashOpen} compacting={compacting} />
+            <ComposerHistoryPlugin menuOpen={mentionOpen || slashOpen} />
           </LexicalComposerInput>
           <ComposerTriggers onToolSelect={onToolSelect} onCommandSelect={onCommandSelect} onMentionStateChange={onMentionStateChange} onSlashStateChange={setSlashOpen} />
           <ComposerAction mentionOpen={mentionOpen} onToggleMention={toggleMention} />
@@ -520,7 +595,7 @@ const UserMessageText: FC<{ paired?: boolean }> = ({ paired = false }) => {
 const UserMessage: FC<{ messageId: string }> = ({ messageId }) => {
   const { t } = useLocale();
   return (
-    <MessagePrimitive.Root className="q-message-root q-message-user relative mx-auto flex w-full q-thread-content flex-col items-end gap-0.5">
+    <MessagePrimitive.Root className="q-message-root q-message-user relative mx-auto flex w-full q-thread-content flex-col items-end gap-1">
       <PairUserAttachments />
       <UserMessageText />
 
@@ -547,7 +622,7 @@ const UserMessage: FC<{ messageId: string }> = ({ messageId }) => {
 
 const PairUserContent: FC = () => {
   return (
-    <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-fit max-w-[70%] flex-col items-end gap-0.5 self-end">
+    <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-fit max-w-[75%] flex-col items-end gap-0.5 self-end">
       <UserMessageText paired />
     </MessagePrimitive.Root>
   );
@@ -560,7 +635,7 @@ const PairUserAttachments: FC = () => {
   if (!hasAttachments) return null;
 
   return (
-    <div className="q-message-user-attachments flex w-fit max-w-[70%] min-w-0 flex-nowrap items-end gap-2 self-end overflow-x-auto overscroll-x-contain pb-1">
+    <div className="q-message-user-attachments flex w-fit max-w-[75%] min-w-0 flex-nowrap items-end gap-2 self-end overflow-x-auto overscroll-x-contain pb-1">
       <MessagePrimitive.Parts>
         {({ part }) => {
           if (part.type === "file") return <div className="shrink-0"><File {...part} /></div>;

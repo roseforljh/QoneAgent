@@ -1,20 +1,30 @@
+/* Codex-style Attached Composer Rail */
 .q-composer-rail {
   position: relative;
   display: flex;
   min-width: 0;
+  width: 100%;
   flex-direction: column;
-  margin-inline: 1rem;
-  margin-bottom: 8px;
-  padding: 4px 8px;
+  margin-inline: 0;
   overflow: clip;
+  border-top-left-radius: var(--composer-radius);
+  border-top-right-radius: var(--composer-radius);
   border: 1px solid color-mix(in oklab, var(--color-foreground) 10%, transparent);
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--composer-bg) 75%, var(--color-background));
-  box-shadow: 0 -2px 10px rgb(0 0 0 / 5%);
+  border-bottom: 1px solid color-mix(in oklab, var(--color-foreground) 8%, transparent);
+  background: color-mix(in oklab, var(--composer-bg) 95%, var(--color-foreground) 5%);
+  box-shadow: 0 -2px 10px rgb(0 0 0 / 3%);
 }
 
-.q-composer-rail:has(.q-composer-queue:empty) {
-  display: none;
+/* 没有队列条目时，彻底隐藏 rail */
+.q-composer-rail:not(:has(.q-composer-queue-item)) {
+  display: none !important;
+}
+
+/* 当队列存在时，下方输入框顶部圆角与边框自然平接 */
+.aui-composer-root:has(.q-composer-queue-item) [data-slot="aui_composer-shell"] {
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+  border-top: none !important;
 }
 
 .q-composer-queue {
@@ -24,10 +34,19 @@
   padding-bottom: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-width: none;
 }
 
-.q-composer-queue-item + .q-composer-queue-item {
-  border-top: 1px solid color-mix(in oklab, var(--color-foreground) 5%, transparent);
+.q-composer-queue::-webkit-scrollbar {
+  display: none;
+}
+
+.q-composer-queue-item {
+  border-bottom: 1px solid color-mix(in oklab, var(--color-foreground) 6%, transparent);
+}
+
+.q-composer-queue-item:last-child {
+  border-bottom: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

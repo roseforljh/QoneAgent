@@ -20,6 +20,7 @@ import { isImageModel } from "./lib/image-model-config";
 import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { expandComposerCommand } from "./lib/composer-command";
+import { addComposerHistory } from "./lib/composer-history";
 import { createQoneMessageQueue, getQoneMessageQueue } from "./lib/qone-message-queue";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
@@ -135,11 +136,13 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       useStore.setState({ editingQueueItem: undefined });
       return true;
     },
-    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId); },
+    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); if (prompt.text.trim()) addComposerHistory(prompt.text); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId); },
     steer: (message, queueItemId, attachments) => {
       const state = sessionStore(useStore, currentSessionId).getState();
       if (!state.activeRunId) return Promise.resolve(false);
-      return steerAgent({ sessionId: currentSessionId, runId: state.activeRunId, queueItemId, message: extractComposerPrompt(message).text, attachments });
+      const prompt = extractComposerPrompt(message);
+      if (prompt.text.trim()) addComposerHistory(prompt.text);
+      return steerAgent({ sessionId: currentSessionId, runId: state.activeRunId, queueItemId, message: prompt.text, attachments });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
     onError: (message) => useStore.setState({ lastError: message }),
@@ -252,6 +255,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     onNew: async (message) => {
       const prompt = extractComposerPrompt(message);
       const text = prompt.text;
+      if (text.trim()) addComposerHistory(text);
       let attachments: MessageAttachmentInfo[];
       try { attachments = await serializeMessageAttachments(message); }
       catch (error) { useStore.setState({ lastError: String(error) }); throw error; }
