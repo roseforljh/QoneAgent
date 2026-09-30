@@ -1,6 +1,11 @@
 const OPEN_BROWSER_EVENT = "qone:open-browser";
 
-export type BrowserDockRequest = { url: string; html?: string; requestId?: string };
+export type BrowserDockRequest = {
+  url: string;
+  html?: string;
+  requestId?: string;
+  sessionId?: string;
+};
 
 export function externalBrowserUrl(value: string): string | undefined {
   try {
@@ -31,8 +36,8 @@ function openInDock(request: BrowserDockRequest): void {
   window.dispatchEvent(new CustomEvent<BrowserDockRequest>(OPEN_BROWSER_EVENT, { detail: request }));
 }
 
-export function openBrowserInDock(url: string): void {
-  openInDock({ url });
+export function openBrowserInDock(url: string, sessionId?: string): void {
+  openInDock({ url, ...(sessionId ? { sessionId } : {}) });
 }
 
 export function sandboxPreviewHtml(html: string): string {
@@ -41,8 +46,13 @@ export function sandboxPreviewHtml(html: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;width:100%;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style></head><body><iframe sandbox="allow-scripts allow-forms allow-modals" srcdoc="${srcdoc}"></iframe></body></html>`;
 }
 
-export function openCodePreviewInDock(html: string, sourceId: string): void {
-  openInDock({ url: "about:blank", html: sandboxPreviewHtml(html), requestId: sourceId });
+export function openCodePreviewInDock(html: string, sourceId: string, sessionId?: string): void {
+  openInDock({
+    url: "about:blank",
+    html: sandboxPreviewHtml(html),
+    requestId: sourceId,
+    ...(sessionId ? { sessionId } : {}),
+  });
 }
 
 export function onOpenBrowserInDock(listener: (request: BrowserDockRequest) => void): () => void {

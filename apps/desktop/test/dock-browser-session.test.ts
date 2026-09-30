@@ -20,11 +20,11 @@ test("unmount during native creation closes the old child before a new mount ope
       await opening.promise;
     }
   };
-  const first = createDockBrowserSession(invoke, "https://example.com", () => {});
+  const first = createDockBrowserSession(invoke, "browser-1", "https://example.com", () => {});
   first.update(bounds, true);
   await tick();
   first.dispose();
-  const second = createDockBrowserSession(invoke, "https://example.com", () => {});
+  const second = createDockBrowserSession(invoke, "browser-2", "https://example.com", () => {});
   second.update(bounds, true);
   try {
     expect(calls).toEqual(["browser_open"]);
@@ -40,7 +40,7 @@ test("unmount during native creation closes the old child before a new mount ope
 
 test("menus hide the native layer and restore its bounds before revealing it", async () => {
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
-  const session = createDockBrowserSession(async (command, args) => { calls.push({ command, args }); }, "https://example.com", () => {});
+  const session = createDockBrowserSession(async (command, args) => { calls.push({ command, args }); }, "browser-1", "https://example.com", () => {});
   try {
     session.update(bounds, true);
     await tick();
@@ -49,12 +49,12 @@ test("menus hide the native layer and restore its bounds before revealing it", a
     await tick();
     session.update({ ...bounds, x: 600 }, false);
     await tick();
-    expect(calls).toEqual([{ command: "browser_visible", args: { visible: false } }]);
+    expect(calls).toEqual([{ command: "browser_visible", args: { browserId: "browser-1", visible: false } }]);
     session.update(bounds, true);
     await tick();
     expect(calls.slice(1)).toEqual([
-      { command: "browser_bounds", args: bounds },
-      { command: "browser_visible", args: { visible: true } },
+      { command: "browser_bounds", args: { browserId: "browser-1", ...bounds } },
+      { command: "browser_visible", args: { browserId: "browser-1", visible: true } },
     ]);
   } finally {
     session.dispose();
@@ -68,7 +68,7 @@ test("a menu opened while native creation is pending prevents the child from sho
   const session = createDockBrowserSession(async (command) => {
     calls.push(command);
     if (command === "browser_open") await opening.promise;
-  }, "https://example.com", () => {});
+  }, "browser-1", "https://example.com", () => {});
   try {
     session.update(bounds, true);
     await tick();
@@ -89,14 +89,14 @@ test("failed creation releases the child and does not poison the next session", 
   const first = createDockBrowserSession(async (command) => {
     calls.push(command);
     if (command === "browser_open") throw new Error("WebView2 failed");
-  }, "https://example.com", (error) => errors.push(error));
+  }, "browser-1", "https://example.com", (error) => errors.push(error));
   first.update(bounds, true);
   await tick();
   expect(errors).toHaveLength(1);
   expect(calls).toEqual(["browser_open", "browser_close"]);
   first.dispose();
   await tick();
-  const second = createDockBrowserSession(async (command) => { calls.push(command); }, "https://example.com", () => {});
+  const second = createDockBrowserSession(async (command) => { calls.push(command); }, "browser-2", "https://example.com", () => {});
   try {
     second.update(bounds, true);
     await tick();
@@ -113,14 +113,14 @@ test("animation bounds are coalesced while native creation is pending", async ()
   const session = createDockBrowserSession(async (command, args) => {
     if (command === "browser_open") await opening.promise;
     if (command === "browser_bounds") placed.push(args!);
-  }, "https://example.com", () => {});
+  }, "browser-1", "https://example.com", () => {});
   try {
     session.update(bounds, true);
     await tick();
     for (let x = 0; x < 100; x++) session.update({ ...bounds, x }, true);
     opening.resolve();
     await tick();
-    expect(placed).toEqual([{ ...bounds, x: 99 }]);
+    expect(placed).toEqual([{ browserId: "browser-1", ...bounds, x: 99 }]);
   } finally {
     opening.resolve();
     session.dispose();
@@ -138,7 +138,7 @@ test("an offscreen host hides its old native hit area", async () => {
   const visibility: unknown[] = [];
   const session = createDockBrowserSession(async (command, args) => {
     if (command === "browser_visible") visibility.push(args?.visible);
-  }, "https://example.com", () => {});
+  }, "browser-1", "https://example.com", () => {});
   try {
     session.update(bounds, true);
     await tick();
@@ -164,12 +164,12 @@ test("WebView2 commands cannot block the synchronous IPC handler", async () => {
 
 test("code preview loads after native creation and before the child becomes visible", async () => {
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
-  const session = createDockBrowserSession(async (command, args) => { calls.push({ command, args }); }, "about:blank", () => {}, "<h1>Preview</h1>");
+  const session = createDockBrowserSession(async (command, args) => { calls.push({ command, args }); }, "browser-preview-1", "about:blank", () => {}, "<h1>Preview</h1>");
   try {
     session.update(bounds, true);
     await tick();
     expect(calls.map((call) => call.command)).toEqual(["browser_open", "browser_preview", "browser_bounds", "browser_visible"]);
-    expect(calls[1]?.args).toEqual({ html: "<h1>Preview</h1>" });
+    expect(calls[1]?.args).toEqual({ browserId: "browser-preview-1", html: "<h1>Preview</h1>" });
   } finally {
     session.dispose();
     await tick();
@@ -182,11 +182,180 @@ test("failed preview closes the native child before showing an error", async () 
   const session = createDockBrowserSession(async (command) => {
     calls.push(command);
     if (command === "browser_preview") throw new Error("preview failed");
-  }, "about:blank", (error) => errors.push(error), "<h1>Preview</h1>");
+  }, "browser-preview-1", "about:blank", (error) => errors.push(error), "<h1>Preview</h1>");
   session.update(bounds, true);
   await tick();
   expect(calls).toEqual(["browser_open", "browser_preview", "browser_close"]);
   expect(errors).toHaveLength(1);
   session.dispose();
   await tick();
+});
+
+test("inactive unopened tab does not create native children", async () => {
+  const calls: string[] = [];
+  const session = createDockBrowserSession(async (command) => {
+    calls.push(command);
+  }, "browser-inactive", "https://example.com", () => {});
+
+  // Mount with active=false
+  session.update(bounds, false);
+  await tick();
+  expect(calls).toEqual([]);
+
+  // Another update with active=false
+  session.update({ ...bounds, x: 800 }, false);
+  await tick();
+  expect(calls).toEqual([]);
+
+  // Later user activates the tab
+  session.update(bounds, true);
+  await tick();
+  expect(calls).toEqual(["browser_open", "browser_bounds", "browser_visible"]);
+
+  session.dispose();
+  await tick();
+  expect(calls).toEqual(["browser_open", "browser_bounds", "browser_visible", "browser_close"]);
+});
+
+test("hide during await browser_bounds flushes desired state without leaving visible native layer", async () => {
+  const boundsPending = deferred();
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const session = createDockBrowserSession(async (command, args) => {
+    calls.push({ command, args });
+    if (command === "browser_bounds") {
+      await boundsPending.promise;
+    }
+  }, "browser-race", "https://example.com", () => {});
+
+  try {
+    session.update(bounds, true);
+    await tick();
+    // browser_open finished, browser_bounds is now awaiting boundsPending
+    expect(calls.map((c) => c.command)).toEqual(["browser_open", "browser_bounds"]);
+
+    // User hides the dock or switches tab while bounds is in-flight
+    session.update(bounds, false);
+
+    // Release bounds
+    boundsPending.resolve();
+    await tick();
+
+    // Verify browser_visible(true) was NOT called, or if called, was immediately flushed to false
+    const visibleCalls = calls.filter((c) => c.command === "browser_visible");
+    const lastVisibleCall = visibleCalls.at(-1);
+    if (lastVisibleCall) {
+      expect(lastVisibleCall.args?.visible).toBe(false);
+    } else {
+      expect(visibleCalls).toHaveLength(0);
+    }
+  } finally {
+    boundsPending.resolve();
+    session.dispose();
+    await tick();
+  }
+});
+
+test("hide during await browser_visible flushes to false and leaves no visible native layer", async () => {
+  const visiblePending = deferred();
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  let intercepted = false;
+
+  const session = createDockBrowserSession(async (command, args) => {
+    calls.push({ command, args });
+    if (command === "browser_visible" && args?.visible === true && !intercepted) {
+      intercepted = true;
+      await visiblePending.promise;
+    }
+  }, "browser-race-vis", "https://example.com", () => {});
+
+  try {
+    session.update(bounds, true);
+    await tick();
+    expect(calls.map((c) => c.command)).toEqual(["browser_open", "browser_bounds", "browser_visible"]);
+
+    // User hides during in-flight browser_visible(true)
+    session.update(bounds, false);
+
+    visiblePending.resolve();
+    await tick();
+
+    // Must have flushed to visible: false
+    expect(calls.slice(-1)[0]).toEqual({
+      command: "browser_visible",
+      args: { browserId: "browser-race-vis", visible: false },
+    });
+  } finally {
+    visiblePending.resolve();
+    session.dispose();
+    await tick();
+  }
+});
+
+test("dispose pending open properly closes the child without unhandled rejection or orphan", async () => {
+  const opening = deferred();
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const errors: unknown[] = [];
+
+  const session = createDockBrowserSession(async (command, args) => {
+    calls.push({ command, args });
+    if (command === "browser_open") {
+      await opening.promise;
+    }
+  }, "browser-pending-dispose", "https://example.com", (err) => errors.push(err));
+
+  session.update(bounds, true);
+  await tick();
+  expect(calls.map((c) => c.command)).toEqual(["browser_open"]);
+
+  // Dispose while browser_open is awaiting
+  session.dispose();
+  opening.resolve();
+  await tick();
+
+  // Child must be closed once open finishes, and no errors reported
+  expect(calls.map((c) => c.command)).toEqual(["browser_open", "browser_close"]);
+  expect(errors).toHaveLength(0);
+});
+
+test("switching between two browser owners serializes correctly on global native queue", async () => {
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const invoke = async (command: string, args?: Record<string, unknown>) => {
+    calls.push({ command, args });
+  };
+
+  const owner1 = createDockBrowserSession(invoke, "tab-session-1", "https://tab1.com", () => {});
+  const owner2 = createDockBrowserSession(invoke, "tab-session-2", "https://tab2.com", () => {});
+
+  try {
+    // Session 1 is initially active; Session 2 mounted inactive
+    owner1.update(bounds, true);
+    owner2.update(bounds, false);
+    await tick();
+
+    expect(calls.map((c) => `${c.args?.browserId}:${c.command}`)).toEqual([
+      "tab-session-1:browser_open",
+      "tab-session-1:browser_bounds",
+      "tab-session-1:browser_visible",
+    ]);
+
+    // Switch: Session 1 becomes inactive, Session 2 becomes active
+    calls.length = 0;
+    owner1.update(bounds, false);
+    owner2.update(bounds, true);
+    await tick();
+
+    // owner1 hides, then owner2 opens, sets bounds and reveals
+    expect(calls.map((c) => `${c.args?.browserId}:${c.command}`)).toEqual([
+      "tab-session-1:browser_visible",
+      "tab-session-2:browser_open",
+      "tab-session-2:browser_bounds",
+      "tab-session-2:browser_visible",
+    ]);
+    expect(calls[0]?.args?.visible).toBe(false);
+    expect(calls[3]?.args?.visible).toBe(true);
+  } finally {
+    owner1.dispose();
+    owner2.dispose();
+    await tick();
+  }
 });

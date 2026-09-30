@@ -39,10 +39,14 @@ import { onOpenBrowserInDock, type BrowserDockRequest } from "../../lib/browser-
 import { SubagentPanel } from "./subagent-view";
 import { clampDockWidth, defaultDockWidth, DOCK_WIDTH_STORAGE_KEY, dockWidthBounds, dockWidthFromRatio, dockWidthRatio } from "../../lib/dock-layout";
 import TerminalView, { type TerminalApi } from "./dock-terminal-view";
+import { closeDockTerminalResource } from "../../lib/dock-terminal-resource";
+import type { DockTab, DockView } from "../../lib/dock-state";
+import {
+  initWorkspaceView, removeWorkspaceView, requestWorkspaceFiles, requestWorkspaceFileRead,
+  requestWorkspaceGit, requestWorkspaceGitDiff, useWorkspaceViewState, useWorkspaceViewStore,
+} from "../../lib/workspace-view-state";
 import "./workspace-dock.css";
 
-type DockView = "session" | "terminal" | "files" | "git" | "browser" | "mcp" | "skills" | "subagents";
-type DockTab = { id: string; view: DockView; browserTarget?: BrowserDockRequest };
 const DOCK_VIEWS: readonly DockView[] = ["session", "terminal", "files", "git", "browser", "mcp", "skills", "subagents"];
 const isDockView = (value: unknown): value is DockView =>
   typeof value === "string" && DOCK_VIEWS.some((view) => view === value);
@@ -146,29 +150,35 @@ function TreeRows({
   );
 }
 
-function FilesView({ workspaceId, refreshNonce }: { workspaceId: string; refreshNonce: number }) {
+function FilesView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspaceId: string; refreshNonce: number }) {
   const { t } = useLocale();
   const send = useStore((s) => s.send);
-  const files = useStore((s) => s.workspaceFiles);
-  const openFile = useStore((s) => s.openFile);
+  const state = useWorkspaceViewState(tabId);
+  const view = state?.workspaceId === workspaceId ? state : undefined;
+  const files = view?.files;
+  const openFile = view?.openFile;
+  const selected = view?.selectedFilePath;
+  const workspaceError = view?.error;
   const connected = useStore((s) => s.connected);
   const capabilities = useStore((s) => s.runtimeCapabilities);
-  const workspaceError = useStore((s) => s.workspaceError);
-  const [selected, setSelected] = useState<string>();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [loadedDirectories, setLoadedDirectories] = useState<ReadonlySet<string>>(new Set());
   const initializedTree = useRef(false);
-  const tree = useMemo(() => buildTree(files), [files]);
+  const tree = useMemo(() => buildTree(files ?? []), [files]);
   const unsupported = connected && !capabilities.includes("workspace.files");
 
   useEffect(() => {
-    setSelected(undefined);
+    initWorkspaceView(tabId, workspaceId);
+    return () => removeWorkspaceView(tabId);
+  }, [tabId, workspaceId]);
+
+  useEffect(() => {
+    useWorkspaceViewStore.getState().resetViewData(tabId);
     setExpanded(new Set());
     setLoadedDirectories(new Set());
     initializedTree.current = false;
-    useStore.setState({ workspaceFiles: [], openFile: undefined, workspaceError: undefined });
-    if (!unsupported) send({ type: "workspace.files", requestId: rid(), workspaceId });
-  }, [workspaceId, send, unsupported, refreshNonce]);
+    if (!unsupported) void requestWorkspaceFiles({ ownerId: tabId, workspaceId, send });
+  }, [tabId, workspaceId, send, unsupported, refreshNonce]);
 
   useEffect(() => {
     if (!tree.length || initializedTree.current) return;
@@ -177,9 +187,9 @@ function FilesView({ workspaceId, refreshNonce }: { workspaceId: string; refresh
     setExpanded(new Set(directories));
     if (directories.length) {
       setLoadedDirectories(new Set(directories));
-      for (const path of directories) send({ type: "workspace.files", requestId: rid(), workspaceId, path });
+      for (const path of directories) void requestWorkspaceFiles({ ownerId: tabId, workspaceId, path, send });
     }
-  }, [tree, send, workspaceId]);
+  }, [tree, send, tabId, workspaceId]);
 
   const toggle = (path: string) => {
     setExpanded((prev) => {
@@ -190,28 +200,24 @@ function FilesView({ workspaceId, refreshNonce }: { workspaceId: string; refresh
     });
     if (!loadedDirectories.has(path)) {
       setLoadedDirectories((prev) => new Set(prev).add(path));
-      send({ type: "workspace.files", requestId: rid(), workspaceId, path });
+      void requestWorkspaceFiles({ ownerId: tabId, workspaceId, path, send });
     }
   };
 
   const open = (path: string) => {
-    setSelected(path);
-    useStore.setState({ workspaceError: undefined });
-    if (openFile?.path !== path || openFile.workspaceId !== workspaceId) {
-      useStore.setState({ openFile: undefined });
-      send({ type: "file.read", requestId: rid(), workspaceId, path });
-    }
+    if (openFile?.path === path) useWorkspaceViewStore.getState().setSelectedFilePath(tabId, path);
+    else void requestWorkspaceFileRead({ ownerId: tabId, workspaceId, path, send });
   };
 
   if (unsupported) return <p className="px-3 py-4 text-sm text-foreground/55">{t("dock.runtimeOutdated")}</p>;
 
   if (selected) {
-    const content = openFile?.workspaceId === workspaceId && openFile.path === selected ? openFile.content : undefined;
+    const content = openFile?.path === selected ? openFile.content : undefined;
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <button
           type="button"
-          onClick={() => setSelected(undefined)}
+          onClick={() => useWorkspaceViewStore.getState().clearOpenFile(tabId)}
           className="text-foreground/60 hover:text-foreground hover:bg-foreground/[0.05] flex shrink-0 items-center gap-1.5 border-b border-border/50 px-3 py-2 text-start text-[12.5px] transition-colors"
         >
           <ArrowLeftIcon className="size-3.5 shrink-0" />
@@ -233,7 +239,7 @@ function FilesView({ workspaceId, refreshNonce }: { workspaceId: string; refresh
   }
 
   if (workspaceError) return <p className="px-3 py-4 text-sm text-red-500/80">{workspaceError}</p>;
-  if (!files.length) return <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.filesEmpty")}</p>;
+  if (!files?.length) return <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.filesEmpty")}</p>;
 
   return (
     <FadeScroll className="min-h-0 flex-1 py-1.5">
@@ -265,44 +271,46 @@ function parseGitStatus(text: string): { code: string; path: string }[] {
     });
 }
 
-function GitView({ workspaceId, refreshNonce }: { workspaceId: string; refreshNonce: number }) {
+function GitView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspaceId: string; refreshNonce: number }) {
   const { t } = useLocale();
   const send = useStore((s) => s.send);
-  const gitStatus = useStore((s) => s.gitStatus);
-  const gitEntries = useStore((s) => s.gitEntries);
-  const gitLoaded = useStore((s) => s.gitLoaded);
+  const state = useWorkspaceViewState(tabId);
+  const view = state?.workspaceId === workspaceId ? state : undefined;
+  const gitStatus = view?.gitStatus ?? "";
+  const gitEntries = view?.gitEntries;
+  const gitLoaded = view?.gitLoaded;
   const connected = useStore((s) => s.connected);
   const capabilities = useStore((s) => s.runtimeCapabilities);
-  const workspaceError = useStore((s) => s.workspaceError);
-  const diffView = useStore((s) => s.gitDiffView);
-  const [selected, setSelected] = useState<string>();
-  const entries = useMemo<WorkspaceGitEntry[]>(() => gitEntries.length ? gitEntries : parseGitStatus(gitStatus), [gitEntries, gitStatus]);
+  const workspaceError = view?.error;
+  const diffView = view?.gitDiffView;
+  const selected = view?.selectedDiffPath;
+  const entries = useMemo<WorkspaceGitEntry[]>(() => gitEntries?.length ? gitEntries : parseGitStatus(gitStatus), [gitEntries, gitStatus]);
   const unsupported = connected && !capabilities.includes("workspace.git");
 
   useEffect(() => {
-    setSelected(undefined);
-    useStore.setState({ gitStatus: "", gitEntries: [], gitLoaded: false, gitDiffView: undefined, workspaceError: undefined });
-    if (!unsupported) send({ type: "workspace.git", requestId: rid(), workspaceId });
-  }, [workspaceId, send, unsupported, refreshNonce]);
+    initWorkspaceView(tabId, workspaceId);
+    return () => removeWorkspaceView(tabId);
+  }, [tabId, workspaceId]);
+
+  useEffect(() => {
+    useWorkspaceViewStore.getState().resetViewData(tabId);
+    if (!unsupported) void requestWorkspaceGit({ ownerId: tabId, workspaceId, send });
+  }, [tabId, workspaceId, send, unsupported, refreshNonce]);
 
   const open = (path: string) => {
-    setSelected(path);
-    useStore.setState({ workspaceError: undefined });
-    if (diffView?.path !== path || diffView.workspaceId !== workspaceId) {
-      useStore.setState({ gitDiffView: undefined });
-      send({ type: "workspace.gitDiff", requestId: rid(), workspaceId, path, scope: "unstaged" });
-    }
+    if (diffView?.path === path) useWorkspaceViewStore.getState().setSelectedDiffPath(tabId, path);
+    else void requestWorkspaceGitDiff({ ownerId: tabId, workspaceId, path, scope: "unstaged", send });
   };
 
   if (unsupported) return <p className="px-3 py-4 text-sm text-foreground/55">{t("dock.runtimeOutdated")}</p>;
 
   if (selected) {
-    const diff = diffView?.workspaceId === workspaceId && diffView.path === selected ? diffView.diff : undefined;
+    const diff = diffView?.path === selected ? diffView.diff : undefined;
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <button
           type="button"
-          onClick={() => setSelected(undefined)}
+          onClick={() => useWorkspaceViewStore.getState().clearGitDiff(tabId)}
           className="text-foreground/60 hover:text-foreground hover:bg-foreground/[0.05] flex shrink-0 items-center gap-1.5 border-b border-border/50 px-3 py-2 text-start text-[12.5px] transition-colors"
         >
           <ArrowLeftIcon className="size-3.5 shrink-0" />
@@ -383,22 +391,31 @@ function SessionDetails() {
   );
 }
 
-export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView | undefined) => void }) {
+export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChange, onTabsChange }: {
+  scopeActive: boolean;
+  sessionId?: string;
+  workspaceId?: string;
+  onViewChange?: (view: DockView | undefined) => void;
+  onTabsChange?: (hasTabs: boolean) => void;
+}) {
   const { t } = useLocale();
-  const workspaceId = useStore((s) => s.currentWorkspaceId);
-  const workspacePath = useStore((s) => s.workspaces.find((w) => w.id === s.currentWorkspaceId)?.path);
+  const workspaces = useStore((s) => s.workspaces);
   const [openTabs, setOpenTabs] = useState<DockTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>();
   const [collapsed, setCollapsed] = useState(false);
   const activeTab = openTabs.find((tab) => tab.id === activeTabId);
-  const view = collapsed ? undefined : activeTab?.view;
+  const view = scopeActive && !collapsed ? activeTab?.view : undefined;
   const activeTabRef = useRef(activeTab);
-  activeTabRef.current = collapsed ? undefined : activeTab;
+  activeTabRef.current = scopeActive && !collapsed ? activeTab : undefined;
   const openTabsRef = useRef(openTabs);
   openTabsRef.current = openTabs;
   useEffect(() => onViewChange?.(view), [view, onViewChange]);
-  const [refreshNonce, setRefreshNonce] = useState(0);
+  useEffect(() => onTabsChange?.(openTabs.length > 0), [openTabs.length, onTabsChange]);
+  useEffect(() => () => {
+    for (const tab of openTabsRef.current) if (tab.view === "terminal") closeDockTerminalResource(tab.id);
+  }, []);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  useEffect(() => { if (!scopeActive) setLauncherOpen(false); }, [scopeActive]);
   const [terminalStatus, setTerminalStatus] = useState<Record<string, { status: "starting" | "ready" | "exited" | "error"; detail?: string }>>({});
   const panelRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(() => typeof window === "undefined" ? 0 : window.innerWidth);
@@ -412,6 +429,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
   const { minimum: minPanelW, maximum: maxPanelW } = dockWidthBounds(availableWidth, isNarrowScreen);
 
   useEffect(() => {
+    if (!scopeActive) return;
     const container = panelRef.current?.parentElement;
     if (!container) return undefined;
     const measure = () => {
@@ -427,7 +445,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, []);
+  }, [scopeActive]);
   const launcherRef = useRef<HTMLDivElement>(null);
   const launcherMenuRef = useRef<HTMLDivElement>(null);
   const [launcherPosition, setLauncherPosition] = useState<{ top: number; right: number }>();
@@ -441,10 +459,12 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
     return ref;
   };
   const onTerminalStatus = useCallback((tabId: string, status: "starting" | "ready" | "exited" | "error", detail?: string) => {
+    if (!openTabsRef.current.some((tab) => tab.id === tabId)) return;
     setTerminalStatus((current) => ({ ...current, [tabId]: { status, detail } }));
   }, []);
 
   useEffect(() => onOpenBrowserInDock((target) => {
+    if (target.sessionId ? target.sessionId !== sessionId : !scopeActive) return;
     setLauncherOpen(false);
     if (target.requestId && activeTabRef.current?.view === "browser" && activeTabRef.current.browserTarget?.requestId === target.requestId) {
       setCollapsed(true);
@@ -454,9 +474,10 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
     setOpenTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
     setCollapsed(false);
-  }), []);
+  }), [scopeActive, sessionId]);
 
   useEffect(() => {
+    if (!scopeActive) return;
     const toggleSubagents = () => {
       setLauncherOpen(false);
       if (activeTabRef.current?.view === "subagents") {
@@ -478,7 +499,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
     };
     window.addEventListener("qone-open-subagents", toggleSubagents);
     return () => window.removeEventListener("qone-open-subagents", toggleSubagents);
-  }, []);
+  }, [scopeActive]);
 
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (maximized || event.button !== 0) return;
@@ -572,7 +593,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
 
   const openTab = (next: DockView, browserTarget?: BrowserDockRequest) => {
     setLauncherOpen(false);
-    const tab: DockTab = { id: rid(), view: next, browserTarget: next === "browser" ? browserTarget ?? { url: "https://www.bing.com" } : undefined };
+    const tab: DockTab = { id: rid(), view: next, workspaceId, browserTarget: next === "browser" ? browserTarget ?? { url: "https://www.bing.com" } : undefined };
     setOpenTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
     setCollapsed(false);
@@ -584,6 +605,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
     const remaining = openTabs.filter((tab) => tab.id !== closingId);
     setLauncherOpen(false);
     setOpenTabs(remaining);
+    if (openTabs[closingIndex]?.view === "terminal") closeDockTerminalResource(closingId);
     terminalApiRefs.current.delete(closingId);
     setTerminalStatus((current) => {
       const next = { ...current };
@@ -601,6 +623,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
   };
 
   useEffect(() => {
+    if (!scopeActive) return;
     const toggleDockView = (event: Event) => {
       const requestedView = (event as CustomEvent<unknown>).detail;
       if (!isDockView(requestedView)) return;
@@ -618,7 +641,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
         setCollapsed(false);
         return;
       }
-      const tab = { id: rid(), view: "session" as const };
+      const tab = { id: rid(), view: "session" as const, workspaceId };
       setOpenTabs([tab]);
       setActiveTabId(tab.id);
       setCollapsed(false);
@@ -629,7 +652,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
       window.removeEventListener("qone-toggle-dock-view", toggleDockView);
       window.removeEventListener("qone-toggle-dock-panel", toggleDockPanel);
     };
-  }, [activeTabId, openTabs]);
+  }, [activeTabId, openTabs, scopeActive, workspaceId]);
 
   const tabMeta: Record<DockView, { icon: LucideIcon; label: string }> = {
     session: { icon: ListTodoIcon, label: t("dock.session") },
@@ -644,7 +667,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
 
   return (
     <>
-      {view && isNarrowScreen && (
+      {scopeActive && view && isNarrowScreen && (
         <div
           role="presentation"
           onClick={closePanel}
@@ -660,7 +683,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
             : "relative z-20",
           view ? "pointer-events-auto visible" : "pointer-events-none invisible",
         )}
-        style={{ width: view ? maximized ? availableWidth : panelW : 0, transition: dragging ? "none" : PANEL_TRANSITION }}
+        style={{ width: view ? maximized ? availableWidth : panelW : 0, transition: !scopeActive || dragging ? "none" : PANEL_TRANSITION }}
         inert={!view}
         aria-hidden={!view}
       >
@@ -713,6 +736,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
                 const duplicateCount = openTabs.filter((item) => item.view === tab.view).length;
                 const tabLabel = duplicateCount > 1 ? `${label} ${openTabs.slice(0, index + 1).filter((item) => item.view === tab.view).length}` : label;
                 const terminalState = terminalStatus[tab.id]?.status ?? "starting";
+                const tabWorkspacePath = workspaces.find((workspace) => workspace.id === (tab.workspaceId ?? workspaceId))?.path;
                 return (
                   <div key={tab.id} data-dock-tab={tab.id} className={cn("q-workspace-dock-tab group flex h-8 min-w-0 flex-1 items-center rounded-lg", active && "is-active")}>
                     <button
@@ -726,7 +750,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
                       {tab.view === "terminal" ? <span className={cn("size-1.5 shrink-0 rounded-full", terminalState === "ready" ? "bg-emerald-500" : terminalState === "error" ? "bg-red-500" : "bg-amber-500")} title={terminalStatus[tab.id]?.detail} /> : null}
                       <Icon className="size-4 shrink-0 text-foreground/55" />
                       <span className="truncate text-sm text-foreground/85">{tabLabel}</span>
-                      {tab.view === "terminal" && workspacePath ? <span className={cn(mono, "min-w-0 truncate text-xs text-foreground/45")} title={workspacePath}>{workspacePath}</span> : null}
+                      {tab.view === "terminal" && tabWorkspacePath ? <span className={cn(mono, "min-w-0 truncate text-xs text-foreground/45")} title={tabWorkspacePath}>{tabWorkspacePath}</span> : null}
                     </button>
                     <button type="button" aria-label={`${t("dock.closePanel")}: ${tabLabel}`} onClick={() => closeTab(tab.id)} className="q-workspace-dock-tab-close me-1 flex size-6 shrink-0 items-center justify-center rounded-md text-foreground/45 hover:bg-foreground/10 hover:text-foreground">
                       <XIcon className="size-3.5" />
@@ -756,7 +780,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
                 </>
               ) : null}
               {view === "files" || view === "git" || view === "mcp" || view === "skills" ? (
-                <TooltipIconButton tooltip={t("dock.refresh")} onClick={() => setRefreshNonce((value) => value + 1)} className="size-7">
+                  <TooltipIconButton tooltip={t("dock.refresh")} onClick={() => setOpenTabs((tabs) => tabs.map((tab) => tab.id === activeTabId ? { ...tab, refreshNonce: (tab.refreshNonce ?? 0) + 1 } : tab))} className="size-7">
                   <RefreshCwIcon className="size-3.5" />
                 </TooltipIconButton>
               ) : null}
@@ -770,19 +794,20 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             {openTabs.map((tab) => {
-              const active = !collapsed && activeTabId === tab.id;
+              const active = scopeActive && !collapsed && activeTabId === tab.id;
               const needsWorkspace = tab.view === "files" || tab.view === "git" || tab.view === "terminal";
+              const tabWorkspaceId = tab.workspaceId ?? workspaceId;
               return (
                 <div key={tab.id} className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", active ? "flex flex-col" : "hidden")}>
-                  {needsWorkspace && !workspaceId ? <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.noWorkspace")}</p> : null}
-                  {tab.view === "terminal" && workspaceId && <TerminalView tabId={tab.id} workspaceId={workspaceId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
+                  {needsWorkspace && !tabWorkspaceId ? <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.noWorkspace")}</p> : null}
+                  {tab.view === "terminal" && tabWorkspaceId && <TerminalView tabId={tab.id} workspaceId={tabWorkspaceId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
                   {tab.view === "browser" && <DockBrowserView browserId={tab.id} active={active && !launcherOpen && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} />}
-                  {tab.view === "files" && workspaceId && <FilesView workspaceId={workspaceId} refreshNonce={refreshNonce} />}
-                  {tab.view === "git" && workspaceId && <GitView workspaceId={workspaceId} refreshNonce={refreshNonce} />}
-                  {tab.view === "mcp" && <DockMcpView refreshNonce={refreshNonce} />}
-                  {tab.view === "skills" && <DockSkillsView workspaceId={workspaceId} refreshNonce={refreshNonce} />}
-                  {tab.view === "subagents" && <SubagentPanel onClose={() => closeTab(tab.id)} />}
-                  {tab.view === "session" && <SessionDetails />}
+                  {tab.view === "files" && tabWorkspaceId && <FilesView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
+                  {tab.view === "git" && tabWorkspaceId && <GitView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
+                  {active && tab.view === "mcp" && <DockMcpView refreshNonce={tab.refreshNonce ?? 0} />}
+                  {active && tab.view === "skills" && <DockSkillsView workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
+                  {active && tab.view === "subagents" && <SubagentPanel onClose={() => closeTab(tab.id)} />}
+                  {active && tab.view === "session" && <SessionDetails />}
                 </div>
               );
             })}
@@ -790,7 +815,7 @@ export function WorkspaceDock({ onViewChange }: { onViewChange?: (view: DockView
           </div>
         </>}
       </div>
-      {launcherOpen && launcherPosition && typeof document !== "undefined" && createPortal(
+      {scopeActive && launcherOpen && launcherPosition && typeof document !== "undefined" && createPortal(
         <AnimatePresence>
           <motion.div
             ref={launcherMenuRef}
