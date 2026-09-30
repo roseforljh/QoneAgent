@@ -151,15 +151,16 @@ export function subagentCatalog(config: SubagentConfigInfo) {
     temporary: {
       id: "temporary",
       name: "临时通用代理",
-      description: "处理普通代码审查、文件分析、研究和其他不需要专门媒体能力的独立任务。选择此项时不要填写 capability 或 subagentId。",
+      description: '处理普通代码审查、文件分析、研究和其他不需要专门媒体能力的独立任务。调用 dispatch_subagent 或工作流步骤时明确设置 capability="temporary"，subagentId 留空。',
+      selection: { capability: "temporary" as const },
       model: config.runtime.temporaryModelId || "follow-parent-model",
     },
     capabilities: CAPABILITY_IDS.flatMap((capability) => {
       const agent = resolveSubagent(config, capability);
-      return agent ? [{ capability, name: agent.name, description: agent.instructions, model: agent.modelId, route: agent.route }] : [];
+      return agent ? [{ capability, selection: { capability }, name: agent.name, description: agent.instructions, model: agent.modelId, route: agent.route }] : [];
     }),
     unconfiguredCapabilities: CAPABILITY_IDS.filter((capability) => !resolveSubagent(config, capability)),
-    profiles: config.profiles.filter((profile) => profile.enabled).map((profile) => ({ id: profile.id, name: profile.name, instructions: profile.instructions.slice(0, 500) })),
+    profiles: config.profiles.filter((profile) => profile.enabled).map((profile) => ({ id: profile.id, selection: { subagentId: profile.id, capability: null }, name: profile.name, instructions: profile.instructions.slice(0, 500) })),
   };
 }
 

@@ -1,7 +1,8 @@
 import { detectImageModel, type AssistantMessagePart, type MessageAttachmentInfo, type SubagentConfigInfo, type SubagentRunInfo } from "@qone/protocol";
 import type { RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
 import type { PiAdapter } from "./pi-adapter.js";
-import { buildSubagentPrompt, resolveSubagent, subagentCatalog } from "./subagents.js";
+import { buildSubagentPrompt, subagentCatalog } from "./subagents.js";
+import { resolveSubagentSelection, type SubagentWorkflowStep } from "./subagent-selection.js";
 import { SubagentScheduler } from "./subagent-scheduler.js";
 
 export interface SubagentController {
@@ -13,7 +14,7 @@ export interface SubagentController {
   recordEvent(id: string, type: string, payload: unknown, sequence: number): void;
   fail(id: string, message: string): void;
   dispose(sessionId: string, parentRunIds?: string[]): Promise<void>;
-  workflow(parentSessionId: string, parentRunId: string, steps: { id: string; title: string; task: string; subagentId?: string; dependsOn?: string[] }[], context?: { model?: string; permissionMode?: "ask" | "auto" | "full"; signal?: AbortSignal }): Promise<SubagentRunInfo[]>;
+  workflow(parentSessionId: string, parentRunId: string, steps: SubagentWorkflowStep[], context?: { model?: string; permissionMode?: "ask" | "auto" | "full"; signal?: AbortSignal }): Promise<SubagentRunInfo[]>;
 }
 
 export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo, streams: Map<string, string>): SubagentRunInfo | undefined {
@@ -220,13 +221,7 @@ export function registerSubagentDispatcher(options: {
     if (inherited && !policy().allowNested) throw new Error("Nested subagents are disabled in settings");
     if (depth > policy().maxDepth) throw new Error("Subagent nesting depth limit reached");
     if (input.background && !policy().backgroundEnabled) throw new Error("Background subagents are disabled in settings");
-    const profile = input.subagentId ? options.config().profiles.find(p => p.id === input.subagentId && p.enabled) : undefined;
-    if (input.subagentId && !profile) throw new Error(`Subagent profile unavailable: ${input.subagentId}`);
-    const capabilityAgent = !profile && input.capability ? resolveSubagent(options.config(), input.capability) : undefined;
-    if (input.capability && !profile && !capabilityAgent) {
-      throw new Error(`No subagent is configured for ${input.capability}. Tell the user this task cannot be done until one is configured in Settings.`);
-    }
-    const agent = profile ?? capabilityAgent;
+    const agent = resolveSubagentSelection(options.config(), input);
     const count = policy().contextMode === "snapshot" ? policy().contextMessages : 0;
     const context = count ? inherited
       ? options.subagentContextProvider?.(inherited.runId, count) ?? ""
@@ -248,7 +243,7 @@ export function registerSubagentDispatcher(options: {
     repo.create({
       ...input, runId: child.id, parentSessionId, parentSubagentId: inherited?.runId, depth,
       executionSessionId: `${parentSessionId}::subagent::${child.id}`,
-      profileId: profile?.id ?? capabilityAgent?.id, model,
+      profileId: agent?.id, model,
       permissionMode, tools, contextMode: policy().contextMode, contextMessageCount: count,
     });
     const work = async () => {
@@ -351,6 +346,8 @@ export function registerSubagentDispatcher(options: {
     }),
     workflow: async (sessionId, parentRunId, steps, context) => {
       validateWorkflow(steps, policy().workflowMaxSteps);
+      // Fail invalid selections before any independent step creates a child run.
+      for (const step of steps) resolveSubagentSelection(options.config(), step);
       const parent = repo.get(parentRunId);
       if (parent && !policy().allowNested) throw new Error("Nested subagents are disabled in settings");
       const root = parent?.parentSessionId ?? sessionId;
@@ -367,7 +364,7 @@ export function registerSubagentDispatcher(options: {
             await dispatch({
               parentSessionId: sessionId, parentRunId, title: step.title,
               task: step.task + dependencies.map(id => `\nDependency ${id}:\n${results.get(id)!.content}`).join("\n"),
-              subagentId: step.subagentId, toolCallId: `workflow:${workflowId}:${step.id}`,
+              capability: step.capability, subagentId: step.subagentId, toolCallId: `workflow:${workflowId}:${step.id}`,
               workflowId, workflowStepId: step.id, dependsOn: dependencies,
               fallbackModel: context?.model, permissionMode: context?.permissionMode ?? "ask", signal: context?.signal,
             });
