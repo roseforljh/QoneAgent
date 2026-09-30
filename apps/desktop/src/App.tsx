@@ -21,6 +21,7 @@ import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-image
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { expandComposerCommand } from "./lib/composer-command";
 import { addComposerHistory } from "./lib/composer-history";
+import { bindComposerDrafts } from "./lib/composer-drafts";
 import { createQoneMessageQueue, getQoneMessageQueue } from "./lib/qone-message-queue";
 import { AnyFileAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
@@ -215,7 +216,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     },
   }), [threads, currentSessionId, newSession, selectSession, send, sessions, t]);
 
-  return useExternalStoreRuntime({
+  const runtime = useExternalStoreRuntime({
     messages: runtimeMessages,
     isRunning: running,
     convertMessage: (message): ThreadMessageLike => {
@@ -294,6 +295,9 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     queue: queue?.adapter,
     adapters: { threadList, attachments: attachmentAdapter },
   });
+
+  useEffect(() => bindComposerDrafts(runtime), [runtime]);
+  return runtime;
 }
 
 function Logo({ collapsed }: { collapsed: boolean }) {

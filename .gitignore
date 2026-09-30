@@ -13,3 +13,4 @@ apps/desktop/src-tauri/binaries/
 .env.*
 !.env.example
 AGENTS.md
+graphify-out
