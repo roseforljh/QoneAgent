@@ -27,3 +27,9 @@ ASAR：读取前 16 字节，uint32LE(12) 为 JSON 索引长度，数据起点�
 ## 验证
 
 消息顺序和分组测试、带真实耗时数据的工具组服务端渲染测试、思考与压缩分组回归测试、桌面端 TypeScript 检查。界面视觉验收由用户完成。
+
+## 补充：执行过程何时出现折叠入口
+
+指定版本 `sites-end-resource-e2d7df4c9a5f.js` 的 `kO` 先计算 `shouldAllowCollapse`：普通会话要有可展示的过程内容、最终回复已经开始且回合未取消。特殊的 `activity` 上下文可通过 `allowCollapseBeforeFinal` 提前允许。`AO` 仅在允许折叠且有可折叠条目时渲染 `TO` 折叠头；否则过程内容直接保持展开。`local-conversation-turn-bf34e7fdd14b.js` 把最终回复是否开始、取消状态和 `activity` 上下文传给这一层。截图中运行期间看不到外层展开/收起，与普通会话的这一分支一致。
+
+Qone 原 `AssistantExecution` 始终渲染外层 `CollapsibleTrigger`，且最终回复开始时通过 effect 强制写入折叠覆盖值。现改为最终回复开始前只显示非交互状态文本和展开的过程内容，最终回复开始后才提供折叠入口；自动折叠继续由最终回复和活动是否结束推导，用户之后的手动选择仍保留。内层工具/思考详情的折叠入口不受影响。

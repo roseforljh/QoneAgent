@@ -86,6 +86,16 @@
 - `git diff --check`：通过；仅有 Git 的 CRLF 提示。
 - `packages/protocol` 和 `packages/database` 当前没有独立 `typecheck` script，已由 runtime typecheck 和 desktop build 间接检查。
 
+## 临时代理显式路由修复
+
+- `dispatch_subagent` 和 `run_subagent_workflow` 的步骤均支持 `capability: "temporary"`，明确选择设置里的临时通用代理；没有单独配置模型时继续使用既有跟随主模型规则。
+- `list_subagents` 的临时代理、媒体能力与保存的 profile 均返回可直接用于调用的 `selection`，避免主模型从媒体枚举里猜选项。
+- 保留旧调用兼容：省略或传 `null` 的 capability 且没有 profile 时仍使用临时代理；保存的 profile 使用 `subagentId`，capability 省略或为 `null`。
+- 显式 capability 与非空 profile ID 不能混用；未知目标、不可用 profile 和未配置媒体能力在创建子运行前报错。工作流预先校验所有步骤，避免无效选择留下已启动的独立步骤。
+- `temporary` 只是委派目标，不新增媒体能力或持久化 profile，也不根据任务关键词自动改选目标。
+- 回归覆盖设置模型变更、主模型回退、原始附件引用、五种媒体路由、profile、工作流，以及 Responses/Codex Responses 实际工具请求参数。网关要求填写全部参数时，可使用 `temporary` 和中性的 `null` profile 值，不再被迫选择媒体能力。
+- 本修复不处理模型提供商返回的 404，也不自动重试或更改用户配置的模型。
+
 ## 运行边界
 
 - 子代理详情页按产品要求只读；主 Agent 通过 `inspect_subagent`、`wait_subagent` 和 `control_subagent` 查询或管理子代理。
