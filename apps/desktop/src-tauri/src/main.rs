@@ -222,20 +222,10 @@ fn pick_workspace() -> Option<String> {
         .map(|path| path.to_string_lossy().into_owned())
 }
 
-#[derive(serde::Serialize)]
-struct DroppedFilePayload {
-    name: String,
-    data: String,
-    path: Option<String>,
-    size: u64,
-}
-
-const MAX_INLINE_FILE_BYTES: u64 = 50 * 1024 * 1024;
-
-fn attachment_file_info(path: &std::path::Path) -> Result<(String, u64), String> {
+fn attachment_path_info(path: &std::path::Path) -> Result<AttachmentFileInfo, String> {
     let metadata = std::fs::metadata(path).map_err(|error| format!("无法读取附件：{error}"))?;
-    if !metadata.is_file() {
-        return Err("拖入的项目不是文件".into());
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err("附件必须是文件或文件夹".into());
     }
     let name = path
         .file_name()
@@ -243,19 +233,17 @@ fn attachment_file_info(path: &std::path::Path) -> Result<(String, u64), String>
         .filter(|value| !value.is_empty())
         .unwrap_or("attachment")
         .to_owned();
-    Ok((name, metadata.len()))
+    Ok(AttachmentFileInfo {
+        name,
+        path: path.to_string_lossy().into_owned(),
+        size: if metadata.is_file() { metadata.len() } else { 0 },
+        is_directory: metadata.is_dir(),
+    })
 }
 
 #[tauri::command]
-fn read_dropped_file(path: String, metadata_only: Option<bool>) -> Result<DroppedFilePayload, String> {
-    let file_path = std::path::PathBuf::from(&path);
-    let (name, size) = attachment_file_info(&file_path)?;
-    if metadata_only.unwrap_or(false) || size > MAX_INLINE_FILE_BYTES {
-        return Ok(DroppedFilePayload { name, data: String::new(), path: Some(path), size });
-    }
-    let data = std::fs::read(&file_path)
-        .map_err(|error| format!("无法读取附件：{error}"))?;
-    Ok(DroppedFilePayload { name, data: BASE64.encode(data), path: None, size })
+fn inspect_dropped_file(path: String) -> Result<AttachmentFileInfo, String> {
+    attachment_path_info(std::path::Path::new(&path))
 }
 
 #[derive(serde::Serialize)]
@@ -263,6 +251,8 @@ struct AttachmentFileInfo {
     name: String,
     path: String,
     size: u64,
+    #[serde(rename = "isDirectory")]
+    is_directory: bool,
 }
 
 #[tauri::command]
@@ -270,10 +260,29 @@ fn pick_attachment_files() -> Result<Vec<AttachmentFileInfo>, String> {
     let Some(paths) = rfd::FileDialog::new().set_title("选择附件").pick_files() else {
         return Ok(Vec::new());
     };
-    paths.into_iter().map(|path| {
-        let (name, size) = attachment_file_info(&path)?;
-        Ok(AttachmentFileInfo { name, path: path.to_string_lossy().into_owned(), size })
-    }).collect()
+    paths.into_iter().map(|path| attachment_path_info(&path)).collect()
+}
+
+#[tauri::command]
+fn pick_attachment_folder() -> Result<Option<AttachmentFileInfo>, String> {
+    rfd::FileDialog::new()
+        .set_title("选择文件夹附件")
+        .pick_folder()
+        .map(|path| attachment_path_info(&path))
+        .transpose()
+}
+
+#[tauri::command]
+fn authorize_attachment_preview(app: AppHandle, path: String) -> Result<(), String> {
+    let file = std::path::Path::new(&path);
+    let extension = file.extension().and_then(|value| value.to_str()).unwrap_or("");
+    if !file.is_absolute() || !["png", "jpg", "jpeg", "webp", "gif"].iter().any(|allowed| extension.eq_ignore_ascii_case(allowed)) {
+        return Err("不是可预览的本地图片路径".into());
+    }
+    if attachment_path_info(file)?.is_directory {
+        return Err("文件夹不能作为图片预览".into());
+    }
+    app.asset_protocol_scope().allow_file(file).map_err(|error| format!("无法预览附件：{error}"))
 }
 
 #[tauri::command]
@@ -601,8 +610,10 @@ fn main() {
             runtime_send,
             runtime_restart,
             pick_workspace,
-            read_dropped_file,
+            inspect_dropped_file,
             pick_attachment_files,
+            pick_attachment_folder,
+            authorize_attachment_preview,
             save_image_as,
             secret_set,
             secret_get,
