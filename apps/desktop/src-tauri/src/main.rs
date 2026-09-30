@@ -35,20 +35,6 @@ fn ensure_global_instructions_file() -> Result<(), String> {
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-#[cfg(all(windows, debug_assertions))]
-use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
-
-#[cfg(all(windows, debug_assertions))]
-use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-    TH32CS_SNAPPROCESS,
-};
-
-#[cfg(all(windows, debug_assertions))]
-use windows::Win32::System::Threading::{
-    GetCurrentProcessId, OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
-};
-
 #[cfg(windows)]
 mod conpty;
 
@@ -76,51 +62,6 @@ impl Drop for SidecarState {
 pub struct Sidecar {
     state: Mutex<SidecarState>,
     generation: Arc<AtomicU64>,
-}
-
-#[cfg(all(windows, debug_assertions))]
-fn dev_parent_process_id() -> Option<u32> {
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()? };
-    let current_id = unsafe { GetCurrentProcessId() };
-    let mut entry = PROCESSENTRY32W {
-        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-        ..Default::default()
-    };
-    let mut parent_id = None;
-    let first = unsafe { Process32FirstW(snapshot, &mut entry) };
-    if first.is_ok() {
-        loop {
-            if entry.th32ProcessID == current_id {
-                parent_id = Some(entry.th32ParentProcessID);
-                break;
-            }
-            if unsafe { Process32NextW(snapshot, &mut entry) }.is_err() {
-                break;
-            }
-        }
-    }
-    unsafe { CloseHandle(snapshot).ok(); }
-    parent_id
-}
-
-#[cfg(all(windows, debug_assertions))]
-fn watch_dev_parent(app: AppHandle) {
-    let Some(parent_id) = dev_parent_process_id() else { return; };
-    if parent_id == 0 || parent_id == unsafe { GetCurrentProcessId() } { return; }
-    std::thread::spawn(move || {
-        // Keep the original process handle: opening a PID repeatedly can find
-        // an exited process (or a different process after PID reuse).
-        unsafe {
-            if let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, parent_id) {
-                if WaitForSingleObject(handle, u32::MAX) == WAIT_OBJECT_0 {
-                    app.exit(0);
-                }
-                CloseHandle(handle).ok();
-            } else {
-                app.exit(0);
-            }
-        }
-    });
 }
 
 impl Sidecar {
@@ -603,9 +544,6 @@ fn main() {
                 generation,
             });
 
-            #[cfg(all(windows, debug_assertions))]
-            watch_dev_parent(app.handle().clone());
-
             let show = MenuItem::with_id(app, "show", "Show Qone", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -624,7 +562,11 @@ fn main() {
                             let _ = window.set_focus();
                         }
                     }
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        #[cfg(debug_assertions)]
+                        eprintln!("[qone:lifecycle] tray quit requested");
+                        app.exit(0);
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -644,6 +586,7 @@ fn main() {
                 {
                     // Let `tauri dev` exit normally so the debug executable is
                     // released before the next Cargo rebuild.
+                    eprintln!("[qone:lifecycle] window close requested: {}", window.label());
                     let _ = (window, api);
                 }
                 #[cfg(not(debug_assertions))]
@@ -681,6 +624,8 @@ fn main() {
         .expect("error while building tauri application")
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {
+                #[cfg(debug_assertions)]
+                eprintln!("[qone:lifecycle] application exited");
                 #[cfg(windows)]
                 conpty::kill_all();
                 #[cfg(desktop)]

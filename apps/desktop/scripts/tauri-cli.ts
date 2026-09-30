@@ -23,21 +23,25 @@ child.stderr.pipe(process.stderr);
 
 let terminating = false;
 
-function stop() {
+function stop(signal: string) {
   if (terminating) return;
   terminating = true;
+  console.error(`[qone:dev] received ${signal}, stopping development processes`);
   if (windowsJob) process.exit(130);
   child.kill("SIGTERM");
 }
 
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
+process.once("SIGINT", () => stop("SIGINT"));
+process.once("SIGTERM", () => stop("SIGTERM"));
 const exitCode = await new Promise<number>((resolve) => {
   child.once("error", (error) => {
     console.error("Failed to start Tauri:", error);
     resolve(1);
   });
-  child.once("exit", (code, signal) => resolve(terminating ? 130 : code ?? (signal ? 1 : 0)));
+  child.once("exit", (code, signal) => {
+    console.error(`[qone:dev] Tauri CLI exited (code: ${code ?? "none"}, signal: ${signal ?? "none"}, interrupted: ${terminating})`);
+    resolve(terminating ? 130 : code ?? (signal ? 1 : 0));
+  });
 });
 
 // Exit also closes the job if the official CLI quits while one of its
