@@ -45,12 +45,50 @@ export function toolTarget(part: ToolActionPart, call?: ToolCall): string {
   const args = { ...asObject(call?.args), ...asObject(part.args) };
   const command = commandForTool(part, call);
   if (command) return compactText(command);
+
+  const toolName = part.toolName.toLowerCase();
+  const isSearchOrFind = ["grep", "find", "glob", "search"].some((name) => toolName.includes(name));
+
+  if (isSearchOrFind) {
+    const pattern = firstString([args.pattern, args.query]);
+    const path = firstString([args.path, args.file]);
+    if (pattern) {
+      if (path) {
+        const normalized = path.trim().replace(/[\\/]+$/, "");
+        const base = normalized.split(/[\\/]/).at(-1) || normalized;
+        return compactText(`${pattern} (${base})`);
+      }
+      return compactText(pattern);
+    }
+  }
+
   const path = firstString([args.path, args.file]);
   if (path) {
     const normalized = path.trim().replace(/[\\/]+$/, "");
     return compactText(normalized.split(/[\\/]/).at(-1) || normalized);
   }
   return compactText(firstString([args.pattern, args.query, args.url, args.name]) ?? part.toolName);
+}
+
+export function toolFullTarget(part: ToolActionPart, call?: ToolCall): string {
+  const args = { ...asObject(call?.args), ...asObject(part.args) };
+  const command = commandForTool(part, call);
+  if (command) return command;
+
+  const toolName = part.toolName.toLowerCase();
+  const isSearchOrFind = ["grep", "find", "glob", "search"].some((name) => toolName.includes(name));
+
+  if (isSearchOrFind) {
+    const pattern = firstString([args.pattern, args.query]);
+    const path = firstString([args.path, args.file]);
+    if (pattern && path) return `${pattern} in ${path}`;
+    if (pattern) return pattern;
+  }
+
+  const path = firstString([args.path, args.file]);
+  if (path) return path;
+
+  return firstString([args.pattern, args.query, args.url, args.name]) ?? part.toolName;
 }
 
 function elapsedSeconds(call: ToolCall | undefined, now: number): number | undefined {
