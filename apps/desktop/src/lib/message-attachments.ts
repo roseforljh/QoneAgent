@@ -1,3 +1,4 @@
+import { translateCurrent as t } from "../localization";
 import type { AppendMessage } from "@assistant-ui/react";
 import type { MessageAttachmentInfo } from "@qone/protocol";
 import { INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo, type NativeAttachmentFile } from "./native-attachment-file";
@@ -15,7 +16,7 @@ function readDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error(`无法读取附件：${file.name}`));
+    reader.onerror = () => reject(new Error(t("attachment.readFailed", { name: file.name })));
     reader.readAsDataURL(file);
   });
 }
@@ -27,21 +28,21 @@ export async function serializeMessageAttachments(message: AppendMessage): Promi
     const type: MessageAttachmentInfo["type"] = nativeFile?.qoneIsDirectory ? "folder" : attachment.type === "image" ? "image" : "file";
     const mimeType = attachment.contentType || attachment.file?.type || (type === "image" ? "image/png" : "text/plain");
     if (nativeFile?.qoneLocalPath) return { type, name: attachment.name, mimeType, data: "", localPath: nativeFile.qoneLocalPath } satisfies MessageAttachmentInfo;
-    if (nativeFile && !isAudioVideo(mimeType) && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) throw new Error("超过 50 MB 的文件请通过附件菜单选择本地文件");
+    if (nativeFile && !isAudioVideo(mimeType) && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) throw new Error(t("attachment.useLocalFile"));
     const data = type === "image"
       ? attachment.content.find((part) => part.type === "image")?.image
       : attachment.file ? await readDataUrl(attachment.file)
         : attachment.content.find((part) => part.type === "file")?.data;
-    if (!data) throw new Error(`附件无法读取：${attachment.name}`);
-    if (!isAudioVideo(mimeType) && data.length > MAX_DATA_LENGTH) throw new Error(`附件过大：${attachment.name}`);
+    if (!data) throw new Error(t("attachment.readFailed", { name: attachment.name }));
+    if (!isAudioVideo(mimeType) && data.length > MAX_DATA_LENGTH) throw new Error(t("attachment.tooLarge", { name: attachment.name }));
     if (type === "image" && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(data)) {
-      throw new Error(`不支持的图片格式：${attachment.name}`);
+      throw new Error(t("attachment.unsupportedImage", { name: attachment.name }));
     }
     const serialized: MessageAttachmentInfo = { type, name: attachment.name, mimeType, data };
     return serialized;
   }));
   if (attachments.reduce((total, attachment) => total + (isAudioVideo(attachment.mimeType) ? 0 : attachment.data.length), 0) > MAX_TOTAL_DATA_LENGTH) {
-    throw new Error("附件总大小不能超过 100 MB");
+    throw new Error(t("attachment.totalTooLarge"));
   }
   return attachments;
 }

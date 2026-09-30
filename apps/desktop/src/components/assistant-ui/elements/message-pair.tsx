@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import type { ComponentProps, ReactNode } from "react";
@@ -42,6 +43,7 @@ export function MessagePair({
   className,
   ...props
 }: MessagePairProps) {
+  const { t } = useLocale();
   const shown = take(words, visibleWords);
   const userSurfaceClass = cn(
     "min-w-0 max-w-[75%] self-end break-words text-start",
@@ -101,14 +103,14 @@ export function MessagePair({
             <>
               <button
                 type="button"
-                aria-label="Copy response"
+                aria-label={t("chat.copyResponse")}
                 className={cn(ghostButton, "size-7")}
               >
                 <CopyIcon className="size-3.5" />
               </button>
               <button
                 type="button"
-                aria-label="Regenerate response"
+                aria-label={t("chat.regenerateResponse")}
                 className={cn(ghostButton, "size-7")}
               >
                 <RefreshCwIcon className="size-3.5" />

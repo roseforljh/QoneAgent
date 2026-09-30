@@ -293,7 +293,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       }
       if (!state.currentSessionId) {
         if (!state.currentWorkspaceId || !state.workspaces.some((workspace) => workspace.id === state.currentWorkspaceId)) {
-          useStore.setState({ lastError: "请先导入项目，再发送消息。" });
+          useStore.setState({ lastError: t("error.projectBeforeMessage") });
           return;
         }
         pendingRun.current = { text, attachments, goal: prompt.goal };
@@ -317,10 +317,11 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
 }
 
 function Logo({ collapsed }: { collapsed: boolean }) {
+  const { t } = useLocale();
   return (
     <Link
       to="/"
-      aria-label="返回主页面"
+      aria-label={t("app.backHome")}
       className={cn(
         "ml-2 flex min-w-0 items-center gap-2 truncate text-[15px] font-semibold transition-[opacity,max-width] duration-200 hover:opacity-80",
         collapsed ? "max-w-0 opacity-0" : "max-w-32 opacity-100",
@@ -333,8 +334,9 @@ function Logo({ collapsed }: { collapsed: boolean }) {
 }
 
 function ThreadLoadingFallback() {
+  const { t } = useLocale();
   return (
-    <div className="flex h-full flex-col bg-background" aria-busy="true" aria-label="正在加载聊天界面">
+    <div className="flex h-full flex-col bg-background" aria-busy="true" aria-label={t("app.loadingChat")}>
       <ConversationLoadingSkeleton />
       <div className="mx-auto w-full max-w-2xl px-4 pb-2">
         <ComposerLoadingSkeleton />
@@ -355,6 +357,7 @@ function PendingApprovals() {
 }
 
 function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOpenSettings: () => void }) {
+  const { t } = useLocale();
   return (
     <div className="mt-auto shrink-0 p-2">
       <button
@@ -366,7 +369,7 @@ function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOp
         )}
       >
         <CodexIcon src={gearIcon} className="size-3.5 shrink-0" />
-        <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", collapsed ? "max-w-0" : "max-w-24")}>设置</span>
+        <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", collapsed ? "max-w-0" : "max-w-24")}>{t("common.settings")}</span>
       </button>
     </div>
   );
@@ -435,7 +438,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
             <TooltipIconButton
               variant="ghost"
               size="icon"
-              tooltip="收起侧边栏"
+              tooltip={t("sidebar.collapse")}
               side="right"
               onClick={() => setSidebarCollapsed(true)}
               className="size-8 shrink-0"
@@ -465,7 +468,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               />
               <Link
                 to="/plugins"
-                aria-label="应用"
+                aria-label={t("app.apps")}
                 data-slot="q-sidebar-app-link"
                 className={cn(
                   "group hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
@@ -473,7 +476,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
                 )}
               >
                 <AnimatedSidebarIcon kind="plugins" />
-                <span className="overflow-hidden whitespace-nowrap">应用</span>
+                <span className="overflow-hidden whitespace-nowrap">{t("app.apps")}</span>
               </Link>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-2">
@@ -494,7 +497,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
           {lastError && (
             <div className="error-banner q-chat-error-banner absolute inset-x-4 z-50" role="alert">
               <span>{lastError}</span>
-              <button className="icon-button" onClick={() => useStore.setState({ lastError: undefined })} aria-label="关闭错误"><X size={15} /></button>
+              <button className="icon-button" onClick={() => useStore.setState({ lastError: undefined })} aria-label={t("common.dismissError")}><X size={15} /></button>
             </div>
           )}
           <div className="q-chat-content relative min-h-0 flex-1 overflow-hidden">
@@ -515,6 +518,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
 }
 
 function PageLayout({ title, theme, onToggleTheme, children }: { title: string; theme: Theme; onToggleTheme: () => void; children: ReactNode }) {
+  const { t } = useLocale();
   return (
     <div className="page-shell">
       <header className="page-topbar">
@@ -522,7 +526,7 @@ function PageLayout({ title, theme, onToggleTheme, children }: { title: string; 
         <div className="page-topbar-actions">
           <Link to="/" className="page-back-link">
             <ArrowLeft size={16} aria-hidden="true" />
-            <span>返回主页面</span>
+            <span>{t("app.backHome")}</span>
           </Link>
           <span className="page-title">{title}</span>
           <ThemeButton theme={theme} onToggle={onToggleTheme} />
@@ -534,16 +538,18 @@ function PageLayout({ title, theme, onToggleTheme, children }: { title: string; 
 }
 
 function AppsPanel({ plugins }: { plugins: PluginInfo[] }) {
+  const { t } = useLocale();
   return <>
     <div className="apps-grid">
       <BrowserIntegration />
     </div>
     <ReachChannels />
-    {plugins.length > 0 && <div className="simple-list">{plugins.map((plugin) => <div className="simple-list-row stacked" key={plugin.id}><div><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.loaded ? `已加载 · ${plugin.toolCount} tools · ${plugin.skillCount} skills` : "未加载"}</small></div><span className="status-dot" /></div>)}</div>}
+    {plugins.length > 0 && <div className="simple-list">{plugins.map((plugin) => <div className="simple-list-row stacked" key={plugin.id}><div><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.loaded ? t("app.pluginLoaded", { tools: plugin.toolCount, skills: plugin.skillCount }) : t("app.pluginUnloaded")}</small></div><span className="status-dot" /></div>)}</div>}
   </>;
 }
 
 function ManagementPanel({ kind }: { kind: "skills" | "plugins" | "permissions" }) {
+  const { t } = useLocale();
   const { send, skills, plugins, workspaces, currentWorkspaceId, permissionRules, setPermission, lastError } = useStore();
   const { theme, toggleTheme } = useTheme();
   useEffect(() => {
@@ -551,12 +557,12 @@ function ManagementPanel({ kind }: { kind: "skills" | "plugins" | "permissions" 
     if (kind === "skills") send({ type: "skills.list", requestId: crypto.randomUUID(), cwd: workspaces.find((w) => w.id === currentWorkspaceId)?.path });
     if (kind === "permissions") send({ type: "permission.list", requestId: crypto.randomUUID() });
   }, [kind, send, workspaces, currentWorkspaceId]);
-  const titles = { skills: "Skills", plugins: "应用", permissions: "Permissions" };
+  const titles = { skills: t("nav.skills"), plugins: t("app.apps"), permissions: t("composer.permissions") };
   return <PageLayout title={titles[kind]} theme={theme} onToggleTheme={toggleTheme}>
     {lastError && <p className="error-banner" role="alert">{lastError}</p>}
     {kind === "plugins" ? <AppsPanel plugins={plugins} /> : <div className="settings-panel">
-      {kind === "skills" && <div className="simple-list">{skills.length === 0 ? <p className="muted-copy">没有发现 Skills。</p> : skills.map((skill) => <div className="simple-list-row stacked" key={skill.id}><strong>{skill.name}</strong><small>{skill.description}</small><code>{skill.path}</code></div>)}</div>}
-      {kind === "permissions" && <div className="simple-list">{permissionRules.length === 0 ? <p className="muted-copy">暂无权限规则。</p> : permissionRules.map((rule) => <div className="simple-list-row" key={`${rule.subjectId}:${rule.permission}`}><div><strong>{rule.subjectId}</strong><small>{rule.permission}</small></div><QoneSelect value={rule.decision} onChange={(value) => setPermission({ subjectId: rule.subjectId, permission: rule.permission, decision: value as "allow" | "ask" | "deny" })} options={[{ value: "allow", label: "ALLOW" }, { value: "ask", label: "ASK" }, { value: "deny", label: "DENY" }]} ariaLabel={`${rule.subjectId} 权限`} triggerClassName="qone-select-trigger-compact" /></div>)}</div>}
+      {kind === "skills" && <div className="simple-list">{skills.length === 0 ? <p className="muted-copy">{t("app.noSkills")}</p> : skills.map((skill) => <div className="simple-list-row stacked" key={skill.id}><strong>{skill.name}</strong><small>{skill.description}</small><code>{skill.path}</code></div>)}</div>}
+      {kind === "permissions" && <div className="simple-list">{permissionRules.length === 0 ? <p className="muted-copy">{t("app.noPermissions")}</p> : permissionRules.map((rule) => <div className="simple-list-row" key={`${rule.subjectId}:${rule.permission}`}><div><strong>{rule.subjectId}</strong><small>{rule.permission}</small></div><QoneSelect value={rule.decision} onChange={(value) => setPermission({ subjectId: rule.subjectId, permission: rule.permission, decision: value as "allow" | "ask" | "deny" })} options={[{ value: "allow", label: t("app.allow") }, { value: "ask", label: t("app.ask") }, { value: "deny", label: t("app.deny") }]} ariaLabel={t("app.subjectPermissions", { subject: rule.subjectId })} triggerClassName="qone-select-trigger-compact" /></div>)}</div>}
     </div>}
   </PageLayout>;
 }

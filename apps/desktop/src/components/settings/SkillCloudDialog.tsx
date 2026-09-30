@@ -9,7 +9,7 @@ import "./skill-cloud.css";
 type Collection = "popular" | "trending" | "official";
 
 export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const installed = useStore((state) => state.skills);
   const [collection, setCollection] = useState<Collection>("popular");
   const [query, setQuery] = useState("");
@@ -111,7 +111,7 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
                 return <button key={`${item.source}#${item.skillId}`} type="button" className="skill-cloud-item" onClick={() => { setSelected(item); setInstallError(""); }}>
                   <span className="skill-cloud-item-icon"><CloudDownload size={17} /></span>
                   <span className="skill-cloud-item-copy"><strong>{item.name}</strong><small>{item.source}</small></span>
-                  <span className="skill-cloud-item-meta">{item.isOfficial && <em>{t("skills.cloud.officialBadge")}</em>}<small>{item.installs.toLocaleString()} {t("skills.cloud.installs")}</small>{isInstalled && <em>{t("skills.cloud.installed")}</em>}</span>
+                  <span className="skill-cloud-item-meta">{item.isOfficial && <em>{t("skills.cloud.officialBadge")}</em>}<small>{item.installs.toLocaleString(locale)} {t("skills.cloud.installs")}</small>{isInstalled && <em>{t("skills.cloud.installed")}</em>}</span>
                 </button>;
               })}
         </div>

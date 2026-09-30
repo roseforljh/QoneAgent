@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
-import { getLanguageSetting, resolveLocale, translate } from "./localization";
+import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
 import { trackWorkspaceRequest, untrackWorkspaceRequest, useWorkspaceViewStore } from "./lib/workspace-view-state";
 
 const displayRuntimeError = (message: string) => message === "MCP_NPX_UNAVAILABLE"
@@ -288,7 +288,7 @@ export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
       reject: (error) => { clearTimeout(timer); cloudRequests.delete(requestId); reject(error); },
     });
     useStore.getState().send({ ...command, requestId } as CloudCommand).then((sent) => {
-      if (!sent) cloudRequests.get(requestId)?.reject(new Error("云库请求发送失败"));
+      if (!sent) cloudRequests.get(requestId)?.reject(new Error(t("error.cloudSendFailed")));
     });
   });
   cloudInFlight.set(cacheKey, request);
@@ -300,13 +300,13 @@ export function requestSkillMutation(command: SkillMutationInput): Promise<Skill
   if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error("Runtime is unavailable"));
   const requestId = rid();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { skillMutationRequests.delete(requestId); reject(new Error("Skill 操作超时")); }, 20_000);
+    const timer = setTimeout(() => { skillMutationRequests.delete(requestId); reject(new Error(t("error.skillTimeout"))); }, 20_000);
     skillMutationRequests.set(requestId, {
       resolve: (response) => { clearTimeout(timer); skillMutationRequests.delete(requestId); resolve(response); },
       reject: (error) => { clearTimeout(timer); skillMutationRequests.delete(requestId); reject(error); },
     });
     useStore.getState().send({ ...command, requestId } as SkillMutationCommand).then((sent) => {
-      if (!sent) skillMutationRequests.get(requestId)?.reject(new Error("Skill 操作发送失败"));
+      if (!sent) skillMutationRequests.get(requestId)?.reject(new Error(t("error.skillSendFailed")));
     });
   });
 }
@@ -459,7 +459,7 @@ export const useStore = create<AgentState>((set, get) => ({
     const state = get();
     const workspaceId = state.currentWorkspaceId;
     if (!workspaceId || !state.workspaces.some((workspace) => workspace.id === workspaceId)) {
-      set({ lastError: "请先导入项目，再创建会话。" });
+      set({ lastError: t("error.projectBeforeChat") });
       return;
     }
     set({ draftRunOptions: {}, lastError: undefined });
@@ -523,7 +523,7 @@ export const useStore = create<AgentState>((set, get) => ({
 
   chooseWorkspace: () => {
     if (!hasTauriBridge()) {
-      set({ lastError: "当前是 Vite 网页预览，未连接 Tauri 原生运行时。请使用 bun run --cwd apps/desktop tauri dev 测试项目导入和 AI 对话。" });
+      set({ lastError: t("error.previewRuntime") });
       return;
     }
     invoke<string | null>("pick_workspace")
@@ -538,7 +538,7 @@ export const useStore = create<AgentState>((set, get) => ({
       })
       .catch((error) => {
         console.error("workspace picker failed", error);
-        set({ lastError: `项目选择器打开失败：${String(error)}` });
+        set({ lastError: t("error.projectPicker", { error: String(error) }) });
       });
   },
 
@@ -576,15 +576,15 @@ export const useStore = create<AgentState>((set, get) => ({
     if (mcpCommand) {
       const server = get().mcpServers.find((item) => item.id === mcpCommand.serverId);
       if (!server?.connected || !(server.toolCount && server.toolCount > 0)) {
-        set({ lastError: "所选 MCP 服务未连接或没有可用工具。" });
+        set({ lastError: t("error.mcpUnavailable") });
         return;
       }
       if (!mcpCommand.text && !attachments?.length) {
-        set({ lastError: "选择 MCP 服务后，请输入消息或添加附件。" });
+        set({ lastError: t("error.mcpMessageRequired") });
         return;
       }
       if (goal) {
-        set({ lastError: "Goal 暂不支持指定 MCP 服务。" });
+        set({ lastError: t("error.goalMcpUnsupported") });
         return;
       }
     }
@@ -599,7 +599,7 @@ export const useStore = create<AgentState>((set, get) => ({
     const session = get().sessions.find((item) => item.id === sid);
     if (!session?.workspaceId || !get().workspaces.some((workspace) => workspace.id === session.workspaceId)) return;
     if (get().running || get().compactionStatuses[sid]) return;
-    if (!hasTauriBridge()) { set({ lastError: "当前未连接桌面运行时，无法发送消息。" }); return; }
+    if (!hasTauriBridge()) { set({ lastError: t("error.runtimeDisconnected") }); return; }
     const history = get().messages;
     replaceFromMessageId ??= repeatedUserMessageId(history, { content: message, attachments });
     const replaceIndex = replaceFromMessageId
@@ -650,7 +650,7 @@ export const useStore = create<AgentState>((set, get) => ({
     if (history.length === 0) {
       const titleRequestId = rid();
       pendingTitleRequests.set(titleRequestId, sid);
-      get().send({ type: "session.generate-title", requestId: titleRequestId, sessionId: sid, prompt: (mcpCommand ? mcpCommand.text : message) || attachments?.map((attachment) => attachment.name).join(", ") || "图片", model });
+      get().send({ type: "session.generate-title", requestId: titleRequestId, sessionId: sid, prompt: (mcpCommand ? mcpCommand.text : message) || attachments?.map((attachment) => attachment.name).join(", ") || t("attachment.image"), model });
     }
   },
 
@@ -700,7 +700,7 @@ export const useStore = create<AgentState>((set, get) => ({
   compactSession: () => {
     const { currentSessionId, selectedModelId, connected, compactionStatuses, messages, messagesLoadingSessionId, running } = get();
     if (!connected || !currentSessionId || !selectedModelId) {
-      set({ lastError: "请先连接运行时、选择会话和模型。" });
+      set({ lastError: t("error.compactionPrerequisites") });
       return;
     }
     if (running || messagesLoadingSessionId === currentSessionId || !messages.length || compactionStatuses[currentSessionId]) return;

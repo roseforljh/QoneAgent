@@ -1,3 +1,4 @@
+import { translateCurrent as t } from "../localization";
 /** Pasted text at or above this size is easier to work with as a document. */
 export const LONG_PASTE_CHAR_LIMIT = 2_000;
 
@@ -16,6 +17,6 @@ export function getPastedTextFileName(text: string): string {
     .replace(/\s+/g, " ")
     .trim();
 
-  if (!firstLine) return "粘贴的文本.txt";
+  if (!firstLine) return t("attachment.pastedFile");
   return firstLine.length > 96 ? `${firstLine.slice(0, 95)}…` : firstLine;
 }

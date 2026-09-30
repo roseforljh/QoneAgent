@@ -1,3 +1,4 @@
+import { useLocale } from "../../localization";
 import { useLayoutEffect, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -14,6 +15,7 @@ export function ResizableSidebar({ collapsed, onCollapsedChange, children }: {
   onCollapsedChange: (collapsed: boolean) => void;
   children: ReactNode;
 }) {
+  const { t } = useLocale();
   const [element, setElement] = useState<HTMLDivElement | null>(null);
   const [shellWidth, setShellWidth] = useState(() => typeof window === "undefined" ? Infinity : window.innerWidth);
   const [preferredWidth, setPreferredWidth] = useState(() => readSavedSidebarWidth() ?? DEFAULT_SIDEBAR_WIDTH);
@@ -53,7 +55,7 @@ export function ResizableSidebar({ collapsed, onCollapsedChange, children }: {
       <div className="q-sidebar-clip" inert={collapsed} aria-hidden={collapsed}>
         <div className="q-sidebar-frame" style={{ width, minWidth: width }}>{children}</div>
       </div>
-      {(!collapsed || dragging) && <div role="separator" aria-label="调整左侧栏宽度"
+      {(!collapsed || dragging) && <div role="separator" aria-label={t("sidebar.resize")}
         aria-orientation="vertical" aria-valuemin={minimum} aria-valuemax={maximum} aria-valuenow={width}
         tabIndex={collapsed ? -1 : 0} className="q-sidebar-resizer" onPointerDown={startResize}
         onKeyDown={(event) => {

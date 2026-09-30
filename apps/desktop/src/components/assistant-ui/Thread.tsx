@@ -470,8 +470,8 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
         >
           {editingQueueItem && (
             <div className="flex items-center justify-between px-2.5 py-1 text-xs text-muted-foreground" role="status">
-              <span>正在编辑待发送消息</span>
-              <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); useStore.setState({ editingQueueItem: undefined }); void aui.composer().reset(); }}>取消</button>
+              <span>{t("chat.queueEditing")}</span>
+              <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); useStore.setState({ editingQueueItem: undefined }); void aui.composer().reset(); }}>{t("common.cancel")}</button>
             </div>
           )}
           <ComposerAttachments />
@@ -495,17 +495,18 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
 };
 
 const GoalStatusBar: FC = () => {
+  const { t } = useLocale();
   const goal = useStore((state) => state.goal);
   const pause = useStore((state) => state.pauseGoal);
   const resume = useStore((state) => state.resumeGoal);
   const clear = useStore((state) => state.clearGoal);
   if (!goal) return null;
-  const status = goal.waitingReason ? "等待外部事件" : goal.status === "active" ? "执行中" : goal.status === "paused" ? "已暂停" : goal.status === "blocked" ? "已阻塞" : "已完成";
+  const status = goal.waitingReason ? t("goal.waiting") : goal.status === "active" ? t("goal.active") : goal.status === "paused" ? t("goal.paused") : goal.status === "blocked" ? t("goal.blocked") : t("goal.complete");
   return <div className="mx-auto mb-2 flex w-full q-composer-content items-center gap-2 rounded-xl border border-foreground/10 bg-muted/30 px-3 py-2 text-xs" role="status">
     <span className="flex min-w-0 flex-1 items-center gap-1.5"><TargetIcon className="size-3.5 shrink-0 text-primary" /><strong className="shrink-0">Goal · {status}</strong><span className="truncate text-muted-foreground" title={goal.objective}>{goal.objective}</span></span>
-    {goal.status === "active" && !goal.waitingReason && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={pause}>暂停</button>}
-    {(goal.status === "paused" || goal.status === "blocked" || Boolean(goal.waitingReason)) && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={resume}>恢复</button>}
-    <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={clear}>清除</button>
+    {goal.status === "active" && !goal.waitingReason && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={pause}>{t("goal.pause")}</button>}
+    {(goal.status === "paused" || goal.status === "blocked" || Boolean(goal.waitingReason)) && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={resume}>{t("goal.resume")}</button>}
+    <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={clear}>{t("goal.clear")}</button>
   </div>;
 };
 
@@ -527,14 +528,14 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>
             <ComposerPrimitive.Dictate asChild>
-              <TooltipIconButton tooltip="Voice input" side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-dictate text-muted-foreground hover:text-foreground size-7 rounded-full" aria-label="Start voice input">
+              <TooltipIconButton tooltip={t("chat.voiceInput")} side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-dictate text-muted-foreground hover:text-foreground size-7 rounded-full" aria-label={t("chat.startVoiceInput")}>
                 <MicIcon className="aui-composer-dictate-icon size-4" />
               </TooltipIconButton>
             </ComposerPrimitive.Dictate>
           </AuiIf>
           <AuiIf condition={(s) => s.composer.dictation != null}>
             <ComposerPrimitive.StopDictation asChild>
-              <TooltipIconButton tooltip="Stop dictation" side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-stop-dictation text-destructive size-7 rounded-full" aria-label="Stop voice input">
+              <TooltipIconButton tooltip={t("chat.stopDictation")} side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-stop-dictation text-destructive size-7 rounded-full" aria-label={t("chat.stopVoiceInput")}>
                 <SquareIcon className="aui-composer-stop-dictation-icon size-3.5 animate-pulse fill-current" />
               </TooltipIconButton>
             </ComposerPrimitive.StopDictation>
@@ -573,10 +574,11 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
 };
 
 const ThreadScrollToBottom: FC = () => {
+  const { t } = useLocale();
   return (
     <ThreadPrimitive.ScrollToBottom asChild>
       <TooltipIconButton
-        tooltip="Scroll to bottom"
+        tooltip={t("chat.scrollToBottom")}
         className="bg-background absolute -top-10 z-10 self-center rounded-full border p-2 disabled:invisible dark:border-white/15 dark:bg-[#2a2a2a]"
       >
         <ChevronDownIcon className="size-5" />

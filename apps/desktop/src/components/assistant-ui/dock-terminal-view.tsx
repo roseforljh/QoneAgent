@@ -1,3 +1,4 @@
+import { useLocale } from "../../localization";
 import { useEffect, useRef, type MutableRefObject } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { useStore } from "../../store";
@@ -11,6 +12,7 @@ export default function TerminalView({ tabId, workspaceId, active, apiRef, onSta
   apiRef: MutableRefObject<TerminalApi | undefined>;
   onStatus: (tabId: string, status: TerminalStatus, detail?: string) => void;
 }) {
+  const { t } = useLocale();
   const cwd = useStore((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.path);
   const hostRef = useRef<HTMLDivElement>(null);
   const resourceRef = useRef<DockTerminalResource | undefined>(undefined);
@@ -48,6 +50,6 @@ export default function TerminalView({ tabId, workspaceId, active, apiRef, onSta
     return () => cancelAnimationFrame(frame);
   }, [active, cwd]);
   return <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden p-2">
-    <div ref={hostRef} className="min-h-0 min-w-0 flex-1 overflow-hidden" tabIndex={0} role="application" aria-label="Terminal" onPointerDown={() => resourceRef.current?.focus()} />
+    <div ref={hostRef} className="min-h-0 min-w-0 flex-1 overflow-hidden" tabIndex={0} role="application" aria-label={t("dock.terminal")} onPointerDown={() => resourceRef.current?.focus()} />
   </div>;
 }

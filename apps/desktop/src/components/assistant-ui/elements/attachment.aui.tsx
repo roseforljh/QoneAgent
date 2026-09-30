@@ -34,11 +34,12 @@ import { useLocale } from "../../../localization";
 import { attachmentFileIcon, attachmentFileKind, attachmentFileLabel } from "../../../lib/attachment-file-kind";
 
 const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
+  const { t } = useLocale();
   const src = useAttachmentSrc();
   const filename = useAuiState((state) => state.attachment.name);
 
   if (!src) return children;
-  return <Image.Zoom src={src} alt={filename || "Image attachment"} filename={filename}>{children}</Image.Zoom>;
+  return <Image.Zoom src={src} alt={filename || t("attachment.imageAlt")} filename={filename}>{children}</Image.Zoom>;
 };
 
 const AttachmentThumb: FC = () => {
@@ -77,11 +78,11 @@ const AttachmentUI: FC = () => {
     const type = s.attachment.type;
     switch (type) {
       case "image":
-        return "Image";
+        return t("attachment.image");
       case "document":
-        return "Document";
+        return t("attachment.document");
       case "file":
-        return "File";
+        return t("attachment.file");
       default:
         return type;
     }
@@ -105,15 +106,15 @@ const AttachmentUI: FC = () => {
       : 0,
   );
   const attachmentMeta = isUploading
-    ? "上传中"
+    ? t("attachment.uploading")
     : isError
-      ? "上传失败"
+      ? t("attachment.uploadFailed")
       : isDirectory ? t("composer.toolFolder") : [attachmentFileLabel(attachmentName, mimeType), attachmentSizeLabel].filter(Boolean).join(" · ");
 
   const errorMessage = useAuiState((s) =>
     s.attachment.status.type === "incomplete" &&
     s.attachment.status.reason === "error"
-      ? (s.attachment.status.message ?? "Upload failed")
+      ? (s.attachment.status.message ?? t("attachment.uploadFailed"))
       : undefined,
   );
 
@@ -141,9 +142,7 @@ const AttachmentUI: FC = () => {
                 )}
                 data-state={isError ? "error" : isUploading ? "uploading" : "done"}
                 data-attachment-kind={kind}
-                aria-label={`${attachmentName || typeLabel} attachment${
-                  isError ? ", upload failed" : isUploading ? ", uploading" : ""
-                }`}
+                aria-label={t("attachment.label", { name: attachmentName || typeLabel }) + (isError || isUploading ? `, ${attachmentMeta}` : "")}
               >
                 <div className="aui-attachment-tile-thumb size-8 shrink-0 overflow-hidden rounded-[8px]">
                   <AttachmentThumb />
@@ -192,8 +191,9 @@ const AttachmentUI: FC = () => {
 };
 
 const AttachmentRemove: FC = () => {
+  const { t } = useLocale();
   return (
-    <AttachmentPrimitive.Remove render={<TooltipIconButton tooltip="Remove file" className="aui-attachment-tile-remove absolute end-1 top-1/2 size-5 -translate-y-1/2 rounded-full text-foreground/45 hover:bg-foreground/[0.06]! hover:text-foreground/90! active:scale-[0.96] motion-reduce:transition-none dark:hover:bg-foreground/[0.09]!" side="top" />}>
+    <AttachmentPrimitive.Remove render={<TooltipIconButton tooltip={t("attachment.remove")} className="aui-attachment-tile-remove absolute end-1 top-1/2 size-5 -translate-y-1/2 rounded-full text-foreground/45 hover:bg-foreground/[0.06]! hover:text-foreground/90! active:scale-[0.96] motion-reduce:transition-none dark:hover:bg-foreground/[0.09]!" side="top" />}>
       <XIcon className="aui-attachment-remove-icon size-3 stroke-[2.5]" />
     </AttachmentPrimitive.Remove>
   );
@@ -220,9 +220,10 @@ export const ComposerAttachments: FC = () => {
 };
 
 export const ComposerAddAttachment: FC<{ hidden?: boolean }> = ({ hidden = false }) => {
+  const { t } = useLocale();
   return (
     <ComposerPrimitive.AddAttachment render={<TooltipIconButton
-        tooltip="Add Attachment"
+        tooltip={t("attachment.add")}
         side="bottom"
         variant="ghost"
         size="icon"
@@ -230,7 +231,7 @@ export const ComposerAddAttachment: FC<{ hidden?: boolean }> = ({ hidden = false
           "aui-composer-add-attachment text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-7 rounded-full active:scale-[0.96] motion-reduce:transition-none",
           hidden && "pointer-events-none absolute size-px overflow-hidden opacity-0",
         )}
-        aria-label="Add Attachment"
+        aria-label={t("attachment.add")}
       />}>
         <PaperclipIcon className="aui-attachment-add-icon size-4" />
     </ComposerPrimitive.AddAttachment>

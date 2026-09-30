@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import { ImageOffIcon, RefreshCwIcon } from "lucide-react";
@@ -8,10 +9,11 @@ const DOTS = Array.from({ length: 64 }, (_, index) => index);
 
 /** Assistant-ui's generation placeholder, styled to match Qone's dark surfaces. */
 export function ImageGeneration({ prompt, generating, error, onRegenerate, className, ...props }: Omit<ComponentProps<"div">, "children"> & { prompt: string; generating: boolean; error?: string; onRegenerate?: () => void }) {
+  const { t } = useLocale();
   return (
     <div data-slot="image-generation" className={cn("flex w-64 flex-col gap-2.5", className)} {...props}>
       <div className="relative aspect-square w-full overflow-hidden rounded-2xl border border-foreground/10 bg-foreground/[0.04]">
-        {error && <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/90 p-6 text-center text-foreground/60"><ImageOffIcon className="size-8" /><span className="text-xs">图像生成失败</span><span className="text-xs text-foreground/45">{error}</span></div>}
+        {error && <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/90 p-6 text-center text-foreground/60"><ImageOffIcon className="size-8" /><span className="text-xs">{t("image.generationFailed")}</span><span className="text-xs text-foreground/45">{error}</span></div>}
         <div className="absolute inset-0 grid grid-cols-8 place-items-center p-6" aria-hidden>
           {DOTS.map((dot) => {
             const row = Math.floor(dot / 8);
@@ -23,8 +25,8 @@ export function ImageGeneration({ prompt, generating, error, onRegenerate, class
         <span className="absolute end-2.5 top-2.5 text-xs tabular-nums text-white/65">1024 × 1024</span>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <p className="min-w-0 flex-1 truncate text-xs text-foreground/55">{generating ? "正在生成图像…" : prompt}</p>
-        {onRegenerate && <button type="button" aria-label="Regenerate image" disabled={generating} onClick={onRegenerate} className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-foreground/60 hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"><RefreshCwIcon className="size-3.5" /></button>}
+        <p className="min-w-0 flex-1 truncate text-xs text-foreground/55">{generating ? t("image.generating") : prompt}</p>
+        {onRegenerate && <button type="button" aria-label={t("image.regenerate")} disabled={generating} onClick={onRegenerate} className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-foreground/60 hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"><RefreshCwIcon className="size-3.5" /></button>}
       </div>
     </div>
   );

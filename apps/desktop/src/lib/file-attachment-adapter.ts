@@ -1,3 +1,4 @@
+import { translateCurrent as t } from "../localization";
 import type {
   Attachment,
   AttachmentAdapter,
@@ -30,7 +31,7 @@ const readFileDataUrl = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error(`无法读取附件：${file.name}`));
+    reader.onerror = () => reject(new Error(t("attachment.readFailed", { name: file.name })));
     reader.readAsDataURL(file);
   });
 };
@@ -55,7 +56,7 @@ export class AnyFileAttachmentAdapter implements AttachmentAdapter {
     const mimeType = attachment.contentType || "application/octet-stream";
     const nativeFile = attachment.file as NativeAttachmentFile;
     if (!nativeFile.qoneLocalPath && !isAudioVideo(mimeType) && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) {
-      throw new Error("超过 50 MB 的文件请通过附件菜单选择本地文件");
+      throw new Error(t("attachment.useLocalFile"));
     }
     return {
       ...attachment,

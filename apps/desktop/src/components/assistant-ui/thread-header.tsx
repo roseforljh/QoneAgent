@@ -68,7 +68,7 @@ export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
 
   return (
     <header className="q-thread-header">
-      {sidebarCollapsed && <TooltipIconButton tooltip="展开侧边栏" onClick={onOpenSidebar} className="q-thread-header-action">
+      {sidebarCollapsed && <TooltipIconButton tooltip={t("sidebar.expand")} onClick={onOpenSidebar} className="q-thread-header-action">
         <CodexIcon src={sidebarIcon} className="size-4" />
       </TooltipIconButton>}
       {renaming ? (

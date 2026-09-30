@@ -112,7 +112,7 @@ export const ComposerTriggers: FC<{
       </ComposerPrimitive.Unstable_TriggerPopoverItems>
     </ComposerPrimitive.Unstable_TriggerPopover>
 
-    {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover char="/" adapter={slash.adapter} className={`${popoverClass} max-h-[min(24rem,50dvh)]`} aria-label="Slash commands">
+    {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover char="/" adapter={slash.adapter} className={`${popoverClass} max-h-[min(24rem,50dvh)]`} aria-label={t("composer.slashCommands")}>
       <MentionPopoverState onStateChange={onSlashStateChange} />
       <ComposerPrimitive.Unstable_TriggerPopover.Action {...slash.action} />
       <ComposerPrimitive.Unstable_TriggerPopoverItems>

@@ -1,3 +1,4 @@
+import { useLocale } from "../../localization";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Check, ChevronRight } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -28,7 +29,7 @@ export function QoneSelect({
   value,
   options,
   onChange,
-  placeholder = "请选择",
+  placeholder,
   prefix,
   ariaLabel,
   disabled = false,
@@ -37,6 +38,7 @@ export function QoneSelect({
   menuClassName,
   align = "start",
 }: QoneSelectProps) {
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -102,7 +104,7 @@ export function QoneSelect({
         onKeyDown={handleTriggerKeyDown}
       >
         {prefix}
-        <span className={cn("qone-select-value", !selected && "is-placeholder")}>{selected?.label ?? placeholder}</span>
+        <span className={cn("qone-select-value", !selected && "is-placeholder")}>{selected?.label ?? placeholder ?? t("common.select")}</span>
         <ChevronRight className="qone-select-chevron" size={16} aria-hidden="true" />
       </button>
       {open && !disabled && (

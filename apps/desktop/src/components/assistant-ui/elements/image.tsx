@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import {
@@ -320,6 +321,7 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
   children?: React.ReactNode;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const { t } = useLocale();
   const overlayRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
   const [failedSrc, setFailedSrc] = useState<string>();
@@ -365,7 +367,7 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
       data-slot="image-zoom-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Image preview"
+      aria-label={t("image.preview")}
       className="aui-image-zoom-overlay fade-in animate-in fixed inset-0 z-50 flex flex-col gap-3 bg-black/90 p-4 duration-200 sm:p-6"
       onClick={onClose}
     >
@@ -375,8 +377,8 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
           type="button"
           disabled={saving || failedSrc === src}
           data-slot="image-save-as"
-          aria-label="Save image as"
-          title="Save image as"
+          aria-label={t("image.saveAs")}
+          title={t("image.saveAs")}
           className="inline-flex size-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50"
           onClick={async () => {
             setSaving(true);
@@ -391,8 +393,8 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
           ref={closeRef}
           type="button"
           data-slot="image-close"
-          aria-label="Close image preview"
-          title="Close"
+          aria-label={t("image.closePreview")}
+          title={t("image.close")}
           onClick={onClose}
           className="inline-flex size-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
         >
@@ -401,7 +403,7 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
       </div>
       <div className="flex min-h-0 w-full flex-1 items-center justify-center">
         {failedSrc === src
-          ? <ImageOffIcon className="size-10 text-white/40" aria-label="Image could not be loaded" />
+          ? <ImageOffIcon className="size-10 text-white/40" aria-label={t("image.loadFailed")} />
           : <img
               data-slot="image-zoom-content"
               src={src}
@@ -416,7 +418,8 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
   );
 }
 
-function ImageZoom({ src, alt = "Image preview", filename, children }: ImageZoomProps) {
+function ImageZoom({ src, alt, filename, children }: ImageZoomProps) {
+  const { t } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const handleClose = useCallback(() => {
@@ -436,15 +439,16 @@ function ImageZoom({ src, alt = "Image preview", filename, children }: ImageZoom
       role="button"
       tabIndex={0}
       className="aui-image-zoom-trigger cursor-pointer"
-      aria-label="Open image preview"
+      aria-label={t("image.openPreview")}
     >
       {children}
     </div>
-    {isOpen && <ImageLightbox src={src} alt={alt} filename={filename} onClose={handleClose} />}
+    {isOpen && <ImageLightbox src={src} alt={alt ?? t("image.preview")} filename={filename} onClose={handleClose} />}
   </>;
 }
 
 function ImageGenerating({ className }: { className?: string }) {
+  const { t } = useLocale();
   return (
     <div
       data-slot="image-generating"
@@ -454,7 +458,7 @@ function ImageGenerating({ className }: { className?: string }) {
       )}
     >
       <Loader2Icon className="text-muted-foreground size-8 animate-spin" />
-      <span className="sr-only">Generating image…</span>
+      <span className="sr-only">{t("image.generating")}</span>
     </div>
   );
 }
@@ -466,6 +470,7 @@ function ImageContentFilterError({
   className?: string;
   reason?: string;
 }) {
+  const { t } = useLocale();
   return (
     <div
       data-slot="image-content-filter-error"
@@ -475,7 +480,7 @@ function ImageContentFilterError({
       )}
     >
       <ShieldAlertIcon className="text-muted-foreground size-8" />
-      <p className="text-sm font-medium">Image could not be generated</p>
+      <p className="text-sm font-medium">{t("image.generationFailed")}</p>
       {reason && <p className="text-muted-foreground text-xs">{reason}</p>}
     </div>
   );

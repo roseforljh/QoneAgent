@@ -1,3 +1,4 @@
+import { translateCurrent as t } from "./localization";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -47,7 +48,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           runningSessionIds: [],
           compactionStatuses: {},
           autoCompactionStatuses: {},
-          browserStatus: st.browserStatus ? { ...st.browserStatus, targetConnected: false, phase: "error", lastError: "浏览器运行时已退出" } : undefined,
+          browserStatus: st.browserStatus ? { ...st.browserStatus, targetConnected: false, phase: "error", lastError: t("browser.runtimeExited") } : undefined,
           mcpConnectingIds: [],
           githubDeviceAuthorization: undefined,
           running: false,

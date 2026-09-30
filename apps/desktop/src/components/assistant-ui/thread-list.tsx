@@ -170,7 +170,7 @@ export const ThreadListItem: FC = () => {
             <ThreadListItemPrimitive.Title fallback={t("sidebar.newChat")} />
           </SidebarSessionTitle>
         </span>
-        {isRunning && <span className="sr-only">Running</span>}
+        {isRunning && <span className="sr-only">{t("goal.active")}</span>}
       </ThreadListItemPrimitive.Trigger>}
       {!renaming && <ThreadListItemMore isRunning={isRunning} onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session?.title ?? t("sidebar.newChat") }))) deleteSession(id); }} />}
     </ThreadListItemPrimitive.Root>

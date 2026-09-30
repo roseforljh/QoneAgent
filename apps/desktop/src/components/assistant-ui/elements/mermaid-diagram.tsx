@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import { renderMermaidSVG } from "beautiful-mermaid";
@@ -31,6 +32,7 @@ type MermaidZoomProps = {
 };
 
 function MermaidZoom({ svg, children }: MermaidZoomProps) {
+  const { t } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -166,7 +168,7 @@ function MermaidZoom({ svg, children }: MermaidZoomProps) {
         ref={triggerRef}
         type="button"
         data-slot="mermaid-zoom-trigger"
-        aria-label="Expand diagram"
+        aria-label={t("diagram.expand")}
         onClick={() => setIsOpen(true)}
         className="aui-mermaid-zoom-trigger text-muted-foreground hover:text-foreground hover:border-muted-foreground/70 border-border bg-background absolute top-2 right-2 cursor-pointer rounded-md border p-1.5 opacity-0 transition group-hover/mermaid:opacity-100 focus-visible:opacity-100"
       >
@@ -179,7 +181,7 @@ function MermaidZoom({ svg, children }: MermaidZoomProps) {
             data-slot="mermaid-zoom-overlay"
             role="dialog"
             aria-modal="true"
-            aria-label="Diagram"
+            aria-label={t("diagram.title")}
             className="aui-mermaid-zoom-overlay fade-in animate-in bg-background fixed inset-0 z-50 duration-200"
           >
             <div
@@ -207,7 +209,7 @@ function MermaidZoom({ svg, children }: MermaidZoomProps) {
             >
               <button
                 type="button"
-                aria-label="Zoom in"
+                aria-label={t("diagram.zoomIn")}
                 onClick={() => zoomBy(1.25)}
                 className="text-muted-foreground hover:text-foreground cursor-pointer rounded-sm p-1.5"
               >
@@ -215,7 +217,7 @@ function MermaidZoom({ svg, children }: MermaidZoomProps) {
               </button>
               <button
                 type="button"
-                aria-label="Zoom out"
+                aria-label={t("diagram.zoomOut")}
                 onClick={() => zoomBy(0.8)}
                 className="text-muted-foreground hover:text-foreground cursor-pointer rounded-sm p-1.5"
               >
@@ -223,7 +225,7 @@ function MermaidZoom({ svg, children }: MermaidZoomProps) {
               </button>
               <button
                 type="button"
-                aria-label="Reset zoom"
+                aria-label={t("diagram.resetZoom")}
                 onClick={() => setTransform({ x: 0, y: 0, scale: 1 })}
                 className="text-muted-foreground hover:text-foreground cursor-pointer rounded-sm p-1.5"
               >
@@ -232,7 +234,7 @@ function MermaidZoom({ svg, children }: MermaidZoomProps) {
               <button
                 ref={closeRef}
                 type="button"
-                aria-label="Close"
+                aria-label={t("diagram.close")}
                 onClick={handleClose}
                 className="text-muted-foreground hover:text-foreground cursor-pointer rounded-sm p-1.5"
               >
@@ -251,6 +253,7 @@ const MermaidDiagramImpl: FC<MermaidDiagramProps> = ({
   className,
   streaming = false,
 }) => {
+  const { t } = useLocale();
   const result = useMemo(() => {
     if (streaming) return null;
     try {
@@ -277,7 +280,7 @@ const MermaidDiagramImpl: FC<MermaidDiagramProps> = ({
     return (
       <div
         data-slot="mermaid-skeleton"
-        aria-label="Rendering diagram"
+        aria-label={t("diagram.rendering")}
         className={cn(
           "aui-mermaid-skeleton bg-muted flex h-32 animate-pulse items-center justify-center gap-3 rounded-b-lg p-4",
           className,

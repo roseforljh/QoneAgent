@@ -2,7 +2,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./router";
-import { initLocale } from "./localization";
+import { initLocale, translateCurrent as t } from "./localization";
 import { initAppearance } from "./lib/appearance";
 import "./index.css";
 import "./desktop-overrides.css";
@@ -34,8 +34,8 @@ class StartupErrorBoundary extends Component<StartupErrorBoundaryProps, StartupE
     if (!this.state.error) return this.props.children;
     return (
       <main style={{ minHeight: "100vh", padding: 32, fontFamily: "system-ui, sans-serif", color: "var(--qone-boot-foreground, #171717)", background: "var(--qone-boot-background, #fff)" }}>
-        <h1 style={{ margin: "0 0 12px", fontSize: 20 }}>Qone 启动失败</h1>
-        <p style={{ margin: "0 0 16px", color: "#666" }}>前端渲染时发生异常，请将下面错误信息反馈给开发者。</p>
+        <h1 style={{ margin: "0 0 12px", fontSize: 20 }}>{t("startup.failed")}</h1>
+        <p style={{ margin: "0 0 16px", color: "#666" }}>{t("startup.reportError")}</p>
         <pre style={{ margin: 0, padding: 16, overflow: "auto", whiteSpace: "pre-wrap", border: "1px solid color-mix(in srgb, currentColor 20%, transparent)", borderRadius: 8, background: "var(--qone-boot-error-surface, #f7f7f7)", color: "#9d2626" }}>
           {this.state.error.stack || this.state.error.message}
         </pre>
@@ -60,6 +60,6 @@ try {
     </StartupErrorBoundary>,
   );
 } catch (error) {
-  rootElement.textContent = `Qone 启动失败：${error instanceof Error ? error.stack || error.message : String(error)}`;
+  rootElement.textContent = `${t("startup.failed")}: ${error instanceof Error ? error.stack || error.message : String(error)}`;
   rootElement.style.cssText = "padding:32px;white-space:pre-wrap;font:14px/1.6 system-ui,sans-serif;color:#9d2626;background:var(--qone-boot-background,#fff)";
 }

@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import type { ComponentProps } from "react";
@@ -28,6 +29,7 @@ export function CodeRunner({
   onRun?: () => void;
 }) {
   return (
+  const { t } = useLocale();
     <div
       data-slot="code-runner"
       className={cn(
@@ -51,7 +53,7 @@ export function CodeRunner({
         )}
         {onRun && <button
           type="button"
-          aria-label="Run this snippet"
+          aria-label={t("code.run")}
           onClick={onRun}
           disabled={state === "running"}
           className={cn(
@@ -73,7 +75,7 @@ export function CodeRunner({
 
       {state !== "idle" && (
         <div className="border-foreground/[0.07] fade-in animate-in flex flex-col border-t px-3.5 py-2.5 duration-300">
-          <span className={cn(mono, "text-foreground/30 pb-1")}>output</span>
+          <span className={cn(mono, "text-foreground/30 pb-1")}>{t("code.output")}</span>
           <div className={cn(terminalViewport, codeScroll)}>
             <div className={cn(codeSurface, "flex flex-col")}>
               {output.map((line, i) => (

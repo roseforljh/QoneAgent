@@ -1,3 +1,4 @@
+import { useLocale } from "../../localization";
 import { unstable_memoizeMarkdownComponents as memoizeMarkdownComponents, useIsMarkdownCodeBlock } from "@assistant-ui/react-markdown";
 import { memo, useRef, useState, type ComponentProps } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
@@ -20,6 +21,7 @@ function useCopyToClipboard() {
 }
 
 function MarkdownTable({ className, children, ...props }: ComponentProps<"table">) {
+  const { t } = useLocale();
   const ref = useRef<HTMLTableElement>(null);
   const { isCopied, copyToClipboard } = useCopyToClipboard();
 
@@ -43,7 +45,7 @@ function MarkdownTable({ className, children, ...props }: ComponentProps<"table"
       <button
         type="button"
         onClick={copy}
-        aria-label="Copy table as markdown"
+        aria-label={t("chat.copyTable")}
         className="absolute top-1.5 right-1.5 z-10 grid size-7 place-items-center rounded-md border border-border/50 bg-background/80 text-muted-foreground opacity-0 backdrop-blur-xs transition-opacity duration-150 hover:bg-muted hover:text-foreground group-hover/table:opacity-100"
       >
         {isCopied ? <CheckIcon className="size-3.5 text-emerald-500" /> : <CopyIcon className="size-3.5" />}

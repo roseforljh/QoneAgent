@@ -336,7 +336,7 @@ function GitView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspac
           ) : diff.trim() ? (
             <DiffViewer patch={diff} language={languageForPath(selected)} showIcon showStats size="default" className="min-w-full" />
           ) : (
-            <p className="px-1 py-1 text-xs text-foreground/50">not a git-tracked change</p>
+            <p className="px-1 py-1 text-xs text-foreground/50">{t("dock.untrackedChange")}</p>
           )}
         </FadeScroll>
       </div>

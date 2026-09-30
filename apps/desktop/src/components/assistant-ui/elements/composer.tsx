@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import { type ComponentProps, useMemo } from "react";
@@ -434,10 +435,11 @@ export function ComposerAttachButton({
   className,
   ...props
 }: Omit<ComponentProps<"button">, "children">) {
+  const { t } = useLocale();
   return (
     <button
       type="button"
-      aria-label="Add attachment"
+      aria-label={t("attachment.add")}
       data-slot="composer-attach"
       disabled={!props.onClick}
       className={cn(
@@ -579,10 +581,11 @@ export function ComposerVoiceButton({
   className,
   ...props
 }: Omit<ComponentProps<"button">, "children"> & { active: boolean }) {
+  const { t } = useLocale();
   return (
     <button
       type="button"
-      aria-label={active ? "Stop recording" : "Start voice input"}
+      aria-label={t(active ? "chat.stopVoiceInput" : "chat.startVoiceInput")}
       data-slot="composer-voice-button"
       className={cn(
         active
@@ -613,10 +616,11 @@ export function ComposerSend({
   streaming: boolean;
   idle: boolean;
 }) {
+  const { t } = useLocale();
   return (
     <button
       type="button"
-      aria-label={streaming ? "Stop generating" : "Send message"}
+      aria-label={t(streaming ? "chat.stopGenerating" : "chat.sendMessage")}
       data-slot="composer-send"
       className={cn(
         "grid size-8 place-items-center rounded-full",

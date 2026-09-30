@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import type { FC } from "react";
@@ -54,6 +55,7 @@ function TerminalResult({ presentation, emptyText }: { presentation: Extract<Too
 }
 
 function SearchResult({ presentation }: { presentation: Extract<ToolPresentation, { kind: "search" }> }) {
+  const { t } = useLocale();
   return (
     <div data-slot="tool-search-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/40">
       {presentation.query && <div className="border-b border-foreground/10 px-3 py-2 font-mono text-xs text-foreground/50">{presentation.query}</div>}
@@ -67,7 +69,7 @@ function SearchResult({ presentation }: { presentation: Extract<ToolPresentation
           ))}
         </ul>
       ) : (
-        <p className="px-3 py-2.5 text-foreground/70">{presentation.text ?? "没有找到结果"}</p>
+        <p className="px-3 py-2.5 text-foreground/70">{presentation.text ?? t("chat.noToolResults")}</p>
       )}
     </div>
   );
@@ -90,9 +92,10 @@ function TextResult({ presentation }: { presentation: Extract<ToolPresentation, 
 }
 
 export function ToolFallback({ presentation }: { presentation: Extract<ToolPresentation, { kind: "unknown" }> }) {
+  const { t } = useLocale();
   return (
     <details data-slot="tool-fallback" className="rounded-xl border border-foreground/10 bg-background/35 px-3 py-2">
-      <summary className="cursor-pointer text-xs text-foreground/50">调试回退</summary>
+      <summary className="cursor-pointer text-xs text-foreground/50">{t("chat.debugFallback")}</summary>
       {presentation.text && <p className="mt-2 whitespace-pre-wrap break-words text-foreground/75">{presentation.text}</p>}
       <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground/60 [overflow-wrap:anywhere]">
         {presentation.debugJson}
