@@ -1,4 +1,5 @@
 import { initRuntimeBridge } from "./store-bridge";
+import { repeatedUserMessageId } from "@qone/protocol";
 import { sessionStore, switchSessionState, type SessionExecutionState } from "./lib/session-execution-state";
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
@@ -600,6 +601,7 @@ export const useStore = create<AgentState>((set, get) => ({
     if (get().running || get().compactionStatuses[sid]) return;
     if (!hasTauriBridge()) { set({ lastError: "当前未连接桌面运行时，无法发送消息。" }); return; }
     const history = get().messages;
+    replaceFromMessageId ??= repeatedUserMessageId(history, { content: message, attachments });
     const replaceIndex = replaceFromMessageId
       ? history.findIndex((item) => item.id === replaceFromMessageId && item.role === "user")
       : -1;

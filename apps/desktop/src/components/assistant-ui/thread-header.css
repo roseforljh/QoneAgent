@@ -1,7 +1,5 @@
 :root { --q-thread-header-height: 46px; }
 
-:root[data-theme="dark"] .q-chat-shell { --background: #0f0f11; }
-
 .q-thread-header {
   display: flex;
   position: relative;

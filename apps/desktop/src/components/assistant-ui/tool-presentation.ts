@@ -1,5 +1,7 @@
 import { toolFileChanges } from "@qone/protocol";
 import { diffLines, parsePatch, formatPatch } from "diff";
+import { commandForTool } from "./tool-action-summary";
+import { isCommandTool } from "./tool-activity-category";
 
 export type ToolPresentationKind =
   | "diff"
@@ -166,6 +168,10 @@ export function detectToolPresentation(toolName: string, result: unknown, args?:
   }
   const text = resultText(result);
   const path = toolArg(args, "path");
+  if (isCommandTool({ toolName })) {
+    const command = commandForTool({ toolName, args });
+    return { kind: "terminal", ...(command ? { command } : {}), output: text ?? "" };
+  }
   switch (toolName) {
     case "write": {
       const content = toolArg(args, "content");
@@ -184,11 +190,6 @@ export function detectToolPresentation(toolName: string, result: unknown, args?:
     case "read":
       if (path && text !== undefined) return { kind: "file", content: text, name: path };
       break;
-    case "bash":
-    case "powershell": {
-      const command = toolArg(args, "command");
-      return { kind: "terminal", ...(command ? { command } : {}), output: text ?? "" };
-    }
     case "grep": {
       const query = toolArg(args, "pattern");
       if (text !== undefined) return { kind: "search", ...(query ? { query } : {}), items: grepItems(text), text };

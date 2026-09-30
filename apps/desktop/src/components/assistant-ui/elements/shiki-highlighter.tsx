@@ -15,14 +15,24 @@ export type SyntaxHighlighterProps = Omit<
   code: string;
   /** Skips tokenization and renders the plain code while `true`. */
   streaming?: boolean;
+  /** File viewers retain leading blank lines and indentation. */
+  preserveWhitespace?: boolean;
+  /** Stable line markers in both the loading and highlighted render. */
+  lineMarkers?: boolean;
 };
 
 const containerClassName =
   "aui-shiki-base [&_pre]:border-border/50 [&_pre]:bg-muted/30! [&_.line]:px-0! [&_pre]:overflow-x-auto [&_pre]:rounded-t-none [&_pre]:rounded-b-xl [&_pre]:border [&_pre]:border-t-0 [&_pre]:p-3.5 [&_pre]:text-sm [&_pre]:leading-relaxed";
 
-const PlainCode: FC<{ code: string }> = ({ code }) => (
+const lineTransformer: NonNullable<ShikiHighlighterProps["transformers"]>[number] = {
+  line(node, line) { node.properties["data-file-line"] = line; },
+};
+
+const PlainCode: FC<{ code: string; lineMarkers?: boolean }> = ({ code, lineMarkers }) => (
   <pre>
-    <code>{code}</code>
+    <code>{lineMarkers ? code.split(/\r?\n/).map((line, index, lines) => <span key={index}>
+      <span className="line" data-file-line={index + 1}>{line}</span>{index < lines.length - 1 ? "\n" : ""}
+    </span>) : code}</code>
   </pre>
 );
 
@@ -31,12 +41,14 @@ const HighlightedCode: FC<{
   language: SyntaxHighlighterProps["language"];
   theme: NonNullable<SyntaxHighlighterProps["theme"]>;
   options: Omit<ShikiHighlighterProps, "children" | "language" | "theme">;
-}> = ({ code, language, theme, options }) => {
+  lineMarkers?: boolean;
+}> = ({ code, language, theme, options, lineMarkers }) => {
   const highlighted = useShikiHighlighter(code, language, theme, {
     ...options,
     defaultColor: "light-dark()",
+    ...(lineMarkers ? { transformers: [...(options.transformers ?? []), lineTransformer] } : {}),
   });
-  return <>{highlighted ?? <PlainCode code={code} />}</>;
+  return <>{highlighted ?? <PlainCode code={code} lineMarkers={lineMarkers} />}</>;
 };
 
 /**
@@ -57,9 +69,11 @@ export const SyntaxHighlighter: FC<SyntaxHighlighterProps> = ({
   showLanguage: _showLanguage,
   delay = 150, // the part settles before smooth streaming finishes draining, so code keeps changing for a few frames
   streaming = false,
+  preserveWhitespace = false,
+  lineMarkers = false,
   ...options
 }) => {
-  const trimmed = code.trim();
+  const trimmed = preserveWhitespace ? code : code.trim();
 
   return (
     <div
@@ -71,13 +85,14 @@ export const SyntaxHighlighter: FC<SyntaxHighlighterProps> = ({
       style={style}
     >
       {streaming ? (
-        <PlainCode code={trimmed} />
+        <PlainCode code={trimmed} lineMarkers={lineMarkers} />
       ) : (
         <HighlightedCode
           code={trimmed}
           language={language}
           theme={theme}
           options={{ ...options, delay }}
+          lineMarkers={lineMarkers}
         />
       )}
     </div>

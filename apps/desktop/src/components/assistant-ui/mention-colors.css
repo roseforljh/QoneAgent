@@ -1,0 +1,10 @@
+/* Linear theme seeds recovered from Codex 26.928. */
+:root {
+  --q-composer-link-info: #5e6ad2;
+  --q-composer-link-ink: #1b1b1b;
+  --q-mention-color: color-mix(in srgb, var(--q-composer-link-info) 80%, var(--q-composer-link-ink) 20%);
+}
+:root[data-theme="dark"] {
+  --q-composer-link-info: #9ea4e0;
+  --q-composer-link-ink: #e3e4e6;
+}

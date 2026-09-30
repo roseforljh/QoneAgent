@@ -1,0 +1,26 @@
+@import "./mention-colors.css";
+
+/* Codex Mention's common inline rules for file references and website links. */
+:is(.q-markdown-file-link, .q-markdown-web-link) {
+  display: inline;
+  color: var(--q-mention-color);
+  font-weight: 500;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+:is(.q-markdown-file-link, .q-markdown-web-link):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  :is(.q-markdown-file-link, .q-markdown-web-link):hover {
+    text-decoration: underline dashed;
+    text-decoration-color: currentColor;
+    text-decoration-thickness: 0.5px;
+    text-underline-offset: 2px;
+  }
+}

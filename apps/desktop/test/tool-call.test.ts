@@ -63,3 +63,15 @@ test("framed command output has one visible card", () => {
   expect(html).not.toContain("border-border/40");
   expect(html).toContain("Name\n.agent");
 });
+
+test("empty running command shows a status instead of a blank terminal", () => {
+  const html = renderToStaticMarkup(createElement(ToolCall, {
+    label: "运行", activeLabel: "正在运行", query: "python -c 'print(1)'",
+    result: createElement(ToolResultView, { presentation: { kind: "terminal", output: "" }, emptyText: "等待结果…" }),
+    resultHasOwnFrame: true,
+    running: true, open: true, onOpenChange: () => {},
+  }));
+  expect(html).toContain("等待结果…");
+  expect(html.match(/q-shine-text/g)).toHaveLength(2);
+  expect(html).toContain("python -c &#x27;print(1)&#x27;");
+});

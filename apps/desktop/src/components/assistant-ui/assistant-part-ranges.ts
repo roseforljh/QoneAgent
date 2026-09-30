@@ -8,7 +8,6 @@ export type AssistantPartRange =
   | { type: "reasoning"; index: number }
   | { type: "image"; index: number }
   | { type: "images"; startIndex: number; endIndex: number }
-  | { type: "subagents"; index: number }
   | { type: "compaction"; index: number; marker: PositionedCompaction }
   | { type: "tools"; startIndex: number; endIndex: number }
   | { type: "presentation"; index: number };
@@ -38,7 +37,7 @@ export function assistantRangeSections(ranges: readonly AssistantPartRange[]): A
   }
   for (let index = ranges.length - 1; index >= 0; index--) {
     const type = ranges[index]?.type;
-    if (type === "tools" || type === "reasoning" || type === "subagents"
+    if (type === "tools" || type === "reasoning"
       || (type === "compaction" && (index < lastContentIndex || lastContentIndex < 0))) {
       lastActivityIndex = index;
       break;
@@ -47,7 +46,7 @@ export function assistantRangeSections(ranges: readonly AssistantPartRange[]): A
   const finalIndex = ranges.findIndex((range) => range.type === "text" && range.phase === "final_answer");
   const hasPhasedText = ranges.some((range) => range.type === "text" && range.phase !== undefined);
   const answerIndex = finalIndex >= 0 ? finalIndex : hasPhasedText ? ranges.length : lastActivityIndex + 1;
-  const firstActivityIndex = ranges.findIndex((range, index) => index < answerIndex && (range.type === "text" || range.type === "tools" || range.type === "reasoning" || range.type === "subagents" || range.type === "compaction"));
+  const firstActivityIndex = ranges.findIndex((range, index) => index < answerIndex && (range.type === "text" || range.type === "tools" || range.type === "reasoning" || range.type === "compaction"));
   if (firstActivityIndex < 0) return { leading: ranges.slice(0, answerIndex), process: [], activity: [], persistent: [], answer: ranges.slice(answerIndex) };
 
   const leading = ranges.slice(0, firstActivityIndex);
@@ -55,7 +54,7 @@ export function assistantRangeSections(ranges: readonly AssistantPartRange[]): A
   const activity: AssistantPartRange[] = [];
   const persistent: AssistantPartRange[] = [];
   for (const range of process) {
-    if (range.type === "text" || range.type === "tools" || range.type === "reasoning" || range.type === "subagents" || range.type === "compaction") activity.push(range);
+    if (range.type === "text" || range.type === "tools" || range.type === "reasoning" || range.type === "compaction") activity.push(range);
     else persistent.push(range);
   }
   return { leading, process, activity, persistent, answer: ranges.slice(answerIndex) };
@@ -135,22 +134,4 @@ export function assistantPartRanges(parts: readonly PartState[]): AssistantPartR
     index++;
   }
   return ranges;
-}
-
-export function visibleAssistantPartRanges(parts: readonly PartState[], hideSubagentCalls: boolean, showSubagentCapsule: boolean): AssistantPartRange[] {
-  return assistantPartRanges(parts).flatMap((range): AssistantPartRange[] => {
-    if (!hideSubagentCalls || range.type !== "tools") return [range];
-    const visible: AssistantPartRange[] = [];
-    let start = -1;
-    for (let index = range.startIndex; index < range.endIndex; index++) {
-      const part = parts[index];
-      if (part?.type === "tool-call" && part.toolName === "dispatch_subagent") {
-        if (start >= 0) visible.push({ ...range, startIndex: start, endIndex: index });
-        if (showSubagentCapsule) visible.push({ type: "subagents", index });
-        start = -1;
-      } else if (start < 0) start = index;
-    }
-    if (start >= 0) visible.push({ ...range, startIndex: start, endIndex: range.endIndex });
-    return visible;
-  });
 }

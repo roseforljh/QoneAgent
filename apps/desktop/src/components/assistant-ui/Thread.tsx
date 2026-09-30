@@ -1,13 +1,21 @@
 import { ComposerAttachments, ComposerAddAttachment } from "./elements/attachment.aui";
 import { File } from "./elements/file";
 import { UserImageThumbnail } from "./elements/user-image-thumbnail";
-import { ComposerToolChip, ComposerToolsPopover, type ComposerTool } from "./composer-tools";
+import { ComposerToolsPopover, type ComposerTool } from "./composer-tools";
 import { ComposerTriggers } from "./composer-triggers";
 import { ComposerEditorBridge, type ComposerMentionControls, type InsertComposerCommand, type InsertComposerTool } from "./composer-editor-bridge";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
 import { ComposerActionGlyph } from "./composer-action-glyph";
 import { LongPasteAttachmentPlugin } from "./long-paste-attachment";
+import { ComposerLinkNode } from "./composer-link-node";
+import { ComposerLinkPastePlugin } from "./composer-link-paste";
+import { composerLinkFormatter } from "./composer-link-formatter";
+import { ComposerDirectiveChip } from "./composer-link-chip";
+import { ComposerLinkOptionsPlugin } from "./composer-link-options";
+import { ComposerUnlinkedNode } from "./composer-unlinked-node";
+import "./composer-links.css";
 import { AssistantParts } from "./assistant-parts";
+import { assistantWaitingPhase } from "./assistant-waiting-phase";
 import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
 import { MessagePair } from "./elements/message-pair";
 import { DaySeparatorMarker } from "./elements/day-separator";
@@ -132,7 +140,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const messageListRef = useRef<HTMLDivElement>(null);
   return (
     <ThreadPrimitive.Root
-      className="aui-root aui-thread-root bg-background text-foreground flex h-full flex-col items-stretch px-4 [--q-chat-bg:var(--background)]"
+      className="aui-root aui-thread-root relative bg-background text-foreground flex h-full flex-col items-stretch px-4 [--q-chat-bg:var(--background)]"
       style={{
         ["--composer-bg" as string]: "var(--color-muted)",
         ["--composer-radius" as string]: "var(--radius-thread)",
@@ -163,7 +171,8 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
         >
           <ConversationMapAui />
           <ThreadScrollFollower contentRef={messageListRef} />
-          <div ref={messageListRef} className="q-message-list flex w-full min-w-0 flex-col gap-5 pt-4">
+          <div ref={messageListRef} className="q-message-list relative flex w-full min-w-0 flex-col gap-5 pt-4">
+            <div data-conversation-rail-content aria-hidden="true" className="pointer-events-none invisible absolute inset-x-0 top-0 mx-auto h-0 w-full q-thread-content" />
             <ThreadPrimitive.Messages>
               {({ message }) => {
                 if (message.role === "user" && pairedUserIds.has(message.id)) return null;
@@ -244,6 +253,7 @@ const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canCha
 
 const composerInputClass =
   "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-9 w-full resize-none bg-transparent px-2.5 py-1 text-sm leading-6 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1";
+const composerNodes = [ComposerLinkNode, ComposerUnlinkedNode] as const;
 
 const CodexQueueIcon: FC<{ className?: string }> = ({ className = "size-4 shrink-0 text-muted-foreground/70" }) => (
   <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -466,9 +476,11 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
           )}
           <ComposerAttachments />
           <ComposerAddAttachment hidden />
-          <LexicalComposerInput autoFocus submitMode="none" placeholder={placeholder} className={composerInputClass} directiveChip={ComposerToolChip}>
+          <LexicalComposerInput nodes={composerNodes} formatter={composerLinkFormatter} autoFocus submitMode="none" placeholder={placeholder} className={composerInputClass} directiveChip={ComposerDirectiveChip}>
             <ComposerEditorBridge onReady={onEditorReady} onCommandReady={onCommandReady} onMentionToggleReady={onMentionToggleReady} />
             <LongPasteAttachmentPlugin />
+            <ComposerLinkPastePlugin />
+            <ComposerLinkOptionsPlugin />
             <ComposerQueueEnterPlugin menuOpen={mentionOpen || slashOpen} compacting={compacting} />
             <ComposerHistoryPlugin menuOpen={mentionOpen || slashOpen} />
           </LexicalComposerInput>
@@ -509,7 +521,8 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
         <ComposerToolsPopover open={mentionOpen} onToggle={onToggleMention} />
         <RunOptionsPopover />
       </div>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
+        <AssistantContext />
         <ModelPicker />
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>
@@ -720,7 +733,7 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
               <button type="button" className="mt-1 flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground" onClick={() => retryUserMessage(answerError.userMessageId)}>
                 <RefreshCwIcon className="size-3.5" />{t("chat.retryMessage")}
               </button>
-            </div> : <AssistantParts hideSubagentCalls showSubagentCapsule />}
+            </div> : <AssistantParts />}
             {!answerError && <>
               <GeneratedMediaArtifacts runIds={runIds} />
               <MessageSourcesView />
@@ -748,9 +761,6 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
               </TooltipIconButton>
             </ActionBarPrimitive.Reload>
             </ActionBarPrimitive.Root>
-            <AuiIf condition={(s) => s.message.status?.type === "complete" && s.message.content.length > 0}>
-              <AssistantContext visible={showLatestExtras} />
-            </AuiIf>
           </div>
         }
       />
@@ -760,6 +770,8 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
 const AgentPreparation: FC = () => {
   const { t } = useLocale();
   const activeRunId = useStore((state) => state.activeRunId);
+  const compacting = useStore((state) => Boolean(activeRunId && state.currentSessionId
+    && state.autoCompactionStatuses[state.currentSessionId]?.runId === activeRunId));
   const request = useStore((state) => state.modelRequest);
   const requestStartedAt = request?.runId === activeRunId ? request?.startedAt : undefined;
   const [now, setNow] = useState(Date.now);
@@ -783,21 +795,14 @@ const AgentPreparation: FC = () => {
   const hasCurrentText = Boolean(streaming.trim()) || (activeMessageSequence !== undefined && currentParts.some(
     (part) => part.type === "text" && part.text.trim().length > 0,
   ));
-  const hasUnfinishedTool = currentParts.some((part) => {
-    if (part.type !== "tool-call") return false;
-    const call = toolCallsById.get(part.toolCallId);
-    return call?.status === "running" || call?.status === "waiting"
-      || (!call && part.result === undefined && !part.isError);
-  });
   const parts = useAuiState((state) => state.message.parts);
   const tailPart = parts.at(-1);
-  const tailIsToolRegion = tailPart?.type === "tool-call"
-    && (tailPart.toolName !== "present" || Boolean(tailPart.isError));
   // The run can be active before Pi emits message.started. Keep this fallback
   // independent of activeMessageSequence so the first visible state is not a
   // blank assistant bubble.
   const hasReasoning = tailPart?.type === "reasoning" && tailPart.status.type === "running" && Boolean(tailPart.text.trim());
-  const candidate = messageRunning && !hasCurrentText && !hasUnfinishedTool && !tailIsToolRegion && !hasReasoning;
+  const phase = assistantWaitingPhase({ messageRunning, compacting, hasCurrentText, hasReasoning, parts: streamingParts, toolCallsById, requestStartedAt });
+  const candidate = phase !== undefined;
   const [visiblePhase, setVisiblePhase] = useState<string>();
 
   useEffect(() => {
@@ -820,7 +825,7 @@ const AgentPreparation: FC = () => {
   return (
     <div className="text-foreground/55 flex items-center py-1 text-sm" role="status" aria-live="polite">
       <ShimmerLabel active className="relative inline-block leading-none">
-        {t(requestStartedAt === undefined ? "chat.preparingRequest" : "chat.waitingResponse")}
+        {t(phase === "thinking" ? "chat.reasoningActive" : phase === "waiting" ? "chat.waitingResponse" : "chat.preparingRequest")}
       </ShimmerLabel>
       <EllipsisDots />
       {requestStartedAt !== undefined && <span className="ms-2 text-xs tabular-nums opacity-70" aria-hidden="true">{Math.max(0, Math.floor((now - requestStartedAt) / 1000))}s</span>}

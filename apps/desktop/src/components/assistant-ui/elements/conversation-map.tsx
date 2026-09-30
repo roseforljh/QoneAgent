@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent } from "react";
 import { PreviewCard } from "@base-ui/react/preview-card";
 import { BookmarkIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -12,6 +12,9 @@ import "./conversation-map.css";
 export interface ConversationMapEntry { id: string; title: string; preview?: string }
 
 const TICK = '[data-slot="conversation-map-tick"]';
+// Codex Pli/$li. These are interaction delays, not an idle-hide timer.
+const PREVIEW_OPEN_DELAY = 250;
+const PREVIEW_LEAVE_DELAY = 100;
 const bookmarkKey = (sessionId: string) => `qone:conversation-bookmarks:${sessionId}`;
 
 function readBookmarks(sessionId?: string): Set<string> {
@@ -29,22 +32,34 @@ function saveBookmarks(sessionId: string, ids: ReadonlySet<string>) {
   } catch { /* The current view still retains the bookmark if storage is unavailable. */ }
 }
 
-export function ConversationMap({ entries, activeId, visibleIds, onSelect, side = "right", sessionId, className, onKeyDown, ...props }: Omit<ComponentProps<"nav">, "children" | "onSelect"> & {
+type ConversationMapProps = Omit<ComponentProps<"nav">, "children" | "onSelect"> & {
   entries: readonly ConversationMapEntry[];
   activeId?: string;
   visibleIds?: readonly string[];
   onSelect?: (id: string, behavior?: ScrollBehavior) => void;
   side?: "left" | "right";
   sessionId?: string;
-}) {
+};
+
+export function ConversationMap(props: ConversationMapProps) {
+  if (props.entries.length < 4) return null;
+  return <ConversationMapContent key={props.sessionId} {...props} />;
+}
+
+function ConversationMapContent({ entries, activeId, visibleIds, onSelect, side = "right", sessionId, className, onKeyDown, ...props }: ConversationMapProps) {
   const { t } = useLocale();
   const railRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const scrubRef = useRef<{ pointerId: number; lastId: string; captureTarget: HTMLElement } | null>(null);
   const suppressClickRef = useRef(false);
+  const suppressClickTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const previewLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const windowFocusedRef = useRef(true);
+  const previewId = useId();
   const [scrubbedId, setScrubbedId] = useState<string | null>(null);
   const [scrollable, setScrollable] = useState(false);
   const [handle] = useState(() => PreviewCard.createHandle<ConversationMapEntry>());
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const [bookmarkState, setBookmarkState] = useState(() => ({ sessionId, ids: readBookmarks(sessionId) }));
   const bookmarkedIds = bookmarkState.sessionId === sessionId ? bookmarkState.ids : readBookmarks(sessionId);
@@ -60,6 +75,47 @@ export function ConversationMap({ entries, activeId, visibleIds, onSelect, side 
     saveBookmarks(sessionId, next);
     setBookmarkState({ sessionId, ids: next });
   }, [bookmarkedIds, sessionId]);
+
+  const endScrub = useCallback(() => {
+    const scrub = scrubRef.current;
+    if (!scrub) return;
+    scrubRef.current = null;
+    setScrubbedId(null);
+    if (scrub.captureTarget.hasPointerCapture(scrub.pointerId)) scrub.captureTarget.releasePointerCapture(scrub.pointerId);
+  }, []);
+
+  const cancelPreviewLeave = useCallback(() => {
+    clearTimeout(previewLeaveTimerRef.current);
+    previewLeaveTimerRef.current = undefined;
+  }, []);
+
+  useEffect(() => {
+    const dismiss = () => {
+      windowFocusedRef.current = false;
+      cancelPreviewLeave();
+      endScrub();
+      // Also cancels Base UI's pending hover opening, even before it is visible.
+      handle.close();
+    };
+    const focus = () => { windowFocusedRef.current = true; };
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        cancelPreviewLeave();
+        handle.close();
+      }
+    };
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("focus", focus);
+    window.addEventListener("keydown", escape, true);
+    return () => {
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("keydown", escape, true);
+      endScrub();
+      clearTimeout(suppressClickTimerRef.current);
+      cancelPreviewLeave();
+    };
+  }, [endScrub, handle, cancelPreviewLeave]);
 
   useEffect(() => {
     if (scrubRef.current) return;
@@ -101,19 +157,24 @@ export function ConversationMap({ entries, activeId, visibleIds, onSelect, side 
   const stopScrub = (event: PointerEvent<HTMLDivElement>) => {
     const scrub = scrubRef.current;
     if (scrub?.pointerId !== event.pointerId) return;
-    scrubRef.current = null;
-    setScrubbedId(null);
-    if (scrub.captureTarget.hasPointerCapture(event.pointerId)) scrub.captureTarget.releasePointerCapture(event.pointerId);
-    window.setTimeout(() => { suppressClickRef.current = false; }, 0);
+    endScrub();
+    const bounds = listRef.current?.getBoundingClientRect();
+    if (event.type === "pointercancel" || !bounds || event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) handle.close();
+    clearTimeout(suppressClickTimerRef.current);
+    suppressClickTimerRef.current = setTimeout(() => { suppressClickRef.current = false; }, 0);
   };
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     const tick = tickAt(event.target instanceof Element ? event.target : null);
     const id = tick?.dataset["entryId"];
-    if (!id) return;
+    if (!tick || !id) return;
+    cancelPreviewLeave();
+    clearTimeout(suppressClickTimerRef.current);
+    suppressClickRef.current = false;
     scrubRef.current = { pointerId: event.pointerId, lastId: id, captureTarget: tick };
     setScrubbedId(id);
+    handle.open(tick.id);
     tick.setPointerCapture(event.pointerId);
   };
 
@@ -125,38 +186,59 @@ export function ConversationMap({ entries, activeId, visibleIds, onSelect, side 
     if (!list) return;
     const bounds = list.getBoundingClientRect();
     const target = document.elementFromPoint(bounds.left + bounds.width / 2, clamp(event.clientY, bounds.top + 1, bounds.bottom - 1));
-    const id = tickAt(target)?.dataset["entryId"];
-    if (!id || id === scrub.lastId) return;
+    const tick = tickAt(target);
+    const id = tick?.dataset["entryId"];
+    if (!tick || !id || id === scrub.lastId) return;
     scrub.lastId = id;
     suppressClickRef.current = true;
     setScrubbedId(id);
+    handle.open(tick.id);
     onSelect?.(id, "instant");
   };
 
-  if (entries.length < 4) return null;
-
   return <nav ref={railRef} aria-label={t("chat.conversationMapLabel")} onKeyDown={handleKeyDown} className={cn("q-conversation-nav", className)} {...props}>
     <div ref={listRef} className="q-conversation-list" data-scrubbing={scrubbedId !== null ? "" : undefined} data-scrollable={scrollable ? "" : undefined}
+      onPointerEnter={cancelPreviewLeave}
       onPointerDownCapture={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopScrub} onPointerCancel={stopScrub} onLostPointerCapture={stopScrub}>
       {entries.map((entry, index) => {
         const current = index === activeIndex;
         const bookmarked = bookmarkedIds.has(entry.id);
         const distance = scrubbedIndex < 0 ? -1 : Math.abs(scrubbedIndex - index);
-        return <PreviewCard.Trigger key={entry.id} handle={handle} payload={entry} delay={150} closeDelay={80} render={<button type="button" />}
+        return <PreviewCard.Trigger key={entry.id} id={`${previewId}-${entry.id}`} handle={handle} payload={entry} delay={PREVIEW_OPEN_DELAY} closeDelay={PREVIEW_LEAVE_DELAY} render={<button type="button" />}
           data-slot="conversation-map-tick" data-entry-id={entry.id} data-active={current ? "" : undefined}
           data-in-view={current || visibleSet.has(entry.id) ? "" : undefined} data-scrub-target={scrubbedId === entry.id ? "" : undefined}
           data-neighbor-distance={distance > 0 && distance <= 3 ? distance : undefined}
           aria-label={t(bookmarked ? "chat.conversationMapJumpBookmarked" : "chat.conversationMapJump", { position: index + 1 })}
           aria-current={current ? "true" : undefined} tabIndex={index === tabbableIndex ? 0 : -1}
-          onFocus={() => setFocusedIndex(index)} onClick={() => { if (!suppressClickRef.current) onSelect?.(entry.id); }}
+          onFocus={(event) => { cancelPreviewLeave(); setFocusedIndex(index); handle.open(event.currentTarget.id); }}
+          onClick={(event) => { if (!suppressClickRef.current) { cancelPreviewLeave(); handle.open(event.currentTarget.id); onSelect?.(entry.id); } }}
+          onContextMenu={() => handle.close()}
           className="q-conversation-tick">
           <span className="q-conversation-marker"><span className="q-conversation-marker-line" />{bookmarked && <span className="q-conversation-bookmark-dot" aria-hidden />}</span>
         </PreviewCard.Trigger>;
       })}
     </div>
-    <PreviewCard.Root handle={handle}>{({ payload }) => <PreviewCard.Portal>
+    <PreviewCard.Root handle={handle} open={previewOpen} onOpenChange={(open, details) => {
+      // Captured scrubbing keeps the preview open until that gesture ends.
+      if (open ? !windowFocusedRef.current : scrubRef.current !== null) { details.cancel(); return; }
+      cancelPreviewLeave();
+      setPreviewOpen(open);
+    }}>{({ payload }) => <PreviewCard.Portal>
       <PreviewCard.Positioner side={side} sideOffset={0}>
-        <PreviewCard.Popup className="q-conversation-preview">
+        <PreviewCard.Popup className="q-conversation-preview" onPointerEnter={cancelPreviewLeave}
+          onPointerLeave={(event) => {
+            cancelPreviewLeave();
+            if (event.relatedTarget instanceof Node && railRef.current?.contains(event.relatedTarget)) return;
+            // Base UI only closes hover-opened popups here; handle.open (scrub/click/focus)
+            // needs the same leave lifecycle. sideOffset=0 keeps popup and ticks adjacent.
+            previewLeaveTimerRef.current = setTimeout(() => { previewLeaveTimerRef.current = undefined; handle.close(); }, PREVIEW_LEAVE_DELAY);
+          }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget) && !railRef.current?.contains(event.relatedTarget)) {
+              cancelPreviewLeave();
+              handle.close();
+            }
+          }}>
           <div className="q-conversation-preview-heading">
             <span className="q-conversation-preview-title">{payload?.title || t("chat.conversationMapEmpty")}</span>
             {payload && sessionId && <button type="button" className="q-conversation-bookmark-button"

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { PartState } from "@assistant-ui/react";
-import { assistantPartRanges, assistantRangeSections, hasVisibleAnswer, visibleAssistantPartRanges } from "../src/components/assistant-ui/assistant-part-ranges";
+import { assistantPartRanges, assistantRangeSections, hasVisibleAnswer } from "../src/components/assistant-ui/assistant-part-ranges";
 import { executionCollapsed } from "../src/components/assistant-ui/execution-disclosure-state";
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 import type { AssistantMessagePart } from "@qone/protocol";
@@ -110,7 +110,7 @@ test("adjacent image parts form one gallery range while separated images stay in
   ]);
 });
 
-test("each subagent capsule stays at its dispatch call and folds with execution", () => {
+test("subagent dispatch remains a tool activity without a separate capsule", () => {
   const parts = [
     { type: "text", text: "准备", status: { type: "complete" } },
     { type: "tool-call", toolName: "read", toolCallId: "read", status: { type: "complete" } },
@@ -119,18 +119,17 @@ test("each subagent capsule stays at its dispatch call and folds with execution"
     { type: "text", text: "结果", status: { type: "complete" } },
     { type: "image", image: "data:image/png;base64,A", status: { type: "complete" } },
   ] as PartState[];
-  const ranges = visibleAssistantPartRanges(parts, true, true);
+  const ranges = assistantPartRanges(parts);
   expect(ranges).toEqual([
     { type: "text", index: 0 },
     { type: "tools", startIndex: 1, endIndex: 2 },
-    { type: "subagents", index: 2 },
-    { type: "subagents", index: 3 },
+    { type: "tools", startIndex: 2, endIndex: 4 },
     { type: "text", index: 4 },
     { type: "image", index: 5 },
   ]);
   const sections = assistantRangeSections(ranges);
-  expect(sections.activity).toEqual(ranges.slice(0, 4));
-  expect(sections.answer).toEqual(ranges.slice(4));
+  expect(sections.activity).toEqual(ranges.slice(0, 3));
+  expect(sections.answer).toEqual(ranges.slice(3));
 });
 
 test("execution folds commentary but keeps presentations, images, and the final answer visible", () => {

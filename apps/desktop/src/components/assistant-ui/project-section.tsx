@@ -48,7 +48,7 @@ const SessionRow: FC<{ session: SessionInfo }> = ({ session }) => {
   };
 
   return (
-    <motion.div layout data-active={active || undefined} className={cn("q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px]", renaming && "bg-muted")}>
+    <motion.div layout="position" data-active={active || undefined} className={cn("q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px]", renaming && "bg-muted")}>
       {renaming ? (
         <input ref={inputRef} value={title} onChange={(event) => setTitle(event.target.value)} onBlur={submitRename}
           onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setTitle(session.title); setRenaming(false); } }}
@@ -97,7 +97,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
   };
 
   return (
-    <motion.div layout initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} className="relative">
+    <motion.div layout="position" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} className="relative">
       <div className={cn("q-sidebar-project-row group relative flex h-[30px] items-center rounded-[10px] transition-colors", renaming && "bg-muted")}>
         {renaming ? (
           <input ref={inputRef} value={name} onChange={(event) => setName(event.target.value)} onBlur={submitRename}

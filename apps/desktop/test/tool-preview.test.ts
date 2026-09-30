@@ -11,6 +11,7 @@ test("partial arguments preview available changes without inventing old file con
   expect(detectToolPreview("edit", { path: "a.ts", oldText: "old", newText: "n" })).toMatchObject({ kind: "diff" });
   expect(detectToolPreview("write", { path: "a.ts", content: "new content" })).toEqual({ kind: "file", name: "a.ts", content: "new content" });
   expect(detectToolPreview("powershell", { command: "bun test" })).toEqual({ kind: "terminal", command: "bun test", output: "" });
+  expect(detectToolPreview("exec", { cmd: "python -c 'print(1)'" })).toEqual({ kind: "terminal", command: "python -c 'print(1)'", output: "" });
   expect(detectToolPreview("mcp:fs:save", { path: "a.ts", content: "x" })).toBeUndefined();
 });
 

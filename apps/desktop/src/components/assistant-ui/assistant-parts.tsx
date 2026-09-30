@@ -2,14 +2,14 @@ import { Fragment, useMemo, type FC } from "react";
 import { MessagePrimitive, useAuiState, type PartState } from "@assistant-ui/react";
 import { MarkdownText } from "./markdown-text";
 import { GenerativeUIPresentation, SessionTimeline } from "./session-timeline";
-import { assistantRangeSections, executionDisplayBlocks, hasVisibleAnswer, visibleAssistantPartRanges, type AssistantPartRange } from "./assistant-part-ranges";
+import { assistantPartRanges, assistantRangeSections, executionDisplayBlocks, hasVisibleAnswer, type AssistantPartRange } from "./assistant-part-ranges";
 import { AssistantExecution } from "./assistant-execution";
 import { RunFileChangesAttachment } from "./run-file-changes-attachment";
 import { Image } from "./elements/image";
 import { ImageGallery } from "./elements/image-gallery";
 import { ImageGeneration } from "./elements/image-generation";
 import { useStore } from "../../store";
-import { SubagentCapsule } from "./subagent-view";
+import { SubagentMedia } from "./subagent-view";
 import { Reasoning } from "./reasoning";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { compactionDisplayIndex, positionedAssistantRanges, type PositionedCompaction } from "./compaction-ranges";
@@ -44,10 +44,10 @@ const PendingImageGeneration: FC = () => {
   return <ImageGeneration prompt={generation.prompt} error={generation.error} generating={!generation.error} onRegenerate={() => regenerateCurrentTurn(messageId)} />;
 };
 
-export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsule?: boolean }> = ({ hideSubagentCalls = false, showSubagentCapsule = false }) => {
+export const AssistantParts: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
   const hasImage = parts.some((part) => part.type === "image");
-  const ranges = useMemo(() => visibleAssistantPartRanges(parts, hideSubagentCalls, showSubagentCapsule), [hideSubagentCalls, parts, showSubagentCapsule]);
+  const ranges = useMemo(() => assistantPartRanges(parts), [parts]);
   const messageId = useAuiState((state) => state.message.id);
   const messageRunning = useAuiState((state) => state.message.status?.type === "running");
   const runId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
@@ -78,10 +78,6 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
       </div>
     );
     if (range.type === "image") return <MessagePrimitive.PartByIndex key={`image-${range.index}`} index={range.index} components={{ Image }} />;
-    if (range.type === "subagents") {
-      const part = parts[range.index];
-      return part?.type === "tool-call" ? <SubagentCapsule key={`subagents-${range.index}`} toolCallId={part.toolCallId} /> : null;
-    }
     if (range.type === "compaction") return <ContextCompactionMarker key={range.marker.id} {...range.marker} />;
     if (range.type === "images") {
       const imageParts = parts.slice(range.startIndex, range.endIndex).filter((part): part is VisibleImagePart => part.type === "image");
@@ -100,6 +96,7 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
           {block.ranges.map(renderRange)}
         </AssistantExecution>)}
     {sections.answer.map(renderRange)}
+    <SubagentMedia />
     <RunFileChangesAttachment messageId={messageId} runId={runId} />
   </>;
 };

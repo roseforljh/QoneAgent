@@ -42,7 +42,7 @@ export const AssistantMemoryChips: FC<{ visible: boolean }> = ({ visible }) => {
   />;
 };
 
-export const AssistantContext: FC<{ visible: boolean }> = ({ visible }) => {
+export const AssistantContext: FC = () => {
   const { t } = useLocale();
   const sessionId = useStore((state) => state.currentSessionId);
   const modelConfigs = useStore((state) => state.modelConfigs);
@@ -57,17 +57,15 @@ export const AssistantContext: FC<{ visible: boolean }> = ({ visible }) => {
   const refreshContextUsage = useStore((state) => state.refreshContextUsage);
 
   useEffect(() => {
-    if (visible && connected && sessionId && selectedModelId && !running && !compacting && loadingSessionId !== sessionId) refreshContextUsage();
-  }, [visible, connected, sessionId, selectedModelId, selectedModel?.updatedAt, running, loadingSessionId, latestMessageId, compacting, refreshContextUsage]);
+    if (connected && sessionId && selectedModelId && !running && !compacting && loadingSessionId !== sessionId) refreshContextUsage();
+  }, [connected, sessionId, selectedModelId, selectedModel?.updatedAt, running, loadingSessionId, latestMessageId, compacting, refreshContextUsage]);
 
-  if (!visible) return null;
+  if (!sessionId || !selectedModelId) return null;
   return <ComposerContext
     usage={contextUsage && contextUsage.sessionId === sessionId && contextUsage.model === selectedModelId
       ? { used: contextUsage.tokens, total: contextUsage.contextWindow }
       : undefined}
     label={t("chat.context")}
     triggerLabel={t("chat.contextUsage")}
-    note={t("chat.contextEstimate")}
-    modelName={typeof selectedModel?.config.displayName === "string" ? selectedModel.config.displayName : selectedModel?.model}
   />;
 };

@@ -69,6 +69,11 @@ export function translate(locale: Locale, key: MessageKey, values?: Record<strin
   return message.replace(/\{(\w+)\}/g, (placeholder, name: string) => String(values?.[name] ?? placeholder));
 }
 
+/** Resolve at call time so adapters and store actions follow the current setting. */
+export function translateCurrent(key: MessageKey, values?: Record<string, string | number>): string {
+  return translate(resolveLocale(getLanguageSetting()), key, values);
+}
+
 const translators = {
   en: (key: MessageKey, values?: Record<string, string | number>) => translate("en", key, values),
   "zh-CN": (key: MessageKey, values?: Record<string, string | number>) => translate("zh-CN", key, values),

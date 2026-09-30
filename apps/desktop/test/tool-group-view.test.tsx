@@ -35,6 +35,53 @@ test("completed timeline uses a category summary even when timing data is presen
   }
 });
 
+function PartlyFailedFixture() {
+  const messages: ThreadMessageLike[] = [{
+    id: "partly-failed", role: "assistant", status: { type: "complete", reason: "stop" },
+    content: [
+      { type: "tool-call", toolName: "edit", toolCallId: "edited", args: { path: "src/App.tsx" }, result: "done" },
+      { type: "tool-call", toolName: "powershell", toolCallId: "failed", args: { command: "./gradlew test" }, result: "failed", isError: true },
+    ],
+  }];
+  const runtime = useExternalStoreRuntime({ messages, convertMessage: (message: ThreadMessageLike) => message, onNew: async () => {} });
+  return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{
+    AssistantMessage: () => <MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={2} /></MessagePrimitive.Root>,
+  }} /></AssistantRuntimeProvider>;
+}
+
+test("failed command changes the group title without erasing successful edits", () => {
+  const html = renderToStaticMarkup(<PartlyFailedFixture />);
+  expect(html).toMatch(/编辑了一个文件，一个操作失败|Edited a file and an action failed/);
+  expect(html).not.toMatch(/编辑了一个文件，运行了一个命令|Edited a file and ran a command/);
+});
+
+function RunningGroupFixture() {
+  const messages: ThreadMessageLike[] = [{
+    id: "running-group", role: "assistant", status: { type: "running" },
+    content: [
+      { type: "tool-call", toolName: "edit", toolCallId: "edited", args: { path: "src/App.tsx" }, result: "done" },
+      { type: "tool-call", toolName: "powershell", toolCallId: "running-command", args: { command: "./gradlew test" } },
+    ],
+  }];
+  const runtime = useExternalStoreRuntime({ messages, isRunning: true, convertMessage: (message: ThreadMessageLike) => message, onNew: async () => {} });
+  return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{
+    AssistantMessage: () => <MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={2} /></MessagePrimitive.Root>,
+  }} /></AssistantRuntimeProvider>;
+}
+
+test("the active tool group opens and uses the running command as its title", () => {
+  const previous = useStore.getState().toolCalls;
+  try {
+    useStore.setState({ toolCalls: [{ toolCallId: "running-command", toolName: "powershell", runId: "run", status: "running" }] });
+    const html = renderToStaticMarkup(<RunningGroupFixture />);
+    expect(html).toContain('data-slot="tool-timeline"');
+    expect(html).toContain('data-state="open"');
+    expect(html).toMatch(/title="[^"]*gradlew test/);
+  } finally {
+    useStore.setState({ toolCalls: previous });
+  }
+});
+
 function FailedFixture() {
   const messages: ThreadMessageLike[] = [{
     id: "failed-command", role: "assistant", status: { type: "complete", reason: "stop" },

@@ -8,6 +8,7 @@ export interface ToolGroupSummaryStep {
   fullTarget?: string;
   category?: ToolActivityCategory;
   filePaths?: string[];
+  failed?: boolean;
 }
 
 const CATEGORY_ORDER: readonly ToolActivityCategory[] = [
@@ -34,7 +35,12 @@ export function toolGroupSummary(
   if (categorized) {
     const counts = new Map<ToolActivityCategory, number>();
     const changedPaths = new Set<string>();
+    let failedCount = 0;
     for (const step of steps) {
+      if (step.failed) {
+        failedCount++;
+        continue;
+      }
       const category = step.category ?? "tool";
       if (category === "file-change") {
         if (step.filePaths?.length) {
@@ -58,6 +64,10 @@ export function toolGroupSummary(
         const label = translate(locale, key);
         return locale === "en" && index > 0 ? label[0]!.toLowerCase() + label.slice(1) : label;
       });
+    if (failedCount > 0) {
+      const label = translate(locale, failedCount === 1 ? "chat.toolGroupFailedOne" : "chat.toolGroupFailedMany", { count: failedCount });
+      parts.push(locale === "en" && parts.length > 0 ? label[0]!.toLowerCase() + label.slice(1) : label);
+    }
     return locale === "en"
       ? new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(parts)
       : parts.join("，");

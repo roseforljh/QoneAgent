@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./router";
 import { initLocale } from "./localization";
+import { initAppearance } from "./lib/appearance";
 import "./index.css";
 import "./desktop-overrides.css";
 import { reportStartup } from "./lib/startup-diagnostic";
@@ -48,7 +49,8 @@ if (!rootElement) throw new Error("Qone root element is missing");
 
 try {
   const disposeLocale = initLocale();
-  if (import.meta.hot) import.meta.hot.dispose(disposeLocale);
+  const disposeAppearance = initAppearance();
+  if (import.meta.hot) import.meta.hot.dispose(() => { disposeLocale(); disposeAppearance(); });
 
   // A recovered module load replaces the early diagnostic page completely.
   rootElement.style.cssText = "";

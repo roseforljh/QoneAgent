@@ -190,7 +190,7 @@ test("removing a workspace refreshes sessions to exclude its orphaned chats", ()
   }
 });
 
-test("failed reply stays with its user message and retry replaces that turn once", () => {
+test("resending after a failed reply merges the user turn and starts execution again", () => {
   useStore.setState({
     currentSessionId: "session-1",
     sessions: [{ id: "session-1", title: "Test", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
@@ -215,7 +215,7 @@ test("failed reply stays with its user message and retry replaces that turn once
   expect(useStore.getState().lastError).toBeUndefined();
   expect(useStore.getState().messages).toHaveLength(1);
 
-  useStore.getState().runAgent("hello", firstUserId);
+  useStore.getState().runAgent("hello");
   expect(useStore.getState().messages).toHaveLength(1);
   const retryUserId = useStore.getState().messages[0]?.id;
   expect(retryUserId).not.toBe(firstUserId);
@@ -256,7 +256,7 @@ test("retry of a rejected optimistic turn sends a new message without replacing 
 
     const rejectedId = useStore.getState().chatRunError?.userMessageId;
     expect(rejectedId).toBe(rejected.messageId);
-    useStore.getState().runAgent("queued reply", rejectedId);
+    useStore.getState().runAgent("queued reply");
     const retry = commands.filter((command) => command.type === "agent.run").at(-1);
     expect(retry?.type).toBe("agent.run");
     if (retry?.type !== "agent.run") return;

@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuiState, useThreadViewport } from "@assistant-ui/react";
 import type { ThreadMessage } from "@assistant-ui/react";
 import { cn } from "../../../lib/utils";
 import { useStore } from "../../../store";
+import { hasConversationRailSpaceInViewport } from "../../../lib/conversation-rail-layout";
 import { ConversationMap, type ConversationMapEntry } from "./conversation-map";
 
 const TOP_TOLERANCE = 1;
@@ -132,9 +134,8 @@ export function ConversationMapAui({
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
   const [visibleIds, setVisibleIds] = useState<readonly string[]>([]);
   // Hidden until the first measurement so a narrow layout never flashes the rail.
-  const [tooNarrow, setTooNarrow] = useState(true);
+  const [layout, setLayout] = useState<{ viewport: HTMLElement; sessionId: string | undefined; side: "left" | "right"; hasSpace: boolean }>();
   const scheduleRef = useRef<(() => void) | undefined>(undefined);
-  const railRef = useRef<HTMLDivElement>(null);
   const cancelNavigationRef = useRef<(() => void) | undefined>(undefined);
 
   const turns = useMemo(() => groupIntoTurns(messages), [messages]);
@@ -155,18 +156,10 @@ export function ConversationMapAui({
       // and which turns the viewport currently holds.
       let current: string | undefined;
       let firstId: string | undefined;
-      let gutter: number | undefined;
       const onScreen: string[] = [];
       for (const block of viewport.querySelectorAll<HTMLElement>("[data-turn-id]")) {
         const box = block.getBoundingClientRect();
         if (box.top >= view.bottom) break;
-
-        // Old blocks use content-visibility; only measure a message root once
-        // its block is on screen, otherwise the rail would force its layout.
-        if (gutter === undefined && box.bottom > view.top) {
-          gutter = block.querySelector<HTMLElement>("[data-message-id]")?.getBoundingClientRect().left ?? block.getBoundingClientRect().left;
-          gutter -= view.left;
-        }
 
         const head = block.dataset["turnId"];
         if (head === undefined) continue;
@@ -182,8 +175,9 @@ export function ConversationMapAui({
       setVisibleIds((previous) =>
         sameIds(previous, onScreen) ? previous : onScreen,
       );
-      const railWidth = railRef.current?.offsetWidth ?? 0;
-      setTooNarrow(gutter === undefined || gutter < railWidth);
+      const hasSpace = hasConversationRailSpaceInViewport(viewport, side);
+      setLayout((previous) => previous?.viewport === viewport && previous.sessionId === sessionId && previous.side === side && previous.hasSpace === hasSpace
+        ? previous : { viewport, sessionId, side, hasSpace });
     };
     const schedule = () => {
       if (frame) return;
@@ -193,16 +187,31 @@ export function ConversationMapAui({
     scheduleRef.current = schedule;
     schedule();
     viewport.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
     const observer = new ResizeObserver(schedule);
     observer.observe(viewport);
+    const content = viewport.querySelector<HTMLElement>("[data-conversation-rail-content]");
+    const messageList = content?.parentElement;
+    if (content) observer.observe(content);
+    if (messageList) observer.observe(messageList);
+    const contentObserver = new MutationObserver(schedule);
+    if (messageList) contentObserver.observe(messageList, { childList: true, subtree: true, characterData: true });
+    const layoutObserver = new MutationObserver(schedule);
+    for (const element of [viewport, content, messageList]) {
+      if (element) layoutObserver.observe(element, { attributes: true, attributeFilter: ["style", "class"] });
+    }
 
     return () => {
       scheduleRef.current = undefined;
       if (frame) cancelAnimationFrame(frame);
       viewport.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
       observer.disconnect();
+      contentObserver.disconnect();
+      layoutObserver.disconnect();
+      cancelNavigationRef.current?.();
     };
-  }, [viewport]);
+  }, [viewport, sessionId, side]);
 
   useEffect(() => {
     scheduleRef.current?.();
@@ -267,23 +276,24 @@ export function ConversationMapAui({
     [viewport],
   );
 
-  return (
+  // Unmount the portal too: CSS visibility on the rail cannot hide a body portal.
+  if (entries.length < 4 || !viewport?.parentElement || !layout || layout.viewport !== viewport || layout.sessionId !== sessionId || layout.side !== side || !layout.hasSpace) return null;
+
+  // Like Codex Pt, portal beside the scroller; no flex gap or scroll offset changes.
+  return createPortal(
     <div
       data-slot="conversation-map-rail"
       className={cn(
-        "pointer-events-none sticky top-0 z-10 h-0 w-full",
-        // `invisible` keeps the rail laid out so its width stays measurable.
-        tooNarrow && "invisible",
+        "pointer-events-none absolute inset-x-0 top-0 z-10",
         className,
       )}
+      style={{ height: viewportHeight }}
     >
       <div
-        ref={railRef}
         className={cn(
-          "pointer-events-auto absolute top-0 px-3 py-10",
+          "pointer-events-auto absolute top-0 h-full px-3 py-10",
           side === "right" ? "right-0" : "left-0",
         )}
-        style={{ height: viewportHeight }}
       >
         <ConversationMap
           entries={entries}
@@ -294,6 +304,6 @@ export function ConversationMapAui({
           side={side === "right" ? "left" : "right"}
         />
       </div>
-    </div>
+    </div>, viewport.parentElement,
   );
 }

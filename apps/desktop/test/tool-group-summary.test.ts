@@ -62,6 +62,16 @@ test("structured file changes from custom tools are classified as edits", () => 
   expect(toolActivityCategory("bash", { content: [{ type: "text", text: "updated a file" }] })).toBe("command");
 });
 
+test("failed actions are not described as completed work", () => {
+  const steps = [
+    { verb: "编辑", category: "file-change" as const, filePaths: ["src/App.tsx"] },
+    { verb: "运行", category: "command" as const, failed: true },
+  ];
+  expect(toolGroupSummary(steps, "zh-CN")).toBe("编辑了一个文件，一个操作失败");
+  expect(toolGroupSummary(steps, "en")).toBe("Edited a file and an action failed");
+  expect(toolGroupSummary(steps.slice(1), "zh-CN")).toBe("一个操作失败");
+});
+
 test("toolTarget preserves search pattern instead of discarding it for directory name", () => {
   const grepCall = {
     toolName: "grep",

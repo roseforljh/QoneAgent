@@ -5,6 +5,7 @@ import {
   type QueueItemState,
 } from "@assistant-ui/react";
 import type { MessageAttachmentInfo, QueueItemInfo } from "@qone/protocol";
+import { sameUserInput } from "@qone/protocol";
 import { serializeMessageAttachments } from "./message-attachments";
 import { createNativeAttachmentFile } from "./native-attachment-file";
 
@@ -12,6 +13,7 @@ type QueueCallbacks = {
   sessionId: string;
   isRunning: () => boolean;
   editPending?: (message: AppendMessage) => boolean;
+  isDuplicate?: (message: AppendMessage, attachments: MessageAttachmentInfo[]) => boolean;
   send: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[]) => void;
   steer: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[]) => Promise<boolean>;
   sync: (items: QueueItemInfo[]) => void;
@@ -96,6 +98,19 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
   const holdReasons = new Set<string>();
   let editingLocalId: string | undefined;
   let restoring = false;
+  let dispatchingMessage: AppendMessage | undefined;
+  const serializedMessages = new WeakMap<AppendMessage, Promise<MessageAttachmentInfo[]>>();
+  const mergedMessages = new WeakSet<AppendMessage>();
+  const serialize = (message: AppendMessage) => {
+    let result = serializedMessages.get(message);
+    if (!result) {
+      result = serializeMessageAttachments(message);
+      serializedMessages.set(message, result);
+    }
+    return result;
+  };
+  const sameMessage = (left: AppendMessage, a: MessageAttachmentInfo[], right: AppendMessage, b: MessageAttachmentInfo[]) =>
+    sameUserInput({ content: textOf(left), attachments: a }, { content: textOf(right), attachments: b });
 
   const hold = (reason: string) => {
     if (holdReasons.size === 0) controller.hold();
@@ -143,17 +158,21 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       // Attachment serialization is asynchronous. Keep the next item queued
       // until this one has actually entered runAgent and marked the session busy.
       hold("dispatch");
+      dispatchingMessage = message;
       const fallbackAttachments = attachments.get(localId) ?? [];
       messages.delete(localId);
       persistentIds.delete(localId);
       attachments.delete(localId);
       timestamps.delete(localId);
       attachmentVersions.delete(localId);
-      void serializeMessageAttachments(message).catch(() => fallbackAttachments).then((serialized) => {
+      void serialize(message).catch(() => fallbackAttachments).then((serialized) => {
         callbacks.send(message, queueItemId, serialized);
         if (callbacks.isRunning()) controller.notifyBusy();
         persist();
-      }).catch(reportError).finally(() => releaseHold("dispatch"));
+      }).catch(reportError).finally(() => {
+        dispatchingMessage = undefined;
+        releaseHold("dispatch");
+      });
     },
   });
 
@@ -177,6 +196,12 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     get steerItems() { return controller.adapter.steerItems; },
     enqueue(message: AppendMessage) {
       if (callbacks.editPending?.(message)) return;
+      const tail = controller.adapter.items.at(-1) ?? controller.adapter.steerItems.at(-1);
+      const previous = tail ? messages.get(tail.id) : dispatchingMessage;
+      const previousDispatching = !tail && Boolean(dispatchingMessage);
+      if (!message.attachments?.length && (previous
+        ? !previous.attachments?.length && sameMessage(previous, [], message, [])
+        : callbacks.isDuplicate?.(message, []))) return;
       const holdForMapping = !callbacks.isRunning();
       if (holdForMapping) hold("mapping");
       else controller.notifyBusy();
@@ -190,13 +215,26 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
           persistentIds.set(localId, persistentId);
           const now = Date.now();
           timestamps.set(localId, { createdAt: now, updatedAt: now });
-          void serializeMessageAttachments(message).then((serialized) => {
+          // Hold dispatch until attachment equality is known. Comparing names
+          // or assistant-ui attachment ids would merge different files.
+          hold(`prepare:${localId}`);
+          void serialize(message).then(async (serialized) => {
+            if (messages.get(localId) !== message) return;
+            const previousFiles = previous ? await serialize(previous).catch(() => undefined) : undefined;
+            const previousPending = previous && (previousDispatching || mergedMessages.has(previous) || [...messages.values()].includes(previous));
+            if (previousPending && previousFiles
+              ? sameMessage(previous, previousFiles, message, serialized)
+              : !tail && callbacks.isDuplicate?.(message, serialized)) {
+              mergedMessages.add(message);
+              if (messages.get(localId) === message) adapter.remove(localId);
+              return;
+            }
             if (messages.get(localId) !== message) return;
             attachments.set(localId, serialized);
             persist();
           }).catch((error) => {
             if (messages.get(localId) === message) reportError(error);
-          });
+          }).finally(() => releaseHold(`prepare:${localId}`));
         }
         persist();
       } catch (error) {

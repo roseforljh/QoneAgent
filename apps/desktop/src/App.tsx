@@ -11,7 +11,7 @@ import {
   type ExternalStoreThreadListAdapter,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import { type MessageAttachmentInfo, type PluginInfo } from "@qone/protocol";
+import { sameUserInput, type MessageAttachmentInfo, type PluginInfo } from "@qone/protocol";
 import { assistantMessageContent } from "./lib/assistant-message-parts";
 import { insertChatRunErrorMessage } from "./lib/chat-run-error-message";
 import { isImageModel } from "./lib/image-model-config";
@@ -47,21 +47,13 @@ import { BrowserIntegration } from "./components/browser/BrowserIntegration";
 import { ReachChannels } from "./components/reach/ReachChannels";
 import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
 import { AppChrome } from "./components/app-chrome/AppChrome";
+import { ResizableSidebar } from "./components/assistant-ui/resizable-sidebar";
+import { useTheme } from "./lib/appearance";
 
 type Theme = "light" | "dark";
 
 const Thread = lazy(async () => ({ default: (await import("./components/assistant-ui/Thread")).Thread }));
 const SettingsDialog = lazy(async () => ({ default: (await import("./components/settings/SettingsDialog")).SettingsDialog }));
-
-function useTheme() {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const saved = window.localStorage.getItem("qone-theme");
-    if (saved === "light" || saved === "dark") return saved;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  });
-  useEffect(() => { document.documentElement.dataset.theme = theme; window.localStorage.setItem("qone-theme", theme); }, [theme]);
-  return { theme, toggleTheme: () => setTheme((current) => current === "dark" ? "light" : "dark") };
-}
 
 function ThemeButton({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
   return (
@@ -122,6 +114,11 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const queue = useMemo(() => currentSessionId && connected ? getQoneMessageQueue(currentSessionId) ?? createQoneMessageQueue({
     sessionId: currentSessionId,
     isRunning: () => sessionStore(useStore, currentSessionId).getState().running || Boolean(useStore.getState().compactionStatuses[currentSessionId]),
+    isDuplicate: (message, attachments) => {
+      const state = sessionStore(useStore, currentSessionId).getState();
+      const previous = [...state.messages].reverse().find((item) => item.role === "user");
+      return state.running && Boolean(previous && sameUserInput(previous, { content: extractComposerPrompt(message).text, attachments }));
+    },
     editPending: (message) => {
       const state = useStore.getState();
       if (!state.editingQueueItem || state.currentSessionId !== currentSessionId) return false;
@@ -411,6 +408,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
   }, []);
   const lastError = useStore((s) => s.lastError);
   const currentSessionId = useStore((s) => s.currentSessionId);
+
   const runAgent = useStore((s) => s.runAgent);
   const sidebarLayout = useSidebarPreferences((s) => s.layout);
   const sessionsLoaded = useStore((s) => s.sessionsLoaded);
@@ -426,25 +424,25 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <div className="relative flex h-full w-full overflow-hidden">
+      <div className="q-chat-layout relative flex h-full w-full overflow-hidden">
+        <ResizableSidebar collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed}>
         <aside
           className={cn(
-            "q-sidebar bg-muted/30 flex h-full shrink-0 flex-col overflow-hidden border-r border-border/50 transition-[width] duration-200",
-            sidebarCollapsed ? "w-12" : "w-[var(--q-sidebar-width)]",
+            "q-sidebar bg-background flex h-full w-full flex-col overflow-hidden border-r border-border/50",
           )}
         >
           <div className="flex h-12 shrink-0 items-center overflow-hidden px-2">
             <TooltipIconButton
               variant="ghost"
               size="icon"
-              tooltip={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+              tooltip="收起侧边栏"
               side="right"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              onClick={() => setSidebarCollapsed(true)}
               className="size-8 shrink-0"
             >
               <CodexIcon src={sidebarIcon} className="size-4" />
             </TooltipIconButton>
-            <Logo collapsed={sidebarCollapsed} />
+            <Logo collapsed={false} />
             <TooltipIconButton
               variant="ghost"
               size="icon"
@@ -461,9 +459,9 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
               <ThreadListNew
                 className={cn(
                   "group h-[30px] overflow-hidden transition-all duration-200",
-                  sidebarCollapsed ? "w-8 gap-0 px-2" : "w-full gap-2 px-2.5",
+                  "w-full gap-2 px-2.5",
                 )}
-                labelClassName={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}
+                labelClassName="overflow-hidden whitespace-nowrap"
               />
               <Link
                 to="/plugins"
@@ -471,35 +469,28 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
                 data-slot="q-sidebar-app-link"
                 className={cn(
                   "group hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
-                  sidebarCollapsed ? "w-8 justify-center gap-0 px-2" : "w-full",
+                  "w-full",
                 )}
               >
                 <AnimatedSidebarIcon kind="plugins" />
-                <span className={cn("overflow-hidden whitespace-nowrap transition-[max-width] duration-200", sidebarCollapsed ? "max-w-0" : "max-w-24")}>应用</span>
+                <span className="overflow-hidden whitespace-nowrap">应用</span>
               </Link>
             </div>
-            <div className={cn("flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-2", sidebarCollapsed && "overflow-hidden")}>
-              {sidebarLayout === "project" && (!workspacesLoaded || !sessionsLoaded) && !sidebarCollapsed && <SidebarLoadingSkeleton layout="project" />}
-              {sidebarLayout === "project" && workspacesLoaded && sessionsLoaded && <div
-                aria-hidden={sidebarCollapsed}
-                inert={sidebarCollapsed}
-                className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
-              >
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-2">
+              {sidebarLayout === "project" && (!workspacesLoaded || !sessionsLoaded) && <SidebarLoadingSkeleton layout="project" />}
+              {sidebarLayout === "project" && workspacesLoaded && sessionsLoaded && <div>
                 <ProjectSection />
               </div>}
-              {sidebarLayout === "list" && !sessionsLoaded && !sidebarCollapsed && <SidebarLoadingSkeleton layout="list" />}
-              {sidebarLayout === "list" && sessionsLoaded && <ThreadListItems
-                  aria-hidden={sidebarCollapsed}
-                  inert={sidebarCollapsed}
-                  className={cn("transition-opacity duration-150", sidebarCollapsed && "pointer-events-none opacity-0")}
-                />}
+              {sidebarLayout === "list" && !sessionsLoaded && <SidebarLoadingSkeleton layout="list" />}
+              {sidebarLayout === "list" && sessionsLoaded && <ThreadListItems />}
             </div>
           </ThreadListRoot>
-          <SidebarFooter collapsed={sidebarCollapsed} onOpenSettings={() => setSettingsOpen(true)} />
+          <SidebarFooter collapsed={false} onOpenSettings={() => setSettingsOpen(true)} />
         </aside>
+        </ResizableSidebar>
 
         <div className="q-chat-shell relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-          <ThreadHeader dockView={dockView} />
+          <ThreadHeader dockView={dockView} sidebarCollapsed={sidebarCollapsed} onOpenSidebar={() => setSidebarCollapsed(false)} />
           {lastError && (
             <div className="error-banner q-chat-error-banner absolute inset-x-4 z-50" role="alert">
               <span>{lastError}</span>
@@ -514,7 +505,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
         </div>
         <ScopedWorkspaceDocks onViewChange={setDockView} />
         {settingsOpen && <Suspense fallback={null}>
-          <SettingsDialog open={settingsOpen} onClose={closeSettings} theme={theme} onToggleTheme={onToggleTheme} />
+          <SettingsDialog open={settingsOpen} onClose={closeSettings} />
         </Suspense>}
         <ChatSearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
         <ConfirmationDialogHost />

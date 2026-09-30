@@ -34,6 +34,8 @@ test("read, shell and grep get their dedicated views by tool name", () => {
     .toEqual({ kind: "file", content: "export const ready = true;", name: "src/app.ts" });
   expect(detectToolPresentation("powershell", { content: [{ type: "text", text: "ok" }] }, { command: "bun test" }))
     .toEqual({ kind: "terminal", command: "bun test", output: "ok" });
+  expect(detectToolPresentation("exec", { content: [{ type: "text", text: "ok" }] }, { cmd: "python -c 'print(1)'" }))
+    .toEqual({ kind: "terminal", command: "python -c 'print(1)'", output: "ok" });
   const search = detectToolPresentation("grep", { content: [{ type: "text", text: "src/app.ts:12: ready" }] }, { pattern: "ready" });
   expect(search.kind === "search" && search.items[0]).toEqual({ path: "src/app.ts", line: 12, text: "ready" });
 });

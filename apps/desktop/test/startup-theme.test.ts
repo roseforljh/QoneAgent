@@ -26,3 +26,9 @@ test("startup theme follows the system when no preference is saved", () => {
   expect(resolveTheme(null, true)).toBe("dark");
   expect(resolveTheme(null, false)).toBe("light");
 });
+
+test("explicit system preference and invalid old values follow the system before first paint", () => {
+  expect(resolveTheme("system", true)).toBe("dark");
+  expect(resolveTheme("system", false)).toBe("light");
+  expect(resolveTheme("invalid", true)).toBe("dark");
+});

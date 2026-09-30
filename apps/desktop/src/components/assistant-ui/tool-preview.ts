@@ -1,4 +1,6 @@
 import { editDiff, toolArg, type ToolPresentation } from "./tool-presentation";
+import { commandForTool } from "./tool-action-summary";
+import { isCommandTool } from "./tool-activity-category";
 
 /** Arguments describe a proposal, never proof that a file has changed. */
 export function detectToolPreview(toolName: string, args: unknown): ToolPresentation | undefined {
@@ -12,11 +14,10 @@ export function detectToolPreview(toolName: string, args: unknown): ToolPresenta
     }
     case "edit":
       return editDiff(args);
-    case "bash":
-    case "powershell": {
-      const command = toolArg(args, "command");
-      return command ? { kind: "terminal", command, output: "" } : undefined;
-    }
+  }
+  if (isCommandTool({ toolName })) {
+    const command = commandForTool({ toolName, args });
+    return command ? { kind: "terminal", command, output: "" } : undefined;
   }
   return undefined;
 }

@@ -43,11 +43,11 @@ function FileResult({ presentation }: { presentation: Extract<ToolPresentation, 
   );
 }
 
-function TerminalResult({ presentation }: { presentation: Extract<ToolPresentation, { kind: "terminal" }> }) {
+function TerminalResult({ presentation, emptyText }: { presentation: Extract<ToolPresentation, { kind: "terminal" }>; emptyText?: string }) {
   return (
     <div data-slot="tool-terminal-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/45">
       <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground/75 [overflow-wrap:anywhere]">
-        {presentation.output || ""}
+        {presentation.output.trim() ? presentation.output : <span className="text-foreground/45">{emptyText}</span>}
       </pre>
     </div>
   );
@@ -101,12 +101,12 @@ export function ToolFallback({ presentation }: { presentation: Extract<ToolPrese
   );
 }
 
-export function ToolResultView({ presentation, className }: { presentation: ToolPresentation; className?: string }) {
+export function ToolResultView({ presentation, className, emptyText }: { presentation: ToolPresentation; className?: string; emptyText?: string }) {
   return (
     <ResultFrame className={className}>
       {presentation.kind === "diff" && <DiffResult presentation={presentation} />}
       {presentation.kind === "file" && <FileResult presentation={presentation} />}
-      {presentation.kind === "terminal" && <TerminalResult presentation={presentation} />}
+      {presentation.kind === "terminal" && <TerminalResult presentation={presentation} emptyText={emptyText} />}
       {presentation.kind === "search" && <SearchResult presentation={presentation} />}
       {presentation.kind === "image" && <ImageResult presentation={presentation} />}
       {presentation.kind === "text" && <TextResult presentation={presentation} />}

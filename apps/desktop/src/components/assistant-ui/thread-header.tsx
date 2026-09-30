@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { DropdownMenu } from "radix-ui";
 import { BotMessageSquareIcon, FolderTreeIcon, GlobeIcon, ListTodoIcon, PencilIcon, PinIcon, PinOffIcon, PlugIcon, TrashIcon, WandSparklesIcon } from "lucide-react";
 import { CodexIcon } from "../ui/CodexIcon";
+import sidebarIcon from "../../assets/codex-icons/sidebar-light-16.svg";
 import moreIcon from "../../assets/codex-icons/ellipsis-horizontal-light-20.svg";
 import terminalIcon from "../../assets/codex-icons/terminal-light-20.svg";
 import branchIcon from "../../assets/codex-icons/branch-light-20.svg";
@@ -13,7 +14,11 @@ import { TooltipIconButton } from "./tooltip-icon-button";
 import "./sidebar-menu.css";
 import "./thread-header.css";
 
-export function ThreadHeader({ dockView }: { dockView?: string }) {
+export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
+  dockView?: string;
+  sidebarCollapsed?: boolean;
+  onOpenSidebar?: () => void;
+}) {
   const { t } = useLocale();
   const sessionId = useStore((state) => state.currentSessionId);
   const session = useStore((state) => state.sessions.find((item) => item.id === state.currentSessionId));
@@ -63,6 +68,9 @@ export function ThreadHeader({ dockView }: { dockView?: string }) {
 
   return (
     <header className="q-thread-header">
+      {sidebarCollapsed && <TooltipIconButton tooltip="展开侧边栏" onClick={onOpenSidebar} className="q-thread-header-action">
+        <CodexIcon src={sidebarIcon} className="size-4" />
+      </TooltipIconButton>}
       {renaming ? (
         <input
           ref={inputRef}
@@ -127,6 +135,14 @@ export function ThreadHeader({ dockView }: { dockView?: string }) {
           className="q-thread-header-action"
         >
           <CodexIcon src={branchIcon} className="size-[18px]" />
+        </TooltipIconButton>
+        <TooltipIconButton
+          tooltip={t("dock.togglePanel")}
+          onClick={() => window.dispatchEvent(new Event("qone-toggle-dock-panel"))}
+          aria-pressed={Boolean(dockView)}
+          className="q-thread-header-action"
+        >
+          <CodexIcon src={sidebarIcon} className="size-[18px]" style={{ scale: "-1 1" }} />
         </TooltipIconButton>
       </div>
     </header>

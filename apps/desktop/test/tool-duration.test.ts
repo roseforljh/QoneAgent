@@ -21,3 +21,9 @@ test("normal command durations keep the existing whole-second display", () => {
     startedAt: 1_000, completedAt: 3_200,
   }, false, 4_000, "zh-CN")).toBe("命令已运行 2秒");
 });
+
+test("the active Chinese command title stays in present tense", () => {
+  expect(toolActionSummary(part, step, {
+    toolCallId: "call-running", runId: "run-1", toolName: "powershell", status: "running", startedAt: 1_000,
+  }, true, 3_200, "zh-CN")).toBe("正在运行 Get-ChildItem · 2秒");
+});

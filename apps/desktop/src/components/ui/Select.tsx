@@ -6,6 +6,7 @@ export interface SelectOption {
   value: string;
   label: string;
   description?: string;
+  suffix?: ReactNode;
   disabled?: boolean;
 }
 
@@ -121,7 +122,14 @@ export function QoneSelect({
                 <strong>{option.label}</strong>
                 {option.description && <small>{option.description}</small>}
               </span>
-              {option.value === value && <Check size={16} aria-hidden="true" />}
+              {option.suffix != null ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  {option.suffix}
+                  <span className="flex w-4 shrink-0 items-center" aria-hidden="true">
+                    {option.value === value && <Check size={16} />}
+                  </span>
+                </div>
+              ) : option.value === value && <Check size={16} aria-hidden="true" />}
             </button>
           ))}
         </div>

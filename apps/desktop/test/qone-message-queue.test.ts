@@ -18,7 +18,7 @@ const flush = async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-test("running sends stay FIFO and duplicate text keeps distinct persistent ids", async () => {
+test("running sends merge adjacent identical submissions and keep FIFO for different prompts", async () => {
   let running = true;
   const sent: string[] = [];
   let latest: readonly { id: string; text: string }[] = [];
@@ -32,6 +32,7 @@ test("running sends stay FIFO and duplicate text keeps distinct persistent ids",
 
   queue.adapter.enqueue(message("same"));
   queue.adapter.enqueue(message("same"));
+  queue.adapter.enqueue(message("next"));
   expect(queue.adapter.items).toHaveLength(2);
   expect(new Set(latest.map((item) => item.id)).size).toBe(2);
   const firstId = latest[0]!.id;
@@ -43,7 +44,7 @@ test("running sends stay FIFO and duplicate text keeps distinct persistent ids",
   expect(sent[0]).toBe(`${firstId}:same`);
   queue.controller.notifyIdle();
   await flush();
-  expect(sent[1]).toBe(`${secondId}:same`);
+  expect(sent[1]).toBe(`${secondId}:next`);
 });
 
 test("idle queue dispatches one follow-up at a time across asynchronous preparation", async () => {
@@ -273,4 +274,105 @@ test("attachment errors are reported instead of silently swallowed", async () =>
   queue.adapter.enqueue({ ...message("with file"), attachments: [{ id: "a", type: "image", name: "x.bmp", contentType: "image/bmp", status: { type: "complete" }, content: [{ type: "image", image: "data:image/bmp;base64,AA==" }] }] });
   await flush();
   expect(errors).toEqual(["不支持的图片格式：x.bmp"]);
+});
+
+const withImage = (data: string): AppendMessage => ({
+  ...message("same"),
+  attachments: [{
+    id: crypto.randomUUID(), type: "image", name: "same.png", contentType: "image/png",
+    status: { type: "complete" }, content: [{ type: "image", image: `data:image/png;base64,${data}` }],
+  }],
+});
+
+test("repeated attachments merge by content across fresh attachment ids", async () => {
+  let running = true;
+  const sent: string[] = [];
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => running,
+    send: (_message, _id, files) => sent.push(files[0]!.data),
+    steer: async () => true, sync: () => {},
+  });
+  queue.adapter.enqueue(withImage("YQ=="));
+  queue.adapter.enqueue(withImage("YQ=="));
+  queue.adapter.enqueue(withImage("YQ=="));
+  running = false;
+  queue.controller.notifyIdle();
+  await flush();
+  expect(sent).toEqual(["data:image/png;base64,YQ=="]);
+  expect(queue.adapter.items).toHaveLength(0);
+});
+
+test("same text and attachment name with different bytes stays distinct", async () => {
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => true, send: () => {},
+    steer: async () => true, sync: () => {},
+  });
+  queue.adapter.enqueue(withImage("YQ=="));
+  queue.adapter.enqueue(withImage("Yg=="));
+  queue.adapter.enqueue(message("same"));
+  await flush();
+  expect(queue.adapter.items).toHaveLength(3);
+});
+
+test("a different submission between identical messages prevents queue merging", async () => {
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => true, send: () => {},
+    steer: async () => true, sync: () => {},
+  });
+  queue.adapter.enqueue(message("same"));
+  queue.adapter.enqueue(message("other"));
+  queue.adapter.enqueue(message("same"));
+  await flush();
+  expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["same", "other", "same"]);
+});
+
+test("resending the active input does not create a follow-up, but idle retry still sends", async () => {
+  let running = true;
+  let sends = 0;
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => running,
+    isDuplicate: (_message, files) => running && files[0]?.data === "data:image/png;base64,YQ==",
+    send: () => { sends++; }, steer: async () => true, sync: () => {},
+  });
+  queue.adapter.enqueue(withImage("YQ=="));
+  await flush();
+  expect(queue.adapter.items).toHaveLength(0);
+  expect(sends).toBe(0);
+  running = false;
+  queue.controller.notifyIdle();
+  queue.adapter.enqueue(withImage("YQ=="));
+  await flush();
+  expect(sends).toBe(1);
+});
+
+test("duplicate during asynchronous dispatch is not sent twice", async () => {
+  const sent: string[] = [];
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => false,
+    send: (item) => {
+      sent.push(item.content[0]?.type === "text" ? item.content[0].text : "");
+      queue.adapter.enqueue(message("same"));
+    },
+    steer: async () => true, sync: () => {},
+  });
+  queue.adapter.enqueue(message("same"));
+  await flush();
+  expect(sent).toEqual(["same"]);
+  expect(queue.adapter.items).toHaveLength(0);
+});
+
+test("attachment duplicate submitted during dispatch is merged even after serialization finishes", async () => {
+  let sends = 0;
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => false,
+    send: () => {
+      sends++;
+      if (sends === 1) queue.adapter.enqueue(withImage("YQ=="));
+    },
+    steer: async () => true, sync: () => {},
+  });
+  queue.adapter.enqueue(withImage("YQ=="));
+  await flush();
+  expect(sends).toBe(1);
+  expect(queue.adapter.items).toHaveLength(0);
 });

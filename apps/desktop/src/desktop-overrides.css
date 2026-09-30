@@ -82,8 +82,8 @@ body {
   max-width: 70%;
   overflow: hidden;
   border-radius: 22px;
-  background: color-mix(in oklab, var(--foreground) 5%, transparent);
-  color: var(--foreground);
+  background: var(--q-user-message-background, color-mix(in oklab, var(--foreground) 5%, transparent));
+  color: var(--q-user-message-text, var(--foreground));
   padding: 10px 16px;
   font-size: var(--q-text-base);
   line-height: 1.5;
