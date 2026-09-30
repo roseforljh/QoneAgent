@@ -1,6 +1,6 @@
 import { CodexArrowLeftIcon as ArrowLeftIcon, CodexCheckIcon as CheckIcon, CodexChevronRightIcon as ChevronRightIcon, CodexXIcon as XIcon, CodexLoader2Icon, CodexClock3Icon } from "./execution-icons";
 import { useEffect, useMemo, useState, type FC } from "react";
-import { MessagePrimitive, ReadonlyThreadProvider, ThreadPrimitive, useAuiState } from "@assistant-ui/react";
+import { MessagePrimitive, ThreadPrimitive, useAuiState } from "@assistant-ui/react";
 import type { SubagentRunInfo } from "@qone/protocol";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
@@ -9,6 +9,7 @@ import { subagentMessages } from "../../lib/subagent-messages";
 import { subagentImageGenerations } from "../../lib/subagent-image-generations";
 import { SubagentLogo } from "../settings/subagent-logo";
 import { AssistantParts } from "./assistant-parts";
+import { SubagentThread } from "./subagent-thread";
 import { ImageGeneration } from "./elements/image-generation";
 import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
 import "./subagent-view.css";
@@ -103,10 +104,8 @@ function statusLabel(item: SubagentRunInfo, locale: string) {
   return zh ? "运行中" : "Running";
 }
 
-const SubagentTranscript: FC<{ item: SubagentRunInfo }> = ({ item }) => {
-  const messages = useMemo(() => subagentMessages(item), [item]);
-  return <ReadonlyThreadProvider messages={messages}>
-    <ThreadPrimitive.Messages>
+const SubagentTranscript: FC = () => {
+  return <ThreadPrimitive.Messages>
       {({ message }) => message.role === "user"
         ? <MessagePrimitive.Root className="q-subagent-task rounded-lg border border-border/50 bg-foreground/[0.03] px-3 py-2 text-xs text-foreground/65">
             <MessagePrimitive.Parts />
@@ -114,8 +113,7 @@ const SubagentTranscript: FC<{ item: SubagentRunInfo }> = ({ item }) => {
         : <MessagePrimitive.Root className="q-subagent-transcript space-y-3 text-sm">
             <AssistantParts />
           </MessagePrimitive.Root>}
-    </ThreadPrimitive.Messages>
-  </ReadonlyThreadProvider>;
+    </ThreadPrimitive.Messages>;
 };
 
 export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
@@ -128,6 +126,7 @@ export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
   const now = useClock(subagents.some((item) => active(item.status)));
   useEffect(() => setSelectedId(undefined), [sessionId]);
   const selected = subagents.find((item) => item.id === selectedId);
+  const messages = useMemo(() => selected ? subagentMessages(selected) : [], [selected]);
   const title = locale === "zh-CN" ? "子代理" : "Subagents";
   const duration = (item: SubagentRunInfo) => formatDuration(((item.completedAt ?? now) - item.startedAt) / 1000, locale);
   const model = (id?: string) => modelConfigs.find((config) => config.id === id)?.model ?? id ?? (locale === "zh-CN" ? "默认模型" : "Default model");
@@ -138,13 +137,13 @@ export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
       <strong>{title}</strong>
       <button type="button" className="ms-auto" onClick={onClose} aria-label={locale === "zh-CN" ? "关闭子代理侧边栏" : "Close subagent panel"}><XIcon size={16} /></button>
     </div>
-    {selected ? <div className="q-subagent-panel-scroll" key={selected.id}>
+    {selected ? <SubagentThread key={selected.id} messages={messages}>
       <h2 className="q-subagent-detail-title">{selected.title}</h2>
       <div className="q-subagent-detail-meta"><span>{statusLabel(selected, locale)}</span><span>·</span><span>{model(selected.model)}</span><span>·</span><span>{duration(selected)}</span></div>
-      <SubagentTranscript item={selected} />
+      <SubagentTranscript />
       <GeneratedMediaArtifacts runIds={[selected.id]} />
       {selected.error && <p className="q-subagent-error">{selected.error}</p>}
-    </div> : <div className="q-subagent-panel-scroll">
+    </SubagentThread> : <div className="q-subagent-panel-scroll">
       {subagents.length === 0 ? <p className="q-subagent-empty">{locale === "zh-CN" ? "暂无子代理" : "No subagents yet"}</p> : subagents.map((item) => <button
         type="button" key={item.id} className="q-subagent-row" onClick={() => setSelectedId(item.id)}
       >
