@@ -28,6 +28,7 @@
     "typescript": "^5.9.0"
   },
   "patchedDependencies": {
-    "@assistant-ui/react@0.15.21": "patches/@assistant-ui%2Freact@0.15.21.patch"
+    "@assistant-ui/react@0.15.21": "patches/@assistant-ui%2Freact@0.15.21.patch",
+    "@assistant-ui/react-lexical@0.2.14": "patches/@assistant-ui%2Freact-lexical@0.2.14.patch"
   }
 }

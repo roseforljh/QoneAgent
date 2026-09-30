@@ -1,0 +1,110 @@
+diff --git a/dist/LexicalComposerInput.d.ts b/dist/LexicalComposerInput.d.ts
+index 0422aa7b22d2ebb635add0b4941987f8bc63c6ce..5c78c7be8e4387dbefa1b18f27173c03de1af45a 100644
+--- a/dist/LexicalComposerInput.d.ts
++++ b/dist/LexicalComposerInput.d.ts
+@@ -2,6 +2,7 @@ import { DirectiveChipProps } from "./nodes/DirectiveNode.js";
+ import { DirectivePluginProps } from "./plugins/DirectivePlugin.js";
+ import { ComponentPropsWithoutRef, FC, ReactNode } from "react";
+ import { Unstable_DirectiveFormatter } from "@assistant-ui/core";
++import { Klass, LexicalNode } from "lexical";
+ //#region src/LexicalComposerInput.d.ts
+ export type LexicalComposerInputProps = Omit<ComponentPropsWithoutRef<"div">, "autoFocus" | "children"> & {
+   /** Controls how Enter submits. @default "enter" */
+@@ -18,6 +19,8 @@ export type LexicalComposerInputProps = Omit<ComponentPropsWithoutRef<"div">, "a
+   directiveChip?: FC<DirectiveChipProps> | undefined;
+   /** Custom formatter for serializing/parsing directives. */
+   formatter?: Unstable_DirectiveFormatter | undefined;
++  /** Additional Lexical nodes used by the host composer. */
++  nodes?: readonly Klass<LexicalNode>[] | undefined;
+   /** Custom Lexical plugins rendered inside the composer context, after the built-in plugins. */
+   children?: ReactNode | undefined;
+ };
+@@ -37,6 +40,8 @@ export declare const LexicalComposerInput: import("react").ForwardRefExoticCompo
+   directiveChip?: FC<DirectiveChipProps> | undefined;
+   /** Custom formatter for serializing/parsing directives. */
+   formatter?: Unstable_DirectiveFormatter | undefined;
++  /** Additional Lexical nodes used by the host composer. */
++  nodes?: readonly Klass<LexicalNode>[] | undefined;
+   /** Custom Lexical plugins rendered inside the composer context, after the built-in plugins. */
+   children?: ReactNode | undefined;
+ } & import("react").RefAttributes<HTMLDivElement>>;
+diff --git a/dist/LexicalComposerInput.js b/dist/LexicalComposerInput.js
+index 5e7b500c2880dcf13cd61fc0d5f0c4857722ae1e..eca0bd28df84c7922000880f83cc3fcaefbb042f 100644
+--- a/dist/LexicalComposerInput.js
++++ b/dist/LexicalComposerInput.js
+@@ -118,17 +118,18 @@ function FocusPlugin({ autoFocus }) {
+ 	}, [editor, aui]);
+ 	return null;
+ }
++const EMPTY_NODES = [];
+ /** Lexical-based composer input with inline directive chips and runtime sync. */
+-const LexicalComposerInput = forwardRef(({ submitMode = "enter", cancelOnEscape = true, placeholder, autoFocus = false, directivePluginProps, directiveChip, formatter: formatterProp, "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, "aria-describedby": ariaDescribedBy, className, children, ...rest }, ref) => {
++const LexicalComposerInput = forwardRef(({ submitMode = "enter", cancelOnEscape = true, placeholder, autoFocus = false, directivePluginProps, directiveChip, formatter: formatterProp, nodes: extraNodes = EMPTY_NODES, "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, "aria-describedby": ariaDescribedBy, className, children, ...rest }, ref) => {
+ 	const isDisabled = useAuiState((s) => s.thread.isDisabled || s.composer.dictation?.inputDisabled);
+ 	const resolvedFormatter = formatterProp ?? unstable_defaultDirectiveFormatter;
+ 	const initialConfig = useMemo(() => ({
+ 		namespace: "aui-lexical-composer",
+-		nodes: [DirectiveNode],
++		nodes: [DirectiveNode, ...extraNodes],
+ 		onError: (error) => {
+ 			console.error("[LexicalComposerInput]", error);
+ 		}
+-	}), []);
++	}), [extraNodes]);
+ 	return /* @__PURE__ */ jsx(LexicalComposer, {
+ 		initialConfig,
+ 		children: /* @__PURE__ */ jsx(DirectiveChipProvider, {
+diff --git a/src/LexicalComposerInput.tsx b/src/LexicalComposerInput.tsx
+index c0afb49d22855705f6c7038885334d536ce0d6dc..f2860a73f0e9cb838aeec97ac347b8f326e6d97e 100644
+--- a/src/LexicalComposerInput.tsx
++++ b/src/LexicalComposerInput.tsx
+@@ -24,6 +24,8 @@ import {
+   KEY_ENTER_COMMAND,
+   KEY_ESCAPE_COMMAND,
+   KEY_TAB_COMMAND,
++  type Klass,
++  type LexicalNode,
+ } from "lexical";
+ import { mergeRegister } from "@lexical/utils";
+ import { useAui, useAuiState } from "@assistant-ui/store";
+@@ -58,6 +60,8 @@ export type LexicalComposerInputProps = Omit<
+   directiveChip?: FC<DirectiveChipProps> | undefined;
+   /** Custom formatter for serializing/parsing directives. */
+   formatter?: Unstable_DirectiveFormatter | undefined;
++  /** Additional Lexical nodes used by the host composer. */
++  nodes?: readonly Klass<LexicalNode>[] | undefined;
+   /** Custom Lexical plugins rendered inside the composer context, after the built-in plugins. */
+   children?: ReactNode | undefined;
+ };
+@@ -232,6 +236,8 @@ function FocusPlugin({ autoFocus }: { autoFocus: boolean }) {
+   return null;
+ }
+ 
++const EMPTY_NODES: readonly Klass<LexicalNode>[] = [];
++
+ /** Lexical-based composer input with inline directive chips and runtime sync. */
+ export const LexicalComposerInput = forwardRef<
+   HTMLDivElement,
+@@ -246,6 +252,7 @@ export const LexicalComposerInput = forwardRef<
+       directivePluginProps,
+       directiveChip,
+       formatter: formatterProp,
++      nodes: extraNodes = EMPTY_NODES,
+       "aria-label": ariaLabel,
+       "aria-labelledby": ariaLabelledBy,
+       "aria-describedby": ariaDescribedBy,
+@@ -264,12 +271,12 @@ export const LexicalComposerInput = forwardRef<
+     const initialConfig = useMemo(
+       () => ({
+         namespace: "aui-lexical-composer",
+-        nodes: [DirectiveNode],
++        nodes: [DirectiveNode, ...extraNodes],
+         onError: (error: Error) => {
+           console.error("[LexicalComposerInput]", error);
+         },
+       }),
+-      [],
++      [extraNodes],
+     );
+ 
+     return (

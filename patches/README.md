@@ -30,3 +30,17 @@ bun x tsc --noEmit -p apps/desktop/tsconfig.json
 
 The tests execute the installed package with synthetic DOM geometry; they do not
 replace user validation of WebView layout, focus and animation behavior.
+
+## Composer link nodes
+
+`@assistant-ui/react-lexical@0.2.14` is patched to accept additional `nodes`.
+Qone registers `ComposerLinkNode` through that prop while keeping the built-in
+directive node, runtime sync, history and keyboard plugins. The patch updates
+the source, runtime JS and declarations only. It introduces no new dependency.
+
+Regression verification:
+
+```sh
+bun test apps/desktop/test/composer-link.test.ts apps/desktop/test/long-paste.test.ts apps/desktop/test/composer-tool-editor.test.ts
+bun x tsc --noEmit -p apps/desktop/tsconfig.json
+```
