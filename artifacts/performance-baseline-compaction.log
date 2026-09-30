@@ -1,0 +1,12 @@
+bun test v1.3.14 (0d9b296a)
+
+apps\desktop\test\compaction-flow.test.ts:
+(pass) manual compaction stays attached to its session and reloads as a timeline marker [4.90ms]
+(pass) legacy compaction completion without a marker clears progress without crashing [0.14ms]
+(pass) an interrupted compaction replaces its running marker with an error row [0.11ms]
+(pass) automatic compaction events appear in the same conversation timeline [0.14ms]
+
+ 4 pass
+ 0 fail
+ 14 expect() calls
+Ran 4 tests across 1 file. [712.00ms]

@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+apps\desktop\test\local-image-preview.test.ts:
+(pass) local image previews authorize the original file and reuse its asset URL [0.50ms]
+
+ 1 pass
+ 0 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [50.00ms]
