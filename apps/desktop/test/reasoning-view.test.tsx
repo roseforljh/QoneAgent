@@ -64,6 +64,7 @@ test("the real message renderer nests active reasoning under the execution discl
   expect(html).toContain('data-slot="assistant-execution"');
   expect(html.indexOf('data-slot="assistant-execution"')).toBeLessThan(html.indexOf('data-slot="reasoning"'));
   expect(html).toContain("分析视频");
+  expect(html).not.toContain('aria-label="Expand or collapse execution details"');
 });
 
 test("completed reasoning folds with the outer execution region while the answer remains visible", () => {
@@ -71,6 +72,7 @@ test("completed reasoning folds with the outer execution region while the answer
     const html = renderToStaticMarkup(<Fixture running={running} complete grouped />);
     expect(html).toContain('data-slot="assistant-execution"');
     expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('aria-label="Expand or collapse execution details"');
     expect(html).not.toContain('data-slot="reasoning"');
     expect(html).toContain("最终答案");
   }

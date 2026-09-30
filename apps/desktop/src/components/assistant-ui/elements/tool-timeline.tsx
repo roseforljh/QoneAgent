@@ -2,8 +2,7 @@
 
 import { CodexChevronRightIcon as ChevronRightIcon, type ExecutionIcon } from "../execution-icons";
 
-import { useRef, type ReactNode } from "react";
-import { useReducedMotion } from "motion/react";
+import { useId, useRef, type ReactNode } from "react";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -12,6 +11,7 @@ import { cn } from "../../../lib/utils";
 import { MeasuredCollapse } from "./measured-collapse";
 import { FadeScroll, regionViewport, ShimmerLabel, SwapLabel } from "./surfaces";
 import { take } from "../utils/range";
+import { OverflowFade } from "./overflow-fade";
 
 export interface TimelineStep {
   id?: string;
@@ -35,6 +35,8 @@ export interface ToolTimelineProps {
   onOpenChange: (open: boolean) => void;
   restingLabel: string;
   activeLabel: string;
+  fullSummary?: string;
+  fullActiveLabel?: string;
   headerIcon?: ExecutionIcon;
   headerStat?: { added: number; removed: number };
   stats: TimelineStat[];
@@ -50,45 +52,53 @@ export function ToolTimeline({
   onOpenChange,
   restingLabel,
   activeLabel,
+  fullSummary,
+  fullActiveLabel,
   headerIcon: HeaderIcon,
   headerStat,
   stats,
   renderStep,
   className,
 }: ToolTimelineProps) {
-  const reduceMotion = useReducedMotion();
   const disclosureRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
   return (
     <Collapsible
       ref={disclosureRef}
       data-slot="tool-timeline"
       open={open}
       onOpenChange={onOpenChange}
-      className={cn("w-full", className)}
+      className={cn("min-w-0 w-full max-w-full", className)}
     >
-      <CollapsibleTrigger className="group/trigger text-muted-foreground/80 hover:text-foreground inline-flex items-center gap-1.5 py-0.5 text-[13px] font-medium transition-colors outline-none bg-transparent">
+      <CollapsibleTrigger
+        aria-controls={panelId}
+        title={streaming ? fullActiveLabel ?? activeLabel : fullSummary ?? restingLabel}
+        className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent"
+      >
         {HeaderIcon && <HeaderIcon className="size-3.5 shrink-0 opacity-60 transition-opacity group-hover/trigger:opacity-90" />}
-        <SwapLabel
-          active={streaming ? 0 : 1}
-          className="text-start tabular-nums"
-        >
-          <ShimmerLabel
-            active={streaming}
-            className="relative inline-block leading-none"
+        <OverflowFade>
+          <SwapLabel
+            active={streaming ? 0 : 1}
+            className="text-start tabular-nums"
           >
-            {activeLabel}
-          </ShimmerLabel>
-          <>{restingLabel}</>
-        </SwapLabel>
+            <ShimmerLabel
+              active={streaming}
+              className="relative inline-block leading-none"
+            >
+              {activeLabel}
+            </ShimmerLabel>
+            <>{restingLabel}</>
+          </SwapLabel>
+        </OverflowFade>
         {headerStat && (headerStat.added > 0 || headerStat.removed > 0) && (
           <span className="flex shrink-0 items-center gap-1 font-mono text-xs tracking-tight">
             {headerStat.added > 0 && <span className="text-emerald-600 dark:text-emerald-400 font-medium">+{headerStat.added}</span>}
             {headerStat.removed > 0 && <span className="text-rose-600 dark:text-rose-400 font-medium">−{headerStat.removed}</span>}
           </span>
         )}
-        <ChevronRightIcon className="size-3.5 shrink-0 opacity-40 transition-transform duration-150 ease-out group-hover/trigger:opacity-75 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />
+        <ChevronRightIcon data-slot="tool-disclosure-chevron" className="size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover/trigger:opacity-75 group-focus-visible/trigger:opacity-100 group-data-[state=open]/trigger:opacity-100 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />
       </CollapsibleTrigger>
-      <MeasuredCollapse open={open} className="outline-none">
+      <MeasuredCollapse id={panelId} open={open} className="outline-none">
         <FadeScroll className={cn(regionViewport, "overflow-x-hidden")}>
           <div className="flex flex-col gap-2 ps-3 pt-2">
               {take(steps, visibleSteps).map((step, index, shown) => {

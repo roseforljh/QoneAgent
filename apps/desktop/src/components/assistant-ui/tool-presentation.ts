@@ -1,3 +1,6 @@
+import { toolFileChanges } from "@qone/protocol";
+import { diffLines, parsePatch, formatPatch } from "diff";
+
 export type ToolPresentationKind =
   | "diff"
   | "file"
@@ -154,6 +157,13 @@ function grepItems(text: string): ToolSearchItem[] {
  * result wording or guessed field names.
  */
 export function detectToolPresentation(toolName: string, result: unknown, args?: unknown): ToolPresentation {
+  const mutations = toolFileChanges(result);
+  if (mutations.length) {
+    const change = mutations[0]!;
+    return "patch" in change
+      ? { kind: "diff", patch: change.patch, name: change.path }
+      : { kind: "diff", name: change.path, oldFile: { content: change.oldContent ?? "", name: change.path }, newFile: { content: change.newContent ?? "", name: change.path } };
+  }
   const text = resultText(result);
   const path = toolArg(args, "path");
   switch (toolName) {
@@ -191,31 +201,54 @@ export function detectToolPresentation(toolName: string, result: unknown, args?:
   return { kind: "unknown", debugJson: debugJson(parseJson(result)) };
 }
 
-/** Count added/removed lines for a diff presentation using a line-multiset diff. */
+/** Mutation presentations share the same data as the tool's Diff Viewer.
+ * A structured fileChanges result works for any tool, including multi-file
+ * patch tools. Plain text containing a diff is never mutation evidence.
+ */
+export function toolMutationPresentations(toolName: string, result: unknown, args?: unknown): Extract<ToolPresentation, { kind: "diff" }>[] {
+  const parsed = asRecord(parseJson(result));
+  const details = asRecord(parsed?.details);
+  if (Array.isArray(details?.fileChanges)) return toolFileChanges(result).map((change) => "patch" in change
+    ? { kind: "diff", patch: change.patch, name: change.path }
+    : { kind: "diff", name: change.path, oldFile: { content: change.oldContent ?? "", name: change.path }, newFile: { content: change.newContent ?? "", name: change.path } });
+  // Compatibility with persisted Pi edits predating snapshot evidence. A
+  // legacy write has no old content, so cannot establish an honest baseline.
+  if (toolName !== "edit") return [];
+  const presentation = detectToolPresentation(toolName, result, args);
+  if (presentation.kind !== "diff") return [];
+  if (!presentation.patch) return [presentation];
+  return splitMutationPatch(presentation);
+}
+
+export function splitMutationPatch(presentation: Extract<ToolPresentation, { kind: "diff" }>): Extract<ToolPresentation, { kind: "diff" }>[] {
+  if (!presentation.patch) return [presentation];
+  try {
+    return parsePatch(presentation.patch).map((file) => ({
+      kind: "diff", patch: formatPatch(file),
+      name: presentation.name ?? (file.newFileName === "/dev/null" ? file.oldFileName : file.newFileName)?.replace(/^[ab]\//, ""),
+    }));
+  } catch { return []; }
+}
+
+/** Use the same ordered line diff as Diff Viewer, not a line multiset. */
 export function toolDiffStats(presentation: ToolPresentation): { file: string; added: number; removed: number } | undefined {
   if (presentation.kind !== "diff") return undefined;
   const file = presentation.name ?? "文件";
-  if (presentation.patch) {
-    let added = 0;
-    let removed = 0;
-    for (const line of presentation.patch.split(/\r?\n/)) {
-      if (line.startsWith("+") && !line.startsWith("+++")) added += 1;
-      else if (line.startsWith("-") && !line.startsWith("---")) removed += 1;
-    }
-    return { file, added, removed };
-  }
-  const oldLines = presentation.oldFile?.content ? presentation.oldFile.content.split(/\r?\n/) : [];
-  const newLines = presentation.newFile?.content ? presentation.newFile.content.split(/\r?\n/) : [];
-  const remaining = new Map<string, number>();
-  for (const line of oldLines) remaining.set(line, (remaining.get(line) ?? 0) + 1);
   let added = 0;
-  for (const line of newLines) {
-    const left = remaining.get(line) ?? 0;
-    if (left > 0) remaining.set(line, left - 1);
-    else added += 1;
-  }
   let removed = 0;
-  for (const count of remaining.values()) removed += count;
+  if (presentation.patch) {
+    try {
+      for (const patch of parsePatch(presentation.patch)) for (const hunk of patch.hunks) for (const line of hunk.lines) {
+        if (line.startsWith("+")) added++;
+        else if (line.startsWith("-")) removed++;
+      }
+    } catch { return undefined; }
+  } else {
+    for (const change of diffLines(presentation.oldFile?.content ?? "", presentation.newFile?.content ?? "")) {
+      if (change.added) added += change.count;
+      else if (change.removed) removed += change.count;
+    }
+  }
   return { file, added, removed };
 }
 

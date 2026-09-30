@@ -8,7 +8,11 @@ export interface ToolGroupSummaryStep {
 }
 
 /** Summarize the work performed, not the duration of the last model message. */
-export function toolGroupSummary(steps: readonly ToolGroupSummaryStep[], locale: Locale): string {
+export function toolGroupSummary(
+  steps: readonly ToolGroupSummaryStep[],
+  locale: Locale,
+  { fullTargets = false }: { fullTargets?: boolean } = {},
+): string {
   const verbMap = new Map<string, { count: number; targets: string[] }>();
   const verbOrder: string[] = [];
 
@@ -19,14 +23,13 @@ export function toolGroupSummary(steps: readonly ToolGroupSummaryStep[], locale:
     }
     const entry = verbMap.get(step.verb)!;
     entry.count += 1;
-    const target = step.target?.trim() || step.chip?.trim();
+    const target = (fullTargets ? step.fullTarget?.trim() : undefined) || step.target?.trim() || step.chip?.trim();
     if (target && !entry.targets.includes(target)) {
       entry.targets.push(target);
     }
   }
 
-  const isZh = locale === "zh-CN";
-  const separator = isZh ? "、" : ", ";
+  const separator = locale === "zh-CN" ? "、" : ", ";
 
   return verbOrder.map((verb) => {
     const { count, targets } = verbMap.get(verb)!;
@@ -35,16 +38,7 @@ export function toolGroupSummary(steps: readonly ToolGroupSummaryStep[], locale:
       return baseCountLabel;
     }
 
-    let targetsText: string;
-    if (targets.length <= 3) {
-      targetsText = targets.join(separator);
-    } else {
-      const head = targets.slice(0, 3).join(separator);
-      targetsText = isZh
-        ? `${head} 等 ${count} 项`
-        : `${head} and ${count - 3} more`;
-    }
-
-    return `${baseCountLabel} (${targetsText})`;
+    // Width is a view concern: never discard targets before the fade/tooltip can show them.
+    return `${baseCountLabel} (${targets.join(separator)})`;
   }).join(" · ");
 }

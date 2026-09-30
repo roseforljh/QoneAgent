@@ -174,13 +174,18 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
   const restingLabel = toolGroupSummary(steps, locale);
   const summaryLabel = restingLabel;
   const activity = activePart ? toolActivity(activePart, activeCall, preparedIds.has(activePart.toolCallId), messageRunning) : undefined;
+  const describeActive = (part: ToolPartState, step: SessionTimelineStep) => activity === "generating"
+    ? `${t("chat.toolGenerating", { operation: step.verb })} · ${step.target}`
+    : activity === "queued" ? `${t("chat.toolQueued")} · ${step.target}`
+      : activity === "waiting" ? `${t("chat.toolApprovalPending")} · ${step.target}`
+        : toolActionSummary(part, step, activeCall, true, now, locale);
   const activeLabel = activePart && activeStep
-    ? activity === "generating"
-      ? `${t("chat.toolGenerating", { operation: activeStep.verb })} · ${activeStep.target}`
-      : activity === "queued" ? `${t("chat.toolQueued")} · ${activeStep.target}`
-        : activity === "waiting" ? `${t("chat.toolApprovalPending")} · ${activeStep.target}`
-          : toolActionSummary(activePart, activeStep, activeCall, true, now, locale)
+    ? describeActive(activePart, activeStep)
     : regionOpen ? summaryLabel : "";
+  const fullSummary = toolGroupSummary(steps, locale, { fullTargets: true });
+  const fullActiveLabel = activePart && activeStep
+    ? describeActive(activePart, { ...activeStep, target: activeStep.fullTarget ?? activeStep.target })
+    : fullSummary;
 
   if (steps.length === 0) return null;
 
@@ -197,6 +202,8 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
       open={open}
       onOpenChange={setOpen}
       restingLabel={restingLabel}
+      fullSummary={fullSummary}
+      fullActiveLabel={fullActiveLabel}
       activeLabel={activeLabel}
       headerIcon={(activeStep ?? lastStep)?.icon}
       headerStat={headerStat}

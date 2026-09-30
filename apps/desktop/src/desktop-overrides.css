@@ -209,6 +209,33 @@ body {
 .aui-thread-root .q-tool-timeline {
   margin-bottom: 0.75rem;
 }
+/* Codex's eased scroll fade uses a 1.5rem edge, not a background-colored
+   overlay. Observe actual label overflow so short rows remain fully opaque. */
+.q-inline-overflow-fade {
+  --q-inline-fade-distance: 1.5rem;
+}
+.q-inline-overflow-fade[data-overflow="true"] {
+  --q-inline-fade-direction: to right;
+  --q-inline-fade-mask: linear-gradient(var(--q-inline-fade-direction),
+    #000 0 calc(100% - var(--q-inline-fade-distance)),
+    #000000f4 calc(100% - var(--q-inline-fade-distance) * .875),
+    #000000d7 calc(100% - var(--q-inline-fade-distance) * .75),
+    #000000ae calc(100% - var(--q-inline-fade-distance) * .625),
+    #00000080 calc(100% - var(--q-inline-fade-distance) * .5),
+    #00000051 calc(100% - var(--q-inline-fade-distance) * .375),
+    #00000028 calc(100% - var(--q-inline-fade-distance) * .25),
+    #0000000b calc(100% - var(--q-inline-fade-distance) * .125), #0000);
+  -webkit-mask-image: var(--q-inline-fade-mask);
+  mask-image: var(--q-inline-fade-mask);
+}
+.q-inline-overflow-fade[data-overflow="true"]:dir(rtl) {
+  --q-inline-fade-direction: to left;
+}
+@media (hover: none) {
+  [data-slot="tool-disclosure-chevron"] {
+    opacity: 0.6;
+  }
+}
 .aui-thread-root .aui-composer-input {
   font-size: var(--q-text-base);
   line-height: 1.5;

@@ -4,6 +4,7 @@ import { MarkdownText } from "./markdown-text";
 import { GenerativeUIPresentation, SessionTimeline } from "./session-timeline";
 import { assistantRangeSections, hasVisibleAnswer, visibleAssistantPartRanges, type AssistantPartRange } from "./assistant-part-ranges";
 import { AssistantExecution } from "./assistant-execution";
+import { RunFileChangesAttachment } from "./run-file-changes-attachment";
 import { Image } from "./elements/image";
 import { ImageGallery } from "./elements/image-gallery";
 import { ImageGeneration } from "./elements/image-generation";
@@ -100,5 +101,6 @@ export const AssistantParts: FC<{ hideSubagentCalls?: boolean; showSubagentCapsu
         {segment.marker && <ContextCompactionMarker {...segment.marker} />}
       </Fragment>;
     })}
+    <RunFileChangesAttachment messageId={messageId} runId={runId} />
   </>;
 };

@@ -1,7 +1,7 @@
 import { CodexChevronRightIcon as ChevronRightIcon } from "./execution-icons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useAuiState } from "@assistant-ui/react";
-import { useEffect, useMemo, useRef, type FC, type ReactNode } from "react";
+import { useMemo, useRef, type FC, type ReactNode } from "react";
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { useLocale } from "../../localization";
 import { formatDuration } from "../../lib/utils";
@@ -93,32 +93,25 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, finalA
   const override = useExecutionDisclosureState((state) => state.overrides[disclosureKey]);
   const setCollapsed = useExecutionDisclosureState((state) => state.setCollapsed);
 
-  const hadAnswerRef = useRef(false);
-  useEffect(() => {
-    if (finalAnswerStarted) {
-      if (!hadAnswerRef.current) {
-        hadAnswerRef.current = true;
-        setCollapsed(disclosureKey, true);
-      }
-    } else {
-      hadAnswerRef.current = false;
-    }
-  }, [finalAnswerStarted, disclosureKey, setCollapsed]);
-
-  const collapsed = executionCollapsed(override, finalAnswerStarted, activitySettled || !messageRunning, run?.status === "cancelled" || run?.status === "interrupted");
-  const visibleOpen = !collapsed;
+  const cancelled = run?.status === "cancelled" || run?.status === "interrupted";
+  const canCollapse = finalAnswerStarted && !cancelled;
+  const collapsed = executionCollapsed(override, finalAnswerStarted, activitySettled || !messageRunning, cancelled);
+  const visibleOpen = !canCollapse || !collapsed;
   const disclosureRef = useRef<HTMLDivElement>(null);
+  const statusLabel = <>{executionLabel}{finishing && <span className="q-execution-dots text-primary/70" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>}</>;
 
   return (
     <div data-slot="assistant-execution" className="q-assistant-execution w-full py-1">
       <Collapsible ref={disclosureRef} open={visibleOpen} onOpenChange={(nextOpen) => { setCollapsed(disclosureKey, !nextOpen); }} className="w-full">
-        <CollapsibleTrigger
+        {canCollapse ? <CollapsibleTrigger
           aria-label={t("chat.executionToggle")}
           className="group/execution-trigger text-muted-foreground/75 hover:text-foreground inline-flex items-center gap-1.5 py-0.5 text-start text-[13px] font-medium tabular-nums transition-colors outline-none bg-transparent"
         >
-          <span>{executionLabel}{finishing && <span className="q-execution-dots text-primary/70" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>}</span>
+          <span>{statusLabel}</span>
           <ChevronRightIcon className="size-3.5 shrink-0 opacity-50 transition-transform duration-200 group-data-[state=open]/execution-trigger:rotate-90 group-hover/execution-trigger:opacity-80 motion-reduce:transition-none" />
-        </CollapsibleTrigger>
+        </CollapsibleTrigger> : <div className="text-muted-foreground/75 py-0.5 text-[13px] font-medium tabular-nums">
+          {statusLabel}
+        </div>}
         <AnimatePresence initial={false}>
           {visibleOpen && (
             <motion.div

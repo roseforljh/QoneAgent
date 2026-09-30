@@ -21,6 +21,7 @@ import { normalizeMultilineDisplayMath } from "../../../lib/normalize-display-ma
 import { ShikiCode, PrismCode, MermaidCode, GenerativeUICode } from "../code-renderers";
 import { canPreviewCode, createCodePreviewHtml } from "../../../lib/code-preview";
 import { openCodePreviewInDock } from "../../../lib/browser-dock";
+import { useStore } from "../../../store";
 import { useLocale } from "../../../localization";
 
 type MarkdownNode = { type?: string; value?: string; children?: MarkdownNode[] };
@@ -131,7 +132,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
     setPreviewError(undefined);
     try {
       const html = await createCodePreviewHtml(language, code);
-      if (html) openCodePreviewInDock(html, sourceId);
+      if (html) openCodePreviewInDock(html, sourceId, useStore.getState().currentSessionId);
     } catch (error) {
       setPreviewError(String(error));
     } finally {

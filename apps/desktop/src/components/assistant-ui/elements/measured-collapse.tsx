@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-export function MeasuredCollapse({ open, children, className }: { open: boolean; children: ReactNode; className?: string }) {
+export function MeasuredCollapse({ id, open, children, className }: { id?: string; open: boolean; children: ReactNode; className?: string }) {
   const reduceMotion = useReducedMotion();
   const contentRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
@@ -25,6 +25,7 @@ export function MeasuredCollapse({ open, children, className }: { open: boolean;
 
   return (
     <motion.div
+      id={id}
       initial={false}
       animate={{ height: open ? height : 0, opacity: open ? 1 : 0 }}
       transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.32, 0.72, 0, 1] }}

@@ -26,10 +26,9 @@ function firstString(values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === "string" && value.trim().length > 0);
 }
 
-function compactText(value: string, maxLength = 56): string {
-  const text = value.replace(/\s+/g, " ").trim();
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
+function compactText(value: string): string {
+  // Normalize the single-line preview without losing content to a character cutoff.
+  return value.replace(/\s+/g, " ").trim();
 }
 
 export function commandForTool(part: ToolActionPart, call?: ToolCall): string | undefined {

@@ -3,6 +3,7 @@ import { memo, useRef, useState, type ComponentProps } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { openBrowserInDock } from "../../lib/browser-dock";
+import { useStore } from "../../store";
 import { InlineCitation } from "./elements/inline-citation";
 import { MathBlock } from "./elements/math-block";
 import { MarkdownText as OfficialMarkdownText } from "./elements/markdown-text";
@@ -71,7 +72,7 @@ export function citationSource(href: string | undefined, label: unknown, title?:
 function CitationLink({ source }: { source: NonNullable<ReturnType<typeof citationSource>> }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const openSource = (url: string) => {
-    openBrowserInDock(url);
+    openBrowserInDock(url, useStore.getState().currentSessionId);
   };
   return <InlineCitation sources={[source]} openIndex={openIndex} onOpenIndexChange={setOpenIndex} onOpenSource={openSource} />;
 }
@@ -107,7 +108,7 @@ const defaultComponents = memoizeMarkdownComponents({
       onClick={(event) => {
         if (!href) return;
         event.preventDefault();
-        openBrowserInDock(href);
+        openBrowserInDock(href, useStore.getState().currentSessionId);
       }}
       {...props}
     >{children}</a>;
