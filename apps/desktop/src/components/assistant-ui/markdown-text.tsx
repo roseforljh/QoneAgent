@@ -2,11 +2,10 @@ import { unstable_memoizeMarkdownComponents as memoizeMarkdownComponents, useIsM
 import { memo, useRef, useState, type ComponentProps } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { openBrowserInDock } from "../../lib/browser-dock";
-import { useStore } from "../../store";
-import { InlineCitation } from "./elements/inline-citation";
 import { MathBlock } from "./elements/math-block";
 import { MarkdownText as OfficialMarkdownText } from "./elements/markdown-text";
+import { MarkdownLink } from "./markdown-link";
+export { citationSource } from "./markdown-link";
 import "katex/dist/katex.min.css";
 
 function useCopyToClipboard() {
@@ -58,25 +57,6 @@ function MarkdownTable({ className, children, ...props }: ComponentProps<"table"
   );
 }
 
-export function citationSource(href: string | undefined, label: unknown, title?: string) {
-  if (typeof label !== "string") return null;
-  const match = /^\[?(\d{1,3})\]?$/.exec(label.trim());
-  if (!match || !href) return null;
-  try {
-    const url = new URL(href);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    return { domain: url.hostname, title: title || undefined, url: url.href, label: match[1] };
-  } catch { return null; }
-}
-
-function CitationLink({ source }: { source: NonNullable<ReturnType<typeof citationSource>> }) {
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const openSource = (url: string) => {
-    openBrowserInDock(url, useStore.getState().currentSessionId);
-  };
-  return <InlineCitation sources={[source]} openIndex={openIndex} onOpenIndexChange={setOpenIndex} onOpenSource={openSource} />;
-}
-
 export function MathSpan({ className, children, ...props }: ComponentProps<"span">) {
   if (className?.split(/\s+/).includes("katex-display")) return (
     <MathBlock steps={[{ expression: <span className={className} {...props}>{children}</span> }]} visibleSteps={1} className="my-3 max-w-none" />
@@ -98,21 +78,7 @@ const defaultComponents = memoizeMarkdownComponents({
   h5: ({ className, ...props }) => <h5 className={cn("aui-md-h5 mt-3 mb-1 text-sm font-semibold first:mt-0 last:mb-0", className)} {...props} />,
   h6: ({ className, ...props }) => <h6 className={cn("aui-md-h6 mt-3 mb-1 text-sm font-medium first:mt-0 last:mb-0", className)} {...props} />,
   p: ({ className, ...props }) => <p className={cn("aui-md-p my-2.5 text-[15px] leading-[1.72] text-foreground/90 first:mt-0 last:mb-0", className)} {...props} />,
-  a: ({ className, href, title, children, ...props }) => {
-    const source = citationSource(href, children, title);
-    if (source) return <CitationLink source={source} />;
-    return <a
-      href={href}
-      title={title}
-      className={cn("aui-md-a text-primary hover:text-primary/80 underline underline-offset-2", className)}
-      onClick={(event) => {
-        if (!href) return;
-        event.preventDefault();
-        openBrowserInDock(href, useStore.getState().currentSessionId);
-      }}
-      {...props}
-    >{children}</a>;
-  },
+  a: MarkdownLink,
   blockquote: ({ className, ...props }) => <blockquote className={cn("aui-md-blockquote border-s-2 border-primary/50 bg-foreground/[0.02] dark:bg-foreground/[0.04] text-muted-foreground my-3 rounded-r-md py-1.5 ps-3.5 italic", className)} {...props} />,
   ul: ({ className, ...props }) => <ul className={cn("aui-md-ul marker:text-muted-foreground/60 my-2.5 ms-5 list-disc space-y-1 text-[15px] leading-[1.7] text-foreground/90 [&>li]:mt-0.5", className)} {...props} />,
   ol: ({ className, ...props }) => <ol className={cn("aui-md-ol marker:text-muted-foreground/60 my-2.5 ms-5 list-decimal space-y-1 text-[15px] leading-[1.7] text-foreground/90 [&>li]:mt-0.5", className)} {...props} />,

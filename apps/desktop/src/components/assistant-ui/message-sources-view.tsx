@@ -14,5 +14,5 @@ export function MessageSourcesView() {
   const { locale } = useLocale();
   if (sources.length === 0) return null;
   const openSource = (url: string) => hasTauriBridge() ? void openUrl(url) : window.open(url, "_blank", "noopener,noreferrer");
-  return <Sources sources={sources} open={open} onOpenChange={setOpen} onOpenSource={openSource} label={locale.startsWith("zh") ? "来源" : "Sources"} className="mt-3 max-w-md" />;
+  return <Sources sources={sources} open={open} onOpenChange={setOpen} onOpenSource={openSource} label={locale.startsWith("zh") ? "来源" : "Sources"} className="mt-3" />;
 }

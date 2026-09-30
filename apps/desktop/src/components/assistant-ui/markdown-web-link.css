@@ -1,0 +1,33 @@
+@import "./inline-mention.css";
+
+.q-markdown-web-link { white-space: nowrap; }
+.q-markdown-web-link-label { white-space: normal; }
+.q-markdown-web-link[data-breakable-url] {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.q-markdown-web-link[data-breakable-url] .q-markdown-web-link-label { word-break: break-all; }
+.q-markdown-web-link-icon {
+  display: inline-block;
+  position: relative;
+  box-sizing: content-box;
+  width: 16px;
+  height: 1lh;
+  padding-inline-end: 3px;
+  vertical-align: bottom;
+}
+.q-markdown-web-link-icon > :is(span, img) {
+  position: absolute;
+  inset-inline-start: 0;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+}
+.q-markdown-web-link-icon > img {
+  object-fit: contain;
+  border-radius: 2px;
+}
+.q-markdown-web-link-icon > img[data-favicon] { opacity: 0; }
+.q-markdown-web-link-icon[data-favicon-loaded] > img[data-favicon] { opacity: 1; }
+.q-markdown-web-link-icon[data-favicon-loaded] > [data-favicon-fallback] { visibility: hidden; }

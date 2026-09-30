@@ -23,6 +23,8 @@ import { canPreviewCode, createCodePreviewHtml } from "../../../lib/code-preview
 import { openCodePreviewInDock } from "../../../lib/browser-dock";
 import { useStore } from "../../../store";
 import { useLocale } from "../../../localization";
+import { markdownUrlTransform } from "../../../lib/markdown-file-reference";
+import { MarkdownLink } from "../markdown-link";
 
 type MarkdownNode = { type?: string; value?: string; children?: MarkdownNode[] };
 
@@ -97,6 +99,7 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
   return (
     <MarkdownTextPrimitive
       smooth={false}
+      urlTransform={markdownUrlTransform}
       remarkPlugins={[remarkQoneGfm, remarkMath, remarkQoneAutolink]}
       rehypePlugins={[rehypeKatex]}
       preprocess={(text) => escapeCurrencyDollars(normalizeMultilineDisplayMath(normalizeMathDelimiters(text)))}
@@ -234,15 +237,7 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  a: ({ className, ...props }) => (
-    <a
-      className={cn(
-        "aui-md-a text-primary hover:text-primary/80 underline underline-offset-2",
-        className,
-      )}
-      {...props}
-    />
-  ),
+  a: MarkdownLink,
   blockquote: ({ className, ...props }) => (
     <blockquote
       className={cn(

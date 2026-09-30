@@ -1,0 +1,15 @@
+@import "./inline-mention.css";
+
+/* Codex Mention inline-flow rules: no pill background, 16px glyph, 3px gap. */
+.q-markdown-file-link::before {
+  display: inline-block;
+  width: 16px;
+  height: 1lh;
+  margin-inline-end: 3px;
+  vertical-align: bottom;
+  background-color: currentColor;
+  mask: var(--q-file-link-icon) center / 16px 16px no-repeat;
+  -webkit-mask: var(--q-file-link-icon) center / 16px 16px no-repeat;
+  content: "";
+}
+.q-markdown-file-link[aria-disabled="true"] { cursor: default; }

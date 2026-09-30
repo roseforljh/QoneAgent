@@ -8,7 +8,7 @@ import {
   CollapsibleTrigger,
 } from "../../ui/collapsible";
 import { cn } from "../../../lib/utils";
-import { FadeScroll, fieldInteractive, mono, paper, regionViewport } from "./surfaces";
+import { fieldInteractive, mono, paper } from "./surfaces";
 
 export interface Source {
   domain: string;
@@ -58,7 +58,7 @@ export function Sources({
       data-slot="sources"
       open={open}
       onOpenChange={onOpenChange}
-      className={cn("w-full max-w-sm", className)}
+      className={cn("w-full min-w-0", className)}
     >
       <CollapsibleTrigger
         className={cn(
@@ -81,33 +81,31 @@ export function Sources({
             transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
             className="overflow-hidden outline-none"
           >
-        <FadeScroll className={cn(regionViewport, "pt-2.5")}>
-        <div className="grid grid-cols-2 gap-2">
-          {sources.map((source) => (
-            <a
-              key={source.url ?? source.domain}
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={source.url && onOpenSource ? (event) => { event.preventDefault(); onOpenSource(source.url!); } : undefined}
-              className={cn(
-                paper,
-                "flex min-w-0 flex-col gap-1.5 rounded-2xl p-3 transition-transform hover:-translate-y-px",
-              )}
-            >
-              <div className="flex items-center gap-1.5">
-                <SourceLogo domain={source.domain} />
-                <span className={cn(mono, "text-foreground/40 truncate")}>
-                  {source.domain}
-                </span>
-              </div>
-              <span className="text-foreground/90 line-clamp-2 text-sm leading-snug font-medium">
-                {source.title}
-              </span>
-            </a>
-          ))}
-        </div>
-        </FadeScroll>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-2 pt-2.5">
+              {sources.map((source) => (
+                <a
+                  key={source.url ?? source.domain}
+                  href={source.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={source.url && onOpenSource ? (event) => { event.preventDefault(); onOpenSource(source.url!); } : undefined}
+                  className={cn(
+                    paper,
+                    "flex min-w-0 flex-col gap-1.5 rounded-2xl p-3 transition-transform hover:-translate-y-px",
+                  )}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <SourceLogo domain={source.domain} />
+                    <span className={cn(mono, "text-foreground/40 truncate")}>
+                      {source.domain}
+                    </span>
+                  </div>
+                  <span className="text-foreground/90 line-clamp-2 text-sm leading-snug font-medium">
+                    {source.title}
+                  </span>
+                </a>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
