@@ -36,15 +36,15 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
   const inspectTools: ToolDefinition[] = options.controller ? [{
     name: "inspect_subagent",
     label: "Inspect subagent",
-    description: "Read a subagent's status, text result, generated images, streaming output and child IDs by run ID. Set includeMessages to read previous conversation text as well as the latest result.",
-    promptSnippet: "Use inspect_subagent to read current progress or previous replies before following up with an existing agent.",
-    parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }), includeMessages: Type.Optional(Type.Boolean()) }),
+    description: "Read a subagent's status, latest result, generated images, streaming output and child IDs by run ID.",
+    promptSnippet: "Use inspect_subagent to read current progress or the latest result before following up with an existing agent.",
+    parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }) }),
     execute: async (_toolCallId, params) => {
       const runId = (params as { runId: string }).runId;
       checkChild(runId);
       const result = options.controller!.query(runId);
       if (!result) throw new Error(`Unknown subagent ${runId}`);
-      return subagentResultForModel(result, (params as { includeMessages?: boolean }).includeMessages);
+      return subagentResultForModel(result);
     },
   }, {
     name: "run_subagent_workflow",

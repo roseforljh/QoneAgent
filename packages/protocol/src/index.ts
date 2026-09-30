@@ -3,6 +3,7 @@ import type { ModelMetadata, ProviderApiType } from "./model-metadata";
 import type { AssistantMessagePart } from "./assistant-parts";
 
 export { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta } from "./assistant-parts";
+export { sameUserInput, repeatedUserMessageId } from "./user-message-equality.js";
 export { toolFileChanges, persistedToolResult } from "./file-changes";
 export type { ToolFileChange } from "./file-changes";
 export {

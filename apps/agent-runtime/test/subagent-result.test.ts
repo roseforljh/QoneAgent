@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { SubagentRunInfo } from "@qone/protocol";
 import { subagentResultForModel, subagentWorkflowResultForModel } from "../src/subagent-result";
 
-test("inspection can retrieve previous replies without serializing transcript media parts", () => {
+test("model-facing subagent result never includes the saved transcript", () => {
   const child = {
     id: "child", status: "completed", content: "latest", parts: [],
     messages: [
@@ -10,12 +10,10 @@ test("inspection can retrieve previous replies without serializing transcript me
       { sequence: 2, role: "assistant", content: "earlier reply", parts: [{ type: "image", image: "data:image/png;base64,AAAA" }] },
     ],
   } as unknown as SubagentRunInfo;
-  expect(subagentResultForModel(child).details).not.toHaveProperty("messages");
-  const result = subagentResultForModel(child, true);
-  expect(result.details.messages).toEqual([
-    { sequence: 1, role: "user", content: "question" },
-    { sequence: 2, role: "assistant", content: "earlier reply" },
-  ]);
+  const result = subagentResultForModel(child);
+  expect(result.details).not.toHaveProperty("messages");
+  expect(result.content[0]!.text).toContain('"result":"latest"');
+  expect(result.content[0]!.text).not.toContain("earlier reply");
   expect(result.content[0]!.text).not.toContain("base64");
 });
 

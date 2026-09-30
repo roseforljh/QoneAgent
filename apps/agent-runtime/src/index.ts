@@ -1,4 +1,5 @@
 import { CompactionPositions } from "./compaction-position.js";
+import { repeatedUserMessageId } from "@qone/protocol";
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, SessionSearchResult } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, thinkingLevelsForApi, parseMcpCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
@@ -1350,6 +1351,12 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       if (cmd.queueItemId) {
         queueRepo.remove(cmd.sessionId, cmd.queueItemId);
         sendQueue(cmd.sessionId);
+      }
+      if (!cmd.goalContinuation && !cmd.replaceFromMessageId) {
+        cmd.replaceFromMessageId = repeatedUserMessageId(messageRepo.listBySession(cmd.sessionId).map(message => ({
+          ...message,
+          attachments: message.attachments ? JSON.parse(message.attachments) as MessageAttachmentInfo[] : undefined,
+        })), { content: cmd.message, attachments: cmd.attachments });
       }
       if (cmd.replaceFromMessageId) {
         startingRunSessions.add(cmd.sessionId);
