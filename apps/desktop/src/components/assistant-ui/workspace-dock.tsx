@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useMotionValueEvent, useReducedMotion } from "motion/react";
 import {
   ArrowLeftIcon,
   BotMessageSquareIcon,
@@ -30,14 +30,22 @@ import type { WorkspaceFileInfo, WorkspaceGitEntry } from "@qone/protocol";
 import { useStore } from "../../store";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { DiffViewer } from "./elements/diff-viewer";
-import { SyntaxHighlighter } from "./elements/shiki-highlighter";
+import { WorkspaceFileContent } from "./workspace-file-content";
 import { DockBrowserView, DockMcpView, DockSkillsView } from "./dock-extra-views";
 import { FadeScroll, mono } from "./elements/surfaces";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { onOpenBrowserInDock, type BrowserDockRequest } from "../../lib/browser-dock";
 import { SubagentPanel } from "./subagent-view";
-import { clampDockWidth, defaultDockWidth, DOCK_WIDTH_STORAGE_KEY, dockWidthBounds, dockWidthFromRatio, dockWidthRatio } from "../../lib/dock-layout";
+import { OPEN_SUBAGENT_EVENT } from "./subagent-navigation";
+import { OPEN_WORKSPACE_FILE_EVENT, type WorkspaceFileTarget } from "../../lib/workspace-file-navigation";
+import { OPEN_RUN_CHANGES_EVENT, runChangesTab, type RunChangesTarget } from "../../lib/run-changes-navigation";
+import { RunChangesPanel } from "./run-changes-panel";
+import { clampDockWidth, defaultDockWidth, DOCK_WIDTH_STORAGE_KEY, dockWidthBounds, dockWidthFromRatio, dockWidthRatio, dockResizeState } from "../../lib/dock-layout";
+import { usePaneResize } from "../../lib/use-pane-resize";
+import { usePaneMotion } from "../../lib/use-pane-motion";
+import { DOCK_VISIBILITY_TRANSITION } from "../../lib/pane-motion";
+import { NARROW_SCREEN_WIDTH } from "../../lib/sidebar-layout";
 import TerminalView, { type TerminalApi } from "./dock-terminal-view";
 import { closeDockTerminalResource } from "../../lib/dock-terminal-resource";
 import type { DockTab, DockView } from "../../lib/dock-state";
@@ -150,7 +158,7 @@ function TreeRows({
   );
 }
 
-function FilesView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspaceId: string; refreshNonce: number }) {
+function FilesView({ tabId, workspaceId, refreshNonce, fileTarget, active }: { tabId: string; workspaceId: string; refreshNonce: number; fileTarget?: DockTab["fileTarget"]; active: boolean }) {
   const { t } = useLocale();
   const send = useStore((s) => s.send);
   const state = useWorkspaceViewState(tabId);
@@ -179,6 +187,11 @@ function FilesView({ tabId, workspaceId, refreshNonce }: { tabId: string; worksp
     initializedTree.current = false;
     if (!unsupported) void requestWorkspaceFiles({ ownerId: tabId, workspaceId, send });
   }, [tabId, workspaceId, send, unsupported, refreshNonce]);
+
+  useEffect(() => {
+    if (unsupported || !fileTarget) return;
+    void requestWorkspaceFileRead({ ownerId: tabId, workspaceId, path: fileTarget.path, send });
+  }, [tabId, workspaceId, send, unsupported, fileTarget?.requestId]);
 
   useEffect(() => {
     if (!tree.length || initializedTree.current) return;
@@ -223,14 +236,15 @@ function FilesView({ tabId, workspaceId, refreshNonce }: { tabId: string; worksp
           <ArrowLeftIcon className="size-3.5 shrink-0" />
           <span className={cn(mono, "truncate")}>{selected}</span>
         </button>
-        <FadeScroll className="min-h-0 flex-1">
+        <FadeScroll data-file-viewport className="min-h-0 flex-1">
           {workspaceError ? <p className="px-3 py-3 text-sm text-red-500/80">{workspaceError}</p> : content === undefined ? (
             <p className="px-3 py-3 text-sm text-foreground/50">{t("dock.fileLoading")}</p>
           ) : (
-            <SyntaxHighlighter
+            <WorkspaceFileContent
               code={content}
               language={languageForPath(selected)}
-              className="min-h-full [&_pre]:m-0! [&_pre]:rounded-none! [&_pre]:border-0! [&_pre]:bg-transparent! [&_pre]:px-3! [&_pre]:py-2.5! [&_pre]:text-xs! [&_pre]:leading-relaxed"
+              target={fileTarget?.path === selected ? fileTarget : undefined}
+              active={active}
             />
           )}
         </FadeScroll>
@@ -354,9 +368,6 @@ function GitView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspac
   );
 }
 
-const PANEL_TRANSITION = "width 0.25s cubic-bezier(0.32,0.72,0,1)";
-const NARROW_SCREEN_WIDTH = 960;
-
 function readSavedDockRatio(): number | undefined {
   try {
     const value = Number(window.localStorage.getItem(DOCK_WIDTH_STORAGE_KEY));
@@ -399,12 +410,15 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   onTabsChange?: (hasTabs: boolean) => void;
 }) {
   const { t } = useLocale();
-  const workspaces = useStore((s) => s.workspaces);
   const [openTabs, setOpenTabs] = useState<DockTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>();
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string>();
   const [collapsed, setCollapsed] = useState(false);
   const activeTab = openTabs.find((tab) => tab.id === activeTabId);
   const view = scopeActive && !collapsed ? activeTab?.view : undefined;
+  const [paneMounted, setPaneMounted] = useState(false);
+  const reduceMotion = useReducedMotion();
+  useEffect(() => { if (view) setPaneMounted(true); }, [view]);
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = scopeActive && !collapsed ? activeTab : undefined;
   const openTabsRef = useRef(openTabs);
@@ -416,13 +430,13 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   }, []);
   const [launcherOpen, setLauncherOpen] = useState(false);
   useEffect(() => { if (!scopeActive) setLauncherOpen(false); }, [scopeActive]);
+  useEffect(() => setSelectedSubagentId(undefined), [sessionId]);
   const [terminalStatus, setTerminalStatus] = useState<Record<string, { status: "starting" | "ready" | "exited" | "error"; detail?: string }>>({});
   const panelRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(() => typeof window === "undefined" ? 0 : window.innerWidth);
   const [availableHeight, setAvailableHeight] = useState(() => typeof window === "undefined" ? 0 : window.innerHeight);
   const [savedWidthRatio, setSavedWidthRatio] = useState(readSavedDockRatio);
   const [dragWidth, setDragWidth] = useState<number>();
-  const [dragging, setDragging] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(() => typeof window !== "undefined" && window.innerWidth <= NARROW_SCREEN_WIDTH);
   const panelW = dragWidth ?? dockWidthFromRatio(savedWidthRatio, availableWidth, availableHeight, isNarrowScreen);
@@ -433,12 +447,18 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     const container = panelRef.current?.parentElement;
     if (!container) return undefined;
     const measure = () => {
-      setAvailableWidth(container.getBoundingClientRect().width);
-      setAvailableHeight(container.getBoundingClientRect().height);
+      const fullWidth = container.clientWidth;
+      const sidebarWidth = window.innerWidth <= NARROW_SCREEN_WIDTH
+        ? 0
+        : container.querySelector<HTMLElement>(".q-sidebar-pane")?.offsetWidth ?? 0;
+      setAvailableWidth(Math.max(0, fullWidth - sidebarWidth));
+      setAvailableHeight(container.clientHeight);
       setIsNarrowScreen(window.innerWidth <= NARROW_SCREEN_WIDTH);
     };
     const observer = new ResizeObserver(measure);
     observer.observe(container);
+    const sidebar = container.querySelector<HTMLElement>(".q-sidebar-pane");
+    if (sidebar) observer.observe(sidebar);
     window.addEventListener("resize", measure);
     measure();
     return () => {
@@ -478,12 +498,11 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
 
   useEffect(() => {
     if (!scopeActive) return;
-    const toggleSubagents = () => {
+    const showSubagents = (event: Event) => {
+      const target = (event as CustomEvent<{ runId?: string; sessionId?: string }>).detail;
+      if (target?.sessionId && target.sessionId !== sessionId) return;
       setLauncherOpen(false);
-      if (activeTabRef.current?.view === "subagents") {
-        setCollapsed(true);
-        return;
-      }
+      setSelectedSubagentId(target?.runId);
 
       const existingTab = openTabsRef.current.find((tab) => tab.view === "subagents");
       if (existingTab) {
@@ -497,42 +516,88 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
       setActiveTabId(tab.id);
       setCollapsed(false);
     };
-    window.addEventListener("qone-open-subagents", toggleSubagents);
-    return () => window.removeEventListener("qone-open-subagents", toggleSubagents);
-  }, [scopeActive]);
+    window.addEventListener(OPEN_SUBAGENT_EVENT, showSubagents);
+    return () => window.removeEventListener(OPEN_SUBAGENT_EVENT, showSubagents);
+  }, [scopeActive, sessionId]);
 
-  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (maximized || event.button !== 0) return;
-    event.preventDefault();
-    const handle = event.currentTarget;
-    handle.setPointerCapture(event.pointerId);
-    setDragging(true);
-    const move = (ev: PointerEvent) => {
-      if (ev.pointerId !== event.pointerId) return;
-      const rightEdge = panelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
-      setDragWidth(clampDockWidth(rightEdge - ev.clientX, availableWidth, isNarrowScreen));
+  useEffect(() => {
+    if (!scopeActive) return;
+    const showFile = (event: Event) => {
+      const target = (event as CustomEvent<WorkspaceFileTarget>).detail;
+      if (!target || target.sessionId !== sessionId || target.workspaceId !== workspaceId) return;
+      const fileTarget = { path: target.path, line: target.line, column: target.column, endLine: target.endLine, requestId: rid() };
+      setLauncherOpen(false);
+      const existing = openTabsRef.current.find((tab) => tab.view === "files" && tab.workspaceId === workspaceId);
+      if (existing) {
+        setOpenTabs((tabs) => tabs.map((tab) => tab.id === existing.id ? { ...tab, fileTarget } : tab));
+        setActiveTabId(existing.id);
+      } else {
+        const tab: DockTab = { id: rid(), view: "files", workspaceId, fileTarget };
+        setOpenTabs((tabs) => [...tabs, tab]);
+        setActiveTabId(tab.id);
+      }
+      setCollapsed(false);
     };
-    const done = (ev: PointerEvent) => {
-      if (ev.pointerId !== event.pointerId) return;
-      const rightEdge = panelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
-      const width = clampDockWidth(rightEdge - ev.clientX, availableWidth, isNarrowScreen);
-      saveWidth(width);
-      setDragWidth(undefined);
-      setDragging(false);
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", done);
-      handle.removeEventListener("pointercancel", done);
+    window.addEventListener(OPEN_WORKSPACE_FILE_EVENT, showFile);
+    return () => window.removeEventListener(OPEN_WORKSPACE_FILE_EVENT, showFile);
+  }, [scopeActive, sessionId, workspaceId]);
+
+  useEffect(() => {
+    if (!scopeActive) return;
+    const showChanges = (event: Event) => {
+      const target = (event as CustomEvent<RunChangesTarget>).detail;
+      if (!target || target.sessionId !== sessionId) return;
+      const tab = runChangesTab(openTabsRef.current, target, rid);
+      setOpenTabs((tabs) => tabs.some((item) => item.id === tab.id) ? tabs.map((item) => item.id === tab.id ? tab : item) : [...tabs, tab]);
+      setActiveTabId(tab.id);
+      setLauncherOpen(false);
+      setCollapsed(false);
     };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", done);
-    handle.addEventListener("pointercancel", done);
-  };
+    window.addEventListener(OPEN_RUN_CHANGES_EVENT, showChanges);
+    return () => window.removeEventListener(OPEN_RUN_CHANGES_EVENT, showChanges);
+  }, [scopeActive, sessionId]);
 
   const saveWidth = (width: number) => {
     const ratio = dockWidthRatio(width, availableWidth, isNarrowScreen);
     setSavedWidthRatio(ratio);
     try { window.localStorage.setItem(DOCK_WIDTH_STORAGE_KEY, String(ratio)); } catch { /* unavailable storage */ }
   };
+
+  const { dragging, startResize, cancelResize } = usePaneResize({
+    direction: -1,
+    getSize: () => maximized ? availableWidth : panelW,
+    onSize: (rawWidth) => {
+      const next = dockResizeState(rawWidth, availableWidth, isNarrowScreen);
+      setCollapsed(!next.open);
+      setMaximized(next.fullWidth);
+      if (next.open && !next.fullWidth) setDragWidth(next.width);
+    },
+    onEnd: (rawWidth) => {
+      const next = dockResizeState(rawWidth, availableWidth, isNarrowScreen);
+      if (next.open && !next.fullWidth) saveWidth(next.width);
+    },
+    onFinish: () => setDragWidth(undefined),
+  });
+  const animatedWidth = usePaneMotion({
+    open: Boolean(view), size: maximized ? availableWidth : panelW,
+    transition: DOCK_VISIBILITY_TRANSITION, immediate: !scopeActive || Boolean(reduceMotion),
+    animateSize: !dragging || maximized,
+  });
+  useMotionValueEvent(animatedWidth, "change", (width) => {
+    if (width === 0 && !view) setPaneMounted(false);
+  });
+  useEffect(() => { if (!scopeActive) cancelResize(); }, [scopeActive]);
+  useLayoutEffect(() => {
+    if (!scopeActive) return;
+    const container = panelRef.current?.parentElement;
+    const chat = container?.querySelector<HTMLElement>(".q-chat-shell");
+    if (!container || !chat) return;
+    const fullWidth = Boolean(view && maximized && !isNarrowScreen);
+    if (fullWidth) container.dataset.dockMaximized = "true";
+    else delete container.dataset.dockMaximized;
+    chat.inert = fullWidth;
+    return () => { delete container.dataset.dockMaximized; chat.inert = false; };
+  }, [scopeActive, view, maximized, isNarrowScreen]);
 
   const onResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     let width: number;
@@ -620,6 +685,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   const closePanel = () => {
     setLauncherOpen(false);
     setCollapsed(true);
+    setMaximized(false);
   };
 
   useEffect(() => {
@@ -632,6 +698,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     const toggleDockPanel = () => {
       setLauncherOpen(false);
       if (activeTabId) {
+        if (!collapsed) setMaximized(false);
         setCollapsed((current) => !current);
         return;
       }
@@ -652,13 +719,14 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
       window.removeEventListener("qone-toggle-dock-view", toggleDockView);
       window.removeEventListener("qone-toggle-dock-panel", toggleDockPanel);
     };
-  }, [activeTabId, openTabs, scopeActive, workspaceId]);
+  }, [activeTabId, openTabs, collapsed, scopeActive, workspaceId]);
 
   const tabMeta: Record<DockView, { icon: LucideIcon; label: string }> = {
     session: { icon: ListTodoIcon, label: t("dock.session") },
     terminal: { icon: SquareTerminalIcon, label: t("dock.terminal") },
     files: { icon: FolderTreeIcon, label: t("dock.files") },
     git: { icon: GitBranchIcon, label: t("dock.git") },
+    changes: { icon: GitBranchIcon, label: t("dock.changes") },
     browser: { icon: GlobeIcon, label: t("dock.browser") },
     mcp: { icon: PlugIcon, label: t("dock.mcp") },
     skills: { icon: WandSparklesIcon, label: t("dock.skills") },
@@ -674,21 +742,22 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
           className="fixed inset-0 z-35 bg-black/40 backdrop-blur-xs transition-opacity"
         />
       )}
-      <div
+      <motion.div
         ref={panelRef}
         className={cn(
-          "q-workspace-dock flex h-full shrink-0 justify-end overflow-hidden bg-background",
+          "q-workspace-dock flex h-full shrink-0 justify-end overflow-visible bg-background",
           isNarrowScreen
             ? "fixed inset-y-0 right-0 z-40 shadow-2xl"
             : "relative z-20",
-          view ? "pointer-events-auto visible" : "pointer-events-none invisible",
+          view || paneMounted || dragging ? "visible" : "invisible",
+          view || dragging ? "pointer-events-auto" : "pointer-events-none",
         )}
-        style={{ width: view ? maximized ? availableWidth : panelW : 0, transition: !scopeActive || dragging ? "none" : PANEL_TRANSITION }}
-        inert={!view}
-        aria-hidden={!view}
+        style={{ width: animatedWidth }}
+        inert={!view && !dragging}
+        aria-hidden={!view && !dragging}
       >
         {openTabs.length > 0 && <>
-          {!maximized && <div
+          {(!maximized || dragging) && <div
             role="separator"
             aria-label={t("dock.resizePanel")}
             aria-orientation="vertical"
@@ -698,9 +767,14 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
             tabIndex={0}
             onPointerDown={startResize}
             onKeyDown={onResizeKeyDown}
-            onDoubleClick={() => saveWidth(defaultDockWidth(availableWidth, availableHeight, isNarrowScreen))}
+            onDoubleClick={() => {
+              cancelResize();
+              setDragWidth(undefined);
+              saveWidth(defaultDockWidth(availableWidth, availableHeight, isNarrowScreen));
+            }}
             className="q-workspace-dock-resizer"
           ><span /></div>}
+          <div className="q-workspace-dock-clip h-full w-full overflow-hidden" inert={!view} aria-hidden={!view}>
           <div className="q-workspace-dock-frame flex h-full min-w-0 shrink-0 flex-col" style={{ width: maximized ? availableWidth : panelW }}>
           <div className="q-workspace-dock-tabbar flex shrink-0 items-center gap-1 bg-background">
             <div
@@ -736,7 +810,6 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                 const duplicateCount = openTabs.filter((item) => item.view === tab.view).length;
                 const tabLabel = duplicateCount > 1 ? `${label} ${openTabs.slice(0, index + 1).filter((item) => item.view === tab.view).length}` : label;
                 const terminalState = terminalStatus[tab.id]?.status ?? "starting";
-                const tabWorkspacePath = workspaces.find((workspace) => workspace.id === (tab.workspaceId ?? workspaceId))?.path;
                 return (
                   <div key={tab.id} data-dock-tab={tab.id} className={cn("q-workspace-dock-tab group flex h-8 min-w-0 flex-1 items-center rounded-lg", active && "is-active")}>
                     <button
@@ -750,7 +823,6 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                       {tab.view === "terminal" ? <span className={cn("size-1.5 shrink-0 rounded-full", terminalState === "ready" ? "bg-emerald-500" : terminalState === "error" ? "bg-red-500" : "bg-amber-500")} title={terminalStatus[tab.id]?.detail} /> : null}
                       <Icon className="size-4 shrink-0 text-foreground/55" />
                       <span className="truncate text-sm text-foreground/85">{tabLabel}</span>
-                      {tab.view === "terminal" && tabWorkspacePath ? <span className={cn(mono, "min-w-0 truncate text-xs text-foreground/45")} title={tabWorkspacePath}>{tabWorkspacePath}</span> : null}
                     </button>
                     <button type="button" aria-label={`${t("dock.closePanel")}: ${tabLabel}`} onClick={() => closeTab(tab.id)} className="q-workspace-dock-tab-close me-1 flex size-6 shrink-0 items-center justify-center rounded-md text-foreground/45 hover:bg-foreground/10 hover:text-foreground">
                       <XIcon className="size-3.5" />
@@ -802,19 +874,21 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                   {needsWorkspace && !tabWorkspaceId ? <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.noWorkspace")}</p> : null}
                   {tab.view === "terminal" && tabWorkspaceId && <TerminalView tabId={tab.id} workspaceId={tabWorkspaceId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
                   {tab.view === "browser" && <DockBrowserView browserId={tab.id} active={active && !launcherOpen && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} />}
-                  {tab.view === "files" && tabWorkspaceId && <FilesView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
+                  {tab.view === "files" && tabWorkspaceId && <FilesView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} fileTarget={tab.fileTarget} active={active} />}
                   {tab.view === "git" && tabWorkspaceId && <GitView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
+                  {active && tab.view === "changes" && tab.changesTarget && <RunChangesPanel target={tab.changesTarget} />}
                   {active && tab.view === "mcp" && <DockMcpView refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "skills" && <DockSkillsView workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
-                  {active && tab.view === "subagents" && <SubagentPanel onClose={() => closeTab(tab.id)} />}
+                  {active && tab.view === "subagents" && <SubagentPanel selectedId={selectedSubagentId} onSelect={setSelectedSubagentId} onClose={() => closeTab(tab.id)} />}
                   {active && tab.view === "session" && <SessionDetails />}
                 </div>
               );
             })}
           </div>
           </div>
+          </div>
         </>}
-      </div>
+      </motion.div>
       {scopeActive && launcherOpen && launcherPosition && typeof document !== "undefined" && createPortal(
         <AnimatePresence>
           <motion.div

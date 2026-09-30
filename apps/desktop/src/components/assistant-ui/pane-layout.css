@@ -1,0 +1,37 @@
+.q-sidebar-pane { min-width: 0; overflow: visible; }
+.q-sidebar-clip { height: 100%; overflow: hidden; }
+.q-sidebar-frame { height: 100%; }
+.q-sidebar-resizer {
+  position: absolute;
+  z-index: 30;
+  inset-block: 0;
+  right: -8px;
+  width: 16px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+.q-sidebar-resizer span {
+  position: absolute;
+  inset-block: 0;
+  left: 7px;
+  width: 1px;
+  opacity: 0;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--foreground) 25%, transparent), transparent);
+  transition: opacity 120ms ease;
+}
+.q-sidebar-resizer:hover span,
+.q-sidebar-resizer:focus-visible span,
+.q-sidebar-pane[data-resizing] .q-sidebar-resizer span { opacity: 1; }
+:root[data-pane-resizing] { cursor: col-resize; user-select: none; }
+:root[data-pane-resizing] .q-sidebar { pointer-events: none; }
+:root[data-pane-resizing] .q-sidebar-session-title-track { animation: none !important; transform: none !important; }
+.q-chat-layout[data-dock-maximized] > .q-chat-shell {
+  flex: none;
+  width: 0;
+  visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-workspace-dock { transition: none !important; }
+}

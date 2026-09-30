@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { PanelRight } from "lucide-react";
 import { CodexIcon } from "../ui/CodexIcon";
 import backIcon from "../../assets/codex-icons/arrow-left-lg-light-16.svg";
 import forwardIcon from "../../assets/codex-icons/arrow-right-lg-light-16.svg";
@@ -114,7 +113,6 @@ export function AppChrome({ path, children }: AppChromeProps) {
           </Menubar.Menu>
         </Menubar.Root>
         <div className="q-app-titlebar-drag" data-tauri-drag-region onDoubleClick={maximize} />
-        <button type="button" className="q-app-dock-toggle" aria-label={label("展开或收起右侧面板", "Expand or collapse right panel")} title={label("展开或收起右侧面板", "Expand or collapse right panel")} onClick={() => emit("qone-toggle-dock-panel")}><PanelRight size={16} /></button>
         {native && <div className="q-app-window-controls">
           <button type="button" aria-label={label("最小化", "Minimize")} onClick={minimize}><span aria-hidden="true" className="q-app-window-glyph q-app-window-glyph-minimize" /></button>
           <button type="button" aria-label={maximized ? label("还原窗口", "Restore window") : label("最大化", "Maximize")} onClick={maximize}><span aria-hidden="true" className={`q-app-window-glyph q-app-window-glyph-${maximized ? "restore" : "maximize"}`} /></button>

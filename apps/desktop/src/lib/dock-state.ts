@@ -1,8 +1,11 @@
 import { create } from "zustand";
 import type { BrowserDockRequest } from "./browser-dock";
+import type { RunChangesTarget } from "./run-changes-navigation";
+import type { WorkspaceFileLocation } from "./workspace-file-navigation";
 
-export type DockView = "session" | "terminal" | "files" | "git" | "browser" | "mcp" | "skills" | "subagents";
-export type DockTab = { id: string; view: DockView; workspaceId?: string; browserTarget?: BrowserDockRequest; refreshNonce?: number };
+export type DockView = "session" | "terminal" | "files" | "git" | "browser" | "mcp" | "skills" | "subagents" | "changes";
+export type DockFileTarget = WorkspaceFileLocation & { path: string; requestId: string };
+export type DockTab = { id: string; view: DockView; workspaceId?: string; browserTarget?: BrowserDockRequest; fileTarget?: DockFileTarget; changesTarget?: RunChangesTarget; refreshNonce?: number };
 export interface DockScope {
   sessionId?: string;
   workspaceId?: string;

@@ -1,4 +1,4 @@
-// Values traced to Codex 26.924's right pane sizing. Keep them together so
+// Values traced to Codex 26.928.2636's right pane sizing. Keep them together so
 // opening, resizing and restoring the pane use the same geometry.
 const MIN_WIDTH = 320;
 const MIN_MAIN_WIDTH = 352;
@@ -9,8 +9,19 @@ const DEFAULT_HEIGHT_RATIO = 1.6;
 export const DOCK_WIDTH_STORAGE_KEY = "qone:right-panel-width:v1";
 
 export function dockWidthBounds(availableWidth: number, overlay: boolean) {
-  const maximum = Math.max(0, Math.floor(overlay ? availableWidth : availableWidth - MIN_MAIN_WIDTH));
+  const maximum = Math.max(MIN_WIDTH, overlay ? availableWidth : availableWidth - MIN_MAIN_WIDTH);
   return { minimum: Math.min(MIN_WIDTH, maximum), maximum };
+}
+
+// d2r / SS: raw pointer overflow closes the pane or enters full width.
+export function dockResizeState(rawWidth: number, availableWidth: number, overlay: boolean) {
+  const { maximum } = dockWidthBounds(availableWidth, overlay);
+  const open = rawWidth >= MIN_WIDTH / 2;
+  return {
+    open,
+    fullWidth: open && rawWidth > maximum && availableWidth - rawWidth < MIN_WIDTH / 2,
+    width: clampDockWidth(rawWidth, availableWidth, overlay),
+  };
 }
 
 export function defaultDockWidth(availableWidth: number, availableHeight: number, overlay: boolean) {
