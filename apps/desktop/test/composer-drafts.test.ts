@@ -1,11 +1,8 @@
 import { expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import {
-  CompositeAttachmentAdapter, SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter,
-  type AppendMessage, type AttachmentAdapter, type ExternalStoreAdapter, type PendingAttachment,
-} from "@assistant-ui/react";
+import { type AppendMessage, type AttachmentAdapter, type ExternalStoreAdapter, type PendingAttachment } from "@assistant-ui/react";
 import { bindComposerDrafts, ComposerDraftStore } from "../src/lib/composer-drafts";
-import { AnyFileAttachmentAdapter } from "../src/lib/file-attachment-adapter";
+import { AnyFileAttachmentAdapter, QoneAttachmentAdapter } from "../src/lib/file-attachment-adapter";
 import { createNativeAttachmentFile } from "../src/lib/native-attachment-file";
 import { serializeMessageAttachments } from "../src/lib/message-attachments";
 
@@ -15,9 +12,7 @@ const reactDist = dirname(Bun.resolveSync("@assistant-ui/react", import.meta.dir
 const { ExternalStoreRuntimeCore } = await import(join(reactDist, "legacy-runtime/runtime-cores/external-store/ExternalStoreRuntimeCore.js"));
 const { AssistantRuntimeImpl } = await import(join(reactDist, "legacy-runtime/runtime/AssistantRuntime.js"));
 
-const localAttachments = () => new CompositeAttachmentAdapter([
-  new SimpleTextAttachmentAdapter(), new SimpleImageAttachmentAdapter(), new AnyFileAttachmentAdapter(),
-]);
+const localAttachments = () => new QoneAttachmentAdapter();
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 function fixture(drafts = new ComposerDraftStore(), subscribeFirst = false, attachments: AttachmentAdapter = localAttachments()) {
@@ -214,6 +209,24 @@ test("remounting a chat runtime preserves native media file metadata", async () 
   expect(await serializeMessageAttachments(second.submitted[0]!)).toEqual([
     { type: "file", name: "video.mp4", mimeType: "video/mp4", data: "", localPath: "C:\\Media\\video.mp4" },
     { type: "file", name: "audio.wav", mimeType: "audio/wav", data: "", localPath: "C:\\Media\\audio.wav" },
+  ]);
+  second.dispose();
+});
+
+test("native image and ZIP paths survive a draft remount and submission", async () => {
+  const drafts = new ComposerDraftStore();
+  const first = fixture(drafts);
+  const image = createNativeAttachmentFile("plot.png", "image/png", "C:\\Media\\plot.png", 900_000);
+  const zip = createNativeAttachmentFile("report.zip", "application/zip", "C:\\Media\\report.zip", 200_000_000);
+  await first.add(image); await first.add(zip);
+  first.dispose();
+  const second = fixture(drafts);
+  expect(second.attachments().map((attachment) => attachment.file)).toEqual([image, zip]);
+  second.runtime.thread.composer.send();
+  await tick();
+  expect(await serializeMessageAttachments(second.submitted[0]!)).toEqual([
+    { type: "image", name: "plot.png", mimeType: "image/png", data: "", localPath: "C:\\Media\\plot.png" },
+    { type: "file", name: "report.zip", mimeType: "application/zip", data: "", localPath: "C:\\Media\\report.zip" },
   ]);
   second.dispose();
 });

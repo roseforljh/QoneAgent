@@ -23,13 +23,10 @@ function readDataUrl(file: File): Promise<string> {
 export async function serializeMessageAttachments(message: AppendMessage): Promise<MessageAttachmentInfo[]> {
   const input = message.attachments ?? [];
   const attachments = await Promise.all(input.map(async (attachment) => {
-    const type: MessageAttachmentInfo["type"] = attachment.type === "image" ? "image" : "file";
-    const mimeType = attachment.contentType || attachment.file?.type || (type === "image" ? "image/png" : "text/plain");
     const nativeFile = attachment.file as NativeAttachmentFile | undefined;
-    if (nativeFile?.qoneLocalPath) {
-      if (!isAudioVideo(mimeType)) throw new Error(`本地路径仅支持音视频附件：${attachment.name}`);
-      return { type: "file", name: attachment.name, mimeType, data: "", localPath: nativeFile.qoneLocalPath } satisfies MessageAttachmentInfo;
-    }
+    const type: MessageAttachmentInfo["type"] = nativeFile?.qoneIsDirectory ? "folder" : attachment.type === "image" ? "image" : "file";
+    const mimeType = attachment.contentType || attachment.file?.type || (type === "image" ? "image/png" : "text/plain");
+    if (nativeFile?.qoneLocalPath) return { type, name: attachment.name, mimeType, data: "", localPath: nativeFile.qoneLocalPath } satisfies MessageAttachmentInfo;
     if (nativeFile && !isAudioVideo(mimeType) && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) throw new Error("超过 50 MB 的文件请通过附件菜单选择本地文件");
     const data = type === "image"
       ? attachment.content.find((part) => part.type === "image")?.image

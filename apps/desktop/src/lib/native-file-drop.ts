@@ -1,14 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import { mediaMimeTypeFromName } from "@qone/protocol";
+import { DIRECTORY_MIME_TYPE, mediaMimeTypeFromName } from "@qone/protocol";
 import type { EventCallback } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import { hasTauriBridge, useStore } from "../store";
 import { useCallback, useEffect, type RefObject } from "react";
-import { createNativeAttachmentFile, INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo } from "./native-attachment-file";
+import { createNativeAttachmentFile } from "./native-attachment-file";
 
-type NativeFilePayload = { name: string; data: string; path?: string; size: number };
-type NativeFileInfo = { name: string; path: string; size: number };
+type NativeFileInfo = { name: string; path: string; size: number; isDirectory: boolean };
 type DropPosition = { x: number; y: number };
 
 const MIME_TYPES: Record<string, string> = {
@@ -36,12 +35,8 @@ const getMimeType = (name: string) => {
   return mediaMimeTypeFromName(name) ?? (extension ? MIME_TYPES[extension] : undefined) ?? "application/octet-stream";
 };
 
-const decodeBase64 = (value: string) => {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-};
+export const fileFromNativeInfo = (file: NativeFileInfo): File =>
+  createNativeAttachmentFile(file.name, file.isDirectory ? DIRECTORY_MIME_TYPE : getMimeType(file.name), file.path, file.size, file.isDirectory);
 
 const isInside = (element: HTMLElement | null, position: DropPosition) => {
   if (!element) return false;
@@ -53,24 +48,14 @@ const isInside = (element: HTMLElement | null, position: DropPosition) => {
   ].some(({ x, y }) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom);
 };
 
-function fileFromPayload(payload: NativeFilePayload): File {
-  const mimeType = getMimeType(payload.name);
-  if (payload.path) {
-    if (!isAudioVideo(mimeType)) throw new Error(`本地路径仅支持音视频附件：${payload.name}`);
-    return createNativeAttachmentFile(payload.name, mimeType, payload.path, payload.size);
-  }
-  return new File([decodeBase64(payload.data)], payload.name, { type: mimeType });
-}
-
 export async function pickNativeAttachmentFiles(): Promise<File[]> {
   const files = await invoke<NativeFileInfo[]>("pick_attachment_files");
-  return Promise.all(files.map(async (file) => {
-    const mimeType = getMimeType(file.name);
-    if (isAudioVideo(mimeType)) return createNativeAttachmentFile(file.name, mimeType, file.path, file.size);
-    return fileFromPayload(file.size > INLINE_ATTACHMENT_LIMIT_BYTES
-      ? { ...file, data: "" }
-      : await invoke<NativeFilePayload>("read_dropped_file", { path: file.path }));
-  }));
+  return files.map(fileFromNativeInfo);
+}
+
+export async function pickNativeAttachmentFolder(): Promise<File[]> {
+  const folder = await invoke<NativeFileInfo | null>("pick_attachment_folder");
+  return folder ? [fileFromNativeInfo(folder)] : [];
 }
 
 export function useNativeFileDrop(
@@ -80,9 +65,8 @@ export function useNativeFileDrop(
   const addFiles = useCallback(async (paths: string[]) => {
     const files = await Promise.all(paths.map(async (path) => {
       try {
-        const mimeType = getMimeType(path);
-        const payload = await invoke<NativeFilePayload>("read_dropped_file", { path, metadataOnly: isAudioVideo(mimeType) });
-        return fileFromPayload(payload);
+        const file = await invoke<NativeFileInfo>("inspect_dropped_file", { path });
+        return fileFromNativeInfo(file);
       } catch (error) {
         useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
         return null;

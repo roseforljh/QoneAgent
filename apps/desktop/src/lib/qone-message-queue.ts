@@ -68,13 +68,13 @@ const toMessage = (item: QueueItemInfo): AppendMessage => ({
   content: item.text ? [{ type: "text", text: item.text }] : [],
   attachments: (item.attachments ?? []).map((attachment) => {
     const file = attachment.localPath
-      ? createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0)
+      ? createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0, attachment.type === "folder")
       : attachment.type === "file"
         ? fileFromDataUrl(attachment.name, attachment.mimeType, attachment.data)
         : undefined;
     return {
       id: crypto.randomUUID(),
-      type: attachment.type,
+      type: attachment.type === "folder" ? "file" : attachment.type,
       name: attachment.name,
       contentType: attachment.mimeType,
       file,
@@ -140,6 +140,9 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       if (!localId) return;
       const queueItemId = persistentIds.get(localId);
       if (!queueItemId) return;
+      // Attachment serialization is asynchronous. Keep the next item queued
+      // until this one has actually entered runAgent and marked the session busy.
+      hold("dispatch");
       const fallbackAttachments = attachments.get(localId) ?? [];
       messages.delete(localId);
       persistentIds.delete(localId);
@@ -148,8 +151,9 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       attachmentVersions.delete(localId);
       void serializeMessageAttachments(message).catch(() => fallbackAttachments).then((serialized) => {
         callbacks.send(message, queueItemId, serialized);
+        if (callbacks.isRunning()) controller.notifyBusy();
         persist();
-      });
+      }).catch(reportError).finally(() => releaseHold("dispatch"));
     },
   });
 

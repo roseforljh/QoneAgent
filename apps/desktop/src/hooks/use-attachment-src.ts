@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuiState } from "@assistant-ui/react";
 import { useShallow } from "zustand/react/shallow";
+import { localImagePreview } from "../lib/local-image-preview";
 
 const useFileSrc = (file: File | undefined) => {
   const [entry, setEntry] = useState<{ file: File; url: string } | undefined>(
@@ -31,10 +32,13 @@ const useFileSrc = (file: File | undefined) => {
 };
 
 export const useAttachmentSrc = () => {
-  const { file, src } = useAuiState(
-    useShallow((s): { file?: File; src?: string } => {
+  const { file, src, localPath } = useAuiState(
+    useShallow((s): { file?: File; src?: string; localPath?: string } => {
       if (s.attachment.type !== "image") return {};
-      if (s.attachment.file) return { file: s.attachment.file };
+      if (s.attachment.file) {
+        const path = (s.attachment.file as File & { qoneLocalPath?: string }).qoneLocalPath;
+        return path ? { localPath: path } : { file: s.attachment.file };
+      }
       const src = s.attachment.content?.filter((c) => c.type === "image")[0]
         ?.image;
       if (!src) return {};
@@ -42,5 +46,15 @@ export const useAttachmentSrc = () => {
     }),
   );
 
-  return useFileSrc(file) ?? src;
+  const [preview, setPreview] = useState<{ path: string; url: string } | undefined>();
+  useEffect(() => {
+    if (!localPath) return;
+    let active = true;
+    void localImagePreview(localPath).then((url) => {
+      if (active) setPreview({ path: localPath, url });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [localPath]);
+
+  return useFileSrc(file) ?? (preview && preview.path === localPath ? preview.url : undefined) ?? src;
 };

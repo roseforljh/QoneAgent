@@ -46,6 +46,30 @@ test("running sends stay FIFO and duplicate text keeps distinct persistent ids",
   expect(sent[1]).toBe(`${secondId}:same`);
 });
 
+test("idle queue dispatches one follow-up at a time across asynchronous preparation", async () => {
+  let running = true;
+  const sent: string[] = [];
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => running,
+    send: (item) => {
+      sent.push(item.content[0]?.type === "text" ? item.content[0].text : "");
+      running = true;
+    },
+    steer: async () => true, sync: () => {},
+  });
+  queue.adapter.enqueue(message("first"));
+  queue.adapter.enqueue(message("second"));
+  running = false;
+  queue.controller.notifyIdle();
+  await flush();
+  expect(sent).toEqual(["first"]);
+  expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["second"]);
+  running = false;
+  queue.controller.notifyIdle();
+  await flush();
+  expect(sent).toEqual(["first", "second"]);
+});
+
 test("editing holds the item and saves in place, while cancelling resumes the original item", async () => {
   let running = true;
   const sent: string[] = [];
@@ -155,6 +179,29 @@ test("a steering item restored after a stopped run is dispatched instead of stra
   await flush();
   expect(queue.adapter.steerItems).toHaveLength(0);
   expect(sent).toEqual(["pending"]);
+});
+
+test("restored queue items dispatch original image, ZIP and folder paths", async () => {
+  let running = true;
+  const sent: unknown[] = [];
+  const queue = createQoneMessageQueue({
+    sessionId: "s",
+    isRunning: () => running,
+    send: (_message, _id, attachments) => { sent.push(attachments); },
+    steer: async () => true,
+    sync: () => {},
+  });
+  const attachments = [
+    { type: "image" as const, name: "plot.png", mimeType: "image/png", data: "", localPath: "C:\\Media\\plot.png" },
+    { type: "file" as const, name: "report.zip", mimeType: "application/zip", data: "", localPath: "C:\\Media\\report.zip" },
+    { type: "folder" as const, name: "source", mimeType: "inode/directory", data: "", localPath: "C:\\Media\\source" },
+  ];
+  queue.restore([{ id: "pending", sessionId: "s", text: "inspect", attachments, lane: "queue", status: "queued", position: 0, createdAt: 1, updatedAt: 1 }]);
+  running = false;
+  queue.releaseIdle();
+  queue.controller.notifyIdle();
+  await flush();
+  expect(sent).toEqual([attachments]);
 });
 
 test("deleting an item while editing does not release it for dispatch", async () => {

@@ -3,7 +3,7 @@ import {
 } from "lexical";
 import { $createDirectiveNode, $isDirectiveNode } from "@assistant-ui/react-lexical";
 
-export type ComposerToolId = "attachment" | "skills" | "mcp" | "web-search" | "goal";
+export type ComposerToolId = "attachment" | "folder" | "skills" | "mcp" | "web-search" | "goal";
 export type ComposerCommand = { kind: "skill"; name: string } | { kind: "mcp"; serverId: string };
 
 function $selectAfterDirective(directive: ReturnType<typeof $createDirectiveNode>) {

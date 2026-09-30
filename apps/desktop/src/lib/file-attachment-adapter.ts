@@ -4,6 +4,7 @@ import type {
   CompleteAttachment,
   PendingAttachment,
 } from "@assistant-ui/react";
+import { CompositeAttachmentAdapter, SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter } from "@assistant-ui/react";
 import type { NativeAttachmentFile } from "./native-attachment-file";
 import { INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo } from "./native-attachment-file";
 
@@ -39,9 +40,10 @@ export class AnyFileAttachmentAdapter implements AttachmentAdapter {
   public readonly accept = "*";
 
   public async add({ file }: { file: File }): Promise<PendingAttachment> {
+    const nativeFile = file as NativeAttachmentFile;
     return {
       id: createAttachmentId(),
-      type: "file",
+      type: nativeFile.qoneLocalPath && /^image\/(?:png|jpeg|webp|gif)$/i.test(file.type) ? "image" : "file",
       name: file.name,
       contentType: file.type || "application/octet-stream",
       file,
@@ -58,16 +60,36 @@ export class AnyFileAttachmentAdapter implements AttachmentAdapter {
     return {
       ...attachment,
       status: { type: "complete" },
-      content: [{
-        type: "file",
-        filename: attachment.name,
-        mimeType,
-        data: nativeFile.qoneLocalPath ? "" : await readFileDataUrl(attachment.file),
-      }],
+      content: attachment.type === "image" && nativeFile.qoneLocalPath
+        ? [{ type: "image", image: "", filename: attachment.name }]
+        : [{ type: "file", filename: attachment.name, mimeType, data: nativeFile.qoneLocalPath ? "" : await readFileDataUrl(attachment.file) }],
     };
   }
 
   public async remove(_attachment: Attachment): Promise<void> {
     // Local files do not need an upload cleanup request.
+  }
+}
+
+/** Native selections carry an OS path; browser and clipboard Files use the library adapters. */
+export class QoneAttachmentAdapter implements AttachmentAdapter {
+  public readonly accept = "*";
+  private readonly native = new AnyFileAttachmentAdapter();
+  private readonly browser = new CompositeAttachmentAdapter([
+    new SimpleTextAttachmentAdapter(),
+    new SimpleImageAttachmentAdapter(),
+    new AnyFileAttachmentAdapter(),
+  ]);
+
+  public add(state: { file: File }) {
+    return (state.file as NativeAttachmentFile).qoneLocalPath ? this.native.add(state) : this.browser.add(state);
+  }
+
+  public send(attachment: PendingAttachment) {
+    return (attachment.file as NativeAttachmentFile).qoneLocalPath ? this.native.send(attachment) : this.browser.send(attachment);
+  }
+
+  public remove(attachment: Attachment) {
+    return (attachment.file as NativeAttachmentFile | undefined)?.qoneLocalPath ? this.native.remove(attachment) : this.browser.remove(attachment);
   }
 }
