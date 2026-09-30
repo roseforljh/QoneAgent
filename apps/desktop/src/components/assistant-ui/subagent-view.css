@@ -1,21 +1,4 @@
-.q-subagent-capsule {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 100%;
-  min-height: 32px;
-  padding: 5px 10px;
-  border: 1px solid color-mix(in oklab, var(--border) 75%, transparent);
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--muted) 48%, var(--background));
-  color: var(--foreground);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
-}
-.q-subagent-capsule-anchor { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-.q-subagent-capsule:hover { background: var(--muted); border-color: var(--border); transform: translateY(-1px); }
-.q-subagent-capsule:focus-visible, .q-subagent-row:focus-visible, .q-subagent-panel-header button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.q-subagent-row:focus-visible, .q-subagent-panel-header button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .q-subagent-elapsed { flex: 0 0 auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .q-subagent-panel { display: flex; flex: 1; min-height: 0; flex-direction: column; background: var(--background); }
 .q-subagent-panel-header { display: flex; align-items: center; gap: 8px; height: 42px; flex: 0 0 auto; padding: 0 12px; border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent); font-size: 13px; }
@@ -30,4 +13,3 @@
 .q-subagent-task { margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .q-subagent-transcript { min-width: 0; overflow-wrap: anywhere; }
 .q-subagent-error { margin-top: 18px; padding: 9px; border-radius: 7px; background: color-mix(in oklab, var(--muted-foreground) 9%, transparent); color: var(--muted-foreground); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (prefers-reduced-motion: reduce) { .q-subagent-capsule { transition: none; } }

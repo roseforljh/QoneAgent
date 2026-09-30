@@ -12,7 +12,7 @@ import { AssistantParts } from "./assistant-parts";
 import { SubagentThread } from "./subagent-thread";
 import { ImageGeneration } from "./elements/image-generation";
 import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
-import { subagentsForAssistantMessage } from "./subagent-capsule-ownership";
+import { subagentsForAssistantMessage } from "./subagent-message-ownership";
 import "./subagent-view.css";
 
 const active = (status: SubagentRunInfo["status"]) => ["created", "running", "waiting_approval", "paused"].includes(status);
@@ -27,8 +27,8 @@ function useClock(running: boolean) {
   return now;
 }
 
-export const SubagentCapsule: FC<{ toolCallId: string }> = ({ toolCallId }) => {
-  const { locale, t } = useLocale();
+export const SubagentMedia: FC = () => {
+  const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
   const messageParts = useAuiState((state) => state.message.parts);
   const activeRunId = useStore((state) => state.activeRunId);
@@ -36,12 +36,11 @@ export const SubagentCapsule: FC<{ toolCallId: string }> = ({ toolCallId }) => {
   const messages = useStore((state) => state.messages);
   const allSubagents = useStore((state) => state.subagents);
   const models = useStore((state) => state.modelConfigs);
-  const maxConcurrent = useStore((state) => state.subagentConfig.runtime.maxConcurrent);
   const runId = messageId === "streaming" ? activeRunId : messageRunId;
-  // 侧栏保留当前会话的历史；消息胶囊只反映当前这条主 Agent 消息启动的子代理。
+  // Media belongs to the message that dispatched the child, even after later turns reuse it.
   const subagents = useMemo(
-    () => subagentsForAssistantMessage(allSubagents, messages, runId, messageId, messageParts).filter((item) => item.toolCallId === toolCallId),
-    [allSubagents, messages, runId, messageId, messageParts, toolCallId],
+    () => subagentsForAssistantMessage(allSubagents, messages, runId, messageId, messageParts),
+    [allSubagents, messages, runId, messageId, messageParts],
   );
   const childRunIds = useMemo(() => {
     if (!runId) return [];
@@ -56,35 +55,8 @@ export const SubagentCapsule: FC<{ toolCallId: string }> = ({ toolCallId }) => {
     return [...descendants];
   }, [allSubagents, runId, subagents]);
   const imageGenerations = useMemo(() => subagentImageGenerations(subagents, runId, models), [subagents, runId, models]);
-  const running = subagents.filter((item) => active(item.status));
-  const queued = subagents.filter((item) => item.status === "created");
-  const executing = running.length - queued.length;
-  const now = useClock(running.length > 0);
-  if (subagents.length === 0) return null;
-  const elapsed = running.length ? formatDuration((now - Math.min(...running.map((item) => item.startedAt))) / 1000, locale) : undefined;
-  const label = locale === "zh-CN"
-    ? running.length
-      ? `共 ${subagents.length} 个 · ${executing} 运行中${queued.length ? ` · ${queued.length} 排队` : ""}`
-      : `共 ${subagents.length} 个子代理`
-    : running.length
-      ? `${subagents.length} total · ${executing} running${queued.length ? ` · ${queued.length} queued` : ""}`
-      : `${subagents.length} subagents`;
-  const summary = locale === "zh-CN"
-    ? `共 ${subagents.length} 个子代理，${executing} 个运行中${queued.length ? `，${queued.length} 个排队` : ""}，最大并发 ${maxConcurrent}`
-    : `${subagents.length} subagents, ${executing} running${queued.length ? `, ${queued.length} queued` : ""}, concurrency limit ${maxConcurrent}`;
-  return <div className="q-subagent-capsule-anchor w-full py-1">
-    <button
-      type="button"
-      className="q-subagent-capsule"
-      onClick={() => window.dispatchEvent(new Event("qone-open-subagents"))}
-      aria-label={locale === "zh-CN" ? "打开子代理侧边栏" : "Open subagents"}
-      title={summary}
-    >
-      {running.length ? <CodexLoader2Icon className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : <CheckIcon size={14} />}
-      <span>{label}</span>
-      {elapsed && <span className="q-subagent-elapsed">· {elapsed}</span>}
-      <ChevronRightIcon size={14} aria-hidden="true" />
-    </button>
+  if (imageGenerations.length === 0 && childRunIds.length === 0) return null;
+  return <div className="flex w-full flex-col gap-2 py-1">
     {imageGenerations.map((generation) => <ImageGeneration
       key={generation.id}
       prompt={generation.prompt}
@@ -118,15 +90,12 @@ const SubagentTranscript: FC = () => {
     </ThreadPrimitive.Messages>;
 };
 
-export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
+export const SubagentPanel: FC<{ selectedId?: string; onSelect: (id?: string) => void; onClose: () => void }> = ({ selectedId, onSelect, onClose }) => {
   const { locale } = useLocale();
-  const sessionId = useStore((state) => state.currentSessionId);
   const subagents = useStore((state) => state.subagents);
   const subagentConfig = useStore((state) => state.subagentConfig);
   const modelConfigs = useStore((state) => state.modelConfigs);
-  const [selectedId, setSelectedId] = useState<string>();
   const now = useClock(subagents.some((item) => active(item.status)));
-  useEffect(() => setSelectedId(undefined), [sessionId]);
   const selected = subagents.find((item) => item.id === selectedId);
   const messages = useMemo(() => selected ? subagentMessages(selected) : [], [selected]);
   const title = locale === "zh-CN" ? "子代理" : "Subagents";
@@ -135,7 +104,7 @@ export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
 
   return <div className="q-subagent-panel">
     <div className="q-subagent-panel-header">
-      {selected && <button type="button" onClick={() => setSelectedId(undefined)} aria-label={locale === "zh-CN" ? "返回子代理列表" : "Back to subagent list"}><ArrowLeftIcon size={16} /></button>}
+      {selected && <button type="button" onClick={() => onSelect(undefined)} aria-label={locale === "zh-CN" ? "返回子代理列表" : "Back to subagent list"}><ArrowLeftIcon size={16} /></button>}
       <strong>{title}</strong>
       <button type="button" className="ms-auto" onClick={onClose} aria-label={locale === "zh-CN" ? "关闭子代理侧边栏" : "Close subagent panel"}><XIcon size={16} /></button>
     </div>
@@ -147,7 +116,7 @@ export const SubagentPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
       {selected.error && <p className="q-subagent-error">{selected.error}</p>}
     </SubagentThread> : <div className="q-subagent-panel-scroll">
       {subagents.length === 0 ? <p className="q-subagent-empty">{locale === "zh-CN" ? "暂无子代理" : "No subagents yet"}</p> : subagents.map((item) => <button
-        type="button" key={item.id} className="q-subagent-row" onClick={() => setSelectedId(item.id)}
+        type="button" key={item.id} className="q-subagent-row" onClick={() => onSelect(item.id)}
       >
         <SubagentLogo logo={subagentConfig.profiles.find((profile) => profile.id === item.profileId)?.logo} name={item.title} size={24} />
         {item.status === "completed" ? <CheckIcon size={13} className="shrink-0 text-foreground/60" aria-hidden="true" />
