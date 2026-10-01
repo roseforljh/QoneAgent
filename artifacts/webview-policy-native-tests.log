@@ -1,0 +1,20 @@
+   Compiling qone-agent v0.0.1 (C:\Users\33039\Desktop\QoneAgent\apps\desktop\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.07s
+     Running unittests src\main.rs (C:\Users\33039\AppData\Local\QoneAgent\cargo-policy-validation\debug\deps\qone_agent-b12c289582d8c2e5.exe)
+
+running 12 tests
+test conpty::tests::blocked_input_does_not_hold_the_terminal_registry ... ok
+test conpty::tests::powershell_prompt_and_interactive_input ... ok
+test creds::tests::parses_manifest_and_rejects_invalid_counts ... ok
+test creds::tests::splits_large_unicode_secrets_without_losing_characters ... ok
+test creds::tests::stores_and_restores_large_secret_in_credential_manager ... ok
+test sidecar_tests::blocked_sidecar_input_does_not_hold_the_lifecycle_lock ... ok
+test sidecar_tests::queued_commands_are_rejected_after_restart ... ok
+test sidecar_tests::runtime_sends_keep_fifo_order_on_blocking_workers ... ok
+test webview_policy::windows_policy::tests::blank_surfaces_have_no_browser_menu ... ok
+test webview_policy::windows_policy::tests::editing_and_selection_keep_native_clipboard_operations ... ok
+test webview_policy::windows_policy::tests::link_and_image_actions_cannot_open_browser_tools_or_windows ... ok
+test webview_policy::windows_policy::tests::removed_commands_do_not_leave_stray_separators ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+

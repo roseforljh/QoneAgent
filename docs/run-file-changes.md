@@ -10,14 +10,14 @@
 
 Qone 复用现有 ToolCall/Radix disclosure、MeasuredCollapse、DiffViewer 和工作区侧栏；assistant-ui 已安装组件中没有直接承担保存任务变更卡片与侧栏数据的组件。按照用户最新要求，所有位置的增删统计常态显示新增绿色、删除红色，包含零值；执行行、完成卡片与变更侧栏共用 ChangeCounts，不再区分淡色与悬停着色模式。执行行保留点状下划线文件名；完成卡片使用独立标题、统计和文件明细。长明细通过有界滚动显示，没有照抄 Codex 固定显示前三个文件的策略，也没有接入撤销或重新应用动作。
 
-执行过程使用同一套文件证据，但挂在 `SessionTimeline` 的单个工具行内：结构化多文件结果拆成多个文件行；编辑参数已经生成但工具尚未结束时显示预览；工具完成后才使用 `details.fileChanges` 的真实旧新内容。状态和统计数字是同一 disclosure 的两个独立按钮；文件名独立打开源文件。失败操作保留失败状态并隐藏已应用差异。组顶部统计复用净变更计算，限定在该组工具，不再取最后一个工具的统计。
+执行过程使用同一套文件证据，但分成两个层次：`SessionTimeline` 的工具行展示单个工具活动，`RunFileChangesSummary` 在输入框上方展示当前 `activeRunId` 的本轮净变更。摘要只从该 run 的 ToolCall 和 assistant parts 派生，并且仅在运行时 `running` 为真且存在 `activeRunId` 时显示；运行结束后 `running` 变为假或 `activeRunId` 清空即卸载，不会把历史 run 合并到当前摘要。结构化多文件结果拆成多个文件行；编辑参数已经生成但工具尚未结束时显示预览；工具完成后才使用 `details.fileChanges` 的真实旧新内容。状态和统计数字是同一 disclosure 的两个独立按钮；文件名独立打开源文件。失败操作保留失败状态并隐藏已应用差异。组顶部统计复用净变更计算，限定在该组工具，不再取最后一个工具的统计。
 
 ## 数据链路
 
 - Qone 的 `file-change-tools.ts` 使用 Pi SDK 的 `operations` 扩展点，在 SDK 自己的文件修改队列内捕获 edit / write 的真实内容。没有修改 Pi 核心，也没有扫描工作区或累计 Git working tree。
 - 证据放入既有工具结果 `details.fileChanges`，沿现有 ToolCallRepo 和 assistant parts 存储、恢复。大于 20,000 字符时保留结构化变更证据，避免把 JSON 截成不可解析的字符串。
-- 前端从当前消息所属 `runId` 的工具结果派生摘要，没有新增全局累计状态或独立数据库表。同一路径只出现一次；完整内容证据以首次 oldContent 和最后 newContent 计算净 diff，撤销回原内容的文件不显示。
-- 仅在 Run completed 后、该 Run 最后一条 assistant 消息末尾挂载。活动过程、streaming 和 Tool Timeline 不挂载摘要。
+- 前端从当前消息所属 `runId` 的工具结果派生完成卡片，从当前 `activeRunId` 的工具结果派生 `RunFileChangesSummary` 执行中摘要，没有新增全局累计状态或独立数据库表。同一路径只出现一次；完整内容证据以首次 oldContent 和最后 newContent 计算净 diff，撤销回原内容的文件不显示。
+- 执行中摘要挂在 composer 上方，只属于当前 run；不会读取最后一个工具、最后一条消息或整个 session 作为回退来源。Run 完成后摘要卸载，改由该 Run 最后一条 assistant 消息末尾挂载完成卡片。
 - 完成后显示变更卡片。标题、总增删数、查看变更按钮和文件明细都打开该 Run 保存的变更面板；点击明细中的数字同样选择该文件。卡片明细中的 Ctrl/Meta 点击可打开工作区内源文件；无法打开源文件时仍可查看保存的 Diff。
 - 变更面板使用独立 `changes` 标签页，与读取实时 Git 工作树的 `git` 标签页分开。同一会话/Run 重用标签页，不同任务独立；点击指定文件会更新选择。已删除、工作区外或没有工作区的文件都能显示已保存证据，不要求源文件仍存在。
 

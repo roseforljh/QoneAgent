@@ -1,0 +1,12 @@
+bun test v1.3.14 (0d9b296a)
+
+apps\desktop\test\webview-policy.test.ts:
+(pass) F12 and Tauri inspector shortcuts never reach the debug toggle or editor [2.41ms]
+(pass) clipboard, terminal copy, input and application shortcuts still propagate [0.64ms]
+(pass) component context menus remain responsible for their own right-clicks [0.56ms]
+(pass) main WebView disables DevTools and ACL denies the inherited toggle permission [0.37ms]
+
+ 4 pass
+ 0 fail
+ 45 expect() calls
+Ran 4 tests across 1 file. [49.00ms]
