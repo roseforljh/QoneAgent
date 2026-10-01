@@ -13,21 +13,25 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+mod native_error;
+use native_error::NativeError;
+mod native_copy;
+use native_copy::{NativeCopy, NativeCopyState, set_native_copy};
 
 fn ensure_global_instructions_file() -> Result<(), String> {
     let root = std::env::var_os("APPDATA")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
-        .ok_or_else(|| "无法确定 Qone 数据目录".to_string())?;
+        .ok_or_else(|| "Could not determine the Qone data directory".to_string())?;
     let directory = root.join("Qone");
-    std::fs::create_dir_all(&directory).map_err(|error| format!("创建 Qone 数据目录失败：{error}"))?;
+    std::fs::create_dir_all(&directory).map_err(|error| format!("Failed to create the Qone data directory: {error}"))?;
     let file = directory.join("Qone.md");
     if !file.exists() {
         std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&file)
-            .map_err(|error| format!("创建 Qone.md 失败：{error}"))?;
+            .map_err(|error| format!("Failed to create Qone.md: {error}"))?;
     }
     Ok(())
 }
@@ -46,7 +50,7 @@ mod browser;
 mod dev_network;
 
 struct SidecarState {
-    stdin: Option<ChildStdin>,
+    stdin: Option<Arc<Mutex<ChildStdin>>>,
     _child: Option<Child>,
 }
 
@@ -59,15 +63,25 @@ impl Drop for SidecarState {
     }
 }
 
+#[derive(Clone)]
 pub struct Sidecar {
-    state: Mutex<SidecarState>,
+    state: Arc<Mutex<SidecarState>>,
     generation: Arc<AtomicU64>,
+    send_order: Arc<tauri::async_runtime::Mutex<()>>,
 }
 
 impl Sidecar {
-    fn send(&self, line: &str) -> Result<(), String> {
-        let mut guard = self.state.lock().map_err(|e| e.to_string())?;
-        let stdin = guard.stdin.as_mut().ok_or("sidecar not running")?;
+    fn send(&self, line: &str, generation: u64) -> Result<(), String> {
+        let input = {
+            let guard = self.state.lock().map_err(|e| e.to_string())?;
+            if self.generation.load(Ordering::SeqCst) != generation {
+                return Err("sidecar restarted before command delivery".into());
+            }
+            guard.stdin.as_ref().ok_or("sidecar not running")?.clone()
+        };
+        // Pipe writes can block. The lifecycle lock must stay available so a
+        // restart can kill the child and release a stalled writer.
+        let mut stdin = input.lock().map_err(|e| e.to_string())?;
         stdin
             .write_all(line.as_bytes())
             .and_then(|_| stdin.write_all(b"\n"))
@@ -75,16 +89,30 @@ impl Sidecar {
             .map_err(|e| e.to_string())
     }
 
+    async fn send_ordered(&self, line: String) -> Result<(), String> {
+        let generation = self.generation.load(Ordering::SeqCst);
+        let _order = self.send_order.lock().await;
+        let worker = self.clone();
+        tauri::async_runtime::spawn_blocking(move || worker.send(&line, generation))
+            .await
+            .map_err(|error| error.to_string())?
+    }
+
     fn respawn(&self, app: &AppHandle) -> Result<(), String> {
         let mut guard = self.state.lock().map_err(|e| e.to_string())?;
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        guard.stdin.take();
         if let Some(mut child) = guard._child.take() {
             let _ = child.kill();
+            let _ = child.wait();
         }
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         *guard = spawn_sidecar(app, self.generation.clone(), generation)?;
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod sidecar_tests;
 
 fn spawn_sidecar(
     app: &AppHandle,
@@ -176,6 +204,7 @@ fn spawn_sidecar(
     std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
+            if generation.load(Ordering::SeqCst) != generation_id { break; }
             match line {
                 Ok(l) if !l.trim().is_empty() => {
                     let emitted = persist_runtime_secret(&l).unwrap_or(l);
@@ -185,7 +214,9 @@ fn spawn_sidecar(
                             .notification()
                             .builder()
                             .title("QoneAgent")
-                            .body("Agent run completed")
+                            .body(app_handle.state::<NativeCopyState>().copy.lock()
+                                .map(|copy| copy.completed.clone())
+                                .unwrap_or_else(|_| "Agent run completed".into()))
                             .show();
                     }
                 }
@@ -199,33 +230,38 @@ fn spawn_sidecar(
     });
 
     Ok(SidecarState {
-        stdin: child.stdin.take(),
+        stdin: child.stdin.take().map(|input| Arc::new(Mutex::new(input))),
         _child: Some(child),
     })
 }
 
 #[tauri::command]
-fn runtime_send(cmd: String, state: State<Sidecar>) -> Result<(), String> {
-    state.send(&cmd)
+async fn runtime_send(cmd: String, state: State<'_, Sidecar>) -> Result<(), String> {
+    let sidecar = state.inner().clone();
+    sidecar.send_ordered(cmd).await
 }
 
 #[tauri::command]
-fn runtime_restart(app: AppHandle, state: State<Sidecar>) -> Result<(), String> {
-    state.respawn(&app)
+async fn runtime_restart(app: AppHandle, state: State<'_, Sidecar>) -> Result<(), String> {
+    let sidecar = state.inner().clone();
+    let worker = sidecar.clone();
+    tauri::async_runtime::spawn_blocking(move || worker.respawn(&app))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn pick_workspace() -> Option<String> {
+fn pick_workspace(title: String) -> Option<String> {
     rfd::FileDialog::new()
-        .set_title("Select Workspace")
+        .set_title(title)
         .pick_folder()
         .map(|path| path.to_string_lossy().into_owned())
 }
 
-fn attachment_path_info(path: &std::path::Path) -> Result<AttachmentFileInfo, String> {
-    let metadata = std::fs::metadata(path).map_err(|error| format!("无法读取附件：{error}"))?;
+fn attachment_path_info(path: &std::path::Path) -> Result<AttachmentFileInfo, NativeError> {
+    let metadata = std::fs::metadata(path).map_err(|error| NativeError::detail("native.attachmentRead", error))?;
     if !metadata.is_file() && !metadata.is_dir() {
-        return Err("附件必须是文件或文件夹".into());
+        return Err(NativeError::new("native.attachmentType"));
     }
     let name = path
         .file_name()
@@ -242,7 +278,7 @@ fn attachment_path_info(path: &std::path::Path) -> Result<AttachmentFileInfo, St
 }
 
 #[tauri::command]
-fn inspect_dropped_file(path: String) -> Result<AttachmentFileInfo, String> {
+fn inspect_dropped_file(path: String) -> Result<AttachmentFileInfo, NativeError> {
     attachment_path_info(std::path::Path::new(&path))
 }
 
@@ -256,37 +292,55 @@ struct AttachmentFileInfo {
 }
 
 #[tauri::command]
-fn pick_attachment_files() -> Result<Vec<AttachmentFileInfo>, String> {
-    let Some(paths) = rfd::FileDialog::new().set_title("选择附件").pick_files() else {
+fn pick_attachment_files(title: String) -> Result<Vec<AttachmentFileInfo>, NativeError> {
+    let Some(paths) = rfd::FileDialog::new().set_title(title).pick_files() else {
         return Ok(Vec::new());
     };
     paths.into_iter().map(|path| attachment_path_info(&path)).collect()
 }
 
 #[tauri::command]
-fn pick_attachment_folder() -> Result<Option<AttachmentFileInfo>, String> {
+fn pick_attachment_folder(title: String) -> Result<Option<AttachmentFileInfo>, NativeError> {
     rfd::FileDialog::new()
-        .set_title("选择文件夹附件")
+        .set_title(title)
         .pick_folder()
         .map(|path| attachment_path_info(&path))
         .transpose()
 }
 
 #[tauri::command]
-fn authorize_attachment_preview(app: AppHandle, path: String) -> Result<(), String> {
+fn authorize_attachment_preview(app: AppHandle, path: String) -> Result<(), NativeError> {
     let file = std::path::Path::new(&path);
     let extension = file.extension().and_then(|value| value.to_str()).unwrap_or("");
     if !file.is_absolute() || !["png", "jpg", "jpeg", "webp", "gif"].iter().any(|allowed| extension.eq_ignore_ascii_case(allowed)) {
-        return Err("不是可预览的本地图片路径".into());
+        return Err(NativeError::new("native.previewPath"));
     }
     if attachment_path_info(file)?.is_directory {
-        return Err("文件夹不能作为图片预览".into());
+        return Err(NativeError::new("native.previewFolder"));
     }
-    app.asset_protocol_scope().allow_file(file).map_err(|error| format!("无法预览附件：{error}"))
+    app.asset_protocol_scope().allow_file(file).map_err(|error| NativeError::detail("native.previewFailed", error))
 }
 
 #[tauri::command]
-async fn save_image_as(filename: String, data: String) -> Result<bool, String> {
+fn authorize_file_preview(app: AppHandle, path: String, allowed_root: String) -> Result<String, NativeError> {
+    let file = std::path::Path::new(&path);
+    if !file.is_absolute() {
+        return Err(NativeError::new("native.filePreviewPath"));
+    }
+    let canonical = file.canonicalize().map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
+    if !canonical.is_file() {
+        return Err(NativeError::new("native.filePreviewType"));
+    }
+    let root = std::path::Path::new(&allowed_root).canonicalize().map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
+    if !canonical.starts_with(&root) {
+        return Err(NativeError::new("native.filePreviewScope"));
+    }
+    app.asset_protocol_scope().allow_file(&canonical).map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
+    Ok(canonical.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn save_image_as(filename: String, data: String, title: String) -> Result<bool, NativeError> {
     tauri::async_runtime::spawn_blocking(move || {
         let name = std::path::Path::new(&filename)
             .file_name()
@@ -294,7 +348,7 @@ async fn save_image_as(filename: String, data: String) -> Result<bool, String> {
             .filter(|value| !value.is_empty())
             .unwrap_or("image.png");
         let Some(path) = rfd::FileDialog::new()
-            .set_title("图片另存为")
+            .set_title(title)
             .set_file_name(name)
             .save_file()
         else {
@@ -302,15 +356,15 @@ async fn save_image_as(filename: String, data: String) -> Result<bool, String> {
         };
         let bytes = BASE64
             .decode(data)
-            .map_err(|error| format!("无法读取图片数据：{error}"))?;
+            .map_err(|error| NativeError::detail("native.imageDecode", error))?;
         if bytes.is_empty() {
-            return Err("图片数据为空".into());
+            return Err(NativeError::new("native.imageEmpty"));
         }
-        std::fs::write(path, bytes).map_err(|error| format!("保存图片失败：{error}"))?;
+        std::fs::write(path, bytes).map_err(|error| NativeError::detail("native.imageSave", error))?;
         Ok(true)
     })
     .await
-    .map_err(|error| format!("保存图片失败：{error}"))?
+    .map_err(|error| NativeError::detail("native.imageSave", error))?
 }
 
 // --- Windows Credential Manager ---
@@ -405,7 +459,7 @@ fn secret_delete(key: String) -> Result<(), String> {
 // --- PTY commands ---
 
 #[tauri::command]
-fn terminal_spawn(
+async fn terminal_spawn(
     app: AppHandle,
     terminal_id: String,
     shell: Option<String>,
@@ -414,38 +468,43 @@ fn terminal_spawn(
     rows: Option<i16>,
 ) -> Result<(), String> {
     #[cfg(windows)]
-    return conpty::spawn(
-        &terminal_id,
-        shell.as_deref().unwrap_or("powershell.exe"),
-        cwd.as_deref(),
-        cols.unwrap_or(120),
-        rows.unwrap_or(30),
-        &app,
-    );
+    return tauri::async_runtime::spawn_blocking(move || {
+        conpty::spawn(
+            &terminal_id,
+            shell.as_deref().unwrap_or("powershell.exe"),
+            cwd.as_deref(),
+            cols.unwrap_or(120),
+            rows.unwrap_or(30),
+            &app,
+        )
+    }).await.map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("pty only supported on Windows".into())
 }
 
 #[tauri::command]
-fn terminal_write(terminal_id: String, data: String) -> Result<(), String> {
+async fn terminal_write(terminal_id: String, data: String) -> Result<(), String> {
     #[cfg(windows)]
-    return conpty::write(&terminal_id, &data);
+    return tauri::async_runtime::spawn_blocking(move || conpty::write(&terminal_id, &data))
+        .await.map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("pty only supported on Windows".into())
 }
 
 #[tauri::command]
-fn terminal_resize(terminal_id: String, cols: i16, rows: i16) -> Result<(), String> {
+async fn terminal_resize(terminal_id: String, cols: i16, rows: i16) -> Result<(), String> {
     #[cfg(windows)]
-    return conpty::resize(&terminal_id, cols, rows);
+    return tauri::async_runtime::spawn_blocking(move || conpty::resize(&terminal_id, cols, rows))
+        .await.map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("pty only supported on Windows".into())
 }
 
 #[tauri::command]
-fn terminal_kill(terminal_id: String) -> Result<(), String> {
+async fn terminal_kill(terminal_id: String) -> Result<(), String> {
     #[cfg(windows)]
-    return conpty::kill(&terminal_id);
+    return tauri::async_runtime::spawn_blocking(move || conpty::kill(&terminal_id))
+        .await.map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Ok(())
 }
@@ -546,16 +605,21 @@ fn main() {
             ensure_global_instructions_file().map_err(std::io::Error::other)?;
             #[cfg(all(windows, debug_assertions))]
             dev_network::install(app.handle());
-            let generation = Arc::new(AtomicU64::new(0));
-            let state = spawn_sidecar(app.handle(), generation.clone(), 0)?;
-            app.manage(Sidecar {
-                state: Mutex::new(state),
-                generation,
-            });
-
             let show = MenuItem::with_id(app, "show", "Show Qone", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
+            app.manage(NativeCopyState {
+                copy: Mutex::new(NativeCopy { show: "Show Qone".into(), quit: "Quit".into(), completed: "Agent run completed".into() }),
+                show,
+                quit,
+            });
+            let generation = Arc::new(AtomicU64::new(0));
+            let state = spawn_sidecar(app.handle(), generation.clone(), 0)?;
+            app.manage(Sidecar {
+                state: Arc::new(Mutex::new(state)),
+                generation,
+                send_order: Arc::new(tauri::async_runtime::Mutex::new(())),
+            });
             let icon = app
                 .default_window_icon()
                 .cloned()
@@ -614,7 +678,9 @@ fn main() {
             pick_attachment_files,
             pick_attachment_folder,
             authorize_attachment_preview,
+            authorize_file_preview,
             save_image_as,
+            set_native_copy,
             secret_set,
             secret_get,
             secret_delete,

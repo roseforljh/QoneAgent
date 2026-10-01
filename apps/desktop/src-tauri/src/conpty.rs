@@ -16,7 +16,7 @@ use windows::Win32::System::Threading::*;
 
 struct Pty {
     hpc: HPCON,
-    input: usize,   // HANDLE as usize — we write here
+    input: Arc<InputPipe>,
     process: usize, // HANDLE
     cols: i16,
     rows: i16,
@@ -24,6 +24,19 @@ struct Pty {
 
 unsafe impl Send for Pty {}
 unsafe impl Sync for Pty {}
+
+// Writers keep the pipe alive independently of the registry. Killing a terminal
+// can close its read end and unblock WriteFile without racing handle reuse.
+struct InputPipe {
+    handle: usize,
+    writer: Mutex<()>,
+}
+
+impl Drop for InputPipe {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseHandle(HANDLE(self.handle as *mut _)) };
+    }
+}
 
 static PTYS: LazyLock<Mutex<HashMap<String, Pty>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -394,7 +407,7 @@ fn spawn_with_events(
 
     let pty = Pty {
         hpc: created.hpc,
-        input: created.in_write.0 as usize,
+        input: Arc::new(InputPipe { handle: created.in_write.0 as usize, writer: Mutex::new(()) }),
         process: created.process.0 as usize,
         cols,
         rows,
@@ -453,7 +466,7 @@ fn spawn_with_events(
         });
         if let Some(pty) = removed {
             unsafe {
-                let _ = CloseHandle(HANDLE(pty.input as *mut _));
+                drop(pty.input);
                 ClosePseudoConsole(pty.hpc);
             }
             waiter_emit(
@@ -498,10 +511,13 @@ fn decode_output(pending: &mut Vec<u8>, eof: bool) -> String {
 }
 
 pub fn write(id: &str, data: &str) -> Result<(), String> {
-    let guard = PTYS.lock().map_err(|e| e.to_string())?;
-    let pty = guard.get(id).ok_or("no such terminal")?;
+    let input = {
+        let guard = PTYS.lock().map_err(|e| e.to_string())?;
+        guard.get(id).ok_or("no such terminal")?.input.clone()
+    };
+    let _writer = input.writer.lock().map_err(|e| e.to_string())?;
     unsafe {
-        let h = HANDLE(pty.input as *mut _);
+        let h = HANDLE(input.handle as *mut _);
         let mut remaining = data.as_bytes();
         while !remaining.is_empty() {
             let mut written = 0u32;
@@ -538,7 +554,7 @@ pub fn kill(id: &str) -> Result<(), String> {
     if let Some(pty) = pty {
         unsafe {
             let _ = TerminateProcess(HANDLE(pty.process as *mut _), 0);
-            let _ = CloseHandle(HANDLE(pty.input as *mut _));
+            drop(pty.input);
             ClosePseudoConsole(pty.hpc);
         }
     }
@@ -553,7 +569,7 @@ pub fn kill_all() {
     for pty in all {
         unsafe {
             let _ = TerminateProcess(HANDLE(pty.process as *mut _), 0);
-            let _ = CloseHandle(HANDLE(pty.input as *mut _));
+            drop(pty.input);
             ClosePseudoConsole(pty.hpc);
         }
     }
