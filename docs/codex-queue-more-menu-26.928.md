@@ -36,8 +36,10 @@ python work/codex-26-928-message-queue/extract_more_actions.py 'C:\Program Files
 
 ## Qone 对齐实现
 
-- `composer-queue.tsx`：三个菜单、原有图标与统一菜单组件；编辑、转移恢复项按完整队列位置显示；侧聊队列复用同一组件并隐藏再次创建侧聊的入口。
-- `run-options.ts` / `store.ts` / `App.tsx`：共享持久化排队偏好，提交时动态读取；发送按钮同步显示加入队列或引导。模型、思考和权限配置保持独立。
+- 原版源码确实包含第三项“关闭排队／开启排队”，但这不是 Qone 主会话的需求。Qone 已移除这项逻辑及其持久化状态：主会话和右侧侧聊在运行中提交普通输入时始终进入 FIFO 等待队列，旧 WebView localStorage 中的 `qone-follow-up-queue-mode` 不再读取。
+- “引导（Steer）”是队列行右侧的独立立即发送按钮，不是普通输入的默认路由；“…”菜单只保留编辑和“在侧边聊天中打开”。第二项通过独立侧聊创建链路打开右侧面板，不能被解释为关闭或切换主会话排队。
+- `composer-queue.tsx`：编辑和侧聊转移两个菜单项；行内保留显式引导按钮，编辑、转移恢复项按完整队列位置显示；侧聊队列复用同一组件并隐藏再次创建侧聊的入口。
+- `qone-message-queue.ts`：普通 `enqueue()` 与 assistant-ui 可能调用的 `steer()` 都保持 FIFO；只有 `steerNow()` 显式移动到 steer lane 并发送。模型、思考和权限配置保持独立。
 - `qone-message-queue.ts`：转移暂时退出投递通道，保留 scheduled 恢复副本；不占用编辑槽，不阻塞父会话后续投递；失败依 surviving anchors 恢复消息身份、附件和位置。
 - `side-conversation.ts` / `SideConversationService`：独立请求和响应身份，不复用会切换主会话的 `session.created`。SQLite 事务一次完成历史快照、边界、子队列及父队列所有权转移；持久化转移标记防止重试或进程重启后的旧快照重复投递。
 - `use-side-conversation-runtime.ts` / `side-conversation-panel.tsx`：按自己的 session 路由输入、草稿、队列、停止、工具和审批。保留原输入附件、继承模型／思考／权限选项；等待工作区和队列恢复完成后才允许提交。
@@ -46,9 +48,15 @@ python work/codex-26-928-message-queue/extract_more_actions.py 'C:\Program Files
 
 Qone 使用本地 Pi / SQLite 的历史快照与队列事务实现上述行为。运行时断线会重试原转移身份；已创建的侧聊保留到明确关闭，以恢复异常中断时的消息所有权。没有实现 Codex 云环境的远程 fork 流程。
 
+## 独立新建侧聊
+
+主聊天右上角三点菜单中的“新建侧边聊天”使用独立请求身份。每次用户主动选择都会创建一个新的侧聊，即使前一个请求仍在等待；多个响应按各自 requestId 归属，创建顺序和响应顺序可以不同。断线重试只重发原 requestId，因此不会把重试误判成新的侧聊。独立创建只复制当前历史和侧聊边界，不消费主会话队列、不启动主会话运行，并分别继承和保存模型、思考级别与权限配置。
+
+离线 DOM 自检还覆盖了多个真实侧聊标签、各自输入框、错误保留已有侧聊，以及窄侧聊容器中权限包装节点和模型选择器的收缩节点结构。
+
 ## 验证
 
-队列、附件、草稿、组件静态渲染、转移事务、断线重试、迟到响应、父子隔离、侧聊工具边界及既有运行时桥接回归：133 项通过。前端和运行时 TypeScript 检查通过。
+本轮队列回归覆盖普通提交 FIFO、assistant-ui `steer()` 路由、显式引导、编辑、删除、侧聊转移、父子会话隔离及恢复链路：34 项通过。前端 TypeScript 检查通过。
 
 ```powershell
 bun test apps/desktop/test/queue-more-actions.test.ts apps/agent-runtime/test/side-conversation.test.ts
