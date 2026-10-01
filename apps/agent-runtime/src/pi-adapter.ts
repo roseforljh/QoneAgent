@@ -27,6 +27,7 @@ import { ModelResponseTiming } from "./model-response-timing.js";
 import { SessionInputQueue } from "./session-input-queue.js";
 import { SIDE_CHAT_INSTRUCTIONS } from "./side-conversation.js";
 import { createFileChangeTools } from "./file-change-tools.js";
+import { createActivityTitleTool } from "./activity-title-tool.js";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
 import { generateImage } from "./image-generation.js";
@@ -570,20 +571,21 @@ export class PiAdapter {
       parameters: Type.Object({ reason: Type.String({ minLength: 1 }), resume_after_ms: Type.Optional(Type.Number({ minimum: 1 })) }),
       execute: async (_toolCallId, params) => { const input = params as { reason: string; resume_after_ms?: number }; return { content: [{ type: "text", text: JSON.stringify(this.goalBridge!.wait(eventSessionId, goalId, goalEpoch, goalRunId, input.reason, input.resume_after_ms)) }], details: {} }; },
     }] : [];
-    const goalToolNames = new Set(goalTools.map((tool) => tool.name));
-    const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...goalTools].map((t) =>
+    const internalTools = [createActivityTitleTool(), ...goalTools];
+    const internalToolNames = new Set(internalTools.map((tool) => tool.name));
+    const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...internalTools].map((t) =>
       withPermission(t, {
         queue: this.approvals,
         workspacePath,
         rules: this.permissionRules,
         mode: () => this.runModes.get(sessionId) ?? "ask",
-        internal: goalToolNames.has(t.name),
+        internal: internalToolNames.has(t.name),
         emitApproval: (approvalId, toolName, args, toolCallId) =>
           this.push("approval.requested", { approvalId, toolName, args, toolCallId }, eventSessionId, this.activeRunIds.get(sessionId)),
       })
     );
     const allowed = toolAllowList
-      ? wrapped.filter((tool) => goalToolNames.has(tool.name) || toolAllowList.includes(tool.name) || toolAllowList.includes((tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? ""))
+      ? wrapped.filter((tool) => internalToolNames.has(tool.name) || toolAllowList.includes(tool.name) || toolAllowList.includes((tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? ""))
       : wrapped;
     assertModelToolNames(allowed.map((tool) => tool.name));
 

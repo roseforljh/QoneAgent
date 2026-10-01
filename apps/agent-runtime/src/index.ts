@@ -657,9 +657,9 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
 
     case "session.side-chat.create": {
       try {
-        const session = sideConversations.create(cmd.sessionId, cmd.queueItemId);
+        const session = sideConversations.create(cmd);
         send({ type: "session.side-chat.created", requestId: cmd.requestId, sessionId: cmd.sessionId, queueItemId: cmd.queueItemId, session });
-        sendQueue(cmd.sessionId);
+        if (cmd.queueItemId) sendQueue(cmd.sessionId);
         sendMessages(session.id);
         sendQueue(session.id);
       } catch (error) {

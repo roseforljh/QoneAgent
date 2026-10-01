@@ -1,5 +1,5 @@
 import { MessageRepo, QueueRepo, SessionRepo, SettingsRepo, WorkspaceRepo, type Db } from "@qone/database";
-import type { AssistantMessagePart, MessageAttachmentInfo, SessionInfo } from "@qone/protocol";
+import type { AssistantMessagePart, MessageAttachmentInfo, RuntimeCommand, SessionInfo } from "@qone/protocol";
 
 export const SIDE_CHAT_INSTRUCTIONS = `You are in a side conversation, separate from the main thread.
 The inherited history before the side conversation boundary is reference context only.
@@ -17,13 +17,14 @@ export class SideConversationService {
     return new SettingsRepo(this.db).get<SessionInfo["sideChat"]>(`side-chat:${sessionId}`) ?? undefined;
   }
 
-  create(parentSessionId: string, queueItemId: string): SessionInfo {
+  create({ sessionId: parentSessionId, queueItemId, requestId, title: requestedTitle }: Extract<RuntimeCommand, { type: "session.side-chat.create" }>): SessionInfo {
     return this.db.$client.transaction(() => {
       const sessions = new SessionRepo(this.db);
       const settings = new SettingsRepo(this.db);
       const queue = new QueueRepo(settings);
       const messages = new MessageRepo(this.db);
-      const transferKey = `queue:transferred:${parentSessionId}:${queueItemId}`;
+      // Queue ownership and standalone creation each have a durable retry identity.
+      const transferKey = queueItemId ? `queue:transferred:${parentSessionId}:${queueItemId}` : `side-chat:created:${parentSessionId}:${requestId}`;
       const existingId = settings.get<string>(transferKey);
       if (existingId) {
         const existing = sessions.get(existingId);
@@ -33,10 +34,10 @@ export class SideConversationService {
       const parent = sessions.get(parentSessionId);
       if (!parent?.workspaceId || !new WorkspaceRepo(this.db).get(parent.workspaceId)) throw new Error("session workspace no longer exists");
       if (this.metadata(parentSessionId)) throw new Error("side conversations cannot open another side conversation");
-      const items = queue.list(parentSessionId);
-      const input = items.find((item) => item.id === queueItemId);
-      if (!input || input.lane !== "queue" || input.status === "steering") throw new Error("queued message is no longer available");
-      const title = input.text.trim() || input.attachments?.map((attachment) => attachment.name).join(", ") || parent.title;
+      const items = queueItemId ? queue.list(parentSessionId) : [];
+      const input = queueItemId ? items.find((item) => item.id === queueItemId) : undefined;
+      if (queueItemId && (!input || input.lane !== "queue" || input.status === "steering")) throw new Error("queued message is no longer available");
+      const title = input?.text.trim() || input?.attachments?.map((attachment) => attachment.name).join(", ") || requestedTitle?.trim() || parent.title;
       const child = sessions.create(title, parent.workspaceId);
       for (const message of messages.listBySession(parentSessionId)) {
         messages.add(child.id, message.role, message.content, undefined, message.model ?? undefined, undefined,
@@ -47,8 +48,8 @@ export class SideConversationService {
       const metadata = { parentSessionId, boundaryMessageId: boundary.id };
       settings.set(`side-chat:${child.id}`, metadata);
       // New identity in the child: the parent's terminal tombstone cannot suppress it.
-      queue.replace(child.id, [{ ...input, id: crypto.randomUUID(), sessionId: child.id, status: "queued", position: 0 }]);
-      queue.replace(parentSessionId, items.filter((item) => item.id !== queueItemId));
+      queue.replace(child.id, input ? [{ ...input, id: crypto.randomUUID(), sessionId: child.id, status: "queued", position: 0 }] : []);
+      if (input) queue.replace(parentSessionId, items.filter((item) => item.id !== queueItemId));
       settings.set(transferKey, child.id);
       return { ...child, sideChat: metadata };
     }).immediate();
