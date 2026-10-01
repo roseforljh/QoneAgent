@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,13 +17,13 @@ export interface ExtractedVideoFrames {
 
 async function readableVideo(filePath: string): Promise<void> {
   const source = await stat(filePath);
-  if (!source.isFile()) throw new Error("视频文件已不存在，无法读取画面");
+  if (!source.isFile()) throw runtimeError("video-frames.the_video_file_no_longer_exists_cannot_read_frames", {});
 }
 
 /** Read container duration without decoding the video. Some streams do not declare one. */
 export async function videoDuration(filePath: string, signal?: AbortSignal): Promise<number | undefined> {
   const ffmpeg = ffmpegExecutable();
-  if (!ffmpeg) throw new Error("非 Gemini 视频理解需要 FFmpeg 来读取画面");
+  if (!ffmpeg) throw runtimeError("video-frames.video_understanding_outside_gemini_requires_ffmpeg_to_read_frames", {});
   await readableVideo(filePath);
   let stderr = "";
   try {
@@ -33,7 +34,7 @@ export async function videoDuration(filePath: string, signal?: AbortSignal): Pro
     if (signal?.aborted) throw error;
     stderr = String((error as { stderr?: string }).stderr ?? "");
   }
-  if (!/Input #\d+/.test(stderr)) throw new Error(`FFmpeg 无法读取视频文件：${stderr.trim().slice(-300) || "未知错误"}`);
+  if (!/Input #\d+/.test(stderr)) throw runtimeError("video-frames.ffmpeg_could_not_read_the_video_file", { p0: stderr.trim().slice(-300) || runtimeText("video-frames.unknown_error") });
   const match = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr);
   return match ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) : undefined;
 }
@@ -41,10 +42,10 @@ export async function videoDuration(filePath: string, signal?: AbortSignal): Pro
 /** Extract only requested moments; never materialize every codec key frame. */
 export async function extractVideoFrames(filePath: string, timestamps: readonly number[], signal?: AbortSignal): Promise<ExtractedVideoFrames> {
   const ffmpeg = ffmpegExecutable();
-  if (!ffmpeg) throw new Error("非 Gemini 视频理解需要 FFmpeg 来提取画面帧");
+  if (!ffmpeg) throw runtimeError("video-frames.video_understanding_outside_gemini_requires_ffmpeg_to_extract_frames", {});
   await readableVideo(filePath);
   if (!timestamps.length || timestamps.some((seconds) => !Number.isFinite(seconds) || seconds < 0)) {
-    throw new Error("请提供要读取的非负视频时间点（秒）");
+    throw runtimeError("video-frames.provide_non_negative_video_timestamps_in_seconds", {});
   }
   const directory = await mkdtemp(path.join(tmpdir(), "qone-video-frames-"));
   try {
@@ -58,7 +59,7 @@ export async function extractVideoFrames(filePath: string, timestamps: readonly 
         const image: ImageContent = { type: "image", data: (await readFile(output)).toString("base64"), mimeType: "image/jpeg" };
         frames.push({ seconds, image });
       } catch {
-        throw new Error(`视频在 ${seconds} 秒处没有可读取的画面`);
+        throw runtimeError("video-frames.no_readable_video_frame_at_seconds", { p0: seconds });
       }
       await rm(output);
     }
@@ -72,7 +73,7 @@ export async function extractVideoFrames(filePath: string, timestamps: readonly 
 async function attachmentPath(attachment: MessageAttachmentInfo): Promise<{ path: string; directory?: string }> {
   if (attachment.localPath) return { path: attachment.localPath };
   const match = /^data:(video\/[^;,]+);base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
-  if (!match) throw new Error(`视频附件 ${attachment.name} 没有可读取的本地路径或 Base64 数据`);
+  if (!match) throw runtimeError("media-attachments.video_attachment_has_no_readable_local_path_or_base64", { p0: attachment.name });
   const directory = await mkdtemp(path.join(tmpdir(), "qone-inline-video-"));
   const filePath = path.join(directory, "source");
   await writeFile(filePath, Buffer.from(match[2]!, "base64"));

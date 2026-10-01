@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { readFile } from "node:fs/promises";
@@ -23,7 +24,7 @@ export function videoAttachmentNotice(attachments: readonly MessageAttachmentInf
     return [`<video id="${id}" name="${escape(attachment.name)}" />`];
   });
   return lines.length
-    ? `<runtime-video-attachments>\n${lines.join("\n")}\n需要委派时直接传原始附件，勿提前处理。最终执行代理若使用非 Gemini API 格式且配置了视频和图像输入，先用 qone_media_extract_frames 读取时长，再传 timestamps 按需读取静态画面；只需声音且配置了音频输入时，可调用 qone_media_extract_audio。两者都传 attachmentId。\n</runtime-video-attachments>`
+    ? runtimeText("pi-attachments.delegate_original_attachments_without_preprocessing_if_the_executing_agent", { p0: lines.join("\n") })
     : "";
 }
 
@@ -64,7 +65,7 @@ export async function materializeModelInputs(
       return { ...attachment, data: `data:${attachment.mimeType};base64,${bytes.toString("base64")}` };
     } catch (error) {
       if (skipUnavailable) return attachment;
-      throw new Error(`无法读取本地附件：${attachment.localPath}`, { cause: error });
+      throw runtimeError("pi-attachments.could_not_read_local_attachment", { p0: attachment.localPath }, { cause: error });
     }
   }));
 }
@@ -74,11 +75,11 @@ export function promptWithAttachments(message: string, attachments: readonly (Me
   const files = attachments.flatMap((attachment) => {
     if (attachment.type === "folder") return attachment.localPath
       ? [`<attachment type="folder" name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`]
-      : [`[文件夹附件 ${escapeName(attachment.name)}：没有可读取的本地路径，请重新附加]`];
+      : [runtimeText("pi-attachments.folder_attachment_no_readable_local_path_attach_it_again", { p0: escapeName(attachment.name) })];
     if (attachment.type === "image" || attachment.mimeType.startsWith("image/")) return [
       ...(attachment.localPath ? [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`] : []),
       ...(allowedInput && !canReadAttachment(allowedInput, attachment)
-        ? [`[图片附件 ${escapeName(attachment.name)}：当前模型未配置图像输入能力，需交给能处理图片的子代理]`] : []),
+        ? [runtimeText("pi-attachments.image_attachment_the_current_model_has_no_image_input", { p0: escapeName(attachment.name) })] : []),
     ];
     if (attachment.type !== "file") return [];
     const canUseNativeMedia = nativeMedia && /^(?:audio|video)\//i.test(attachment.mimeType)
@@ -91,13 +92,13 @@ export function promptWithAttachments(message: string, attachments: readonly (Me
       const canReadFrames = video && nativeMedia !== true && allowedInput?.includes("video") && allowedInput.includes("image");
       const canExtractAudio = video && Boolean(nativeMedia) && allowedInput?.includes("audio");
       const action = canReadFrames
-        ? "当前 API 格式没有直接的视频文件输入；需要画面时由最终执行代理按需读取画面帧"
+        ? runtimeText("pi-attachments.the_current_api_format_has_no_direct_video_file")
         : canExtractAudio
-          ? "当前模型可按需调用 qone_media_extract_audio 读取声音；若任务需要画面，请委派原始附件"
-          : "当前模型无法直接读取，需交给能处理该媒体的子代理";
+          ? runtimeText("pi-attachments.the_current_model_can_call_qone_media_extract_audio")
+          : runtimeText("pi-attachments.the_current_model_cannot_read_this_media_directly_delegate");
       return [
         ...(attachment.localPath ? [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`] : []),
-        `[媒体附件 ${escapeName(attachment.name)}（${escapeName(attachment.mimeType)}）：${action}]`,
+        runtimeText("pi-attachments.media_attachment", { p0: escapeName(attachment.name), p1: escapeName(attachment.mimeType), p2: action }),
       ];
     }
     if (!attachment.localPath) {
@@ -110,11 +111,11 @@ export function promptWithAttachments(message: string, attachments: readonly (Me
           } catch { /* Invalid text must not be inserted into the model context as replacement characters. */ }
         }
       }
-      return [`[附件 ${escapeName(attachment.name)}：没有可读取的本地路径，如需使用文件工具读取请从本地重新附加]`];
+      return [runtimeText("pi-attachments.attachment_no_readable_local_path_attach_it_again_from", { p0: escapeName(attachment.name) })];
     }
     return [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`];
   });
-  return [message.trim(), ...files].filter(Boolean).join("\n\n") || "请分析附件。";
+  return [message.trim(), ...files].filter(Boolean).join("\n\n") || runtimeText("pi-attachments.please_analyze_the_attachment");
 }
 
 /**

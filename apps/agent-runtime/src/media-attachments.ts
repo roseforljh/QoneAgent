@@ -1,3 +1,4 @@
+import { runtimeError } from "./runtime-localization";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -21,7 +22,7 @@ export async function videoAttachmentsAsAudio(
     try {
       if (!source) {
         const match = /^data:(video\/[^;,]+);base64,([A-Za-z0-9+/=]+)$/i.exec(item.data);
-        if (!match) throw new Error(`视频附件 ${item.name} 没有可读取的本地路径或 Base64 数据`);
+        if (!match) throw runtimeError("media-attachments.video_attachment_has_no_readable_local_path_or_base64", { p0: item.name });
         staging = await mkdtemp(path.join(tmpdir(), "qone-inline-video-"));
         source = path.join(staging, "source");
         await writeFile(source, Buffer.from(match[2]!, "base64"));

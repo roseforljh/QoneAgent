@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { MessageAttachmentInfo, ModelConfigInfo } from "@qone/protocol";
 import { Type } from "typebox";
@@ -36,14 +37,14 @@ function supportsVideoInput(model: { api: string; provider: string; id: string }
 async function frameResult(filePath: string, source: string, options: MediaToolOptions, runId: string, timestamps?: number[], signal?: AbortSignal) {
   if (!timestamps) {
     const duration = await videoDuration(filePath, signal);
-    return { content: [{ type: "text" as const, text: `已通过 ${source} 获取视频。本地文件：${filePath}。${duration === undefined ? "视频时长未知" : `视频时长 ${duration} 秒`}。按任务需要选择时间点，再调用 qone_video_use_file，传 path 和 timestamps（秒）读取画面；需要声音时对相同路径设置 mode=audio。当前尚未读取画面或声音。` }],
+    return { content: [{ type: "text" as const, text: runtimeText("media-tool.video_retrieved_through_local_file_choose_timestamps_as_needed", { p0: source, p1: filePath, p2: duration === undefined ? runtimeText("media-tool.video_duration_unknown") : runtimeText("media-tool.video_duration_seconds", { p0: duration }) }) }],
       details: { source, path: filePath, videoRead: false, transport: "image-frames", duration } };
   }
   const frames = await extractVideoFrames(filePath, timestamps, signal);
   options.registerDirectory?.(runId, frames.directory);
   return {
-    content: [{ type: "text" as const, text: `已通过 ${source} 获取视频并按所选时间点读取 ${frames.frames.length} 帧。模型实际读取的是这些静态画面，不是完整视频，也未读取声音。本地文件：${filePath}。需要声音时可对这个路径调用 qone_video_use_file 并设置 mode=audio；无需重新下载。` },
-      ...frames.frames.flatMap(({ seconds, image }) => [{ type: "text" as const, text: `画面时间：${seconds} 秒` }, image])],
+    content: [{ type: "text" as const, text: runtimeText("media-tool.video_retrieved_through_frames_read_at_the_selected_timestamps", { p0: source, p1: frames.frames.length, p2: filePath }) },
+      ...frames.frames.flatMap(({ seconds, image }) => [{ type: "text" as const, text: runtimeText("media-tool.frame_timestamp_seconds", { p0: seconds }) }, image])],
     details: { source, path: filePath, videoRead: true, transport: "image-frames", frameCount: frames.frames.length },
   };
 }
@@ -56,22 +57,22 @@ export function createAttachmentAudioTool(options: MediaToolOptions): ToolDefini
     parameters: Type.Object({ attachmentId: Type.String({ minLength: 1 }) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
-      if (!active) throw new Error("没有可用的媒体识别任务");
+      if (!active) throw runtimeError("media-tool.no_media_recognition_task_is_available", {});
       const { runId, model } = active;
       const input = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`).input;
-      if (!input.includes("audio")) throw new Error("当前模型未配置音频输入；请委派原始附件");
+      if (!input.includes("audio")) throw runtimeError("media-tool.the_current_model_has_no_audio_input_configured_delegate", {});
       if (model.api !== "google-generative-ai" && model.api !== "openai-completions") {
-        throw new Error("当前 API 格式尚未接入音频附件输入；请委派原始附件");
+        throw runtimeError("media-tool.the_current_api_format_does_not_support_audio_attachments", {});
       }
       const attachmentId = (params as { attachmentId: string }).attachmentId;
       const attachment = options.attachment?.(runId, attachmentId);
-      if (!attachment || !attachment.mimeType.startsWith("video/")) throw new Error("未找到当前任务的视频附件引用");
+      if (!attachment || !attachment.mimeType.startsWith("video/")) throw runtimeError("media-tool.no_video_attachment_reference_was_found_for_the_current", {});
       const registerDirectory = options.registerDirectory;
-      if (!registerDirectory) throw new Error("音轨提取的临时文件管理尚未初始化");
+      if (!registerDirectory) throw runtimeError("media-tool.temporary_file_management_for_audio_extraction_is_not_initialized", {});
       const [audio] = await videoAttachmentsAsAudio([attachment], (directory) => registerDirectory(runId, directory), signal) ?? [];
-      if (!audio?.localPath) throw new Error("无法从视频附件提取音轨");
+      if (!audio?.localPath) throw runtimeError("media-tool.could_not_extract_audio_from_the_video_attachment", {});
       options.registerMedia(runId, audio.localPath, audio.mimeType);
-      return { content: [{ type: "text", text: `已从用户视频附件提取声音；未读取画面。音频输入：${localMediaMarker(audio.localPath, audio.mimeType, true)}` }],
+      return { content: [{ type: "text", text: runtimeText("media-tool.audio_extracted_from_the_user_s_video_attachment_no", { p0: localMediaMarker(audio.localPath, audio.mimeType, true) }) }],
         details: { path: audio.localPath, mimeType: audio.mimeType, videoRead: false } };
     },
   };
@@ -85,18 +86,18 @@ export function createAttachmentFrameTool(options: MediaToolOptions): ToolDefini
     parameters: Type.Object({ attachmentId: Type.String({ minLength: 1 }), timestamps: Type.Optional(Type.Array(Type.Number({ minimum: 0 }))) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
-      if (!active) throw new Error("没有可用的媒体识别任务");
+      if (!active) throw runtimeError("media-tool.no_media_recognition_task_is_available", {});
       const { runId, model } = active;
       const input = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`).input;
-      if (!supportsFrameVideo(model, input)) throw new Error("当前模型无法通过图像协议读取视频画面；请委派原始附件");
+      if (!supportsFrameVideo(model, input)) throw runtimeError("media-tool.the_current_model_cannot_read_video_frames_through_the", {});
       const request = params as { attachmentId: string; timestamps?: number[] };
       const attachment = options.attachment?.(runId, request.attachmentId);
-      if (!attachment || !attachment.mimeType.startsWith("video/")) throw new Error("未找到当前任务的视频附件引用");
-      if (!options.registerDirectory) throw new Error("画面提取的临时文件管理尚未初始化");
+      if (!attachment || !attachment.mimeType.startsWith("video/")) throw runtimeError("media-tool.no_video_attachment_reference_was_found_for_the_current", {});
+      if (!options.registerDirectory) throw runtimeError("media-tool.temporary_file_management_for_frame_extraction_is_not_initialized", {});
       const prepared = await videoAttachmentFrames(attachment, request.timestamps, (directory) => options.registerDirectory!(runId, directory), signal);
       return {
-        content: [{ type: "text" as const, text: request.timestamps ? `已从附件 ${attachment.name} 按指定时间点读取 ${prepared.frames.length} 帧；未读取声音或完整视频。` : `附件 ${attachment.name}：${prepared.duration === undefined ? "视频时长未知" : `视频时长 ${prepared.duration} 秒`}。请按任务需要选择时间点，带 timestamps（秒）再次调用本工具。当前未读取画面或声音。` },
-          ...prepared.frames.flatMap(({ seconds, image }) => [{ type: "text" as const, text: `画面时间：${seconds} 秒` }, image])],
+        content: [{ type: "text" as const, text: request.timestamps ? runtimeText("media-tool.read_frames_from_attachment_at_the_specified_timestamps_no", { p0: attachment.name, p1: prepared.frames.length }) : runtimeText("media-tool.attachment_choose_timestamps_as_needed_and_call_this_tool", { p0: attachment.name, p1: prepared.duration === undefined ? runtimeText("media-tool.video_duration_unknown") : runtimeText("media-tool.video_duration_seconds", { p0: prepared.duration }) }) },
+          ...prepared.frames.flatMap(({ seconds, image }) => [{ type: "text" as const, text: runtimeText("media-tool.frame_timestamp_seconds", { p0: seconds }) }, image])],
         details: { source: "user attachment", videoRead: Boolean(request.timestamps), transport: "image-frames", frameCount: prepared.frames.length, duration: prepared.duration },
       };
     },
@@ -112,19 +113,19 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
     parameters: Type.Object({ url: Type.String({ minLength: 1 }), mode: Type.Optional(Type.Union([Type.Literal("video"), Type.Literal("audio")])) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
-      if (!active) throw new Error("没有可用的视频识别任务");
+      if (!active) throw runtimeError("media-tool.no_video_recognition_task_is_available", {});
       const { runId, model } = active;
       const capability = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`);
       const request = params as { url: string; mode?: "video" | "audio" };
       const mode = request.mode ?? (capability.input.includes("video") ? "video" : "audio");
       if (mode === "video" && !supportsVideoInput(model, capability.input)) {
-        throw new Error("当前 API 格式无法读取完整视频或画面帧；需要画面时请配置图像输入，或委派原始链接");
+        throw runtimeError("media-tool.the_current_api_format_cannot_read_full_videos_or", {});
       }
       if (mode === "audio" && !supportsAudioInput(model, capability.input)) {
-        throw new Error("当前模型或 API 格式无法读取音频；请委派原始链接");
+        throw runtimeError("media-tool.the_current_model_or_api_format_cannot_read_audio", {});
       }
       const url = request.url.trim();
-      if (model.api === "google-generative-ai" && youtubeUrlsFromText(url).includes(url) && mode === "video") throw new Error("Gemini 可直接识别 YouTube 链接，无需下载");
+      if (model.api === "google-generative-ai" && youtubeUrlsFromText(url).includes(url) && mode === "video") throw runtimeError("media-tool.gemini_can_recognize_youtube_urls_directly_no_download_is", {});
       let downloaded: Awaited<ReturnType<typeof downloadVideo>>;
       let source = "yt-dlp";
       try {
@@ -134,22 +135,22 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
           } catch (audioError) {
             if (signal?.aborted) throw audioError;
             downloaded = await downloadVideo(url, signal).catch((videoError) => {
-              throw new Error(`音轨下载失败：${String(audioError)}；完整视频下载失败：${String(videoError)}`);
+              throw runtimeError("media-tool.audio_download_failed_full_video_download_failed", { p0: String(audioError), p1: String(videoError) });
             });
           }
         } else downloaded = await downloadVideo(url, signal);
       } catch (error) {
         if (signal?.aborted || !isBilibiliUrl(url)) throw error;
         const fallback = await readBilibiliFallback(url, signal).catch((fallbackError) => {
-          throw new Error(`视频获取失败：yt-dlp: ${String(error)}；bilibili-cli/OpenCLI 降级资料: ${String(fallbackError)}`);
+          throw runtimeError("media-tool.video_retrieval_failed_yt_dlp_bilibili_cli_opencli_fallback", { p0: String(error), p1: String(fallbackError) });
         });
-        const parts = [`降级分析：未取得完整视频，不能声称识别了画面。资料来源：${fallback.source}。`, fallback.text];
+        const parts = [runtimeText("media-tool.fallback_analysis_the_full_video_was_not_retrieved_do", { p0: fallback.source }), fallback.text];
         if (fallback.audio) {
           options.registerMedia(runId, fallback.audio.path, fallback.audio.mimeType, fallback.audio.directory);
-          parts.push(`可用音频路径：${fallback.audio.path}`);
-          if (supportsAudioInput(model, capability.input)) parts.push(`音频输入：${localMediaMarker(fallback.audio.path, fallback.audio.mimeType, true)}`);
-          else parts.push("当前模型未配置音频输入；需要声音分析时委派音频子代理并传 mediaPath。");
-        } else parts.push("未取得可读取的音频文件。");
+          parts.push(runtimeText("media-tool.available_audio_path", { p0: fallback.audio.path }));
+          if (supportsAudioInput(model, capability.input)) parts.push(runtimeText("media-tool.audio_input", { p0: localMediaMarker(fallback.audio.path, fallback.audio.mimeType, true) }));
+          else parts.push(runtimeText("media-tool.the_current_model_has_no_audio_input_configured_delegate_details_0"));
+        } else parts.push(runtimeText("media-tool.no_readable_audio_file_was_retrieved"));
         return { content: [{ type: "text", text: parts.join("\n\n") }], details: { source: fallback.source, degraded: true, hasAudio: Boolean(fallback.audio) } };
       }
       options.registerMedia(runId, downloaded.path, downloaded.mimeType, downloaded.directory);
@@ -157,10 +158,10 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
       if (mode === "audio") {
         const audio = downloaded.mimeType.startsWith("audio/") ? downloaded : await extractVideoAudio(downloaded.path, signal);
         if (audio !== downloaded) options.registerMedia(runId, audio.path, audio.mimeType, audio.directory);
-        return { content: [{ type: "text", text: `已通过 ${source} ${audio === downloaded ? "直接获取音频" : "获取视频并提取音频"}；未读取画面。音频路径：${audio.path}\n音频输入：${localMediaMarker(audio.path, audio.mimeType, true)}` }],
+        return { content: [{ type: "text", text: runtimeText("media-tool.used_to_no_frames_have_been_read_audio_path", { p0: source, p1: audio === downloaded ? runtimeText("media-tool.retrieve_audio_directly") : runtimeText("media-tool.retrieve_the_video_and_extract_audio"), p2: audio.path, p3: localMediaMarker(audio.path, audio.mimeType, true) }) }],
           details: { source, path: audio.path, mimeType: audio.mimeType, videoRead: false } };
       }
-      return { content: [{ type: "text", text: `已通过 ${source} 下载视频，本地路径：${downloaded.path}\n媒体输入：${localMediaMarker(downloaded.path, downloaded.mimeType, true)}\n实际来源：完整视频文件。` }],
+      return { content: [{ type: "text", text: runtimeText("media-tool.video_downloaded_through_local_path_media_input_actual_source", { p0: source, p1: downloaded.path, p2: localMediaMarker(downloaded.path, downloaded.mimeType, true) }) }],
         details: { source, path: downloaded.path, mimeType: downloaded.mimeType } };
     },
   };
@@ -175,14 +176,14 @@ export function createVideoFallbackTools(options: MediaToolOptions): ToolDefinit
     parameters: Type.Object({}),
     execute: async () => {
       const active = options.active();
-      if (!active) throw new Error("没有可用的媒体识别任务");
+      if (!active) throw runtimeError("media-tool.no_media_recognition_task_is_available", {});
       const input = configuredCapabilities(options.configs(), `${active.model.provider}/${active.model.id}`).input;
       if (!supportsVideoInput(active.model, input) && !supportsAudioInput(active.model, input)) {
-        throw new Error("当前模型无法处理视频或音频；请委派原始链接，勿提前下载");
+        throw runtimeError("media-tool.the_current_model_cannot_process_video_or_audio_delegate", {});
       }
       const directory = await mkdtemp(path.join(tmpdir(), "qone-video-fallback-"));
       options.registerDirectory?.(active.runId, directory);
-      return { content: [{ type: "text", text: `临时下载目录：${directory}。下载完成后调用 qone_video_use_file，传入实际媒体文件路径。` }], details: { directory } };
+      return { content: [{ type: "text", text: runtimeText("media-tool.temporary_download_directory_after_downloading_call_qone_video_use", { p0: directory }) }], details: { directory } };
     },
   }, {
     name: "qone_video_use_file",
@@ -191,37 +192,37 @@ export function createVideoFallbackTools(options: MediaToolOptions): ToolDefinit
     parameters: Type.Object({ path: Type.String({ minLength: 1 }), mode: Type.Optional(Type.Union([Type.Literal("video"), Type.Literal("audio")])), timestamps: Type.Optional(Type.Array(Type.Number({ minimum: 0 }))) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
-      if (!active) throw new Error("没有可用的媒体识别任务");
+      if (!active) throw runtimeError("media-tool.no_media_recognition_task_is_available", {});
       const { runId, model } = active;
       const input = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`).input;
-      if (!input.includes("video") && !input.includes("audio")) throw new Error("当前模型无法处理视频或音频；请委派原始链接，勿提前下载");
+      if (!input.includes("video") && !input.includes("audio")) throw runtimeError("media-tool.the_current_model_cannot_process_video_or_audio_delegate", {});
       const request = params as { path: string; mode?: "video" | "audio"; timestamps?: number[] };
       const filePath = request.path;
-      if (!path.isAbsolute(filePath)) throw new Error("需要媒体文件的绝对路径");
+      if (!path.isAbsolute(filePath)) throw runtimeError("media-tool.an_absolute_media_file_path_is_required", {});
       const info = await stat(filePath);
-      if (!info.isFile()) throw new Error("媒体路径不是文件");
+      if (!info.isFile()) throw runtimeError("media-tool.the_media_path_is_not_a_file", {});
       const mimeType = mediaMimeType(filePath);
-      if (!mimeType) throw new Error("无法识别媒体文件格式");
+      if (!mimeType) throw runtimeError("media-tool.could_not_identify_the_media_file_format", {});
       const mode = request.mode ?? (mimeType.startsWith("audio/") || !input.includes("video") ? "audio" : "video");
-      if (mode === "video" && !mimeType.startsWith("video/")) throw new Error("mode=video 需要视频文件；当前路径是音频文件");
-      if (mode === "audio" && !/^(?:audio|video)\//.test(mimeType)) throw new Error("mode=audio 需要音频或视频文件");
-      if (mode === "video" && !supportsVideoInput(model, input)) throw new Error("当前 API 格式无法读取完整视频或画面帧；请配置图像输入或委派原始附件");
-      if (mode === "audio" && !supportsAudioInput(model, input)) throw new Error("当前模型或 API 格式无法读取音频；请委派原始附件");
+      if (mode === "video" && !mimeType.startsWith("video/")) throw runtimeError("media-tool.mode_video_requires_a_video_file_the_current_path", {});
+      if (mode === "audio" && !/^(?:audio|video)\//.test(mimeType)) throw runtimeError("media-tool.mode_audio_requires_an_audio_or_video_file", {});
+      if (mode === "video" && !supportsVideoInput(model, input)) throw runtimeError("media-tool.the_current_api_format_cannot_read_full_videos_or_details_0", {});
+      if (mode === "audio" && !supportsAudioInput(model, input)) throw runtimeError("media-tool.the_current_model_or_api_format_cannot_read_audio_details_0", {});
       const temporary = options.isTemporary?.(runId, filePath) ?? false;
       if (!temporary && !options.hasMedia?.(runId, filePath)) {
-        throw new Error("媒体文件必须位于当前任务的临时下载目录，或由当前任务的下载工具生成");
+        throw runtimeError("media-tool.the_media_file_must_be_in_the_current_task", {});
       }
       options.registerMedia(runId, filePath, mimeType);
       if (mode === "video" && supportsFrameVideo(model, input) && mimeType.startsWith("video/")) return frameResult(filePath, "local download", options, runId, request.timestamps, signal);
       if (mimeType.startsWith("video/") && mode === "audio") {
         const audio = await extractVideoAudio(filePath, signal);
         options.registerMedia(runId, audio.path, audio.mimeType, audio.directory);
-        return { content: [{ type: "text", text: `已从文件提取音频，未读取画面。音频输入：${localMediaMarker(audio.path, audio.mimeType, true)}` }],
+        return { content: [{ type: "text", text: runtimeText("media-tool.audio_extracted_from_the_file_no_frames_have_been", { p0: localMediaMarker(audio.path, audio.mimeType, true) }) }],
           details: { source: "local download", path: audio.path, mimeType: audio.mimeType, videoRead: false } };
       }
       const capability = mimeType.startsWith("video/") ? "video" : "audio";
-      if (!input.includes(capability)) return { content: [{ type: "text", text: `当前模型未配置${capability === "video" ? "视频" : "音频"}输入；请用 mediaPath=${filePath} 委派合适的子代理。` }], details: { path: filePath, mimeType, delegated: true } };
-      return { content: [{ type: "text", text: `实际来源：本地下载文件 ${filePath}。媒体输入：${localMediaMarker(filePath, mimeType, temporary)}` }],
+      if (!input.includes(capability)) return { content: [{ type: "text", text: runtimeText("media-tool.the_current_model_has_no_input_configured_delegate_to", { p0: capability === "video" ? runtimeText("media-tool.video") : runtimeText("media-tool.audio"), p1: filePath }) }], details: { path: filePath, mimeType, delegated: true } };
+      return { content: [{ type: "text", text: runtimeText("media-tool.actual_source_local_downloaded_file_media_input", { p0: filePath, p1: localMediaMarker(filePath, mimeType, temporary) }) }],
         details: { source: "local download", path: filePath, mimeType } };
     },
   }];

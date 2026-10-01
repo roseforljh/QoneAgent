@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import {
   createAgentSession,
   createReadTool,
@@ -631,7 +632,8 @@ export class PiAdapter {
     let lastToolDeltaAt = 0;
     const responseTiming = new ModelResponseTiming();
     session.subscribe((e) => {
-      const runId = [...this.runs.entries()].find(([, s]) => s === session)?.[0];
+      const candidateRunId = this.activeRunIds.get(sessionId);
+      const runId = candidateRunId && this.runs.get(candidateRunId) === session ? candidateRunId : undefined;
       const raw = e as unknown as Record<string, unknown>;
       const messageEvent = raw.assistantMessageEvent as { type?: string; delta?: string; contentIndex?: number; toolCall?: unknown } | undefined;
       const normalized = messageEvent?.delta
@@ -791,7 +793,7 @@ export class PiAdapter {
       const attachments = opts.attachments;
       const videoAttachmentNotice = this.rememberVideoAttachments(runId, attachments);
       const capabilityNotice = capabilities
-        ? `<runtime-media-capabilities input="${capabilities.input.join(",")}" output="${capabilities.output.join(",")}">按这些勾选项判断能否处理媒体。缺少能力时先按已启用子代理的描述委派原始链接或附件；不要提前下载。没有合适子代理则说明缺少的能力并停止，不能假装已识别。</runtime-media-capabilities>`
+        ? runtimeText("pi-adapter.use_these_configured_capabilities_to_determine_whether_media_can", { p0: capabilities.input.join(","), p1: capabilities.output.join(",") })
         : "";
       const missingAttachmentInput = capabilities && attachments?.some((attachment) => !canProcessMediaAttachment(selectedModel!.api, capabilities.input, attachment));
       const delegationPolicy = this.subagentPolicy?.();
@@ -799,12 +801,12 @@ export class PiAdapter {
         && (opts.subagentDepth ?? 0) < (delegationPolicy?.maxDepth ?? 3);
       const routingCandidates = missingAttachmentInput && canDelegate ? this.subagentController?.catalog() : undefined;
       const routingNotice = routingCandidates
-        ? `<media-routing-candidates>${JSON.stringify(routingCandidates)}</media-routing-candidates>\n当前模型不能直接读取部分附件。仅在任务需要其内容时，按上述已启用子代理的描述选择合适代理，委派原始附件；没有合适代理则明确说明无法完成，不要猜测附件内容。`
+        ? runtimeText("pi-adapter.the_current_model_cannot_directly_read_some_attachments_only", { p0: JSON.stringify(routingCandidates) })
         : missingAttachmentInput && !canDelegate
-          ? "当前模型不能直接读取部分附件，且当前执行层级无法继续委派。任务需要这些附件内容时须明确说明无法完成，不要猜测。"
+          ? runtimeText("pi-adapter.the_current_model_cannot_directly_read_some_attachments_and")
           : "";
       const unsupportedVideoNotice = !isGoogle && capabilities?.input.includes("video") && !capabilities.input.includes("image")
-        ? "当前 API 格式没有通用的视频文件字段，且当前模型未配置图像输入；需要画面时请委派原始视频附件。" : "";
+        ? runtimeText("pi-adapter.the_current_api_format_has_no_general_video_file") : "";
       const modelAttachments = await materializeModelInputs(attachments, isGoogle, capabilities?.input);
       await session.prompt([capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
         images: isGoogle ? googleMediaContent(modelAttachments, capabilities?.input)
@@ -875,8 +877,8 @@ export class PiAdapter {
 
   private async runSpeechGeneration(sessionId: string, runId: string, text: string, config: ModelConfigInfo): Promise<void> {
     const apiKey = this.modelApiKeys.get(config.provider);
-    if (!apiKey) throw new Error(`语音生成渠道 ${config.provider} 没有配置 API Key`);
-    if (!this.hooks.onGeneratedMedia) throw new Error("语音结果保存功能未初始化");
+    if (!apiKey) throw runtimeError("pi-adapter.no_api_key_configured_for_speech_provider", { p0: config.provider });
+    if (!this.hooks.onGeneratedMedia) throw runtimeError("pi-adapter.speech_result_storage_is_not_initialized", {});
     const controller = new AbortController();
     this.generationRunControllers.set(runId, controller);
     this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
@@ -885,7 +887,7 @@ export class PiAdapter {
       controller.signal.throwIfAborted();
       const savedPath = await this.hooks.onGeneratedMedia(sessionId, runId, speech.bytes, speech.mimeType, speech.extension, controller.signal);
       controller.signal.throwIfAborted();
-      this.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: `已生成语音：${savedPath}` }] } }, sessionId, runId);
+      this.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: runtimeText("pi-adapter.speech_generated", { p0: savedPath }) }] } }, sessionId, runId);
     } finally {
       this.generationRunControllers.delete(runId);
     }
@@ -893,8 +895,8 @@ export class PiAdapter {
 
   private async runVideoGeneration(sessionId: string, runId: string, prompt: string, config: ModelConfigInfo): Promise<void> {
     const apiKey = this.modelApiKeys.get(config.provider);
-    if (!apiKey) throw new Error(`视频生成渠道 ${config.provider} 没有配置 API Key`);
-    if (!this.hooks.onGeneratedMedia) throw new Error("视频结果保存功能未初始化");
+    if (!apiKey) throw runtimeError("pi-adapter.no_api_key_configured_for_video_provider", { p0: config.provider });
+    if (!this.hooks.onGeneratedMedia) throw runtimeError("pi-adapter.video_result_storage_is_not_initialized", {});
     const controller = new AbortController();
     this.generationRunControllers.set(runId, controller);
     this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
@@ -903,7 +905,7 @@ export class PiAdapter {
       controller.signal.throwIfAborted();
       const savedPath = await this.hooks.onGeneratedMedia(sessionId, runId, video.stream, video.mimeType, video.extension, controller.signal);
       controller.signal.throwIfAborted();
-      this.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: `已生成视频：${savedPath}` }] } }, sessionId, runId);
+      this.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: runtimeText("pi-adapter.video_generated", { p0: savedPath }) }] } }, sessionId, runId);
     } finally {
       this.generationRunControllers.delete(runId);
     }

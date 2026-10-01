@@ -1,6 +1,13 @@
 import { z } from "zod";
 import type { ModelMetadata, ProviderApiType } from "./model-metadata";
 import type { AssistantMessagePart } from "./assistant-parts";
+import type { FilePreviewInfo } from "./file-preview";
+import { isRuntimeMessageKey, type RuntimeLocale, type LocalizedErrorInfo, type RuntimeMessageKey } from "./localized-error";
+export { runtimeMessage, isRuntimeMessageKey } from "./localized-error";
+export type { RuntimeLocale, RuntimeMessageKey, LocalizedErrorInfo } from "./localized-error";
+
+export { filePreviewKind } from "./file-preview";
+export type { FilePreviewInfo, FilePreviewKind } from "./file-preview";
 
 export { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta } from "./assistant-parts";
 export { sameUserInput, repeatedUserMessageId } from "./user-message-equality.js";
@@ -56,7 +63,7 @@ export interface CommandBase {
   requestId: string;
 }
 
-export type RuntimeCommand =
+export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "ping"; requestId: string }
   | { type: "session.create"; requestId: string; title?: string; workspaceId: string }
   | { type: "session.generate-title"; requestId: string; sessionId: string; prompt: string; model?: string }
@@ -83,6 +90,7 @@ export type RuntimeCommand =
   | { type: "workspace.git"; requestId: string; workspaceId: string }
   | { type: "workspace.gitDiff"; requestId: string; workspaceId: string; path: string; scope?: "staged" | "unstaged" }
   | { type: "file.read"; requestId: string; workspaceId: string; path: string }
+  | { type: "file.preview"; requestId: string; workspaceId?: string; path: string; full?: boolean }
   | { type: "global-prompt.get"; requestId: string }
   | { type: "global-prompt.set"; requestId: string; content: string }
   | { type: "skills.list"; requestId: string; cwd?: string }
@@ -139,7 +147,7 @@ export type RuntimeCommand =
   | { type: "tool.approve"; requestId: string; approvalId: string }
   | { type: "tool.reject"; requestId: string; approvalId: string; reason?: string }
   | { type: "secret.set"; requestId: string; key: string; value: string }
-  | { type: "secret.delete"; requestId: string; key: string };
+  | { type: "secret.delete"; requestId: string; key: string });
 
 // ---------- Events (Runtime -> GUI) ----------
 
@@ -191,6 +199,7 @@ export type RuntimeEvent =
   | { type: "goal.updated"; goal: GoalInfo }
   | { type: "goal.cleared"; sessionId: string; goalId: string }
   | { type: "subagent.updated"; subagent: SubagentRunInfo }
+  | { type: "subagent.streaming"; sessionId: string; id: string; delta: string; reasoning?: { delta: string; messageSequence: number; contentIndex?: number; complete?: boolean }[] }
   | { type: "artifact.list"; sessionId: string; artifacts: ArtifactInfo[] }
   | { type: "workspace.list"; workspaces: WorkspaceInfo[] }
   | { type: "workspace.updated"; workspace: WorkspaceInfo }
@@ -227,10 +236,11 @@ export type RuntimeEvent =
   | { type: "agent.event"; event: AgentEvent }
   | { type: "workspace.gitDiff"; requestId?: string; workspaceId: string; path: string; diff: string; truncated?: boolean }
   | { type: "file.read"; requestId?: string; workspaceId: string; path: string; content: string; binary?: boolean; truncated?: boolean }
+  | { type: "file.preview"; requestId: string; workspaceId?: string; path: string; file: FilePreviewInfo }
   | { type: "global-prompt"; requestId: string; content: string; path: string; directory?: string }
   | { type: "terminal.data"; terminalId: string; data: string }
   | { type: "terminal.exit"; terminalId: string }
-  | { type: "error"; requestId?: string; message: string };
+  | { type: "error"; requestId?: string; message: string; localization?: LocalizedErrorInfo };
 
 // ---------- Shared shapes ----------
 
@@ -513,6 +523,9 @@ export interface SubagentProfileInfo {
   id: string;
   name: string;
   instructions: string;
+  /** Present only for untouched product defaults; user edits clear these keys. */
+  nameKey?: RuntimeMessageKey;
+  instructionsKey?: RuntimeMessageKey;
   modelId: string;
   logo?: string;
   enabled: boolean;
@@ -656,7 +669,7 @@ export function isSecureServiceUrl(value: string): boolean {
   }
 }
 
-const request = { requestId: z.string().min(1) };
+const request = { requestId: z.string().min(1), locale: z.enum(["en", "zh-CN"]).optional() };
 const id = z.string().min(1);
 const secureUrl = z.string().url().refine(isSecureServiceUrl, "URL must use HTTPS or loopback HTTP");
 const secretKey = z.string().regex(/^[A-Za-z][A-Za-z0-9.-]{0,63}:[A-Za-z0-9._/-]{1,128}$/);
@@ -693,6 +706,8 @@ const nonMediaAttachmentBytes = (attachments: readonly { data: string; mimeType:
 const subagentProfile = z.object({
   id: id.max(128), name: z.string().trim().min(1).max(120),
   instructions: z.string().trim().min(1).max(32_000), modelId: z.string().max(512), logo: z.string().trim().min(1).max(64).optional(),
+  nameKey: z.string().refine(isRuntimeMessageKey).optional(),
+  instructionsKey: z.string().refine(isRuntimeMessageKey).optional(),
   enabled: z.boolean(), tools: z.array(z.string().regex(/^[a-zA-Z0-9_:-]+$/).max(64)).max(100).optional(),
   permissionMode: z.enum(["ask", "auto", "full"]).optional(), updatedAt: z.number().int().nonnegative(),
 }).refine((profile) => Boolean(profile.modelId) || isBuiltinSubagentId(profile.id), "A custom subagent needs a model");
@@ -740,6 +755,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "workspace.git": z.object({ type: z.literal("workspace.git"), ...request, workspaceId: id }),
   "workspace.gitDiff": z.object({ type: z.literal("workspace.gitDiff"), ...request, workspaceId: id, path: id, scope: z.enum(["staged", "unstaged"]).optional() }),
   "file.read": z.object({ type: z.literal("file.read"), ...request, workspaceId: id, path: id }),
+  "file.preview": z.object({ type: z.literal("file.preview"), ...request, workspaceId: id.optional(), path: id, full: z.boolean().optional() }),
   "skills.list": z.object({ type: z.literal("skills.list"), ...request, cwd: z.string().optional() }),
   "skills.cloud.list": z.object({ type: z.literal("skills.cloud.list"), ...request, collection: z.enum(["popular", "trending", "official"]), page: z.number().int().min(1).max(200), query: z.string().max(100).optional() }),
   "skills.cloud.install": z.object({ type: z.literal("skills.cloud.install"), ...request, source: z.string().max(200), skillId: z.string().max(64) }),

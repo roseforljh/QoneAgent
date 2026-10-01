@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { sessions, messages, runs, subagentRuns, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
 import type { Db } from "./index.js";
 import { persistedToolResult, type CompactionMarkerInfo, type AssistantMessagePart, type GoalInfo, type GoalStatus, type MessageAttachmentInfo, type QueueItemInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
@@ -25,6 +25,57 @@ export class SessionRepo {
 
   list() {
     return this.db.select().from(sessions).orderBy(desc(sessions.updatedAt)).all();
+  }
+
+  /** Stream only search text; retain Unicode folding without loading transcripts. */
+  search(query: string, limit = 50) {
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle || limit <= 0) return [];
+    const rows = this.db.select().from(sessions)
+      .where(and(
+        isNotNull(sessions.workspaceId),
+        sql`EXISTS (SELECT 1 FROM ${workspaces} WHERE ${workspaces.id} = ${sessions.workspaceId})`,
+      ))
+      .orderBy(desc(sessions.updatedAt), sql`${sessions}.rowid DESC`)
+      .all();
+    if (!rows.length) return [];
+    const ranks = new Map(rows.map((session, index) => [session.id, index]));
+    const results: { session: typeof rows[number]; match: "title" | "content"; content?: string }[] = [];
+    const matched = new Set<string>();
+    for (const session of rows) {
+      if (!session.title.toLocaleLowerCase().includes(needle)) continue;
+      results.push({ session, match: "title" });
+      matched.add(session.id);
+      if (results.length >= limit) break;
+    }
+    let lastRank = results.length >= limit ? ranks.get(results.at(-1)!.session.id)! : rows.length;
+    // CROSS JOIN fixes the traversal order: indexed sessions, then indexed
+    // messages. SQLite can stream this order without sorting all message text.
+    // lower() cannot replace JS folding: even ASCII "k" must match Unicode K.
+    const cursor = this.db.$client.prepare<{ sessionId: string; content: string }, []>(`
+      SELECT s.id AS sessionId, m.content
+      FROM sessions s
+      CROSS JOIN workspaces w ON w.id = s.workspace_id
+      CROSS JOIN messages m ON m.session_id = s.id
+      ORDER BY s.updated_at DESC, s.rowid DESC, m.created_at ASC, m.rowid ASC
+    `);
+    try {
+      for (const row of cursor.iterate()) {
+        const rank = ranks.get(row.sessionId)!;
+        if (rank > lastRank) break;
+        if (matched.has(row.sessionId) || !row.content.toLocaleLowerCase().includes(needle)) continue;
+        const position = results.findIndex((result) => ranks.get(result.session.id)! > rank);
+        results.splice(position < 0 ? results.length : position, 0, { session: rows[rank]!, match: "content", content: row.content });
+        matched.add(row.sessionId);
+        if (results.length > limit) matched.delete(results.pop()!.session.id);
+        if (results.length >= limit) lastRank = ranks.get(results.at(-1)!.session.id)!;
+      }
+    } finally {
+      // Bun's cached query iterator retains its position after an early break.
+      // Own and finalize this cursor so later searches always start at the top.
+      cursor.finalize();
+    }
+    return results;
   }
 
   touch(id: string) {
@@ -566,6 +617,7 @@ export class EventRepo {
   constructor(private db: Db) {}
 
   add(event: StoredEvent) {
+    const payload = JSON.stringify(event.payload);
     this.db.insert(events).values({
       eventId: event.eventId,
       sessionId: event.sessionId,
@@ -573,10 +625,10 @@ export class EventRepo {
       sequence: event.sequence,
       type: event.type,
       timestamp: event.timestamp,
-      payload: JSON.stringify(event.payload),
+      payload,
     }).onConflictDoUpdate({
       target: events.eventId,
-      set: { sessionId: event.sessionId, runId: event.runId, sequence: event.sequence, type: event.type, timestamp: event.timestamp, payload: JSON.stringify(event.payload) },
+      set: { sessionId: event.sessionId, runId: event.runId, sequence: event.sequence, type: event.type, timestamp: event.timestamp, payload },
     }).run();
   }
 
@@ -584,13 +636,14 @@ export class EventRepo {
     if (items.length === 0) return;
     this.db.transaction((tx) => {
       for (const event of items) {
+        const payload = JSON.stringify(event.payload);
         tx.insert(events).values({
           eventId: event.eventId, sessionId: event.sessionId, runId: event.runId,
           sequence: event.sequence, type: event.type, timestamp: event.timestamp,
-          payload: JSON.stringify(event.payload),
+          payload,
         }).onConflictDoUpdate({
           target: events.eventId,
-          set: { sessionId: event.sessionId, runId: event.runId, sequence: event.sequence, type: event.type, timestamp: event.timestamp, payload: JSON.stringify(event.payload) },
+          set: { sessionId: event.sessionId, runId: event.runId, sequence: event.sequence, type: event.type, timestamp: event.timestamp, payload },
         }).run();
       }
     });
@@ -609,14 +662,20 @@ export class EventRepo {
   listCompactions(sessionId: string): CompactionMarkerInfo[] {
     // Older markers only stored a user-message anchor. Recover their position
     // from persisted parts' event sequences, without rewriting chat history.
-    const partsByRun = new Map<string, AssistantMessagePart[]>();
-    for (const message of new MessageRepo(this.db).listBySession(sessionId)) {
-      if (message.role !== "assistant" || !message.runId || !message.parts) continue;
-      try {
-        const parts = JSON.parse(message.parts);
-        if (Array.isArray(parts)) partsByRun.set(message.runId, parts);
-      } catch { /* Legacy messages can lack structured content. */ }
-    }
+    let partsByRun: Map<string, AssistantMessagePart[]> | undefined;
+    const legacyPartsForRun = (runId: string) => {
+      if (!partsByRun) {
+        partsByRun = new Map();
+        for (const message of new MessageRepo(this.db).listBySession(sessionId)) {
+          if (message.role !== "assistant" || !message.runId || !message.parts) continue;
+          try {
+            const parts = JSON.parse(message.parts);
+            if (Array.isArray(parts)) partsByRun.set(message.runId, parts);
+          } catch { /* Legacy messages can lack structured content. */ }
+        }
+      }
+      return partsByRun.get(runId);
+    };
     return this.db.select().from(events)
       .where(and(eq(events.sessionId, sessionId), inArray(events.type, ["context.compacted", "context.compaction.interrupted"])))
       .orderBy(events.sequence).all().flatMap((row) => {
@@ -624,10 +683,10 @@ export class EventRepo {
           const payload: unknown = JSON.parse(row.payload);
           if (!payload || typeof payload !== "object") return [];
           const { id, throughMessageId, createdAt, source, partIndex } = payload as { id?: unknown; throughMessageId?: unknown; createdAt?: unknown; source?: unknown; partIndex?: unknown };
-          const legacyParts = row.runId && source === "automatic" ? partsByRun.get(row.runId) : undefined;
           const position = typeof partIndex === "number" && Number.isInteger(partIndex) && partIndex >= 0
             ? partIndex
-            : legacyParts?.filter((part) => part.type !== "reasoning" && part.messageSequence < row.sequence).length;
+            : row.runId && source === "automatic"
+              ? legacyPartsForRun(row.runId)?.filter((part) => part.type !== "reasoning" && part.messageSequence < row.sequence).length : undefined;
           return typeof id === "string" && typeof throughMessageId === "string"
             ? [{ id, throughMessageId, ...(row.runId ? { runId: row.runId } : {}), ...(position !== undefined ? { partIndex: position } : {}), createdAt: typeof createdAt === "number" ? createdAt : row.timestamp, status: row.type === "context.compacted" ? "completed" as const : "interrupted" as const, source: source === "automatic" ? "automatic" as const : "manual" as const }]
             : [];

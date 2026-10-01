@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
@@ -49,10 +50,10 @@ export function localMediaMarker(path: string, mimeType: string, temporary = fal
 
 function decodeLocalMedia(encoded: string, signature: string): { path: string; mimeType: string; temporary: boolean } {
   const expected = createHmac("sha256", markerSecret).update(encoded).digest("hex");
-  if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"))) throw new Error("无效的本地媒体附件引用");
+  if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"))) throw runtimeError("google-media.invalid_local_media_attachment_reference", {});
   const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as { path?: unknown; mimeType?: unknown; temporary?: unknown };
   if (typeof value.path !== "string" || !isAbsolute(value.path) || typeof value.mimeType !== "string" || !/^(?:audio|video)\//i.test(value.mimeType)) {
-    throw new Error("无效的本地媒体附件路径或类型");
+    throw runtimeError("google-media.invalid_local_media_attachment_path_or_type", {});
   }
   return { path: value.path, mimeType: value.mimeType, temporary: value.temporary === true };
 }
@@ -93,16 +94,16 @@ function withApiKey(url: URL, apiKey: string): URL {
 }
 
 function responseFile(value: unknown): GoogleFile {
-  if (!value || typeof value !== "object") throw new Error("Gemini 文件上传返回了无效结果");
+  if (!value || typeof value !== "object") throw runtimeError("google-media.gemini_file_upload_returned_an_invalid_result", {});
   const record = value as { file?: GoogleFile } & GoogleFile;
   const file = record.file ?? record;
-  if (!file.uri || !file.name) throw new Error("Gemini 文件上传缺少文件 URI");
+  if (!file.uri || !file.name) throw runtimeError("google-media.gemini_file_upload_returned_no_file_uri", {});
   return file;
 }
 
 async function readResponseError(response: Response): Promise<string> {
   const body = await response.text().catch(() => "");
-  return body ? `Gemini 文件接口 HTTP ${response.status}: ${body.slice(0, 500)}` : `Gemini 文件接口 HTTP ${response.status}`;
+  return body ? runtimeText("google-media.gemini_files_api_http", { p0: response.status, p1: body.slice(0, 500) }) : runtimeText("google-media.gemini_files_api_http_details_1", { p0: response.status });
 }
 
 async function readUploadSession(response: Response): Promise<{ url?: string; body: string }> {
@@ -113,7 +114,7 @@ async function readUploadSession(response: Response): Promise<{ url?: string; bo
 }
 
 async function waitForActiveFile(file: GoogleFile, baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<GoogleFile> {
-  if (file.state === "FAILED") throw new Error(`Gemini 无法处理这个音视频文件${file.error?.message ? `：${file.error.message}` : ""}`);
+  if (file.state === "FAILED") throw runtimeError("google-media.gemini_could_not_process_this_audio_or_video_file", { p0: file.error?.message ? `：${file.error.message}` : "" });
   if (!file.state || file.state === "ACTIVE") return file;
   const startedAt = Date.now();
   while (Date.now() - startedAt < FILE_PROCESSING_TIMEOUT_MS) {
@@ -121,11 +122,11 @@ async function waitForActiveFile(file: GoogleFile, baseUrl: string, apiKey: stri
     const response = await fetch(withApiKey(fileResourceUrl(baseUrl, file.name!), apiKey), { headers: { Accept: "application/json" }, signal });
     if (!response.ok) throw new Error(await readResponseError(response));
     const next = responseFile(await response.json());
-    if (next.state === "FAILED") throw new Error(`Gemini 无法处理这个音视频文件${next.error?.message ? `：${next.error.message}` : ""}`);
+    if (next.state === "FAILED") throw runtimeError("google-media.gemini_could_not_process_this_audio_or_video_file", { p0: next.error?.message ? `：${next.error.message}` : "" });
     if (!next.state || next.state === "ACTIVE") return next;
     file = next;
   }
-  throw new Error("Gemini 音视频处理超时，请稍后重试");
+  throw runtimeError("google-media.gemini_audio_video_processing_timed_out_please_try_again", {});
 }
 
 async function uploadGoogleFile(baseUrl: string, apiKey: string, mimeType: string, data: string | { path: string; size: number }, displayName: string, signal?: AbortSignal): Promise<GoogleFile> {
@@ -149,10 +150,10 @@ async function uploadGoogleFile(baseUrl: string, apiKey: string, mimeType: strin
     const endpoint = filesEndpoint(baseUrl);
     const location = `${endpoint.origin}${endpoint.pathname}`;
     if (/text\/html/i.test(start.headers.get("content-type") ?? "") || /^\s*(?:<!doctype html|<html)/i.test(uploadSession.body)) {
-      throw new Error(`Gemini 视频尚未上传：Files API ${location} 返回 HTTP ${start.status} HTML 网页，未返回上传会话。请核实网关是否支持 Gemini Files API 及上传路由；支持文本或 YouTube 链接不代表支持文件上传。`);
+      throw runtimeError("google-media.gemini_video_has_not_been_uploaded_files_api_returned", { p0: location, p1: start.status });
     }
     const detail = uploadSession.body ? `：${uploadSession.body.slice(0, 500)}` : "";
-    throw new Error(`Gemini 文件接口未返回上传地址（${location}，HTTP ${start.status}，Content-Type: ${start.headers.get("content-type") ?? "未提供"}）${detail}`);
+    throw runtimeError("google-media.gemini_files_api_returned_no_upload_url_http_content", { p0: location, p1: start.status, p2: start.headers.get("content-type") ?? runtimeText("google-media.not_provided"), p3: detail });
   }
   const finish = await fetch(uploadSession.url, {
     method: "POST",
@@ -183,7 +184,7 @@ function cachedUpload(baseUrl: string, apiKey: string, part: { mimeType: string;
 
 async function uploadLocalMedia(path: string, mimeType: string, model: Model<any>, apiKey: string, signal?: AbortSignal): Promise<GoogleFile> {
   const info = await stat(path);
-  if (!info.isFile()) throw new Error("本地媒体附件已不是文件");
+  if (!info.isFile()) throw runtimeError("google-media.the_local_media_attachment_is_no_longer_a_file", {});
   return cachedUpload(model.baseUrl, apiKey, { mimeType, data: { path, size: info.size, modified: info.mtimeMs }, name: path.split(/[\\/]/).at(-1) ?? "media" }, signal);
 }
 
@@ -225,13 +226,13 @@ export async function prepareGooglePayload(payload: unknown, model: Model<any>, 
       const inline = part.inlineData;
       if (inline && /^(?:audio|video)\//.test(inline.mimeType) && allowedInput
         && !allowedInput.includes(inline.mimeType.startsWith("video/") ? "video" : "audio")) {
-        rewrittenParts.push({ text: "[当前模型未配置对应媒体输入能力；请委派子代理]" });
+        rewrittenParts.push({ text: runtimeText("google-media.the_current_model_lacks_the_required_media_input_capability") });
         continue;
       }
       const fileData = part.fileData;
       if (fileData && /^(?:audio|video)\//.test(fileData.mimeType) && allowedInput
         && !allowedInput.includes(fileData.mimeType.startsWith("video/") ? "video" : "audio")) {
-        rewrittenParts.push({ text: "[当前模型未配置对应媒体输入能力；请委派子代理]" });
+        rewrittenParts.push({ text: runtimeText("google-media.the_current_model_lacks_the_required_media_input_capability") });
         continue;
       }
       if (part.text) {
@@ -245,11 +246,11 @@ export async function prepareGooglePayload(payload: unknown, model: Model<any>, 
             const media = verifiedLocalMedia(marker[1]!, marker[2]!);
             const mediaCapability = media?.mimeType.startsWith("video/") ? "video" : "audio";
             if (!media) {
-              rewrittenParts.push({ text: "[先前会话的媒体引用已失效；如需分析，请重新提供]" });
+              rewrittenParts.push({ text: runtimeText("google-media.the_previous_session_s_media_reference_has_expired_provide") });
             } else if (allowedInput && !allowedInput.includes(mediaCapability)) {
-              rewrittenParts.push({ text: "[当前模型未配置对应媒体输入能力；请委派子代理]" });
+              rewrittenParts.push({ text: runtimeText("google-media.the_current_model_lacks_the_required_media_input_capability") });
             } else if (media.temporary && !await stat(media.path).then((info) => info.isFile()).catch(() => false)) {
-              rewrittenParts.push({ text: "[先前处理的媒体临时文件已清理；如需再次分析，请重新获取]" });
+              rewrittenParts.push({ text: runtimeText("google-media.previously_processed_temporary_media_has_been_cleaned_up_retrieve") });
             } else {
               const localPart: GooglePart = {};
               rewrittenParts.push(localPart);
@@ -282,9 +283,9 @@ export async function prepareGooglePayload(payload: unknown, model: Model<any>, 
           rewrittenParts.push({ ...part, functionResponse: {
             ...part.functionResponse,
             response: { ...part.functionResponse.response, output: output.replace(MEDIA_MARKER,
-              available.length ? "[媒体文件已附在工具结果后]" : rejected
-                ? "[当前模型未配置对应媒体输入能力；请委派子代理]"
-                : "[先前下载的媒体临时文件已清理；如需再次分析，请重新下载]") },
+              available.length ? runtimeText("google-media.media_files_are_attached_after_the_tool_result") : rejected
+                ? runtimeText("google-media.the_current_model_lacks_the_required_media_input_capability")
+                : runtimeText("google-media.previously_downloaded_temporary_media_has_been_cleaned_up_download")) },
           } });
           for (const media of available) {
             const localPart: GooglePart = {};
@@ -294,24 +295,24 @@ export async function prepareGooglePayload(payload: unknown, model: Model<any>, 
         } else rewrittenParts.push(part);
       } else rewrittenParts.push(part);
       if (inline && /^(?:audio|video)\//.test(inline.mimeType) && dataBytes(inline.data) >= LARGE_MEDIA_BYTES) {
-        if (!apiKey) throw new Error("Gemini 音视频上传需要 API Key");
+        if (!apiKey) throw runtimeError("google-media.gemini_audio_video_upload_requires_an_api_key", {});
         mediaUploads.push({ part, data: inline.data, name: `qone-${inline.mimeType.replace(/[^a-z0-9]+/gi, "-")}` });
       }
     }
     content.parts = rewrittenParts;
   }
   if (mediaUploads.length) {
-    if (!apiKey) throw new Error("Gemini 音视频上传需要 API Key");
+    if (!apiKey) throw runtimeError("google-media.gemini_audio_video_upload_requires_an_api_key", {});
     await Promise.all(mediaUploads.map(async ({ part, data, name }) => {
       const mimeType = part.inlineData!.mimeType;
       const file = await cachedUpload(model.baseUrl, apiKey, { mimeType, data, name }, signal);
-      if (!file.uri) throw new Error("Gemini 文件接口未返回文件 URI");
+      if (!file.uri) throw runtimeError("google-media.gemini_files_api_returned_no_file_uri", {});
       part.fileData = { mimeType, fileUri: file.uri };
       delete part.inlineData;
     }));
   }
   if (localUploads.length) {
-    if (!apiKey) throw new Error("Gemini 音视频上传需要 API Key");
+    if (!apiKey) throw runtimeError("google-media.gemini_audio_video_upload_requires_an_api_key", {});
     await Promise.all(localUploads.map(async ({ part, path, mimeType }) => {
       const file = await uploadLocalMedia(path, mimeType, model, apiKey, signal);
       part.fileData = { mimeType, fileUri: file.uri! };

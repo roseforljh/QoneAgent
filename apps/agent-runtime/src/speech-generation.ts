@@ -1,3 +1,4 @@
+import { runtimeError } from "./runtime-localization";
 import { modelBaseUrl, type ModelConfigInfo } from "@qone/protocol";
 
 export interface SpeechGenerationRequest {
@@ -24,32 +25,32 @@ function googleAudio(payload: unknown): Uint8Array {
     ? (step as { content: unknown[] }).content : []) as AudioData[];
   const audio = direct ?? [...parts].reverse().find((part) => part?.type === "audio");
   if (!audio || typeof audio.data !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(audio.data)) {
-    throw new Error("Gemini 语音接口未返回有效音频数据");
+    throw runtimeError("speech-generation.gemini_speech_api_returned_no_valid_audio_data", {});
   }
   const mimeType = audio.mime_type ?? audio.mimeType;
   if (mimeType && mimeType !== "audio/wav" && mimeType !== "audio/x-wav") {
-    throw new Error(`Gemini 语音接口返回了未接入的音频格式：${String(mimeType)}`);
+    throw runtimeError("speech-generation.gemini_speech_api_returned_an_unsupported_audio_format", { p0: String(mimeType) });
   }
   const bytes = Buffer.from(audio.data, "base64");
   if (bytes.toString("ascii", 0, 4) !== "RIFF" || bytes.toString("ascii", 8, 12) !== "WAVE") {
-    throw new Error("Gemini 语音接口返回的音频缺少 WAV 文件头");
+    throw runtimeError("speech-generation.audio_returned_by_the_gemini_speech_api_has_no", {});
   }
   return bytes;
 }
 
 /** The standard OpenAI-compatible text-to-speech wire format. */
 export async function generateSpeech(input: SpeechGenerationRequest): Promise<GeneratedSpeech> {
-  if (!input.text.trim()) throw new Error("语音生成缺少待朗读文本");
+  if (!input.text.trim()) throw runtimeError("speech-generation.speech_generation_requires_text_to_read_aloud", {});
   const settings = input.config.config as Record<string, unknown>;
   if (settings.apiType !== "openai-compatible" && settings.apiType !== "google") {
-    throw new Error("当前 API 格式尚未接入语音生成接口");
+    throw runtimeError("speech-generation.the_current_api_format_does_not_support_speech_generation", {});
   }
   const speechSettings = settings.speechGeneration && typeof settings.speechGeneration === "object"
     ? settings.speechGeneration as Record<string, unknown> : {};
   const voice = typeof speechSettings.voice === "string" ? speechSettings.voice.trim() : "";
-  if (!voice) throw new Error("语音生成需要在模型参数中填写 voice");
+  if (!voice) throw runtimeError("speech-generation.speech_generation_requires_a_voice_in_the_model_parameters", {});
   const base = modelBaseUrl(settings.apiType, String(settings.baseUrl ?? ""));
-  if (!base) throw new Error("语音生成模型缺少 API 地址");
+  if (!base) throw runtimeError("speech-generation.the_speech_generation_model_has_no_api_url", {});
   const url = new URL(base);
   if (settings.apiType === "google") {
     url.pathname = `${url.pathname.replace(/\/interactions\/?$/i, "").replace(/\/+$/, "")}/interactions`;
@@ -61,7 +62,7 @@ export async function generateSpeech(input: SpeechGenerationRequest): Promise<Ge
         response_format: { type: "audio" }, generation_config: { speech_config: [{ voice }] } }),
       signal: input.signal,
     });
-    if (!response.ok) throw new Error(`Gemini 语音接口 HTTP ${response.status}: ${(await response.text()).slice(0, 2_000)}`);
+    if (!response.ok) throw runtimeError("speech-generation.gemini_speech_api_http", { p0: response.status, p1: (await response.text()).slice(0, 2_000) });
     return { bytes: googleAudio(await response.json()), mimeType: "audio/wav", extension: "wav" };
   }
   url.pathname = `${url.pathname.replace(/\/(?:audio\/speech)\/?$/i, "").replace(/\/+$/, "")}/audio/speech`;
@@ -71,18 +72,18 @@ export async function generateSpeech(input: SpeechGenerationRequest): Promise<Ge
     body: JSON.stringify({ model: input.config.model, input: input.text, voice, response_format: "mp3" }),
     signal: input.signal,
   });
-  if (!response.ok) throw new Error(`语音生成接口 HTTP ${response.status}: ${(await response.text()).slice(0, 2_000)}`);
+  if (!response.ok) throw runtimeError("speech-generation.speech_generation_api_http", { p0: response.status, p1: (await response.text()).slice(0, 2_000) });
   if (/^(?:application\/json|text\/)/i.test(response.headers.get("content-type") ?? "")) {
-    throw new Error(`语音生成接口未返回音频：${(await response.text()).slice(0, 2_000)}`);
+    throw runtimeError("speech-generation.speech_generation_api_returned_no_audio", { p0: (await response.text()).slice(0, 2_000) });
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!bytes.length) throw new Error("语音生成接口没有返回音频数据");
+  if (!bytes.length) throw runtimeError("speech-generation.speech_generation_api_returned_no_audio_data", {});
   const returnedMime = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
   if (returnedMime === "audio/wav" || returnedMime === "audio/x-wav") {
     return { bytes, mimeType: "audio/wav", extension: "wav" };
   }
   if (returnedMime && returnedMime !== "audio/mpeg" && returnedMime !== "audio/mp3" && returnedMime !== "application/octet-stream") {
-    throw new Error(`语音生成接口返回了不支持的音频格式：${returnedMime}`);
+    throw runtimeError("speech-generation.speech_generation_api_returned_an_unsupported_audio_format", { p0: returnedMime });
   }
   return { bytes, mimeType: "audio/mpeg", extension: "mp3" };
 }

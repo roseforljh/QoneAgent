@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import { spawn } from "node:child_process";
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
@@ -14,7 +15,7 @@ function publicUrl(input: string): URL {
   const host = url.hostname.toLowerCase();
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !host.includes(".") ||
     host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || isIP(host) !== 0) {
-    throw new Error("只允许访问公开网站的 HTTP(S) 地址");
+    throw runtimeError("reach-public-tools.only_public_website_http_s_urls_are_allowed", {});
   }
   return url;
 }
@@ -28,7 +29,7 @@ function privateAddress(address: string): boolean {
 
 async function requirePublicResolution(url: URL): Promise<void> {
   const addresses = await lookup(url.hostname, { all: true });
-  if (!addresses.length || addresses.some(({ address }) => privateAddress(address))) throw new Error("网站解析到了私有网络地址");
+  if (!addresses.length || addresses.some(({ address }) => privateAddress(address))) throw runtimeError("reach-public-tools.the_website_resolved_to_a_private_network_address", {});
 }
 
 async function boundedFetch(url: URL, headers: Record<string, string> = {}): Promise<string> {
@@ -42,15 +43,15 @@ async function boundedFetch(url: URL, headers: Record<string, string> = {}): Pro
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");
-      if (!location) throw new Error("网站重定向缺少目标地址");
+      if (!location) throw runtimeError("reach-public-tools.the_website_redirect_has_no_target_url", {});
       const next = publicUrl(new URL(location, current).href);
-      if (carriesCredentials && next.origin !== current.origin) throw new Error("带有凭据的请求不能跨站重定向");
+      if (carriesCredentials && next.origin !== current.origin) throw runtimeError("reach-public-tools.requests_carrying_credentials_cannot_redirect_to_another_origin", {});
       current = next;
       continue;
     }
-    if (!response.ok) throw new Error(`网站请求失败：HTTP ${response.status}`);
+    if (!response.ok) throw runtimeError("reach-public-tools.website_request_failed_http", { p0: response.status });
     const length = Number(response.headers.get("content-length") ?? 0);
-    if (length > MAX_BYTES) throw new Error("网站响应过大");
+    if (length > MAX_BYTES) throw runtimeError("reach-public-tools.website_response_is_too_large", {});
     const reader = response.body?.getReader();
     if (!reader) return "";
     const chunks: Uint8Array[] = [];
@@ -60,18 +61,18 @@ async function boundedFetch(url: URL, headers: Record<string, string> = {}): Pro
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > MAX_BYTES) throw new Error("网站响应过大");
+        if (size > MAX_BYTES) throw runtimeError("reach-public-tools.website_response_is_too_large", {});
         chunks.push(value);
       }
     } finally { await reader.cancel().catch(() => undefined); }
     return new TextDecoder().decode(Buffer.concat(chunks));
   }
-  throw new Error("网站重定向次数过多");
+  throw runtimeError("reach-public-tools.too_many_website_redirects", {});
 }
 
 function output(value: unknown) {
   const body = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  return { content: [{ type: "text" as const, text: body.length > TEXT_LIMIT ? `${body.slice(0, TEXT_LIMIT)}\n[结果已截断]` : body }], details: undefined };
+  return { content: [{ type: "text" as const, text: body.length > TEXT_LIMIT ? runtimeText("reach-public-tools.result_truncated", { p0: body.slice(0, TEXT_LIMIT) }) : body }], details: undefined };
 }
 
 function list<T>(value: T | T[] | undefined): T[] { return value === undefined ? [] : Array.isArray(value) ? value : [value]; }
@@ -84,7 +85,7 @@ function textValue(value: unknown): string {
 export function parseFeed(xml: string, limit = 20): { title: string; url: string; published?: string; summary?: string }[] {
   const parsed = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@", processEntities: true }).parse(xml) as Record<string, any>;
   const root = parsed.rss?.channel ?? parsed.feed ?? parsed["rdf:RDF"];
-  if (!root) throw new Error("这不是有效的 RSS 或 Atom 订阅源");
+  if (!root) throw runtimeError("reach-public-tools.this_is_not_a_valid_rss_or_atom_feed", {});
   return list(root.item ?? root.entry).slice(0, Math.max(1, Math.min(limit, 50))).map((item: any) => {
     const link = typeof item.link === "string" ? item.link : list(item.link).find((entry: any) => entry?.["@rel"] === "alternate") ?? list(item.link)[0];
     return {
@@ -104,14 +105,14 @@ async function runCli(command: string, args: string[], timeout = 60_000): Promis
     const collect = (chunk: Buffer) => { size += chunk.byteLength; if (size <= MAX_BYTES) chunks.push(chunk.toString()); else child.kill(); };
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
-    const timer = setTimeout(() => { child.kill(); reject(new Error("工具执行超时")); }, timeout);
+    const timer = setTimeout(() => { child.kill(); reject(runtimeError("reach-public-tools.tool_execution_timed_out", {})); }, timeout);
     child.once("error", (error) => { clearTimeout(timer); reject(error); });
     child.once("close", (code) => {
       clearTimeout(timer);
       const body = chunks.join("").trim();
-      if (size > MAX_BYTES) reject(new Error("工具输出过大"));
+      if (size > MAX_BYTES) reject(runtimeError("reach-public-tools.tool_output_is_too_large", {}));
       else if (code === 0) resolve(body);
-      else reject(new Error(body || `工具退出码 ${code}`));
+      else reject(new Error(body || runtimeText("reach-public-tools.tool_exit_code", { p0: code })));
     });
   });
 }
@@ -136,7 +137,7 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       name: "qone_v2ex", label: "V2EX · public API", description: "Read V2EX hot/latest topics, a node, a topic, or its replies through the public API.",
       parameters: Type.Object({ kind: Type.Union([Type.Literal("hot"), Type.Literal("latest"), Type.Literal("node"), Type.Literal("topic"), Type.Literal("replies")]), value: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
       execute: async (_id, { kind, value, limit }: { kind: string; value?: string; limit?: number }) => {
-        if (["node", "topic", "replies"].includes(kind) && !value) throw new Error("缺少节点名或主题 ID");
+        if (["node", "topic", "replies"].includes(kind) && !value) throw runtimeError("reach-public-tools.a_node_name_or_topic_id_is_required", {});
         const endpoints: Record<string, string> = {
           hot: "/api/topics/hot.json", latest: "/api/topics/latest.json",
           node: `/api/topics/show.json?node_name=${encodeURIComponent(value ?? "")}`,
@@ -152,8 +153,8 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       parameters: Type.Object({ kind: Type.Union([Type.Literal("repo"), Type.Literal("issues"), Type.Literal("user"), Type.Literal("search")]), value: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
       execute: async (_id, { kind, value, limit }: { kind: string; value: string; limit?: number }) => {
         const slug = value.trim();
-        if (kind !== "search" && !/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?$/.test(slug)) throw new Error("GitHub 仓库或用户名无效");
-        if (["repo", "issues"].includes(kind) && slug.split("/").length !== 2) throw new Error("请输入 owner/repo");
+        if (kind !== "search" && !/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?$/.test(slug)) throw runtimeError("reach-public-tools.invalid_github_repository_or_username", {});
+        if (["repo", "issues"].includes(kind) && slug.split("/").length !== 2) throw runtimeError("reach-public-tools.enter_owner_repo", {});
         const routes: Record<string, string> = {
           repo: `/repos/${slug}`, issues: `/repos/${slug}/issues?per_page=${limit ?? 20}`,
           user: `/users/${slug}`, search: `/search/repositories?q=${encodeURIComponent(slug)}&per_page=${limit ?? 20}`,
@@ -172,18 +173,18 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
         const url = new URL("https://api.bilibili.com/x/web-interface/search/all/v2");
         url.searchParams.set("keyword", query); url.searchParams.set("page", "1");
         const data = JSON.parse(await boundedFetch(url, { Referer: "https://www.bilibili.com/" })) as { code?: number; message?: string; data?: { result?: { data?: unknown[] }[] } };
-        if (data.code !== 0) throw new Error(`B站搜索失败：${data.message ?? data.code}`);
+        if (data.code !== 0) throw runtimeError("reach-public-tools.bilibili_search_failed", { p0: data.message ?? data.code });
         return output((data.data?.result ?? []).flatMap((group) => group.data ?? []).slice(0, limit ?? 10));
       },
     },
     {
-      name: "qone_xueqiu", label: "雪球 · API", description: "Read Xueqiu stock quotes, stock search, or hot stocks through its API. Requires a Cookie configured in the application card.",
+      name: "qone_xueqiu", label: runtimeText("reach-public-tools.xueqiu_api"), description: "Read Xueqiu stock quotes, stock search, or hot stocks through its API. Requires a Cookie configured in the application card.",
       parameters: Type.Object({ kind: Type.Union([Type.Literal("quote"), Type.Literal("search"), Type.Literal("hot")]), value: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
       execute: async (_id, { kind, value, limit }: { kind: string; value?: string; limit?: number }) => {
         const cookie = options.xueqiuCookie?.();
-        if (!cookie) throw new Error("请先在应用页的雪球卡片配置 Cookie");
-        if (kind !== "hot" && !value?.trim()) throw new Error("请输入股票代码或搜索词");
-        if (kind === "quote" && !/^[A-Z0-9.]{2,20}$/i.test(value!)) throw new Error("股票代码格式无效");
+        if (!cookie) throw runtimeError("reach-public-tools.configure_a_cookie_in_the_xueqiu_card_on_the", {});
+        if (kind !== "hot" && !value?.trim()) throw runtimeError("reach-public-tools.enter_a_stock_symbol_or_search_term", {});
+        if (kind === "quote" && !/^[A-Z0-9.]{2,20}$/i.test(value!)) throw runtimeError("reach-public-tools.invalid_stock_symbol_format", {});
         const route = kind === "quote"
           ? `https://stock.xueqiu.com/v5/stock/quote.json?symbol=${encodeURIComponent(value!)}&extend=detail`
           : kind === "search"
@@ -198,12 +199,12 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       parameters: Type.Object({ kind: Type.Union([Type.Literal("search"), Type.Literal("video")]), value: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }),
       execute: async (_id, { kind, value, limit }: { kind: string; value: string; limit?: number }) => {
         const executable = options.ytDlp();
-        if (!executable) throw new Error("yt-dlp 尚不可用；请在应用页查看 YouTube 后端状态");
+        if (!executable) throw runtimeError("reach-public-tools.yt_dlp_is_unavailable_check_the_youtube_backend_status", {});
         let target = `ytsearch${limit ?? 5}:${value}`;
         if (kind === "video") {
           const url = publicUrl(value);
           const host = url.hostname.toLowerCase();
-          if (!["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"].includes(host)) throw new Error("YouTube 工具只接受 YouTube 视频地址");
+          if (!["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"].includes(host)) throw runtimeError("reach-public-tools.the_youtube_tool_only_accepts_youtube_video_urls", {});
           target = url.href;
         }
         return output(await runCli(executable, ["--no-playlist", "--dump-json", "--skip-download", target], 90_000));

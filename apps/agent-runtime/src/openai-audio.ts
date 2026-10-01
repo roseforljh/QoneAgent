@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,7 +24,7 @@ async function audioPart(data: Buffer | string, mimeType: string, signal?: Abort
     return { type: "input_audio", input_audio: { data: bytes.toString("base64"), format } };
   }
   const ffmpeg = ffmpegExecutable();
-  if (!ffmpeg) throw new Error(`Chat Completions 音频输入需要 MP3/WAV；转换 ${mimeType} 时未找到 FFmpeg`);
+  if (!ffmpeg) throw runtimeError("openai-audio.chat_completions_audio_input_requires_mp3_wav_ffmpeg_was", { p0: mimeType });
   const directory = await mkdtemp(path.join(tmpdir(), "qone-openai-audio-"));
   try {
     const source = typeof data === "string" ? data : path.join(directory, "input");
@@ -44,12 +45,12 @@ async function textParts(value: string, allowedInput: readonly string[], signal?
   for (const match of value.matchAll(MEDIA_MARKER)) {
     if (match.index! > offset) parts.push({ type: "text", text: value.slice(offset, match.index) });
     const media = verifiedLocalMedia(match[1]!, match[2]!);
-    if (!media) parts.push({ type: "text", text: "[先前会话的媒体引用已失效；请重新提供]" });
+    if (!media) parts.push({ type: "text", text: runtimeText("openai-audio.the_previous_session_s_media_reference_has_expired_provide") });
     else if (!media.mimeType.startsWith("audio/")) {
-      throw new Error("Chat Completions API 格式没有通用的原生视频文件输入；不能把下载路径当作视频内容发送");
-    } else if (!allowedInput.includes("audio")) parts.push({ type: "text", text: "[当前模型未配置音频输入能力；请委派子代理]" });
+      throw runtimeError("openai-audio.chat_completions_has_no_general_native_video_file_input", {});
+    } else if (!allowedInput.includes("audio")) parts.push({ type: "text", text: runtimeText("openai-audio.the_current_model_has_no_audio_input_capability_configured") });
     else if (!await stat(media.path).then((info) => info.isFile()).catch(() => false)) {
-      parts.push({ type: "text", text: "[媒体文件已清理或不存在；请重新提供]" });
+      parts.push({ type: "text", text: runtimeText("openai-audio.the_media_file_was_cleaned_up_or_is_missing") });
     } else {
       const part = await audioPart(media.path, media.mimeType, signal);
       audio.push(part);
@@ -81,7 +82,7 @@ export async function prepareOpenAICompletionsPayload(payload: unknown, allowedI
         messages.push(message);
       } else if (message.role === "tool") {
         toolAudio.push(...converted.audio);
-        messages.push({ ...message, content: converted.parts.filter((part) => part.type === "text").map((part) => part.text).join("") || "[音频已附于后续消息]" });
+        messages.push({ ...message, content: converted.parts.filter((part) => part.type === "text").map((part) => part.text).join("") || runtimeText("openai-audio.audio_is_attached_to_a_subsequent_message") });
       } else if (message.role === "user") {
         messages.push({ ...message, content: converted.parts });
       } else messages.push(message);
@@ -100,8 +101,8 @@ export async function prepareOpenAICompletionsPayload(payload: unknown, allowedI
         const url = (part.image_url as { url?: unknown } | undefined)?.url;
         const match = typeof url === "string" ? /^data:((?:audio|video)\/[^;,]+);base64,([A-Za-z0-9+/=]+)$/i.exec(url) : null;
         if (!match) next.push(part);
-        else if (match[1]!.startsWith("video/")) next.push({ type: "text", text: "[当前 API 格式未接通视频文件输入；请委派能处理视频的子代理]" });
-        else if (!allowedInput.includes("audio")) next.push({ type: "text", text: "[当前模型未配置音频输入能力；请委派子代理]" });
+        else if (match[1]!.startsWith("video/")) next.push({ type: "text", text: runtimeText("openai-audio.the_current_api_format_does_not_support_video_file") });
+        else if (!allowedInput.includes("audio")) next.push({ type: "text", text: runtimeText("openai-audio.the_current_model_has_no_audio_input_capability_configured") });
         else next.push(await audioPart(Buffer.from(match[2]!, "base64"), match[1]!, signal));
       } else next.push(part);
     }

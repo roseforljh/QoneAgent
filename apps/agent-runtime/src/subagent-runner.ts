@@ -1,3 +1,4 @@
+import { runtimeText } from "./runtime-localization";
 import { detectImageModel, type AssistantMessagePart, type MessageAttachmentInfo, type SubagentConfigInfo, type SubagentRunInfo } from "@qone/protocol";
 import type { RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
 import type { PiAdapter } from "./pi-adapter.js";
@@ -17,11 +18,13 @@ export interface SubagentController {
   workflow(parentSessionId: string, parentRunId: string, steps: SubagentWorkflowStep[], context?: { model?: string; permissionMode?: "ask" | "auto" | "full"; signal?: AbortSignal }): Promise<SubagentRunInfo[]>;
 }
 
-export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo, streams: Map<string, string>): SubagentRunInfo | undefined {
+type TextChunkBuffers = Map<string, string[]>;
+
+export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo, streams: TextChunkBuffers, liveParts?: AssistantMessagePart[]): SubagentRunInfo | undefined {
   const row = repo.get(runId);
   const run = runs.get(runId);
   if (!row || !run) return undefined;
-  const parts = JSON.parse(row.parts) as AssistantMessagePart[];
+  const parts = liveParts ?? JSON.parse(row.parts) as AssistantMessagePart[];
   return {
     id: runId, parentSessionId: row.parentSessionId, parentRunId: row.parentRunId,
     parentSubagentId: row.parentSubagentId ?? undefined, depth: row.depth ?? 0,
@@ -34,7 +37,7 @@ export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo
     status: run.status as SubagentRunInfo["status"],
     startedAt: run.startedAt ?? 0, completedAt: run.completedAt ?? undefined,
     content: row.content, parts,
-    streaming: streams.get(runId), error: run.error ?? undefined,
+    streaming: streams.get(runId)?.join(""), error: run.error ?? undefined,
     turnCount: row.turnCount ?? 1, retryCount: row.retryCount ?? 0,
     workflowId: row.workflowId ?? undefined, workflowStepId: row.workflowStepId ?? undefined,
     dependsOn: row.dependsOn ? JSON.parse(row.dependsOn) as string[] : undefined,
@@ -63,8 +66,8 @@ export function registerSubagentDispatcher(options: {
   partsByRun: Map<string, AssistantMessagePart[]>;
   messageSequenceByRun: Map<string, number>;
   assistantBuffers: Map<string, string>;
-  streamBuffers: Map<string, string>;
-  subagentStreams: Map<string, string>;
+  streamBuffers: TextChunkBuffers;
+  subagentStreams: TextChunkBuffers;
   activeSubagents: Set<string>;
   contextProvider?: (sessionId: string, limit: number) => string;
   subagentContextProvider?: (runId: string, limit: number) => string;
@@ -83,7 +86,7 @@ export function registerSubagentDispatcher(options: {
   const scheduler = new SubagentScheduler(() => policy().maxConcurrent);
   const yielding = new Map<string, { count: number; held: boolean }>();
 
-  const query = (id: string) => subagentInfo(id, repo, runRepo, subagentStreams);
+  const query = (id: string) => subagentInfo(id, repo, runRepo, subagentStreams, partsByRun.get(id));
   const requireInfo = (id: string) => {
     const info = query(id);
     if (!info) throw new Error(`Unknown subagent ${id}`);
@@ -228,7 +231,7 @@ export function registerSubagentDispatcher(options: {
       : options.contextProvider?.(parentSessionId, count) ?? "" : "";
     const prompt = buildSubagentPrompt(agent
       ? { id: agent.id, name: agent.name, instructions: agent.instructions }
-      : { id: "delegate", name: input.title, instructions: "完成委派任务；父级上下文仅供参考。" }, input.task, context);
+      : { id: "delegate", name: input.title, instructions: runtimeText("subagent-runner.complete_the_delegated_task_parent_context_is_provided_for") }, input.task, context);
     const inheritedAttachments = originalAttachments(parentSessionId, input.parentRunId);
     const attachments = input.mediaAttachment && !inheritedAttachments.some((item) => item.localPath === input.mediaAttachment?.localPath)
       ? [...inheritedAttachments, input.mediaAttachment] : inheritedAttachments;
@@ -331,7 +334,7 @@ export function registerSubagentDispatcher(options: {
         if ((action === "steer" || action === "follow_up") && !message?.trim()) throw new Error(`${action} requires a message`);
         if (action === "retry") repo.incrementRetry(id);
         const attachments = originalAttachments(row.parentSessionId, id);
-        await start(id, message?.trim() || (action === "retry" ? row.task : "继续完成之前的任务，并说明本轮新增结果。"), false, action !== "retry", undefined, attachments).done;
+        await start(id, message?.trim() || (action === "retry" ? row.task : runtimeText("subagent-runner.continue_the_previous_task_and_describe_the_new_results")), false, action !== "retry", undefined, attachments).done;
       }
       return requireInfo(id);
     },

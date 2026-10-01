@@ -1,3 +1,4 @@
+import { runtimeError } from "./runtime-localization";
 import { setTimeout as delay } from "node:timers/promises";
 import { modelBaseUrl } from "@qone/protocol";
 import type { GeneratedVideo, VideoGenerationRequest } from "./video-generation.js";
@@ -13,15 +14,15 @@ type VeoOperation = {
 };
 
 async function readOperation(response: Response): Promise<VeoOperation> {
-  if (!response.ok) throw new Error(`Google Veo 接口 HTTP ${response.status}: ${(await response.text()).slice(0, 2_000)}`);
+  if (!response.ok) throw runtimeError("google-video-generation.google_veo_api_http", { p0: response.status, p1: (await response.text()).slice(0, 2_000) });
   const result = await response.json() as VeoOperation;
-  if (!result || typeof result !== "object") throw new Error("Google Veo 接口返回格式无效");
+  if (!result || typeof result !== "object") throw runtimeError("google-video-generation.invalid_google_veo_api_response_format", {});
   return result;
 }
 
 function operationPath(name: unknown): string {
   if (typeof name !== "string" || !name.split("/").every((part) => part && part !== "." && part !== ".." && /^[\w.-]+$/.test(part))) {
-    throw new Error("Google Veo 接口未返回有效任务名称");
+    throw runtimeError("google-video-generation.google_veo_api_returned_no_valid_operation_name", {});
   }
   return name;
 }
@@ -32,7 +33,7 @@ export async function generateGoogleVideo(input: VideoGenerationRequest): Promis
   const videoSettings = settings.videoGeneration && typeof settings.videoGeneration === "object"
     ? settings.videoGeneration as Record<string, unknown> : {};
   const base = modelBaseUrl("google", String(videoSettings.baseUrl || settings.baseUrl || ""));
-  if (!base) throw new Error("Google Veo 模型缺少 API 地址");
+  if (!base) throw runtimeError("google-video-generation.the_google_veo_model_has_no_api_url", {});
   const baseUrl = new URL(base);
   const requestUrl = new URL(baseUrl);
   requestUrl.pathname = `${baseUrl.pathname.replace(/\/+$/, "")}/models/${encodeURIComponent(input.config.model)}:predictLongRunning`;
@@ -47,16 +48,16 @@ export async function generateGoogleVideo(input: VideoGenerationRequest): Promis
   statusUrl.pathname = `${baseUrl.pathname.replace(/\/+$/, "")}/${name}`;
   while (operation.done !== true) {
     input.signal.throwIfAborted();
-    if (operation.error) throw new Error(`Google Veo 视频生成失败：${JSON.stringify(operation.error)}`);
+    if (operation.error) throw runtimeError("google-video-generation.google_veo_video_generation_failed", { p0: JSON.stringify(operation.error) });
     await delay(input.pollIntervalMs ?? 10_000, undefined, { signal: input.signal });
     operation = await readOperation(await fetchImpl(statusUrl, { headers, signal: input.signal }));
   }
-  if (operation.error) throw new Error(`Google Veo 视频生成失败：${JSON.stringify(operation.error)}`);
+  if (operation.error) throw runtimeError("google-video-generation.google_veo_video_generation_failed", { p0: JSON.stringify(operation.error) });
   const uri = operation.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri
     ?? operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (typeof uri !== "string" || !uri) throw new Error("Google Veo 生成完成但未返回视频地址");
+  if (typeof uri !== "string" || !uri) throw runtimeError("google-video-generation.google_veo_finished_but_returned_no_video_url", {});
   let downloadUrl = new URL(uri, baseUrl);
-  if (!/^https?:$/.test(downloadUrl.protocol)) throw new Error("Google Veo 返回了不支持的下载地址");
+  if (!/^https?:$/.test(downloadUrl.protocol)) throw runtimeError("google-video-generation.google_veo_returned_an_unsupported_download_url", {});
   let response: Response | undefined;
   for (let redirect = 0; redirect <= 10; redirect++) {
     response = await fetchImpl(downloadUrl, {
@@ -65,18 +66,18 @@ export async function generateGoogleVideo(input: VideoGenerationRequest): Promis
     });
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
     const location = response.headers.get("location");
-    if (!location) throw new Error("Google Veo 视频下载重定向缺少地址");
+    if (!location) throw runtimeError("google-video-generation.google_veo_video_download_redirect_has_no_url", {});
     await response.body?.cancel();
     downloadUrl = new URL(location, downloadUrl);
-    if (!/^https?:$/.test(downloadUrl.protocol)) throw new Error("Google Veo 视频下载重定向地址无效");
+    if (!/^https?:$/.test(downloadUrl.protocol)) throw runtimeError("google-video-generation.invalid_google_veo_video_download_redirect_url", {});
     response = undefined;
   }
-  if (!response) throw new Error("Google Veo 视频下载重定向过多");
-  if (!response.ok) throw new Error(`Google Veo 视频下载 HTTP ${response.status}: ${(await response.text()).slice(0, 2_000)}`);
+  if (!response) throw runtimeError("google-video-generation.too_many_google_veo_video_download_redirects", {});
+  if (!response.ok) throw runtimeError("google-video-generation.google_veo_video_download_http", { p0: response.status, p1: (await response.text()).slice(0, 2_000) });
   const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
   if (contentType && contentType !== "video/mp4" && contentType !== "application/octet-stream") {
-    throw new Error(`Google Veo 视频下载返回了非 MP4 内容：${contentType}`);
+    throw runtimeError("google-video-generation.google_veo_video_download_returned_content_other_than_mp4", { p0: contentType });
   }
-  if (!response.body) throw new Error("Google Veo 视频下载没有返回文件");
+  if (!response.body) throw runtimeError("google-video-generation.google_veo_video_download_returned_no_file", {});
   return { stream: response.body, mimeType: "video/mp4", extension: "mp4" };
 }

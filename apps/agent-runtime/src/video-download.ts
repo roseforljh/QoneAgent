@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,9 +26,9 @@ export function mediaMimeType(filePath: string): string | undefined {
 /** Download only for the agent that will actually inspect the media. Caller owns cleanup. */
 async function downloadMedia(url: string, audioOnly: boolean, signal?: AbortSignal): Promise<DownloadedVideo> {
   const parsed = new URL(url);
-  if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("视频地址必须是 HTTP 或 HTTPS 链接");
+  if (!["http:", "https:"].includes(parsed.protocol)) throw runtimeError("video-download.the_video_url_must_use_http_or_https", {});
   const executable = ytDlpExecutable();
-  if (!executable) throw new Error("未找到 yt-dlp，无法下载视频");
+  if (!executable) throw runtimeError("video-download.yt_dlp_was_not_found_cannot_download_the_video", {});
   const directory = await mkdtemp(path.join(tmpdir(), audioOnly ? "qone-audio-download-" : "qone-video-"));
   try {
     const ffmpeg = ffmpegExecutable();
@@ -35,18 +36,18 @@ async function downloadMedia(url: string, audioOnly: boolean, signal?: AbortSign
       "--output", path.join(directory, "media.%(ext)s")];
     if (ffmpeg) args.push("--ffmpeg-location", path.dirname(ffmpeg));
     if (audioOnly) {
-      if (!ffmpeg) throw new Error("音频下载需要 FFmpeg 来生成通用 MP3 文件");
+      if (!ffmpeg) throw runtimeError("video-download.audio_download_requires_ffmpeg_to_create_a_standard_mp3", {});
       args.push("--format", "bestaudio", "--extract-audio", "--audio-format", "mp3");
     }
     args.push(url);
     const { stdout } = await execFileAsync(executable, args, { signal, windowsHide: true, maxBuffer: 1024 * 1024 });
     const filePath = stdout.trim().split(/\r?\n/).at(-1)?.trim();
-    if (!filePath || path.dirname(path.resolve(filePath)) !== path.resolve(directory)) throw new Error("yt-dlp 未返回下载文件路径");
+    if (!filePath || path.dirname(path.resolve(filePath)) !== path.resolve(directory)) throw runtimeError("video-download.yt_dlp_returned_no_downloaded_file_path", {});
     const info = await stat(filePath);
-    if (!info.isFile()) throw new Error("yt-dlp 未生成视频文件");
+    if (!info.isFile()) throw runtimeError("video-download.yt_dlp_did_not_create_a_video_file", {});
     const mimeType = audioOnly ? mediaMimeType(filePath) : videoMimeType(filePath);
     if (!mimeType || audioOnly && !mimeType.startsWith("audio/")) {
-      throw new Error(`无法识别下载的${audioOnly ? "音频" : "视频"}格式：${path.extname(filePath) || "无扩展名"}`);
+      throw runtimeError("video-download.could_not_identify_the_downloaded_format", { p0: audioOnly ? runtimeText("media-tool.audio") : runtimeText("media-tool.video"), p1: path.extname(filePath) || runtimeText("video-download.no_extension") });
     }
     return { path: filePath, mimeType, directory };
   } catch (error) {
@@ -66,15 +67,15 @@ export function downloadAudio(url: string, signal?: AbortSignal): Promise<Downlo
 /** Extract the sound track in the consuming audio agent, without downloading again. */
 export async function extractVideoAudio(filePath: string, signal?: AbortSignal): Promise<{ path: string; directory: string; mimeType: "audio/mp4" }> {
   const ffmpeg = ffmpegExecutable();
-  if (!ffmpeg) throw new Error("未找到 FFmpeg，无法从视频中提取音频");
+  if (!ffmpeg) throw runtimeError("video-download.ffmpeg_was_not_found_cannot_extract_audio_from_the", {});
   const info = await stat(filePath);
-  if (!info.isFile()) throw new Error("视频文件已不存在，无法提取音频");
+  if (!info.isFile()) throw runtimeError("video-download.the_video_file_no_longer_exists_cannot_extract_audio", {});
   const directory = await mkdtemp(path.join(tmpdir(), "qone-audio-"));
   const output = path.join(directory, "audio.m4a");
   try {
     await execFileAsync(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error", "-i", filePath,
       "-vn", "-c:a", "aac", output], { signal, windowsHide: true, maxBuffer: 1024 * 1024 });
-    if (!(await stat(output)).isFile()) throw new Error("FFmpeg 未生成音频文件");
+    if (!(await stat(output)).isFile()) throw runtimeError("video-download.ffmpeg_did_not_create_an_audio_file", {});
     return { path: output, directory, mimeType: "audio/mp4" };
   } catch (error) {
     await rm(directory, { recursive: true, force: true });

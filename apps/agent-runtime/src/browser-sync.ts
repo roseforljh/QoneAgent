@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
@@ -60,14 +61,14 @@ export function runOpenCli(args: string[], timeout = COMMAND_TIMEOUT, signal?: A
     });
     let stdout = "";
     let stderr = "";
-    const timer = timeout > 0 ? setTimeout(() => { child.kill(); reject(new Error("OpenCLI 操作超时")); }, timeout) : undefined;
+    const timer = timeout > 0 ? setTimeout(() => { child.kill(); reject(runtimeError("browser-sync.opencli_operation_timed_out", {})); }, timeout) : undefined;
     child.stdout.on("data", (chunk) => { stdout += String(chunk); });
     child.stderr.on("data", (chunk) => { stderr += String(chunk); });
     child.once("error", (error) => { if (timer) clearTimeout(timer); reject(error); });
     child.once("close", (code) => {
       if (timer) clearTimeout(timer);
       if (code === 0) resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
-      else reject(new OpenCliError((stderr || stdout || `OpenCLI 退出码 ${code}`).trim(), code));
+      else reject(new OpenCliError((stderr || stdout || runtimeText("browser-sync.opencli_exit_code", { p0: code })).trim(), code));
     });
   });
 }
@@ -88,13 +89,13 @@ export function bundledOpenCli(args: string[]): { command: string; args: string[
 }
 
 function result(value: CommandResult): { content: [{ type: "text"; text: string }] } {
-  const text = value.stdout || value.stderr || "完成";
-  return { content: [{ type: "text", text: text.length > MAX_TOOL_OUTPUT ? `${text.slice(0, MAX_TOOL_OUTPUT)}\n[输出已截断]` : text }] };
+  const text = value.stdout || value.stderr || runtimeText("browser-sync.done");
+  return { content: [{ type: "text", text: text.length > MAX_TOOL_OUTPUT ? runtimeText("browser-sync.output_truncated", { p0: text.slice(0, MAX_TOOL_OUTPUT) }) : text }] };
 }
 
 export function parseOpenCliCatalog(text: string): OpenCliCommand[] {
   const parsed: unknown = JSON.parse(text);
-  if (!Array.isArray(parsed)) throw new Error("OpenCLI 命令注册表格式无效");
+  if (!Array.isArray(parsed)) throw runtimeError("browser-sync.invalid_opencli_command_registry_format", {});
   return parsed.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const value = item as Record<string, unknown>;
@@ -145,7 +146,7 @@ export function buildOpenCliCommandArgs(value: {
   const site = value.site.trim();
   const command = value.command.trim();
   if (!/^[a-z0-9][a-z0-9_-]*$/i.test(site) || !/^[a-z0-9][a-z0-9_-]*$/i.test(command)) {
-    throw new Error("OpenCLI 的 site 和 command 只能包含字母、数字、下划线或短横线");
+    throw runtimeError("browser-sync.opencli_site_and_command_may_only_contain_letters_numbers", {});
   }
   const args = [...(value.args ?? [])];
   if (!hasCliOption(args, "--format", "-f")) args.push("--format", value.format ?? "json");
@@ -222,7 +223,7 @@ function chromeProfileDirectory(): string | undefined {
 
 function launchChrome(): Promise<void> {
   const executable = chromeExecutable();
-  if (!executable) throw new Error("未找到 Google Chrome，无法启动当前浏览器配置");
+  if (!executable) throw runtimeError("browser-sync.google_chrome_was_not_found_unable_to_launch_the", {});
   const profile = chromeProfileDirectory();
   const args = ["--new-window", "about:blank"];
   if (profile) args.unshift(`--profile-directory=${profile}`);
@@ -324,7 +325,7 @@ export class BrowserSyncService {
     if (!force && this.openCliCatalogPromise) return this.openCliCatalogPromise;
     const load = runOpenCli(["list", "--format", "json"]).then(({ stdout }) => {
       const commands = parseOpenCliCatalog(stdout);
-      if (!commands.length) throw new Error("OpenCLI 没有返回可用适配器命令");
+      if (!commands.length) throw runtimeError("browser-sync.opencli_returned_no_available_adapter_commands", {});
       this.openCliCatalog = { loadedAt: Date.now(), commands };
       return commands;
     });
@@ -355,7 +356,7 @@ export class BrowserSyncService {
       parameters: Type.Object({}),
       execute: async () => {
         await this.release();
-        return result({ stdout: "浏览器连接已释放；仅关闭了 Qone 自己启动的浏览器。", stderr: "" }) as never;
+        return result({ stdout: runtimeText("browser-sync.browser_connection_released_only_the_browser_started_by_qone"), stderr: "" }) as never;
       },
     } as ToolDefinition;
   }

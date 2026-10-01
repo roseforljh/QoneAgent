@@ -1,3 +1,4 @@
+import { runtimeError } from "./runtime-localization";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -32,15 +33,15 @@ export async function createLocalSkill(name: string, description: string, instru
   const normalizedName = name.trim().toLowerCase();
   const normalizedDescription = description.trim();
   const normalizedInstructions = instructions.trim();
-  if (!SKILL_NAME.test(normalizedName)) throw new Error("Skill 名称只能使用小写字母、数字和连字符");
-  if (!normalizedDescription) throw new Error("Skill 描述不能为空");
-  if (!normalizedInstructions) throw new Error("Skill 指令不能为空");
+  if (!SKILL_NAME.test(normalizedName)) throw runtimeError("skills.skill_names_may_only_contain_lowercase_letters_numbers_and", {});
+  if (!normalizedDescription) throw runtimeError("skills.the_skill_description_cannot_be_empty", {});
+  if (!normalizedInstructions) throw runtimeError("skills.the_skill_instructions_cannot_be_empty", {});
   const content = `---\nname: ${normalizedName}\ndescription: ${JSON.stringify(normalizedDescription.replace(/[\r\n]+/g, " "))}\n---\n\n${normalizedInstructions}\n`;
   return writeSkillContent(content, normalizedName);
 }
 
 async function writeSkillContent(content: string, expectedName?: string): Promise<SkillInfo> {
-  if (!content.trim() || Buffer.byteLength(content, "utf8") > MAX_SKILL_CONTENT_BYTES) throw new Error("Skill 文件为空或超过 2 MB");
+  if (!content.trim() || Buffer.byteLength(content, "utf8") > MAX_SKILL_CONTENT_BYTES) throw runtimeError("skills.the_skill_file_is_empty_or_exceeds_2_mb", {});
   const agentDir = qoneAgentDir();
   const skillsDir = path.join(agentDir, "skills");
   await mkdir(agentDir, { recursive: true });
@@ -57,11 +58,11 @@ async function writeSkillContent(content: string, expectedName?: string): Promis
     });
     await loaded.reload();
     const skill = loaded.getSkills().skills[0];
-    if (!skill || loaded.getSkills().skills.length !== 1) throw new Error("Skill 文件格式无效");
-    if (!SKILL_NAME.test(skill.name)) throw new Error("Skill 名称只能使用小写字母、数字和连字符");
-    if (expectedName && skill.name !== expectedName) throw new Error("Skill 名称与创建表单不一致");
+    if (!skill || loaded.getSkills().skills.length !== 1) throw runtimeError("skills.invalid_skill_file_format", {});
+    if (!SKILL_NAME.test(skill.name)) throw runtimeError("skills.skill_names_may_only_contain_lowercase_letters_numbers_and", {});
+    if (expectedName && skill.name !== expectedName) throw runtimeError("skills.the_skill_name_does_not_match_the_creation_form", {});
     const destination = path.join(skillsDir, skill.name);
-    if (existsSync(destination)) throw new Error(`Skill ${skill.name} 已安装`);
+    if (existsSync(destination)) throw runtimeError("skill-catalog.skill_is_already_installed", { p0: skill.name });
     await mkdir(skillsDir, { recursive: true });
     await rename(staging, destination);
     return { id: skill.name, name: skill.name, description: skill.description, path: path.join(destination, "SKILL.md") };

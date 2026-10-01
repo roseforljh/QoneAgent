@@ -9,7 +9,7 @@ export const sessions = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("idx_sessions_workspace").on(t.workspaceId)]
+  (t) => [index("idx_sessions_workspace").on(t.workspaceId), index("idx_sessions_updated").on(t.updatedAt)]
 );
 
 export const messages = sqliteTable(
@@ -29,7 +29,7 @@ export const messages = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("idx_messages_session").on(t.sessionId)]
+  (t) => [index("idx_messages_session").on(t.sessionId), index("idx_messages_session_created").on(t.sessionId, t.createdAt)]
 );
 
 export const runs = sqliteTable(
@@ -76,7 +76,7 @@ export const subagentRuns = sqliteTable("subagent_runs", {
   contextMode: text("context_mode").notNull().default("snapshot"),
   contextMessageCount: integer("context_message_count").notNull().default(0),
   tokenUsage: text("token_usage"),
-});
+}, (t) => [index("idx_subagent_runs_parent").on(t.parentSessionId, t.parentRunId)]);
 
 export const subagentMessages = sqliteTable("subagent_messages", {
   id: text("id").primaryKey(),

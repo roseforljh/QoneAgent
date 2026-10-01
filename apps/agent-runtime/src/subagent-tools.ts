@@ -1,3 +1,4 @@
+import { runtimeError } from "./runtime-localization";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { RunPermissionMode } from "@qone/protocol";
@@ -130,9 +131,9 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       const input = params as SubagentSelection & { title: string; task: string; mediaPath?: string; background?: boolean };
       const parentRunId = options.parentRunId();
       if (!parentRunId || !options.delegate) throw new Error("No active parent run");
-      if (input.mediaPath && input.background) throw new Error("传递临时视频文件的子代理必须等待完成，不能在后台运行");
+      if (input.mediaPath && input.background) throw runtimeError("subagent-tools.a_subagent_receiving_a_temporary_video_file_must_wait", {});
       const mediaMimeType = input.mediaPath ? options.mediaMimeType(parentRunId, input.mediaPath) : undefined;
-      if (input.mediaPath && !mediaMimeType) throw new Error("mediaPath 必须是当前子代理刚取得的媒体路径");
+      if (input.mediaPath && !mediaMimeType) throw runtimeError("subagent-tools.mediapath_must_be_a_media_path_just_retrieved_by", {});
       const result = await options.delegate({
         parentSessionId: eventSessionId, parentRunId, parentSubagentId: subagentRunId, depth: subagentDepth + 1, toolCallId,
         title: input.title.trim(), task: input.task.trim(), subagentId: input.subagentId, capability: input.capability,

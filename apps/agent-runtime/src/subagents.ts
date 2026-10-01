@@ -1,4 +1,5 @@
-import { builtinSubagentId, builtinSubagentLogo, CAPABILITY_IDS, DEFAULT_SUBAGENT_RUNTIME, isBuiltinSubagentId, REMOVED_BUILTIN_SUBAGENT_IDS, SUBAGENT_LOGO_IDS, type CapabilityId, type CapabilityRouting, type SubagentConfigInfo, type SubagentProfileInfo, type SubagentRuntimeConfig, type RunPermissionMode } from "@qone/protocol";
+import { runtimeText } from "./runtime-localization";
+import { isRuntimeMessageKey, builtinSubagentId, builtinSubagentLogo, CAPABILITY_IDS, DEFAULT_SUBAGENT_RUNTIME, isBuiltinSubagentId, REMOVED_BUILTIN_SUBAGENT_IDS, SUBAGENT_LOGO_IDS, type CapabilityId, type CapabilityRouting, type SubagentConfigInfo, type SubagentProfileInfo, type SubagentRuntimeConfig, type RunPermissionMode } from "@qone/protocol";
 
 export interface ResolvedSubagent {
   id: string;
@@ -10,22 +11,6 @@ export interface ResolvedSubagent {
   tools?: string[];
   permissionMode?: RunPermissionMode;
 }
-
-const capabilityInstructions: Record<CapabilityId, string> = {
-  videoRecognition: "你负责视频内容识别。读取用户提供的视频或相关文件，提取时间线、画面、字幕和声音中的关键信息，按用户要求给出结构化结论。无法读取的媒体必须明确说明。",
-  imageGeneration: "你负责图像生成。理解用户要生成的画面内容、风格和用途，并调用可用的图像生成能力完成；如果当前模型不能产出图像，要清楚说明限制。",
-  videoGeneration: "你负责视频生成。按用户要求生成视频，说明实际使用的生成能力，并返回可访问的结果。当前 API 格式没有可用的视频生成接口时必须明确报错，不得把文字描述冒充生成结果。",
-  stt: "你负责语音转文字。识别用户提供的音频内容，尽量保留说话人、时间顺序和原话；听不清的部分用标记说明，不要臆造。",
-  tts: "你负责文字转语音。父代理委派给语音模型时，任务文本应只包含需要朗读的原文；声线由模型参数中的 voice 决定。生成后返回可访问的文件结果；如果当前 API 格式不能产出音频，要清楚说明限制。",
-};
-
-const capabilityNames: Record<CapabilityId, string> = {
-  videoRecognition: "视频识别",
-  imageGeneration: "图像生成",
-  videoGeneration: "视频生成",
-  stt: "语音转文字",
-  tts: "文字转语音",
-};
 
 function routeTarget(routing: CapabilityRouting, capability: CapabilityId): string | undefined {
   const value = routing[capability]?.trim();
@@ -41,6 +26,8 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
     return [{
       id: profile.id.slice(0, 128), name: profile.name.trim().slice(0, 120),
       instructions: profile.instructions.trim().slice(0, 32_000), modelId: profile.modelId,
+      nameKey: isRuntimeMessageKey(profile.nameKey) ? profile.nameKey : undefined,
+      instructionsKey: isRuntimeMessageKey(profile.instructionsKey) ? profile.instructionsKey : undefined,
       logo: typeof profile.logo === "string" ? profile.logo.trim().slice(0, 64) || undefined : undefined,
       tools: Array.isArray(profile.tools) ? profile.tools.filter((tool): tool is string => typeof tool === "string").slice(0, 100) : undefined,
       permissionMode: profile.permissionMode === "auto" || profile.permissionMode === "full" ? profile.permissionMode : "ask",
@@ -76,12 +63,14 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
       ? profiles.find((profile) => profile.id === legacyRoute.slice("subagent:".length))
       : undefined;
     const routeInstructions = legacyRoute?.startsWith("mcp:")
-      ? "\n\n本次任务优先使用 MCP " + legacyRoute.slice("mcp:".length) + " 提供的工具。"
+      ? "\n\n" + runtimeText("subagent.mcpPriority", { p0: legacyRoute.slice("mcp:".length) })
       : "";
     return {
       id,
-      name: legacyProfile?.name ?? capabilityNames[capability],
-      instructions: legacyProfile?.instructions ?? capabilityInstructions[capability] + routeInstructions,
+      name: legacyProfile?.name ?? runtimeText(`subagent.name.${capability}`),
+      nameKey: legacyProfile ? legacyProfile.nameKey : `subagent.name.${capability}`,
+      instructions: legacyProfile?.instructions ?? runtimeText(`subagent.instructions.${capability}`) + routeInstructions,
+      instructionsKey: legacyProfile ? legacyProfile.instructionsKey : routeInstructions ? undefined : `subagent.instructions.${capability}`,
       modelId: legacyProfile?.modelId ?? (legacyRoute?.startsWith("model:") ? legacyRoute.slice("model:".length) : ""),
       logo: builtinSubagentLogo(capability),
       tools: legacyProfile?.tools,
@@ -127,7 +116,7 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
 /** The subagent the user configured for a capability, or undefined when nothing is configured. */
 export function resolveSubagent(config: SubagentConfigInfo, capability: CapabilityId): ResolvedSubagent | undefined {
   const builtin = config.profiles.find((item) => item.id === builtinSubagentId(capability) && item.enabled);
-  if (builtin) return { id: builtin.id, name: builtin.name, instructions: builtin.instructions, modelId: builtin.modelId || undefined, tools: builtin.tools, permissionMode: builtin.permissionMode, route: "subagent:" + builtin.id };
+  if (builtin) return { id: builtin.id, name: builtin.nameKey ? runtimeText(builtin.nameKey) : builtin.name, instructions: builtin.instructionsKey ? runtimeText(builtin.instructionsKey) : builtin.instructions, modelId: builtin.modelId || undefined, tools: builtin.tools, permissionMode: builtin.permissionMode, route: "subagent:" + builtin.id };
   const route = routeTarget(config.routing, capability);
   if (!route) return undefined;
   if (route.startsWith("subagent:")) {
@@ -138,7 +127,7 @@ export function resolveSubagent(config: SubagentConfigInfo, capability: Capabili
   return {
     id: `capability:${capability}`,
     name: `${capability} capability agent`,
-    instructions: [capabilityInstructions[capability], mcpServerId ? `本次任务优先使用 MCP ${mcpServerId} 提供的工具。` : ""].filter(Boolean).join("\n\n"),
+    instructions: [runtimeText(`subagent.instructions.${capability}`), mcpServerId ? runtimeText("subagent.mcpPriority", { p0: mcpServerId }) : ""].filter(Boolean).join("\n\n"),
     modelId: route.startsWith("model:") ? route.slice("model:".length) : undefined,
     route,
     mcpServerId,
@@ -150,8 +139,8 @@ export function subagentCatalog(config: SubagentConfigInfo) {
   return {
     temporary: {
       id: "temporary",
-      name: "临时通用代理",
-      description: '处理普通代码审查、文件分析、研究和其他不需要专门媒体能力的独立任务。调用 dispatch_subagent 或工作流步骤时明确设置 capability="temporary"，subagentId 留空。',
+      name: runtimeText("subagent.temporaryName"),
+      description: runtimeText("subagent.temporaryDescription"),
       selection: { capability: "temporary" as const },
       model: config.runtime.temporaryModelId || "follow-parent-model",
     },
@@ -160,7 +149,7 @@ export function subagentCatalog(config: SubagentConfigInfo) {
       return agent ? [{ capability, selection: { capability }, name: agent.name, description: agent.instructions, model: agent.modelId, route: agent.route }] : [];
     }),
     unconfiguredCapabilities: CAPABILITY_IDS.filter((capability) => !resolveSubagent(config, capability)),
-    profiles: config.profiles.filter((profile) => profile.enabled).map((profile) => ({ id: profile.id, selection: { subagentId: profile.id, capability: null }, name: profile.name, instructions: profile.instructions.slice(0, 500) })),
+    profiles: config.profiles.filter((profile) => profile.enabled).map((profile) => ({ id: profile.id, selection: { subagentId: profile.id, capability: null }, name: profile.nameKey ? runtimeText(profile.nameKey) : profile.name, instructions: (profile.instructionsKey ? runtimeText(profile.instructionsKey) : profile.instructions).slice(0, 500) })),
   };
 }
 

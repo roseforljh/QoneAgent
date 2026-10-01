@@ -1,3 +1,4 @@
+import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,13 +16,13 @@ const AUDIO_MIME: Record<string, string> = {
 
 export function bilibiliCliResultText(stdout: string): string {
   const text = stdout.trim();
-  if (!text) throw new Error("bilibili-cli 未返回资料");
+  if (!text) throw runtimeError("bilibili-fallback.bilibili_cli_returned_no_data", {});
   let value: unknown;
-  try { value = JSON.parse(text); } catch { throw new Error("bilibili-cli 未返回有效 JSON"); }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("bilibili-cli 返回格式无效");
+  try { value = JSON.parse(text); } catch { throw runtimeError("bilibili-fallback.bilibili_cli_returned_invalid_json", {}); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw runtimeError("bilibili-fallback.invalid_bilibili_cli_response_format", {});
   const envelope = value as Record<string, unknown>;
   if (envelope.ok === false) {
-    throw new Error(`bilibili-cli 获取资料失败：${JSON.stringify(envelope.error ?? envelope)}`);
+    throw runtimeError("bilibili-fallback.bilibili_cli_failed_to_retrieve_data", { p0: JSON.stringify(envelope.error ?? envelope) });
   }
   return text;
 }
@@ -65,7 +66,7 @@ export interface BilibiliFallbackResult {
 
 /** These sources provide partial evidence only; the caller must label the result as degraded. */
 export async function readBilibiliFallback(url: string, signal?: AbortSignal): Promise<BilibiliFallbackResult> {
-  if (!isBilibiliUrl(url)) throw new Error("不是 B 站视频链接");
+  if (!isBilibiliUrl(url)) throw runtimeError("bilibili-fallback.this_is_not_a_bilibili_video_url", {});
   const bvid = /\bBV[A-Za-z0-9]+\b/i.exec(url)?.[0];
   const reference = bvid ?? url;
   const launch = biliLaunch();
@@ -99,7 +100,7 @@ export async function readBilibiliFallback(url: string, signal?: AbortSignal): P
       errors.push(`bilibili-cli: ${String(error)}`);
     }
   } else {
-    errors.push("bilibili-cli 未安装");
+    errors.push(runtimeText("bilibili-fallback.bilibili_cli_is_not_installed"));
   }
   const parts: string[] = [];
   for (const command of ["subtitle", "summary"] as const) {
@@ -111,6 +112,6 @@ export async function readBilibiliFallback(url: string, signal?: AbortSignal): P
       errors.push(`OpenCLI ${command}: ${String(error)}`);
     }
   }
-  if (!parts.length) throw new Error(`无法取得 B 站完整视频、字幕、音频或摘要。${errors.join("；")}`);
+  if (!parts.length) throw runtimeError("bilibili-fallback.could_not_retrieve_the_full_bilibili_video_subtitles_audio", { p0: errors.join("；") });
   return { source: "OpenCLI", text: parts.join("\n\n") };
 }

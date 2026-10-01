@@ -1,3 +1,4 @@
+import { runtimeText, withRuntimeLocale, runtimeErrorInfo } from "./runtime-localization";
 import { CompactionPositions } from "./compaction-position.js";
 import { repeatedUserMessageId } from "@qone/protocol";
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
@@ -21,9 +22,11 @@ import { listReachChannels, ytDlpExecutable } from "./reach-channels.js";
 import { configurePodcast, podcastConfigured } from "./reach-podcast.js";
 import { createPodcastTools } from "./reach-podcast-tools.js";
 import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } from "./workspace.js";
+import { readFilePreview } from "./file-preview.js";
 import { normalizeSubagentConfig } from "./subagents.js";
 import { restoreCompactedContext, type SessionCompactionCheckpoint } from "./session-compaction.js";
 import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
+import { createSubagentPublisher } from "./subagent-publisher.js";
 import { generatedSessionTitle, provisionalSessionTitle } from "./session-title.js";
 import { ensureGlobalInstructions, globalInstructionsDirectory, globalInstructionsPath, readGlobalInstructions, writeGlobalInstructions } from "./global-instructions.js";
 
@@ -82,9 +85,13 @@ const skillRepo = new SkillRepo(db);
 const eventJournal = new SequencedEventJournal<AgentEvent>(settingsRepo.get<number>("event.sequence") ?? 0);
 eventJournal.restore(eventRepo.list());
 const pendingEvents: AgentEvent[] = [];
-const subagentStreams = new Map<string, string>();
+const subagentStreams = new Map<string, string[]>();
 const activeSubagents = new Set<string>();
-const subagentPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const subagentPublisher = createSubagentPublisher({
+  load: (id) => subagentInfo(id, subagentRunRepo, runRepo, subagentStreams, assistantPartsByRun.get(id)),
+  send,
+  intervalMs: 32,
+});
 let subagentController: ReturnType<typeof registerSubagentDispatcher>;
 function readTokenUsage(value: unknown) {
   const usage = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -97,15 +104,7 @@ function readTokenUsage(value: unknown) {
   return { input, output, cacheRead, cacheWrite, total: input + output + cacheRead + cacheWrite || reportedTotal, cost: Number(usage.totalCost ?? cost.total ?? usage.cost ?? 0) || 0 };
 }
 function publishSubagent(runId: string) {
-  const timer = subagentPublishTimers.get(runId);
-  if (timer) clearTimeout(timer);
-  subagentPublishTimers.delete(runId);
-  const subagent = subagentInfo(runId, subagentRunRepo, runRepo, subagentStreams);
-  if (subagent) send({ type: "subagent.updated", subagent });
-}
-function scheduleSubagentPublish(runId: string) {
-  if (subagentPublishTimers.has(runId)) return;
-  subagentPublishTimers.set(runId, setTimeout(() => publishSubagent(runId), 32));
+  subagentPublisher.publish(runId);
 }
 let eventFlushTimer: ReturnType<typeof setTimeout> | undefined;
 const flushEvents = () => {
@@ -161,6 +160,8 @@ eventBus.subscribe((busEvent) => {
         assistantMessageSequenceByRun.delete(agentEvent.runId);
       } else if (agentEvent.type === "message.reasoning.delta") {
         assistantPartsByRun.set(agentEvent.runId, applyReasoningDelta(parts, agentEvent.payload, completedMessageSequence));
+      } else if (agentEvent.type === "message.block.completed" && (agentEvent.payload as { blockType?: string }).blockType === "reasoning") {
+        assistantPartsByRun.set(agentEvent.runId, applyReasoningDelta(parts, { ...(agentEvent.payload as object), complete: true }, completedMessageSequence));
       } else if (agentEvent.type === "tool.started" || agentEvent.type === "tool.completed" || agentEvent.type === "tool.failed") {
         assistantPartsByRun.set(agentEvent.runId, applyAssistantToolEvent(parts, agentEvent.type, agentEvent.payload));
       }
@@ -175,7 +176,9 @@ eventBus.subscribe((busEvent) => {
         }
       }
       if (agentEvent.type === "message.delta" && typeof (agentEvent.payload as { delta?: unknown }).delta === "string") {
-        subagentStreams.set(agentEvent.runId, (subagentStreams.get(agentEvent.runId) ?? "") + (agentEvent.payload as { delta: string }).delta);
+        const chunks = subagentStreams.get(agentEvent.runId);
+        if (chunks) chunks.push((agentEvent.payload as { delta: string }).delta);
+        else subagentStreams.set(agentEvent.runId, [(agentEvent.payload as { delta: string }).delta]);
       }
       if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string } }).message?.role === "assistant") {
         subagentStreams.delete(agentEvent.runId);
@@ -185,8 +188,15 @@ eventBus.subscribe((busEvent) => {
         subagentRunRepo.save(agentEvent.runId, assistantBuffers.get(agentEvent.runId) ?? "", parts);
       }
       subagentController?.recordEvent(agentEvent.runId, agentEvent.type, agentEvent.payload, completedMessageSequence);
-      if (agentEvent.type === "message.delta" || agentEvent.type === "message.reasoning.delta") scheduleSubagentPublish(agentEvent.runId);
-      else publishSubagent(agentEvent.runId);
+      if (agentEvent.type === "message.delta" && typeof (agentEvent.payload as { delta?: unknown }).delta === "string") {
+        subagentPublisher.append(agentEvent.runId, (agentEvent.payload as { delta: string }).delta);
+      } else if (agentEvent.type === "message.reasoning.delta" || (agentEvent.type === "message.block.completed" && (agentEvent.payload as { blockType?: string }).blockType === "reasoning")) {
+        const payload = agentEvent.payload as { delta?: unknown; contentIndex?: number };
+        subagentPublisher.appendReasoning(agentEvent.runId, {
+          delta: typeof payload.delta === "string" ? payload.delta : "", contentIndex: payload.contentIndex,
+          messageSequence: completedMessageSequence, ...(agentEvent.type === "message.block.completed" ? { complete: true } : {}),
+        });
+      } else if (agentEvent.type !== "message.delta") publishSubagent(agentEvent.runId);
     }
   }
   queueEventPersistence(agentEvent);
@@ -215,7 +225,7 @@ eventBus.subscribe((busEvent) => {
 });
 const assistantBuffers = new Map<string, string>();
 // Raw streamed deltas per run; survives aborts so partial answers can be saved.
-const assistantStreamBuffers = new Map<string, string>();
+const assistantStreamBuffers = new Map<string, string[]>();
 const assistantPartsByRun = new Map<string, AssistantMessagePart[]>();
 const assistantMessageSequenceByRun = new Map<string, number>();
 const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }>>();
@@ -230,7 +240,7 @@ const goalContinuationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // Persist whatever the run produced so far (final text, streamed deltas, tool parts).
 function persistPartialAssistant(sessionId: string, runId: string, model?: string) {
   const parts = assistantPartsByRun.get(runId) ?? [];
-  const streamText = assistantStreamBuffers.get(runId)?.trim() ?? "";
+  const streamText = assistantStreamBuffers.get(runId)?.join("").trim() ?? "";
   const partsText = parts
     .filter((part): part is Extract<AssistantMessagePart, { type: "text" }> => part.type === "text")
     .map((part) => part.text)
@@ -295,7 +305,11 @@ const adapter = new PiAdapter((event) => eventBus.emit({
     if (content.trim()) assistantBuffers.set(runId, content);
   },
   onMessage: (_sessionId, runId, role, delta) => {
-    if (role === "assistant") assistantStreamBuffers.set(runId, (assistantStreamBuffers.get(runId) ?? "") + delta);
+    if (role === "assistant") {
+      const chunks = assistantStreamBuffers.get(runId);
+      if (chunks) chunks.push(delta);
+      else assistantStreamBuffers.set(runId, [delta]);
+    }
   },
   onTool: (sessionId, runId, phase, name, args, result, toolCallId) => {
     if (phase === "start") {
@@ -416,7 +430,7 @@ const mcp = new McpManager(async (serverId, token) => {
     } catch (error) {
       log.warn("MCP OAuth reconnect failed", { serverId, err: String(error) });
       const requestId = pendingMcpAuthRequests.get(serverId);
-      if (requestId) send({ type: "error", requestId, message: String(error) });
+      if (requestId) send({ type: "error", requestId, ...runtimeErrorInfo(error) });
       pendingMcpAuthRequests.delete(serverId);
     }
   }
@@ -427,7 +441,7 @@ const mcp = new McpManager(async (serverId, token) => {
 }, (serverId, error) => {
   const requestId = pendingMcpAuthRequests.get(serverId);
   pendingMcpAuthRequests.delete(serverId);
-  if (requestId) send({ type: "error", requestId, message: error.message });
+  if (requestId) send({ type: "error", requestId, ...runtimeErrorInfo(error) });
 }, (key) => runtimeSecrets.get(key), async (config) => {
   const key = config.oauth?.tokenSecretKey ?? `mcp.oauth:${config.id}`;
   runtimeSecrets.delete(key);
@@ -545,22 +559,17 @@ function sendMessages(sessionId: string) {
 function searchSessions(query: string): SessionSearchResult[] {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return [];
-  const workspaceIds = new Set(workspaceRepo.list().map((workspace) => workspace.id));
   const results: SessionSearchResult[] = [];
-  for (const session of sessionRepo.list()) {
-    if (!session.workspaceId || !workspaceIds.has(session.workspaceId)) continue;
-    if (session.title.toLocaleLowerCase().includes(needle)) {
-      results.push({ session: toInfo(session), match: "title" });
-    } else {
-      const message = messageRepo.listBySession(session.id).find((item) => item.content.toLocaleLowerCase().includes(needle));
-      if (!message) continue;
-      const content = message.content.replace(/\s+/g, " ").trim();
-      const matchIndex = content.toLocaleLowerCase().indexOf(needle);
-      const start = Math.max(0, matchIndex - 48);
-      const end = Math.min(content.length, matchIndex + needle.length + 96);
-      results.push({ session: toInfo(session), match: "content", snippet: `${start > 0 ? "…" : ""}${content.slice(start, end)}${end < content.length ? "…" : ""}` });
+  for (const result of sessionRepo.search(query, 50)) {
+    if (result.match === "title") {
+      results.push({ session: toInfo(result.session), match: "title" });
+      continue;
     }
-    if (results.length >= 50) break;
+    const content = result.content?.replace(/\s+/g, " ").trim() ?? "";
+    const matchIndex = content.toLocaleLowerCase().indexOf(needle);
+    const start = Math.max(0, matchIndex - 48);
+    const end = Math.min(content.length, matchIndex + needle.length + 96);
+    results.push({ session: toInfo(result.session), match: "content", snippet: `${start > 0 ? "…" : ""}${content.slice(start, end)}${end < content.length ? "…" : ""}` });
   }
   return results;
 }
@@ -620,6 +629,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           "workspace.git",
           "workspace.gitDiff",
           "file.read",
+          "file.preview",
           "browser.connect",
           "reach.channels",
           "reach.podcast.configure",
@@ -684,7 +694,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       try {
         send({ type: "session.renamed", session: toInfo(sessionRepo.rename(cmd.sessionId, cmd.title)) });
       } catch (error) {
-        send({ type: "error", requestId: cmd.requestId, message: String(error) });
+        send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
       }
       return;
     }
@@ -892,7 +902,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       try {
         send({ type: "workspace.renamed", workspace: workspaceRepo.rename(cmd.workspaceId, cmd.name) as WorkspaceInfo });
       } catch (error) {
-        send({ type: "error", requestId: cmd.requestId, message: String(error) });
+        send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
       }
       return;
     }
@@ -906,6 +916,12 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       send({ type: "workspace.deleted", workspaceId: cmd.workspaceId });
       return;
 
+    case "file.preview": {
+      const workspace = cmd.workspaceId ? workspaceRepo.get(cmd.workspaceId) : undefined;
+      if (cmd.workspaceId && !workspace) throw new Error("Unknown workspace");
+      send({ type: cmd.type, requestId: cmd.requestId, workspaceId: cmd.workspaceId, path: cmd.path, file: await readFilePreview(cmd.path, workspace?.path, cmd.full) });
+      return;
+    }
     case "workspace.files":
     case "workspace.git":
     case "workspace.gitDiff":
@@ -946,7 +962,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         await adapter.refreshSkills();
         send({ type: "global-prompt", requestId: cmd.requestId, content: cmd.content, path: globalInstructionsPath(), directory: globalInstructionsDirectory() });
       } catch (error) {
-        send({ type: "error", requestId: cmd.requestId, message: `保存 Qone.md 失败：${String(error)}` });
+        send({ type: "error", requestId: cmd.requestId, message: runtimeText("index.failed_to_save_qone_md", { p0: String(error) }) });
       }
       return;
 
@@ -1020,7 +1036,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         const subagent = await subagentController.control(cmd.runId, cmd.action, cmd.message);
         send({ type: "subagent.controlled", requestId: cmd.requestId, subagent });
       } catch (error) {
-        send({ type: "error", requestId: cmd.requestId, message: String(error) });
+        send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
       }
       return;
     }
@@ -1076,7 +1092,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
             void device.completion.catch((error) => {
               if (pendingMcpAuthRequests.get(cmd.config.id) !== cmd.requestId) return;
               pendingMcpAuthRequests.delete(cmd.config.id);
-              send({ type: "error", requestId: cmd.requestId, message: String(error) });
+              send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
             });
             return;
           }
@@ -1174,7 +1190,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       }
       const history = messageRepo.listBySession(cmd.sessionId);
       if (!history.length) {
-        send({ type: "error", requestId: cmd.requestId, message: "没有可压缩的会话内容" });
+        send({ type: "error", requestId: cmd.requestId, message: runtimeText("index.there_is_no_session_content_to_compact") });
         return;
       }
       try {
@@ -1211,7 +1227,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         const usage = await adapter.getContextUsage(cmd.sessionId, cwd, cmd.model);
         send({ type: "session.context", requestId: cmd.requestId, sessionId: cmd.sessionId, model: cmd.model, ...usage });
       } catch (error) {
-        send({ type: "error", requestId: cmd.requestId, message: error instanceof Error ? error.message : String(error) });
+        send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
       }
       return;
     }
@@ -1381,7 +1397,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           await generatedArtifacts.removeRuns(cmd.sessionId, [...removedRunIds]);
           eventJournal.restore(eventRepo.list());
         } catch (error) {
-          send({ type: "error", requestId: cmd.requestId, message: String(error) });
+          send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
           return;
         } finally {
           startingRunSessions.delete(cmd.sessionId);
@@ -1474,7 +1490,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled
             ? (assistantMessage ? { message: { id: assistantMessage.id, role: assistantMessage.role, content: assistantMessage.content, parts, runId: assistantMessage.runId, createdAt: assistantMessage.createdAt } } : {})
-            : { message: String(err) }, cmd.sessionId, run.id);
+            : runtimeErrorInfo(err), cmd.sessionId, run.id);
           if (goal && !cancelled) {
             const current = goalRepo.get(goal.id);
             if (current?.status === "active" && current.epoch === goal.epoch) {
@@ -1492,12 +1508,12 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     case "agent.steer": {
       const session = sessionRepo.get(cmd.sessionId);
       if (!session || !adapter.isRunning(cmd.sessionId)) {
-        send({ type: "error", requestId: cmd.requestId, message: "当前 Agent 已不在运行，无法引导" });
+        send({ type: "error", requestId: cmd.requestId, message: runtimeText("index.the_agent_is_no_longer_running_and_cannot_be") });
         return;
       }
       const activeRun = runRepo.listBySession(cmd.sessionId).find((run) => run.id === cmd.runId && ["created", "running", "waiting_approval", "paused"].includes(run.status));
       if (!activeRun) {
-        send({ type: "error", requestId: cmd.requestId, message: "目标 Agent run 已结束" });
+        send({ type: "error", requestId: cmd.requestId, message: runtimeText("index.the_target_agent_run_has_ended") });
         return;
       }
       const pending = { runId: cmd.runId, queueItemId: cmd.queueItemId, message: cmd.message, attachments: cmd.attachments };
@@ -1514,7 +1530,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         const remaining = (pendingSteers.get(cmd.sessionId) ?? []).filter((item) => item !== pending);
         if (remaining.length) pendingSteers.set(cmd.sessionId, remaining);
         else pendingSteers.delete(cmd.sessionId);
-        send({ type: "error", requestId: cmd.requestId, message: "Pi 当前不接受引导消息" });
+        send({ type: "error", requestId: cmd.requestId, message: runtimeText("index.pi_is_not_accepting_steering_messages") });
         return;
       }
       // Acceptance only queues the steer inside Pi. The user turn enters the
@@ -1612,11 +1628,11 @@ while (true) {
       } catch { /* Ignore malformed input without a request ID. */ }
       continue;
     }
-    handle(cmd).catch((err) => {
+    withRuntimeLocale(cmd.locale, () => handle(cmd).catch((err) => {
       log.error("command failed", { err: String(err) });
       // Send the bare message so error codes such as SKILL_CATALOG_TIMEOUT arrive without an "Error: " prefix.
-      send({ type: "error", requestId: cmd.requestId, message: err instanceof Error ? err.message : String(err) });
-    });
+      send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(err) });
+    }));
   }
 }
 
@@ -1625,3 +1641,4 @@ for (const session of adapter.getSessions()) {
   try { await session.dispose(); } catch (error) { log.warn("Pi session dispose failed", { err: String(error) }); }
 }
 flushEvents();
+subagentPublisher.dispose();

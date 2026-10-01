@@ -1,3 +1,4 @@
+import { runtimeError } from "./runtime-localization";
 import { createWriteStream } from "node:fs";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -26,7 +27,7 @@ export class GeneratedArtifacts {
   }): Promise<ArtifactRow> {
     const { sessionId, runId, data, mimeType, extension, signal } = input;
     signal.throwIfAborted();
-    if (!/^[a-z0-9]{2,8}$/.test(extension)) throw new Error("无效的媒体文件格式");
+    if (!/^[a-z0-9]{2,8}$/.test(extension)) throw runtimeError("generated-artifacts.invalid_media_file_format", {});
     const id = crypto.randomUUID();
     const filePath = path.join(this.directory, `${id}.${extension}`);
     await mkdir(this.directory, { recursive: true });
@@ -35,7 +36,7 @@ export class GeneratedArtifacts {
       else await pipeline(Readable.fromWeb(data as never), createWriteStream(filePath, { flags: "wx" }), { signal });
       signal.throwIfAborted();
       const size = (await stat(filePath)).size;
-      if (!size) throw new Error("媒体生成接口返回了空文件");
+      if (!size) throw runtimeError("generated-artifacts.the_media_generation_api_returned_an_empty_file", {});
       const saved = this.repo.add({ id, sessionId, runId, type: mimeType.startsWith("audio/") ? "audio" : "video",
         name: mimeType.startsWith("audio/") ? `speech.${extension}` : `video.${extension}`, path: filePath, mimeType, size });
       if (signal.aborted) {
