@@ -1,0 +1,1156 @@
+bun test v1.3.14 (0d9b296a)
+
+apps\agent-runtime\test\api-payload.test.ts:
+(pass) Pi provider wire payloads > OpenAI-compatible completions uses max_completion_tokens and reasoning_effort [4.71ms]
+(pass) Pi provider wire payloads > public Responses uses max_output_tokens and reasoning effort plus summary [1.43ms]
+(pass) Pi provider wire payloads > ChatGPT Codex omits the unsupported max_output_tokens field [1.94ms]
+(pass) Pi provider wire payloads > Claude adaptive and budget thinking use their native fields [3.79ms]
+(pass) Pi provider wire payloads > Claude adaptive max reaches the native effort field [0.31ms]
+(pass) Pi provider wire payloads > Gemini uses maxOutputTokens and thinkingConfig [2.11ms]
+(pass) Pi provider wire payloads > Gemini 3 uses native thinkingLevel instead of thinkingBudget [0.34ms]
+
+apps\agent-runtime\test\artifact-persistence.test.ts:
+(pass) generated artifact keeps its run association after reopening the database [11.99ms]
+(pass) existing artifact tables gain a nullable run ID column [2.04ms]
+(pass) generated video streams to disk and is removed with its run [11.84ms]
+(pass) cancelling a video download removes the partial generated file [43.10ms]
+
+apps\agent-runtime\test\assistant-parts.test.ts:
+(pass) Pi content-block order and message sequence survive a database reopen [4.03ms]
+(pass) bootstrap adds ordered parts to an existing messages table [2.21ms]
+
+apps\agent-runtime\test\attachment-flow.test.ts:
+(pass) local files keep their original paths in commands and Pi transcript [8.11ms]
+(pass) folder attachment gives the model only its directory path, including after transcript restore [0.36ms]
+(pass) inline files without a saved path ask for reattachment without dumping binary [0.22ms]
+(pass) pasted text stays readable without creating a temporary file [0.16ms]
+(pass) local image bytes are read only for model input and its original path remains [0.92ms]
+{"timestamp":1790813055572,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"attachment-path-session","runId":"3fc4a776-c5d2-45ad-842f-21c2ba980a06","startedAt":1790813055567,"firstResponseAt":1790813055572,"firstTextAt":1790813055572,"completedAt":1790813055572,"textDeltas":1,"reasoningDeltas":0}
+(pass) the adapter supplies the original ZIP path to the model and restores it from saved history [55.10ms]
+(pass) existing SQLite conversations migrate and persist attachments [10.75ms]
+(pass) Gemini converts YouTube links to native fileData parts [1.17ms]
+(pass) unconfigured media input remains an attachment reference for delegation [0.11ms]
+(pass) an audio-capable agent can extract a video's sound without claiming its picture [0.14ms]
+(pass) media routing uses the API format and configured inputs together [0.06ms]
+(pass) image MIME type routes correctly even when the transport labels it as a file [0.05ms]
+(pass) Gemini automatic input defaults to four capabilities but manual selection wins [0.08ms]
+(pass) Gemini attaches a downloaded tool video to the next request and ignores it after cleanup [12.84ms]
+(pass) Gemini rewrites the actual Pi tool-result payload into a native file part [11.21ms]
+(pass) Gemini replay skips a cleaned temporary audio attachment [0.62ms]
+(pass) Gemini replay ignores an invalid media marker instead of reading its path [0.27ms]
+(pass) Gemini payload rejects historical media when the current model lacks that input [0.54ms]
+(pass) Gemini keeps audio and video attachments as native media parts [0.05ms]
+(pass) Gemini uploads large video data through the Files API [9.25ms]
+(pass) local Gemini media is referenced without base64 and uploaded from disk [3.80ms]
+(pass) Gemini file upload surfaces the provider response [1.05ms]
+(pass) Gemini rejects an HTML gateway page instead of claiming video upload succeeded [0.75ms]
+(pass) Gemini reports the provider body when upload initialization has no URL [0.77ms]
+(pass) Gemini stops immediately when upload already reports processing failure [0.76ms]
+
+apps\agent-runtime\test\browser-library.test.ts:
+(pass) imports Chromium and Firefox bookmarks/history and keeps prior data on a broken source [37.92ms]
+
+apps\agent-runtime\test\builtin-tools.test.ts:
+(pass) Pi built-in Windows coding tools > read/write/edit/grep/find/ls/powershell execute against the workspace [485.76ms]
+
+apps\agent-runtime\test\compaction-position.test.ts:
+(pass) completion updates the original position and each new compaction gets its own identity [1.62ms]
+(pass) history restores saved positions and recovers legacy positions from event sequences [3.58ms]
+
+apps\agent-runtime\test\compaction-settings.test.ts:
+(pass) Qone compaction settings > normalizes persisted preferences and keeps the default [0.04ms]
+(pass) Qone compaction settings > maps the UI percentage to Pi reserve tokens per model context window [0.02ms]
+
+apps\agent-runtime\test\compatibility-gate.test.ts:
+{"timestamp":1790813056226,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"compatibility","runId":"ff96ba48-e205-4210-b7a8-9e212d8ca77f","startedAt":1790813056225,"firstResponseAt":1790813056226,"firstTextAt":1790813056226,"completedAt":1790813056226,"textDeltas":1,"reasoningDeltas":0}
+(pass) Pi model tool compatibility > the actual adapter sends only Pi tools and legal MCP names to the model [27.91ms]
+(pass) Pi model tool compatibility > rejects malformed custom names before making a model request [31.56ms]
+{"timestamp":1790813056286,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"routing","runId":"792fc92d-7a47-4deb-bbac-a31019e4107f","startedAt":1790813056284,"firstResponseAt":1790813056286,"firstTextAt":1790813056286,"completedAt":1790813056286,"textDeltas":1,"reasoningDeltas":0}
+(pass) Pi model tool compatibility > video input without an API picture path exposes subagent descriptions without sending video bytes [28.40ms]
+
+apps\agent-runtime\test\context-usage.test.ts:
+(pass) context request selects the current model and returns Pi's active-session usage [2.49ms]
+
+apps\agent-runtime\test\core.test.ts:
+(pass) runtime persistence and permissions > persists MCP API key references without persisting the API key [2.49ms]
+(pass) runtime persistence and permissions > persists sessions, messages and interrupted runs across reopen [12.86ms]
+(pass) runtime persistence and permissions > allows filesystem reads and asks for shell or mutating access [0.77ms]
+(pass) runtime persistence and permissions > maps the three run modes to Codex-style approval and permission profiles [1.50ms]
+(pass) runtime persistence and permissions > rebuilds Pi context from product messages [0.09ms]
+(pass) runtime persistence and permissions > persists turns, skills and marks unfinished tool calls on recovery [10.62ms]
+{"timestamp":1790813056346,"level":"info","module":"permission","msg":"tool waiting approval","tool":"write","approvalId":"52257566-335f-4a0d-93d7-ec5c06ffb325"}
+(pass) runtime persistence and permissions > registers approval before notifying the UI [1.19ms]
+(pass) runtime persistence and permissions > runs Goal state tools without requesting external capability approval [0.14ms]
+{"timestamp":1790813056347,"level":"info","module":"permission","msg":"tool waiting approval","tool":"write","approvalId":"1d82379d-511a-4beb-97da-57198ab8861c"}
+{"timestamp":1790813056348,"level":"info","module":"permission","msg":"tool waiting approval","tool":"write","approvalId":"f86072b8-8101-4eeb-931c-0b6ad1b115d4"}
+(pass) runtime persistence and permissions > run modes change approvals while preserving explicit and credential-store denials [2.17ms]
+{"timestamp":1790813056349,"level":"info","module":"permission","msg":"tool waiting approval","tool":"plugin:demo:fetch","approvalId":"de9f7214-399d-479c-8f5b-a694688a9ca0"}
+(pass) runtime persistence and permissions > applies auto and full modes to plugin and MCP capabilities [0.55ms]
+(pass) runtime persistence and permissions > allowing an MCP connection does not allow its account tools [0.07ms]
+(pass) runtime persistence and permissions > enforces permissions declared by plugin tools [0.12ms]
+(pass) runtime persistence and permissions > cancels a pending approval when the run aborts [0.16ms]
+{"timestamp":1790813056357,"level":"info","module":"plugin-runtime","msg":"plugin loaded","plugin":"demo","tools":1}
+(pass) runtime persistence and permissions > loads plugin tools, skills, hooks, storage, events and permissions [8.57ms]
+(pass) runtime persistence and permissions > does not import plugin code before explicit full-trust approval [2.53ms]
+(pass) runtime persistence and permissions > recognizes common secret-bearing model config fields and values [0.75ms]
+(pass) runtime persistence and permissions > accepts only supported run settings in the command protocol [0.24ms]
+(pass) runtime persistence and permissions > rejects MCP configs without exactly one secure transport [1.33ms]
+
+apps\agent-runtime\test\event-persistence.test.ts:
+(pass) persistent event journal > current markers skip history parsing while legacy automatic markers recover their position [9.23ms]
+(pass) persistent event journal > loads completed and interrupted context markers for the requested session [3.38ms]
+(pass) persistent event journal > restores events and continues sequence after reopening SQLite [9.39ms]
+
+apps\agent-runtime\test\event-replay.test.ts:
+(pass) event ordering and reconnect replay > keeps monotonic sequence across a restored seed and filters replay [1.52ms]
+(pass) event ordering and reconnect replay > wraps repeatedly, restores unsorted history, and preserves session filtering [0.34ms]
+(pass) event ordering and reconnect replay > zero capacity retains sequence continuity without storing payloads [0.09ms]
+
+apps\agent-runtime\test\external-file-access.test.ts:
+(pass) external filesystem access policy > ask: all read tools allow ordinary external and installation paths [2.93ms]
+(pass) external filesystem access policy > ask: external mutations retain mode-dependent approval [5.01ms]
+(pass) external filesystem access policy > ask: explicit deny still blocks external reads and shell [0.40ms]
+(pass) external filesystem access policy > ask: credential stores remain protected [2.22ms]
+(pass) external filesystem access policy > ask: installation path commands follow shell approval, not a path blacklist [0.09ms]
+(pass) external filesystem access policy > auto: all read tools allow ordinary external and installation paths [2.43ms]
+(pass) external filesystem access policy > auto: external mutations retain mode-dependent approval [3.25ms]
+(pass) external filesystem access policy > auto: explicit deny still blocks external reads and shell [0.27ms]
+(pass) external filesystem access policy > auto: credential stores remain protected [2.13ms]
+(pass) external filesystem access policy > auto: installation path commands follow shell approval, not a path blacklist [0.02ms]
+(pass) external filesystem access policy > full: all read tools allow ordinary external and installation paths [2.31ms]
+(pass) external filesystem access policy > full: external mutations retain mode-dependent approval [3.30ms]
+(pass) external filesystem access policy > full: explicit deny still blocks external reads and shell [0.26ms]
+(pass) external filesystem access policy > full: credential stores remain protected [1.58ms]
+(pass) external filesystem access policy > full: installation path commands follow shell approval, not a path blacklist
+(pass) external filesystem access policy > explicit ask rules on reads still request approval [0.54ms]
+(pass) external filesystem access policy > explicit allow cannot widen external writes in non-full modes [0.78ms]
+(pass) external filesystem access policy > OS access errors propagate unchanged instead of becoming policy denials [0.34ms]
+(pass) wrapped Pi tools outside the imported workspace > read/grep/find/ls execute for absolute and parent-relative paths in all modes [211.81ms]
+(pass) wrapped Pi tools outside the imported workspace > junctions to external directories allow reads without auto-approving external writes [2.80ms]
+
+apps\agent-runtime\test\file-change-tools.test.ts:
+(pass) SDK operations capture overwrite, create and exact edit baselines without altering Pi [4.87ms]
+(pass) parallel edits take baselines inside Pi's shared mutation queue [4.04ms]
+(pass) permission denial does not execute file operations or produce evidence [1.30ms]
+(pass) large mutation evidence survives both persisted tool calls and message parts [8.34ms]
+
+apps\agent-runtime\test\file-preview.test.ts:
+(pass) file preview > reads Markdown and HTML content for their renderers [4.66ms]
+(pass) file preview > marks binary data without returning bytes to the renderer [1.20ms]
+(pass) file preview > resolves a root relative link from a real Windows workspace [1.19ms]
+(pass) file preview > explicitly loads the complete document after a bounded initial preview [2.32ms]
+(pass) file preview > reads absolute files outside a workspace and requires a base for relative paths [2.43ms]
+(pass) file preview > decodes Unicode documents while keeping actual binary bytes out of text renderers [0.13ms]
+
+apps\agent-runtime\test\global-instructions.test.ts:
+(pass) persists global instructions as Qone/Qone.md [1.24ms]
+(pass) creates an empty global file without overwriting it [1.45ms]
+
+apps\agent-runtime\test\goal.test.ts:
+(pass) goal persistence > stores lifecycle state and rejects stale goal identity at the repository boundary [5.94ms]
+
+apps\agent-runtime\test\image-generation.test.ts:
+(pass) image model detection > recognizes the four image model families without version hardcoding [0.18ms]
+(pass) image model detection > manual format and image output take priority over name fallback [0.42ms]
+(pass) image model detection > normalizes capability and method declarations from provider catalogs [0.62ms]
+(pass) image request formats > executes each format adapter through its response parser [1.41ms]
+(pass) image request formats > builds OpenAI generations and edits requests [0.30ms]
+(pass) image request formats > does not send GPT Image compression for PNG output [0.06ms]
+(pass) image request formats > keeps automatic count with the provider and sends compression for JPEG [0.08ms]
+(pass) image request formats > passes prompt instructions unchanged while leaving automatic parameters to the image API [0.05ms]
+(pass) image request formats > builds native Gemini Interactions request with image response settings [0.06ms]
+(pass) image request formats > keeps Qwen extension fields and DashScope protocol separate [0.19ms]
+(pass) image request formats > builds Seedream multi-image request and parses URL/base64/Gemini responses [0.15ms]
+
+apps\agent-runtime\test\llm-contract.test.ts:
+(pass) Pi model contract > streams assistant text and executes a tool with a fake provider [181.47ms]
+(pass) Pi model contract > abort settles without leaving a live session [4111.98ms]
+
+apps\agent-runtime\test\mcp-oauth.test.ts:
+(pass) MCP OAuth > resolves stored API key references only after a credential is restored [0.78ms]
+(pass) MCP OAuth > launches Windows npx through Node without a command shell [2.02ms]
+(pass) MCP OAuth > restores hosted client and token separately without persisting them in config [0.17ms]
+(pass) MCP OAuth > normalizes model-facing tool names and avoids collisions [0.16ms]
+(pass) MCP OAuth > rejects remote cleartext OAuth endpoints [0.32ms]
+(pass) MCP OAuth > creates a PKCE authorization request without exposing a token [0.56ms]
+(pass) MCP OAuth > starts GitHub re-login before probing the MCP endpoint [0.52ms]
+(pass) MCP OAuth > rotates an expiring GitHub token once and persists the new pair [0.44ms]
+
+apps\agent-runtime\test\media-attachments.test.ts:
+(pass) audio-only executor extracts clipboard video without changing a local user file [140.10ms]
+
+apps\agent-runtime\test\media-tool.test.ts:
+(pass) media staging refuses a model without audio or video input [0.45ms]
+(pass) Gemini video recognition refuses a YouTube download so the native URL path remains available [0.53ms]
+(pass) Chat Completions audio model can use a downloaded audio file, but cannot claim video input [1.50ms]
+(pass) non-Gemini visual model receives selected still frames through the generic image path [163.62ms]
+(pass) video metadata rejects invalid bytes before requesting frames [30.15ms]
+(pass) attachment audio is extracted only when the consuming agent calls its tool [82.48ms]
+(pass) video attachment frames are extracted only by a capable consuming agent [124.48ms]
+(pass) a model configured for both media types can request only the sound [179.15ms]
+(pass) audio mode gets sound from a combined video URL [2719.42ms]
+(pass) Bilibili CLI error envelope cannot masquerade as analysis data [0.21ms]
+(pass) Bilibili subtitle JSON failure falls back to metadata and cancellation does not retry [0.26ms]
+(pass) site fallback uses only a file in this run's staging directory [1.84ms]
+(pass) video file tool rejects an audio file when video mode is requested [2.06ms]
+
+apps\agent-runtime\test\message-queue.test.ts:
+(pass) queued messages persist their order and attachments without entering history [3.60ms]
+(pass) a stale snapshot cannot bring back a consumed queue item [2.72ms]
+(pass) queue protocol accepts sync and steer commands [1.86ms]
+
+apps\agent-runtime\test\message-rewrite.test.ts:
+(pass) editing and retrying a user turn > removes that turn and later model context, runs, tools, and replay events [6.70ms]
+
+apps\agent-runtime\test\model-resolver.test.ts:
+(pass) model metadata resolver > Pi catalog fills provider omissions before models.dev [2.97ms]
+(pass) model metadata resolver > saved fallback fields are not promoted to merchant priority [0.70ms]
+(pass) model metadata resolver > complete merchant metadata needs no models.dev request [0.99ms]
+(pass) model metadata resolver > falls back promptly when models.dev ignores abort, then retries later [39.06ms]
+(pass) model metadata resolver > parses provider model limits, reasoning options and modalities [0.30ms]
+(pass) model metadata resolver > infers reasoning only from exact reasoning parameter names [0.20ms]
+(pass) model metadata resolver > uses provider metadata per field, then Pi, then models.dev [0.67ms]
+(pass) model metadata resolver > resolves supplied merchant metadata for settings without credentials or another merchant request [0.68ms]
+(pass) model metadata resolver > validates batched settings metadata requests [1.31ms]
+(pass) model metadata resolver > manual limit overrides remain explicit over automatic sources [0.62ms]
+(pass) model metadata resolver > maps all four UI API types to Pi APIs and endpoint semantics [3.16ms]
+(pass) model metadata resolver > separates private Codex runtime URLs from catalog URLs with query parameters [0.73ms]
+(pass) model metadata resolver > keeps query parameters for catalogs but removes them from SDK string-join runtime URLs [0.65ms]
+(pass) model metadata resolver > uses Pi model thinking maps and API-specific compatibility [2.55ms]
+(pass) model metadata resolver > does not leak a gateway compat record into a generic endpoint [0.74ms]
+(pass) model metadata resolver > leaves known endpoints to Pi instead of overriding them from the model name [0.60ms]
+(pass) model metadata resolver > selects the subscription Responses catalog entry for ChatGPT backend URLs [0.63ms]
+(pass) model metadata resolver > uses provider-declared reasoning formats only when the API advertises them [2.78ms]
+(pass) model metadata resolver > keeps a live provider catalog ahead of stale saved metadata [0.93ms]
+(pass) model metadata resolver > treats disabled thinking values as a real off override [0.70ms]
+(pass) model metadata resolver > a manual default of none keeps per-run reasoning available [0.64ms]
+(pass) model metadata resolver > maps provider budget parameters and common model namespaces [1.19ms]
+(pass) model metadata resolver > retries a provider catalog after a transient failure [1.19ms]
+(pass) model metadata resolver > normalizes bare hosts and complete endpoint URLs [0.15ms]
+
+apps\agent-runtime\test\openai-audio.test.ts:
+(pass) Chat Completions sends a local audio file as input_audio rather than a path [4.04ms]
+(pass) Chat Completions adds tool audio after the contiguous tool result group [1.16ms]
+(pass) Chat Completions translates inline audio and refuses a video file marker [0.39ms]
+(pass) Chat Completions converts a downloaded M4A sound track to MP3 [78.84ms]
+
+apps\agent-runtime\test\opencli-gateway.test.ts:
+(pass) OpenCLI gateway > registers discovery and adapter tools without connecting a browser [2.84ms]
+(pass) OpenCLI gateway > parses the official command registry and keeps adapter capabilities [0.29ms]
+(pass) OpenCLI gateway > passes adapter arguments through without forcing browser options [0.13ms]
+(pass) OpenCLI gateway > rejects shell-like site and command names while allowing raw option values [0.06ms]
+
+apps\agent-runtime\test\pi-session-isolation.test.ts:
+(pass) a child execution does not mark the parent session as running [0.14ms]
+
+apps\agent-runtime\test\present-tool.test.ts:
+[@assistant-ui/react-generative-ui] Prop "size" is declared by "Header", "Text", "Image", and "Icon"; keeping "Header"'s schema. Rename or align the prop type to avoid an ambiguous schema.
+[@assistant-ui/react-generative-ui] Prop "value" is declared by "Text", "Caption", "Fact", "Badge", and "Markdown"; keeping "Text"'s schema. Rename or align the prop type to avoid an ambiguous schema.
+[@assistant-ui/react-generative-ui] Prop "color" is declared by "Text" and "Chart"; keeping "Text"'s schema. Rename or align the prop type to avoid an ambiguous schema.
+[@assistant-ui/react-generative-ui] Prop "title" is declared by "Card" and "Alert"; keeping "Card"'s schema. Rename or align the prop type to avoid an ambiguous schema.
+[@assistant-ui/react-generative-ui] Prop "background" is declared by "Card" and "Box"; keeping "Card"'s schema. Rename or align the prop type to avoid an ambiguous schema.
+[@assistant-ui/react-generative-ui] Prop "gap" is declared by "Col" and "Row"; keeping "Col"'s schema. Rename or align the prop type to avoid an ambiguous schema.
+[@assistant-ui/react-generative-ui] Prop "align" is declared by "Col" and "Row"; keeping "Col"'s schema. Rename or align the prop type to avoid an ambiguous schema.
+[@assistant-ui/react-generative-ui] Prop "variant" is declared by "Badge" and "Chart"; keeping "Badge"'s schema. Rename or align the prop type to avoid an ambiguous schema.
+(pass) present exposes the official recursive UI schema without an approval prompt [2.28ms]
+
+apps\agent-runtime\test\reach-podcast-tools.test.ts:
+(pass) splits audio over 25 MB locally and uploads ordered pieces [459.82ms]
+
+apps\agent-runtime\test\reach-public-tools.test.ts:
+(pass) Agent Reach channels > parses RSS and Atom links without mixing entries [2.59ms]
+(pass) Agent Reach channels > publishes 16 honest channel states and registers only installed CLI tools [2.94ms]
+(pass) Agent Reach channels > public GitHub route makes a direct API request and returns data [10.68ms]
+(pass) Agent Reach channels > Xueqiu route uses the configured cookie only for the fixed API host [5.15ms]
+(pass) Agent Reach channels > never forwards credentials to a different origin after a redirect [6.33ms]
+(pass) Agent Reach channels > rejects local RSS URLs and redirects to local addresses [0.76ms]
+
+apps\agent-runtime\test\reasoning-stream.test.ts:
+(pass) reasoning stays separate and survives interruption and persistence [3.30ms]
+(pass) timings reset per model turn and distinguish reasoning from answer deltas [0.09ms]
+{"timestamp":1790813066794,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"reason-session","runId":"reason-run","startedAt":1790813066625,"firstResponseAt":1790813066653,"firstTextAt":1790813066793,"completedAt":1790813066794,"textDeltas":1,"reasoningDeltas":2}
+(pass) Google adapter reasoning: streamed [1596.87ms]
+{"timestamp":1790813067400,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"reason-session","runId":"reason-run","startedAt":1790813067371,"firstResponseAt":1790813067400,"firstTextAt":1790813067400,"completedAt":1790813067400,"textDeltas":1,"reasoningDeltas":1}
+(pass) Google adapter reasoning: batched [606.35ms]
+{"timestamp":1790813067968,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"reason-session","runId":"reason-run","startedAt":1790813067949,"firstResponseAt":1790813067968,"completedAt":1790813067968,"textDeltas":0,"reasoningDeltas":1}
+(pass) Google adapter reasoning: reasoning-only [567.44ms]
+{"timestamp":1790813068441,"level":"info","module":"pi-adapter","msg":"run aborted","runId":"reason-run"}
+{"timestamp":1790813068442,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"reason-session","runId":"reason-run","startedAt":1790813068433,"firstResponseAt":1790813068440,"completedAt":1790813068442,"textDeltas":0,"reasoningDeltas":1}
+(pass) Google adapter reasoning: cancelled [473.81ms]
+
+apps\agent-runtime\test\repeated-user-run.test.ts:
+(pass) runtime resend merges persisted identical user turns and preserves distinct inputs [1627.47ms]
+
+apps\agent-runtime\test\runtime-localization.test.ts:
+(pass) runtime copy is complete, English contains no fixed Chinese, and parameters match [1.18ms]
+(pass) command decoding keeps a validated locale and remains compatible with old clients [0.55ms]
+(pass) the real NDJSON runtime returns English and Chinese errors with stable codes [1453.16ms]
+(pass) untouched built-in profiles retain language keys through normalization and protocol validation [3.72ms]
+(pass) concurrent language contexts remain isolated through async tools and child work [0.43ms]
+(pass) structured errors can be translated again without replacing user paths or diagnostics [0.20ms]
+(pass) media generation validation reports the requested language before any network call [0.50ms]
+(pass) runtime errors cannot reintroduce untranslated Chinese literals [107.30ms]
+
+apps\agent-runtime\test\session-compaction.test.ts:
+(pass) manual session compaction > validates the command independently of auto-compaction settings [0.60ms]
+(pass) manual session compaction > restores the compacted Pi context and only newer SQLite messages [0.23ms]
+(pass) manual session compaction > zero retained tokens selects a cut point even in a short chat [0.24ms]
+(pass) manual session compaction > calls Pi manual compaction with zero retained tokens even when auto-compaction is off [0.38ms]
+
+apps\agent-runtime\test\session-search.test.ts:
+(pass) session search avoids per-session message loading and preserves title/content semantics [4.14ms]
+(pass) session search preserves Chinese and Unicode folding for ASCII queries [3.12ms]
+(pass) session search picks the first inserted match on equal timestamps and titles take precedence [2.40ms]
+(pass) session search merges recent title and content hits before applying the result limit [8.18ms]
+
+apps\agent-runtime\test\session-title.test.ts:
+(pass) first message supplies a provisional title without a model response [0.13ms]
+(pass) a prose answer cannot replace the conversation title [0.14ms]
+
+apps\agent-runtime\test\skill-catalog.test.ts:
+(pass) cloud catalog reads the skills.sh collection and search [0.84ms]
+(pass) imports only the selected skill into QoneAgent and makes it discoverable [37.87ms]
+(pass) rejects a changed file without installing a partial skill [24.08ms]
+
+apps\agent-runtime\test\skills.test.ts:
+(pass) loads only QoneAgent skills, excluding workspace and Pi skills [31.71ms]
+(pass) creates a skill in the QoneAgent skill directory [33.92ms]
+(pass) imports a valid SKILL.md and rejects invalid or duplicate skills [90.98ms]
+
+apps\agent-runtime\test\speech-generation.test.ts:
+(pass) speech generation sends the configured voice and exact text to the compatible API [0.36ms]
+(pass) Gemini native speech sends an interaction and saves the returned WAV [0.46ms]
+(pass) speech generation reports API errors and missing voice [0.19ms]
+(pass) speech output keeps the provider's WAV media type when it differs from the requested MP3 [0.13ms]
+(pass) an audio-output model completes a Pi run and yields a saved media reference [466.82ms]
+{"timestamp":1790813072979,"level":"info","module":"pi-adapter","msg":"run aborted","runId":"run-2"}
+(pass) stopping speech generation aborts its request before a file is saved [471.34ms]
+
+apps\agent-runtime\test\subagent-publisher.test.ts:
+(pass) coalesced text contains each delta once and does not query or transmit history [31.13ms]
+(pass) a state boundary supersedes pending deltas and completion closes the stream [42.36ms]
+(pass) concurrent children retain ownership and disposal cancels unsent work [29.32ms]
+
+apps\agent-runtime\test\subagent-result.test.ts:
+(pass) model-facing subagent result never includes the saved transcript [0.13ms]
+(pass) generated image reaches the parent as an image block without base64 in text [2.23ms]
+
+apps\agent-runtime\test\subagent-routing-contract.test.ts:
+{"timestamp":1790813073134,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"routing-openai-responses","runId":"3acefe2b-1a82-42f8-8c4a-a5f39c6a1a00","startedAt":1790813073131,"firstResponseAt":1790813073134,"firstTextAt":1790813073134,"completedAt":1790813073134,"textDeltas":1,"reasoningDeltas":0}
+(pass) model-facing subagent routing contract > openai-responses exposes an explicit temporary target and valid neutral values when fields are required [31.73ms]
+{"timestamp":1790813073170,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"routing-openai-codex-responses","runId":"1cfa2ec5-85a1-452e-934a-1ad0ec94f970","startedAt":1790813073169,"firstResponseAt":1790813073170,"firstTextAt":1790813073170,"completedAt":1790813073170,"textDeltas":1,"reasoningDeltas":0}
+(pass) model-facing subagent routing contract > openai-codex-responses exposes an explicit temporary target and valid neutral values when fields are required [36.02ms]
+{"timestamp":1790813073206,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"routing-execution","runId":"parent-run","startedAt":1790813073205,"firstResponseAt":1790813073206,"completedAt":1790813073206,"textDeltas":0,"reasoningDeltas":0}
+{"timestamp":1790813073210,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"routing-execution","runId":"parent-run","startedAt":1790813073209,"firstResponseAt":1790813073210,"completedAt":1790813073210,"textDeltas":0,"reasoningDeltas":0}
+{"timestamp":1790813073213,"level":"info","module":"pi-adapter","msg":"model response timing","sessionId":"routing-execution","runId":"parent-run","startedAt":1790813073212,"firstResponseAt":1790813073213,"firstTextAt":1790813073213,"completedAt":1790813073213,"textDeltas":1,"reasoningDeltas":0}
+(pass) model-facing subagent routing contract > Pi executes explicit temporary and nullable profile selections without substituting a media target [42.07ms]
+
+apps\agent-runtime\test\subagent-selection.test.ts:
+(pass) explicit temporary subagent selection > catalog selections are executable for temporary, media and saved targets [3.42ms]
+(pass) explicit temporary subagent selection > explicit temporary, omitted and null selectors use the configured general model, not a media profile [22.87ms]
+(pass) explicit temporary subagent selection > explicit media and saved profile selectors retain their configured routes [17.77ms]
+(pass) explicit temporary subagent selection > conflicting and unavailable targets are rejected before creating any child [6.72ms]
+(pass) explicit temporary subagent selection > workflows route explicit media selections to each configured capability model [19.58ms]
+(pass) explicit temporary subagent selection > workflows support explicit temporary and profile selectors and preflight every target [9.84ms]
+
+apps\agent-runtime\test\subagents.test.ts:
+(pass) capability subagent routing > always lists the temporary general agent with its configured or inherited model [0.24ms]
+(pass) capability subagent routing > normalizes the five supported capability agents as built-in profiles [0.19ms]
+(pass) capability subagent routing > keeps normalization idempotent and does not duplicate built-ins [0.24ms]
+(pass) capability subagent routing > keeps saved profile positions when configuration is synchronized [0.14ms]
+(pass) capability subagent routing > resolves only what the user configured and reports the rest as unavailable [0.22ms]
+(pass) capability subagent routing > normalizes malformed persisted values and keeps instructions in prompt [0.12ms]
+(pass) capability subagent routing > removes the retired search built-in from saved profiles without deleting custom agents [0.15ms]
+(pass) capability subagent routing > accepts atomic settings synchronization over the protocol [0.29ms]
+(pass) keeps parallel subagent transcripts separate across restart and removes them with a rewritten parent turn [5.62ms]
+(pass) delegation has its own permission while child tools retain their normal gate [0.52ms]
+(pass) two delegation calls launch independent Pi runs before either finishes [7.09ms]
+(pass) persists the initial child turn exactly once [15.45ms]
+(pass) capability dispatch uses the configured model with the parent's attachments and refuses unconfigured capabilities [24.26ms]
+(pass) scheduler admits queued children in FIFO order [0.20ms]
+
+apps\agent-runtime\test\user-message-equality.test.ts:
+(pass) exact user input equality > compares body exactly and treats absent attachments as an empty list [0.09ms]
+(pass) exact user input equality > compares every serialized attachment field and ignores object key order [0.15ms]
+(pass) exact user input equality > attachment order and local file or folder identity matter [0.05ms]
+(pass) adjacent user bubbles > returns the first identical bubble in the trailing group [0.09ms]
+(pass) adjacent user bubbles > answers and different user inputs break the group [0.06ms]
+
+apps\agent-runtime\test\video-download.test.ts:
+(pass) download and local attachment routes agree on video containers [0.09ms]
+(pass) yt-dlp downloads a video into a temporary directory [1301.25ms]
+(pass) audio-only download uses yt-dlp's audio format instead of downloading video [1379.61ms]
+(pass) audio agent extracts an existing video soundtrack without redownloading [94.65ms]
+
+apps\agent-runtime\test\video-generation.test.ts:
+(pass) Google native Veo creates, polls, follows download redirect and keeps the API key on its own origin [14.84ms]
+(pass) Google native Veo reports operation errors and cancellation [0.32ms]
+(pass) Sora-compatible video transport creates, polls and downloads without leaking auth to the media URL [12.81ms]
+(pass) video transport reports provider failure and requires an explicit format [2.47ms]
+(pass) a video-output model completes a Pi run with a streamed generated file [547.33ms]
+(pass) a Google video-output model uses native Veo and persists the generated video [462.23ms]
+
+apps\agent-runtime\test\worker.test.ts:
+(pass) CPU worker abstraction > runs a structured-cloneable task without changing the caller API [11.93ms]
+
+apps\agent-runtime\test\workspace.test.ts:
+(pass) workspace explorer > lists directories, reads text and rejects workspace escapes [204.28ms]
+(pass) workspace explorer > returns structured Git status and diffs tracked plus untracked files [438.25ms]
+
+apps\desktop\test\appearance.test.ts:
+(pass) accent values and Qone theme tokens match the extracted Codex functions [5.14ms]
+(pass) invalid persisted values, old named settings and custom colors normalize safely [0.31ms]
+(pass) system mode survives runtime startup and follows changes until an explicit choice [0.49ms]
+(pass) per-mode settings persist without dropping language or the other mode [0.37ms]
+(pass) startup restores all appearance tokens before opening settings and external updates apply [0.23ms]
+
+apps\desktop\test\assistant-elements.test.ts:
+(pass) official assistant elements render their real data slots [28.80ms]
+(pass) failed tool cards expose the same disclosure state as other tool rows [0.90ms]
+(pass) folder attachment renders a folder icon without a download or fake size [0.25ms]
+(pass) sent PDF and spreadsheet attachments use their own Codex icons [0.38ms]
+
+apps\desktop\test\assistant-message-parts.test.ts:
+(pass) reasoning remains visible after reload and never counts as a final answer [0.39ms]
+(pass) reasoning settles at block end before the answer and on interrupted history [0.06ms]
+(pass) reasoning before, between and after tools stays inside the execution disclosure in order [0.27ms]
+(pass) render input preserves order and groups contiguous tools across model message boundaries [0.08ms]
+(pass) legacy final-text messages still render with their saved tool list [0.07ms]
+(pass) a Pi text block separates tool groups even if assistant-ui hides whitespace text [0.05ms]
+(pass) adjacent image parts form one gallery range while separated images stay independent [0.03ms]
+(pass) subagent dispatch remains a tool activity without a separate capsule [0.07ms]
+(pass) execution folds commentary but keeps presentations, images, and the final answer visible [0.05ms]
+(pass) execution waits for a visible final answer and respects manual choice and cancellation [0.05ms]
+(pass) image before activity and a presentation within activity stay outside the disclosure [0.05ms]
+(pass) reasoning without tools creates an execution region before the final answer [0.02ms]
+(pass) explicit phases keep commentary and pending text in activity until a final answer exists [0.15ms]
+(pass) a text-only stream is an answer until an activity boundary is known [0.05ms]
+(pass) exploration tools share a group while edits and commands form a separate group [0.04ms]
+
+apps\desktop\test\assistant-waiting-phase.test.ts:
+(pass) automatic compaction owns the waiting indicator until it finishes [0.33ms]
+(pass) the model keeps a thinking shimmer after the last tool has completed [0.09ms]
+(pass) running or pending tools do not show a second waiting indicator [0.08ms]
+(pass) an earlier unfinished tool still blocks the waiting indicator [0.07ms]
+(pass) text, reasoning and a completed run stop the thinking fallback [0.11ms]
+
+apps\desktop\test\attachment-file-kind.test.ts:
+(pass) attachment icons distinguish file families using MIME and extension [0.61ms]
+
+apps\desktop\test\browser-dock.test.ts:
+(pass) external browser accepts only navigable web pages [1.98ms]
+(pass) HTML data previews can be opened externally [0.42ms]
+(pass) openBrowserInDock and openCodePreviewInDock support optional sessionId routing [0.42ms]
+
+apps\desktop\test\chat-run-error-message.test.ts:
+(pass) failed answer appears after its user message [0.14ms]
+(pass) failed answer follows existing assistant text without changing it [0.06ms]
+(pass) missing user does not create an orphaned failed answer [0.01ms]
+
+apps\desktop\test\chat-run-error.test.ts:
+(pass) ordinary commands and direct model metadata requests use the current UI language [1.86ms]
+(pass) child deltas preserve transcript references, route to the parent session, and settle with a full snapshot [0.47ms]
+(pass) MCP loading survives the saved list and clears on success or failure [0.76ms]
+(pass) restores a key preset credential when the saved MCP list arrives [13.73ms]
+(pass) shows an install hint when an MCP preset cannot find Node.js/npm [2.34ms]
+(pass) session creation requires an imported selected workspace and stays available during another run [0.70ms]
+(pass) switching sessions while one is running keeps the run alive [0.50ms]
+(pass) removing a workspace refreshes sessions to exclude its orphaned chats [0.16ms]
+(pass) resending after a failed reply merges the user turn and starts execution again [0.81ms]
+(pass) retry of a rejected optimistic turn sends a new message without replacing an unsaved id [0.28ms]
+(pass) stopping the first run clears a title spinner even when title generation never replies [0.21ms]
+(pass) a failed title request clears its spinner [0.14ms]
+(pass) an active run snapshot fills in the run id while the optimistic UI is already running [0.12ms]
+(pass) accepted agent run requests a run snapshot when the start event is missed [0.18ms]
+(pass) stop requested before run id arrives is sent once the run starts [0.32ms]
+(pass) live assistant parts and reloaded parts keep the same Pi order [160.74ms]
+(pass) one Pi message streams text and tool blocks in order before message completion [53.91ms]
+(pass) tool execution start creates live parts before the tool completes [0.55ms]
+(pass) completed Pi tool arguments are prepared before execution starts [0.16ms]
+(pass) reloaded tool rows restore the Pi tool-call id [0.24ms]
+(pass) reloaded legacy tool rows use the persisted assistant part id [0.10ms]
+(pass) streaming tool arguments update one preview without entering prose or completing the tool [0.27ms]
+(pass) reasoning streams separately, settles at block end and survives completed message reload [114.71ms]
+(pass) interleaved background text, reasoning, tools and approvals survive switching and creation [60.51ms]
+(pass) a background completion saves its answer without stopping the foreground run [0.69ms]
+(pass) overlapping pending run requests keep errors and acknowledgements with their sessions [0.42ms]
+(pass) a queued follow-up stays with its background session and starts after completion [19.98ms]
+runtime_send failed 902 |     setupConcurrentSessions();
+903 |     sendFailure = (command) => command.type === "agent.run" && command.sessionId === "background-a"
+904 |       ? new Promise<void>((_resolve, reject) => { rejectSend = reject; }) : Promise.resolve();
+905 |     useStore.getState().runAgent("A will fail");
+906 |     startConcurrentRun("background-b");
+907 |     rejectSend!(new Error("transport down"));
+                          ^
+error: transport down
+      at <anonymous> (C:\Users\33039\Desktop\QoneAgent\apps\desktop\test\chat-run-error.test.ts:907:21)
+
+(pass) a delayed transport failure clears only the pending background run [14.51ms]
+(pass) late snapshots preserve a pending user turn and live background tools [0.58ms]
+
+apps\desktop\test\code-preview.test.ts:
+(pass) HTML and SVG preserve source and Unicode [0.41ms]
+(pass) Markdown and Mermaid render to browser documents [189.67ms]
+(pass) JavaScript and TypeScript run in a separate browser document [51.56ms]
+(pass) React TSX compiles standard React imports and a default component [12.06ms]
+(pass) unsupported or empty code has no preview [0.10ms]
+(pass) preview runs inside an opaque sandbox without breaking srcdoc attributes [0.03ms]
+
+apps\desktop\test\compaction-flow.test.ts:
+53 |   expect(useStore.getState().compactionStatuses["session-1"]?.throughMessageId).toBe(message.id);
+54 | 
+55 |   useStore.setState({ currentSessionId: "session-2", messages: [], compactions: [] });
+56 |   const marker = { id: command.requestId, throughMessageId: message.id, createdAt: 200, status: "completed" as const, source: "manual" as const };
+57 |   emit({ type: "session.compacted", requestId: command.requestId, sessionId: "session-1", marker });
+58 |   expect(useStore.getState().compactionStatuses["session-1"]).toBeUndefined();
+                                                                   ^
+error: expect(received).toBeUndefined()
+
+Received: {
+  requestId: "10ad0903-f861-4f84-90a5-4c8687e555d2",
+  throughMessageId: "message-1",
+  startedAt: 1790813079619,
+}
+
+      at <anonymous> (C:\Users\33039\Desktop\QoneAgent\apps\desktop\test\compaction-flow.test.ts:58:63)
+(fail) manual compaction stays attached to its session and reloads as a timeline marker [5.07ms]
+80 |   useStore.getState().compactSession();
+81 |   const command = commands.findLast((item) => item.type === "session.compact");
+82 |   if (!command || command.type !== "session.compact") throw new Error("compaction command missing");
+83 |   emitLegacy({ type: "session.compacted", requestId: command.requestId, sessionId: "legacy-session" });
+84 | 
+85 |   expect(useStore.getState().compactionStatuses["legacy-session"]).toBeUndefined();
+                                                                        ^
+error: expect(received).toBeUndefined()
+
+Received: {
+  requestId: "717ca001-d504-4b2c-b1bd-069c1c190458",
+  throughMessageId: "legacy-message",
+  startedAt: 1790813079621,
+}
+
+      at <anonymous> (C:\Users\33039\Desktop\QoneAgent\apps\desktop\test\compaction-flow.test.ts:85:68)
+(fail) legacy compaction completion without a marker clears progress without crashing [0.40ms]
+108 |   const command = commands.findLast((item) => item.type === "session.compact");
+109 |   if (!command || command.type !== "session.compact") throw new Error("compaction command missing");
+110 |   const marker = { id: command.requestId, throughMessageId: "message-1", createdAt: 300, status: "interrupted" as const, source: "manual" as const };
+111 |   emit({ type: "session.compactionInterrupted", requestId: command.requestId, sessionId: "session-1", marker, message: "model unavailable" });
+112 | 
+113 |   expect(useStore.getState().compactionStatuses["session-1"]).toBeUndefined();
+                                                                    ^
+error: expect(received).toBeUndefined()
+
+Received: {
+  requestId: "2e3ae6e9-ca0d-4596-8aa8-925c209a55dd",
+  throughMessageId: "message-1",
+  startedAt: 1790813079621,
+}
+
+      at <anonymous> (C:\Users\33039\Desktop\QoneAgent\apps\desktop\test\compaction-flow.test.ts:113:63)
+(fail) an interrupted compaction replaces its running marker with an error row [0.23ms]
+124 |   });
+125 |   emit({ type: "agent.event", event: {
+126 |     eventId: "start-event", sequence: 100, sessionId: "session-1", runId: "run-1", type: "context.compaction.started", timestamp: 400,
+127 |     payload: { id: "auto-1", partIndex: 3, throughMessageId: "user-1", startedAt: 400, source: "automatic" },
+128 |   } });
+129 |   expect(useStore.getState().autoCompactionStatuses["session-1"]?.throughMessageId).toBe("user-1");
+                                                                                          ^
+error: expect(received).toBe(expected)
+
+Expected: "user-1"
+Received: undefined
+
+      at <anonymous> (C:\Users\33039\Desktop\QoneAgent\apps\desktop\test\compaction-flow.test.ts:129:85)
+(fail) automatic compaction events appear in the same conversation timeline [0.46ms]
+
+apps\desktop\test\compaction-ranges.test.ts:
+(pass) reasoning on both sides of compaction stays in its own execution region [0.19ms]
+(pass) reasoning display changes do not move compaction across tools or answer text [0.07ms]
+(pass) compaction splits a tool group at the recorded boundary [0.04ms]
+(pass) start, consecutive and trailing compactions retain order without losing content [0.08ms]
+(pass) hidden parts do not shift the boundary and empty messages still show running compaction [0.03ms]
+(pass) split process sections share one disclosure and one status after the last activity [0.13ms]
+(pass) a compaction immediately before the answer keeps the divider after the marker [0.07ms]
+(pass) compaction stays at its event boundary inside the collapsible execution [0.14ms]
+(pass) compaction after a completed answer remains at the end of the reply [0.05ms]
+(pass) interleaved media does not shift a subagent or compaction marker [0.11ms]
+
+apps\desktop\test\composer-command.test.ts:
+(pass) MCP selection decodes the server ID and leaves the task text [0.06ms]
+(pass) ordinary message text and malformed commands are left alone [0.05ms]
+(pass) serialized command chips become leading runtime commands [0.07ms]
+
+apps\desktop\test\composer-drafts.test.ts:
+(pass) unsent long multiline text is restored verbatim after switching sessions [3.57ms]
+(pass) independent drafts survive rapid round trips without blank snapshots overwriting them [1.10ms]
+(pass) manually clearing a draft removes it and whitespace-only text remains exact [0.38ms]
+(pass) sending clears only the sender's draft [1.17ms]
+(pass) same-thread adapter refresh and StrictMode-style effect rebinding keep the current draft [0.30ms]
+(pass) drafts survive chat-page runtime remounts and listeners detach on cleanup [0.31ms]
+(pass) deleting an inactive session drops its draft [0.27ms]
+(pass) earlier UI subscribers cannot save the replacement's blank state under the outgoing owner [0.53ms]
+(pass) mixed image, video, audio and document drafts retain exact files, IDs and order without rereads [1.90ms]
+(pass) attachment-only drafts and independent per-session files are restored synchronously [0.43ms]
+(pass) effect rebinding does not duplicate or rebuild attachments [0.24ms]
+(pass) remounting a chat runtime preserves native media file metadata [0.85ms]
+(pass) native image and ZIP paths survive a draft remount and submission [0.43ms]
+(pass) completed external attachments keep original content and can still be sent [0.38ms]
+(pass) removing an attachment or resetting a draft never resurrects it after switching [1.11ms]
+(pass) sending restored files clears only the sender's attachments and sends their original bytes [0.64ms]
+(pass) deleting a session releases its attachment draft [0.22ms]
+(pass) an in-progress attachment completes in its restored session, never the selected other session [0.58ms]
+(pass) returning before upload completion mirrors the result without losing newer text or files [0.49ms]
+(pass) removing a restored upload cannot be undone by a detached upload's completion [0.55ms]
+(pass) deleting a session prevents an unfinished upload from recreating its draft [0.31ms]
+
+apps\desktop\test\composer-link-sites.test.ts:
+(pass) Cloudflare, Reddit and X use their own icons, including subdomains and legacy/short links [0.36ms]
+(pass) common video, community, development and AI websites use the expected brands [0.21ms]
+(pass) additional sites match only hostname boundaries, never credentials, paths or lookalikes [1.62ms]
+(pass) existing Google service icons retain precedence over the new Google domain mapping [0.09ms]
+(pass) Cloudflare's multicolor image resets to a monochrome mask when editing the URL to X [0.17ms]
+(pass) shared hosting customer sites keep the generic icon; unknown URLs remain supported [0.16ms]
+
+apps\desktop\test\composer-link.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+21 | 
+22 | 
+23 | // This workaround is no longer necessary in React 19,
+24 | // but we currently support React >=18.x
+25 | // https://github.com/facebook/react/pull/26395
+26 | const useLayoutEffectImpl = CAN_USE_DOM ? useLayoutEffect : useEffect;
+                                 ^
+ReferenceError: Cannot access 'CAN_USE_DOM' before initialization.
+      at C:\Users\33039\Desktop\QoneAgent\node_modules\.bun\@lexical+react@0.49.0+a4fa0f9114c2616d\node_modules\@lexical\react\dist\LexicalComposer.dev.mjs:26:29
+-------------------------------
+
+
+apps\desktop\test\composer-tool-editor.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+101 |     const context = createLexicalComposerContext(null, theme);
+102 |     const editor = createEditor({
+103 |       editable: initialConfig.editable,
+104 |       html,
+105 |       namespace,
+106 |       nodes,
+            ^
+ReferenceError: Cannot access 'CAN_USE_DOM' before initialization.
+      at C:\Users\33039\Desktop\QoneAgent\node_modules\.bun\@lexical+react@0.49.0+a4fa0f9114c2616d\node_modules\@lexical\react\dist\LexicalComposer.dev.mjs:106:7
+-------------------------------
+
+
+apps\desktop\test\confirm-action.test.ts:
+(pass) destructive confirmations are queued and resolve only after an explicit choice [0.26ms]
+
+apps\desktop\test\conversation-map.test.tsx:
+(pass) fewer than four user turns do not mount a rail or preview root [0.28ms]
+(pass) four turns mount navigation with its preview initially closed [2.65ms]
+
+apps\desktop\test\conversation-rail-layout.test.ts:
+(pass) rail measurement preserves active and visible turns through gaps and shared turn ids [0.73ms]
+(pass) a long conversation only measures search boundaries instead of all earlier turns [0.91ms]
+(pass) navigation visibility uses 48 CSS pixels of measured gutter at every zoom [0.05ms]
+(pass) visibility measures the fixed column even when a user bubble has ample left space [0.11ms]
+(pass) sidebar changes and zoom use live column bounds on the chosen side [0.05ms]
+(pass) unavailable or unlaid-out content keeps the rail unmounted [0.05ms]
+
+apps\desktop\test\diff-viewer-hunks.test.ts:
+(pass) snapshot diff keeps changed hunks and omits distant unchanged lines [1.15ms]
+(pass) separate changes stay in separate hunks [0.40ms]
+
+apps\desktop\test\dock-browser-session.test.ts:
+(pass) unmount during native creation closes the old child before a new mount opens [35.04ms]
+(pass) menus hide the native layer and restore its bounds before revealing it [53.37ms]
+(pass) a menu opened while native creation is pending prevents the child from showing [47.19ms]
+(pass) failed creation releases the child and does not poison the next session [47.68ms]
+(pass) animation bounds are coalesced while native creation is pending [41.81ms]
+(pass) native bounds stay inside the viewport during panel transitions [2.63ms]
+(pass) an offscreen host hides its old native hit area [52.35ms]
+(pass) WebView2 commands cannot block the synchronous IPC handler [5.22ms]
+(pass) code preview loads after native creation and before the child becomes visible [12.28ms]
+(pass) failed preview closes the native child before showing an error [24.33ms]
+(pass) inactive unopened tab does not create native children [39.63ms]
+(pass) hide during await browser_bounds flushes desired state without leaving visible native layer [41.41ms]
+(pass) hide during await browser_visible flushes to false and leaves no visible native layer [46.12ms]
+(pass) dispose pending open properly closes the child without unhandled rejection or orphan [16.45ms]
+(pass) switching between two browser owners serializes correctly on global native queue [28.99ms]
+
+apps\desktop\test\dock-layout.test.ts:
+(pass) right pane retains room for the chat and follows its measured container [0.12ms]
+(pass) resized width can be restored after a container resize [0.07ms]
+
+apps\desktop\test\dock-scope.test.ts:
+(pass) 同项目的会话和新草稿拥有不同右侧栏作用域 [0.07ms]
+
+apps\desktop\test\dock-terminal-appearance.test.ts:
+(pass) 终端从页面解析后的颜色和字体取值，不回退成独立黑底 [0.43ms]
+(pass) 已挂载终端在主题切换后更新并重绘，合并同帧通知且不重复调整尺寸 [0.33ms]
+(pass) 字体变化重新拟合行列，解绑取消待执行更新 [0.15ms]
+
+apps\desktop\test\dock-terminal-session.test.ts:
+(pass) 会话切换后复用原 PTY，只有关闭标签才终止进程 [0.64ms]
+(pass) 创建中的终端被关闭后，排队的 kill 不会漏掉 PTY [0.15ms]
+(pass) dispose can release a blocked write without replaying old input [0.20ms]
+(pass) restart can release a blocked write without replaying old input [21.51ms]
+
+apps\desktop\test\file-attachment-adapter.test.ts:
+(pass) generic file adapter accepts and serializes non-text files [3.11ms]
+(pass) native image and file adapters never read their empty metadata Files [0.18ms]
+(pass) native directory stays a file card and never reads directory contents [0.08ms]
+
+apps\desktop\test\file-change-activity.test.tsx:
+(pass) execution file evidence becomes one independent row with three independent click targets [2.78ms]
+(pass) running edit uses the argument as a preview and completed write needs evidence [0.27ms]
+(pass) failed mutation evidence keeps the failed row without showing an applied diff [0.62ms]
+
+apps\desktop\test\file-preview-state.test.ts:
+(pass) independent readers accept out-of-order responses in their owning tabs [0.49ms]
+(pass) stale success and error responses cannot replace a refreshed reader [0.12ms]
+(pass) closing a tab consumes its late error without recreating it or reporting a chat error [0.08ms]
+(pass) disconnect and failed sends settle loading state, then a new request recovers [0.16ms]
+
+apps\desktop\test\file-reader-tabs.test.ts:
+(pass) a file reference opens a reader independently of an existing directory browser [0.15ms]
+(pass) reselecting a document keeps its tab and changes its navigation request [0.05ms]
+(pass) another file or workspace opens an independent reader [0.03ms]
+(pass) projectless sessions can open an absolute file path [0.03ms]
+
+apps\desktop\test\floating-boundaries.test.ts:
+(pass) accent and language menus use the settings scrollport and dialog instead of the full window [0.22ms]
+(pass) a model editor uses its own dialog and does not inherit an outer settings scrollport [0.07ms]
+(pass) a dialog remains a boundary even when its overflow is visible [0.04ms]
+(pass) native dialogs and alert dialogs also contain nested choices [0.05ms]
+(pass) horizontal clipping and vertical scrolling both constrain the popup [0.03ms]
+(pass) ordinary layout wrappers and the body do not turn into artificial popup boundaries [0.02ms]
+(pass) opening after the parent changes its overflow uses its current clipping behavior [0.02ms]
+(pass) detached documents fall back to the positioning library's viewport boundary [0.03ms]
+
+apps\desktop\test\inline-overflow.test.ts:
+(pass) short, exactly fitting and subpixel-rounded labels never fade [0.29ms]
+(pass) streamed content growth and active/resting label switches update overflow [0.05ms]
+(pass) window/sidebar resize clears the fade when the entire label fits again [0.02ms]
+(pass) animation/resize callbacks reuse RO measurements without synchronous layout reads [0.06ms]
+(pass) hidden execution regions remeasure when expanded and release both observations [0.05ms]
+
+apps\desktop\test\local-image-preview.test.ts:
+14 |     const path = "C:\\Media\\plot.png";
+15 |     const first = await localImagePreview(path);
+16 |     const second = await localImagePreview(path);
+17 |     expect(first).toBe(second);
+18 |     expect(first).toContain("plot.png");
+19 |     expect(calls).toEqual([{ command: "authorize_attachment_preview", path }]);
+                       ^
+error: expect(received).toEqual(expected)
+
+- [
+-   {
+-     "command": "authorize_attachment_preview",
+-     "path": "C:\Media\plot.png",
+-   },
+- ]
++ []
+
+- Expected  - 6
++ Received  + 1
+
+      at <anonymous> (C:\Users\33039\Desktop\QoneAgent\apps\desktop\test\local-image-preview.test.ts:19:19)
+(fail) local image previews authorize the original file and reuse its asset URL [3.30ms]
+
+apps\desktop\test\localization.test.tsx:
+(pass) both dictionaries have exactly the same keys, interpolation parameters and no empty values [3.12ms]
+(pass) dictionary source never silently overwrites duplicate keys [4.92ms]
+(pass) auto detection respects supported language preference order and saved explicit choices [0.13ms]
+(pass) switching language preserves appearance settings, updates the document and notifies subscribers [0.31ms]
+(pass) invalid persisted settings and blocked storage fall back to system language [0.14ms]
+(pass) blocked storage writes still switch this window and later storage changes restore synchronization [0.24ms]
+(pass) native and runtime structured errors follow the current UI language and preserve external messages [0.15ms]
+(pass) every native error code has translated copy and file preview failures preserve diagnostics [0.75ms]
+(pass) built-in profile copy switches language while user-authored names and instructions remain intact [0.12ms]
+(pass) representative UI defaults and adapter errors follow both languages at call time [4.17ms]
+(pass) all built-in channel states have English display copy without changing commands or original names [75.10ms]
+(pass) generated startup copy is current and uses the same locale resolver before React [10.22ms]
+
+apps\desktop\test\long-paste.test.ts:
+(pass) short pasted text stays in the composer [0.05ms]
+(pass) long pasted text becomes a document title based on its first line [0.13ms]
+(pass) very long first lines are safely truncated for display [0.02ms]
+
+apps\desktop\test\markdown-document.test.tsx:
+(pass) the reader renders full Markdown with GFM, math and stable document anchors [27.77ms]
+(pass) document resources retain local paths without allowing executable protocols [0.12ms]
+
+apps\desktop\test\markdown-file-link.test.tsx:
+(pass) real Markdown link rendering retains Windows href, custom label and file icon [9.73ms]
+(pass) workspace-external references open in the file preview tab [0.61ms]
+(pass) numeric citations keep their original URL semantics [0.05ms]
+(pass) file viewer fallback retains leading blank lines and indentation for accurate positioning [0.61ms]
+
+apps\desktop\test\markdown-file-reference.test.ts:
+(pass) Windows, relative, POSIX and file URI destinations preserve encoded spaces and Unicode [0.21ms]
+(pass) web/mail/anchor destinations and invalid positions never become file references [0.19ms]
+(pass) Markdown URL transform preserves file anchors but keeps protocol and image filtering [0.10ms]
+(pass) decoded destinations must still respect workspace boundaries [0.16ms]
+(pass) file icons use the destination extension, including Codex aliases and skill filename [0.07ms]
+
+apps\desktop\test\markdown-gfm.test.ts:
+(pass) numeric ranges do not become deletions while explicit GFM still works [7.89ms]
+
+apps\desktop\test\markdown-web-link.test.tsx:
+(pass) known Codex service links reuse their glyph and make no favicon request [0.42ms]
+(pass) unknown websites request a favicon with a visible generic fallback [0.32ms]
+(pass) Qone's extra known sites remain as fallbacks while official favicons load [0.38ms]
+(pass) real Markdown raw URLs can wrap, while titled inline labels retain their text [1.10ms]
+(pass) mail, page anchors and unsafe protocols do not request favicons [0.28ms]
+(pass) favicon URL excludes credentials, path, query and fragments, and supports protocol-relative URLs [0.09ms]
+
+apps\desktop\test\message-attachments.test.ts:
+(pass) text and image attachments retain their bytes, names and MIME types [0.35ms]
+(pass) unsupported image formats fail before a message is sent [0.14ms]
+(pass) large native media keeps only a local file reference [0.10ms]
+(pass) native image, ZIP and text files serialize only their original paths [0.37ms]
+(pass) native folder serializes as a directory path and protocol rejects inline folder data [0.28ms]
+(pass) local media above 2 GB is passed to the provider without an app size cap [0.08ms]
+(pass) local video formats use the same MIME mapping as downloaded videos [0.23ms]
+(pass) multiple local media files pass through serialization and runtime protocol without a count cap [0.35ms]
+(pass) restored inline file attachments can be serialized again without a File object [0.09ms]
+
+apps\desktop\test\message-day-separators.test.ts:
+(pass) separators follow the last visible row of each past day and keep paired turns together [0.33ms]
+(pass) today has no separator, while the preceding day's marker stays below its final turn [0.06ms]
+(pass) official separator marker renders only the date line [0.37ms]
+
+apps\desktop\test\message-pair.test.ts:
+(pass) each assistant answer takes its adjacent user message once [0.08ms]
+(pass) official MessagePair renders supplied message and action content once [0.67ms]
+
+apps\desktop\test\message-sources.test.ts:
+(pass) source cards use actual answer URLs and ignore examples in code fences [3.04ms]
+
+apps\desktop\test\model-brand.test.ts:
+(pass) recognizes model families without enumerating versions [0.46ms]
+(pass) uses the actual model before aliases and ignores gateway namespaces [0.08ms]
+(pass) unknown and empty models use the generic icon [0.07ms]
+
+apps\desktop\test\model-picker.test.ts:
+(pass) reads the active configuration and isolates models with identical names [0.27ms]
+(pass) saved models remain selectable before the runtime responds [0.03ms]
+(pass) empty configuration does not leak other providers or stale runtime models [0.03ms]
+(pass) disabled runtime models cannot be selected [0.02ms]
+(pass) provider changes and deletion follow the same first-provider fallback as Settings [0.03ms]
+(pass) missing and malformed storage safely produce an empty list [0.05ms]
+(pass) filters model labels and raw names without changing the source list [0.15ms]
+(pass) recovers a provider profile from durable runtime model configs [0.27ms]
+
+apps\desktop\test\model-settings-image.test.ts:
+(pass) provider metadata promotes image models to image input and output capabilities [0.20ms]
+(pass) metadata and manual format remain distinguishable for later overrides [0.06ms]
+
+apps\desktop\test\model-settings.test.ts:
+(pass) provider model list metadata becomes saved model settings [0.57ms]
+(pass) refresh keeps explicit user settings while retaining the enriched metadata [0.07ms]
+(pass) provider refresh preserves speech voice and explicit video API format [0.05ms]
+(pass) unknown models do not claim unverified media capabilities [0.11ms]
+(pass) id-only provider responses clear previously inferred metadata without losing manual overrides [0.19ms]
+(pass) partial provider metadata does not retain unverified old fields [0.10ms]
+(pass) unmarked legacy manual values survive a provider response without metadata [0.06ms]
+(pass) resolved model settings retain each field's fallback source [0.12ms]
+(pass) model API format controls the available thinking levels [0.14ms]
+(pass) model metadata does not narrow API thinking options [0.09ms]
+
+apps\desktop\test\native-file-drop.test.ts:
+(pass) native picker and drop metadata keep the original path for every file type [0.17ms]
+(pass) native folder metadata keeps its original directory path without reading contents [0.03ms]
+
+apps\desktop\test\normalize-display-math.test.ts:
+(pass) renders multiline matrix and aligned math even when the opening $$ shares a line [13.40ms]
+(pass) keeps one-line math, code fences, and inline code unchanged [0.07ms]
+
+apps\desktop\test\pane-motion.test.ts:
+(pass) left: continued pointer moves do not cancel the close/reopen spring [3.29ms]
+(pass) right: continued pointer moves do not cancel the close/reopen spring [0.27ms]
+(pass) reversing an unfinished close starts opening from the current progress [0.16ms]
+(pass) reduced motion stops the spring and directly applies visibility [0.11ms]
+(pass) spring overshoot cannot make the pane wider than its frame or negative [0.02ms]
+
+apps\desktop\test\pane-pointer-resize.test.ts:
+(pass) pane drag lifecycle > left pane closes and reopens without ending the drag or persisting each move [0.30ms]
+(pass) pane drag lifecycle > right pane closes to the right, becomes full to the left, and reverses into split [0.07ms]
+(pass) pane drag lifecycle > ignores other pointers and normalizes window zoom [0.05ms]
+(pass) pane drag lifecycle > cancel uses the last movement, lost capture ends only this handle [0.08ms]
+(pass) pane drag lifecycle > unmount cleans up without writing a partial preference; click writes nothing [0.05ms]
+(pass) right thresholds are evaluated before width clamping [0.03ms]
+
+apps\desktop\test\popup-height.test.ts:
+(pass) composer suggestions use the space above the composer within its pane [0.50ms]
+(pass) small windows and growing composer contents reduce the internal scroll height [0.11ms]
+(pass) resizing only a parent pane updates the available height [0.06ms]
+(pass) zoomed visual viewports constrain suggestions and update on viewport events [0.06ms]
+(pass) scroll and resize bursts share one layout read per frame [0.09ms]
+(pass) closing a popup releases observations, listeners, pending work and inline sizing [0.06ms]
+
+apps\desktop\test\provider-brand.test.ts:
+(pass) recognizes built-in mainstream provider brands [1.18ms]
+(pass) uses the API host when the provider name is generic [0.10ms]
+
+apps\desktop\test\provider-logo-urls.test.ts:
+(pass) uses the website domain before an API subdomain [0.21ms]
+(pass) keeps custom domains and handles invalid addresses [0.07ms]
+(pass) prefers an explicit logo URL [0.03ms]
+
+apps\desktop\test\qone-message-queue.test.ts:
+(pass) running sends merge adjacent identical submissions and keep FIFO for different prompts [28.01ms]
+(pass) idle queue dispatches one follow-up at a time across asynchronous preparation [30.63ms]
+(pass) editing holds the item and saves in place, while cancelling resumes the original item [36.46ms]
+(pass) failed native steering returns the item to its original queue position [27.48ms]
+(pass) accepted steering remains pending until Pi delivers the user turn [8.91ms]
+(pass) undelivered steering returns to the queue after the run ends [10.54ms]
+(pass) a steering item restored after a stopped run is dispatched instead of stranded [5.85ms]
+(pass) restored queue items dispatch original image, ZIP and folder paths [16.07ms]
+(pass) deleting an item while editing does not release it for dispatch [13.33ms]
+(pass) editing a later item lets earlier items dispatch and holds only once it reaches the head [30.09ms]
+(pass) attachment errors are reported instead of silently swallowed [9.56ms]
+(pass) repeated attachments merge by content across fresh attachment ids [8.70ms]
+(pass) same text and attachment name with different bytes stays distinct [9.18ms]
+(pass) a different submission between identical messages prevents queue merging [10.97ms]
+(pass) resending the active input does not create a follow-up, but idle retry still sends [24.89ms]
+(pass) duplicate during asynchronous dispatch is not sent twice [15.98ms]
+(pass) attachment duplicate submitted during dispatch is merged even after serialization finishes [18.62ms]
+
+apps\desktop\test\reasoning-view.test.tsx:
+(pass) active reasoning shows scrollable content with only the disclosure icon [14.32ms]
+(pass) long reasoning retains its beginning and ending inside the bounded scroll area [4.52ms]
+(pass) block completion collapses the preview while the answer is still running [2.64ms]
+(pass) finished and interrupted messages keep their collapsed reasoning header [4.73ms]
+(pass) reasoning disclosure chevron stays inside the interactive trigger [2.07ms]
+(pass) empty reasoning does not create a disclosure [3.05ms]
+(pass) the real message renderer nests active reasoning under the execution disclosure [5.08ms]
+(pass) completed reasoning folds with the outer execution region while the answer remains visible [7.06ms]
+(pass) assistant-ui preserves the pending phase after a tool and does not expose the outer toggle [9.46ms]
+(pass) a completed process without a final answer keeps its status after the activity [4.71ms]
+(pass) the execution divider follows commentary and precedes the final answer [2.97ms]
+(pass) opening execution reveals its content below the toggle [4.53ms]
+
+apps\desktop\test\resizable-sidebar.test.tsx:
+(pass) closing clips the same content frame rather than laying out an icon-only strip [1.41ms]
+
+apps\desktop\test\run-changes-navigation.test.ts:
+(pass) review retains saved evidence and selects the requested file without a workspace [0.10ms]
+(pass) same run reuses its tab; other runs and sessions have independent reviews [0.06ms]
+(pass) summary click preserves selection and invalid paths fall back to saved files [0.03ms]
+(pass) activity group statistics compose repeated edits and vanish after reversal [0.29ms]
+
+apps\desktop\test\run-file-changes-view.test.tsx:
+(pass) completed summary is a resource card, not repeated activity disclosures [0.71ms]
+(pass) multiple files have review rows and clickable line counts [0.50ms]
+(pass) no files produces no attachment [0.08ms]
+(pass) saved empty file creation has an explicit panel message [0.41ms]
+(pass) missing saved diff displays a message rather than a blank panel [0.21ms]
+(pass) attachment only renders on the completed run's last assistant message, never in streaming or another run [0.63ms]
+
+apps\desktop\test\run-file-changes.test.ts:
+(pass) A, B, A yields two files and the actual first-to-last diff, not inflated per-tool totals [0.33ms]
+(pass) run IDs isolate the next task, paths deduplicate, and reversal vanishes [0.18ms]
+(pass) overwriting writes, creates and deletes use real baselines including empty files [0.12ms]
+(pass) reads, plain-text patches, failed edits, unexecuted calls and legacy writes do not invent mutations [0.14ms]
+(pass) a failed tool that actually committed a write still retains authoritative evidence [0.04ms]
+(pass) any custom tool may publish multi-file snapshots or patches without name inference [0.55ms]
+(pass) snapshot followed by a patch composes to one run diff [0.51ms]
+(pass) persisted parts across multiple assistant messages restore once, even with truncated tool summaries [0.17ms]
+(pass) line stats agree with Diff Viewer for reordered lines, trailing newlines and patch content resembling headers [0.16ms]
+
+apps\desktop\test\runtime-message-converter.test.ts:
+(pass) streaming and unrelated tool updates reuse saved history conversions [0.35ms]
+(pass) local preview resolution updates only the owning user message [0.11ms]
+(pass) legacy tool results invalidate their run and unchanged regrouped calls remain cached [0.10ms]
+(pass) child images and segment window changes refresh their owning saved answer [0.27ms]
+(pass) image generation state and error details stay live without invalidating completed history [0.11ms]
+
+apps\desktop\test\scroll-region.test.ts:
+(pass) real wheel handler consumes inner distance only before the boundary [0.53ms]
+(pass) the gesture crossing the bottom immediately passes only its remainder to the viewport [0.07ms]
+(pass) continued wheel at the bottom scrolls the outer viewport without jumping to its end [0.04ms]
+(pass) an upward gesture crossing the top hands its remainder to the viewport [0.04ms]
+(pass) short non-overflowing reasoning transfers the whole wheel gesture [0.03ms]
+(pass) upward scrolling outside a short region does not re-enable internal stream following [0.07ms]
+(pass) fractional remaining distance is consumed rather than applied twice [0.03ms]
+(pass) an exact boundary hit consumes no outer distance; the next wheel scrolls externally [0.04ms]
+(pass) both regions at their boundary neither swallow input nor cause scrolling [0.03ms]
+(pass) line and page wheel units use measured line height and viewport height [0.04ms]
+(pass) viewport registration is resolved at event time, never via a CSS selector [0.05ms]
+(pass) zoom, horizontal, shift, non-cancelable and already-handled gestures remain native [0.07ms]
+(pass) streamed growth follows internally but never hijacks the conversation position [0.05ms]
+(pass) upward reading pauses following even before a scroll event or resize is delivered [0.03ms]
+(pass) reading away from the bottom is retained, returning to bottom resumes streamed following [0.05ms]
+(pass) hidden or finished regions do not follow content growth [0.03ms]
+(pass) disposing the actual binding removes listeners and disconnects observation [0.04ms]
+
+apps\desktop\test\sidebar-drag.test.ts:
+(pass) short clicks, early movement and action buttons do not reorder or suppress clicks [1.22ms]
+(pass) session drag reorders live above or below the target and suppresses the release click [0.22ms]
+(pass) workspace drag reorders live above or below the target and suppresses the release click [0.17ms]
+(pass) cross-project, cross-pin, outside-sidebar and self drops are rejected [0.20ms]
+(pass) Escape, pointer cancellation, window blur, hidden document and disposal clean up without saving [0.31ms]
+(pass) edge scrolling continues while held, stops outside, and cancels when the source disappears [0.08ms]
+
+apps\desktop\test\sidebar-layout.test.ts:
+(pass) Codex sidebar geometry > uses pixel preferences and reserves shell space without a dock feedback loop [0.07ms]
+(pass) Codex sidebar geometry > closes below half minimum, reverses within the same drag, keeps normal content width [0.03ms]
+(pass) Codex sidebar geometry > missing, obsolete ratio or corrupt storage cannot become zero width [0.09ms]
+
+apps\desktop\test\sidebar-preferences.test.ts:
+(pass) sidebar preferences use safe defaults and discard malformed ids [0.05ms]
+(pass) recent and priority sorting are deterministic [0.13ms]
+(pass) manual order moves one chat and project filtering isolates orphan chats [0.10ms]
+(pass) project sidebar places each chat in one visible group [0.11ms]
+(pass) workspace ordering tolerates deleted projects, new projects and malformed saved ids [0.09ms]
+(pass) dragging freezes the current order, saves it, and preserves project membership and pinned chats [0.85ms]
+
+apps\desktop\test\startup-diagnostics.test.ts:
+(pass) module import failure replaces the existing loading placeholder and reaches native diagnostics [1.03ms]
+(pass) failure of the bootstrap itself is visible before any module executes [0.38ms]
+(pass) a CSP failure names the blocked resource and directive [0.36ms]
+(pass) startup diagnostics never replace an already mounted application [0.34ms]
+(pass) startup failures follow the saved English setting before modules execute [0.29ms]
+
+apps\desktop\test\startup-theme.test.ts:
+(pass) startup theme honors an explicitly saved dark theme [0.42ms]
+(pass) startup theme honors an explicitly saved light theme [0.27ms]
+(pass) startup theme follows the system when no preference is saved [0.40ms]
+(pass) explicit system preference and invalid old values follow the system before first paint [0.75ms]
+
+apps\desktop\test\subagent-images.test.ts:
+(pass) child images appear in the parent answer during streaming and after reload [0.34ms]
+(pass) an image already emitted by the parent is not shown twice [0.07ms]
+(pass) images belong to only the assistant segment in which their child started [0.09ms]
+(pass) streaming child text does not re-render the parent until images change [0.12ms]
+(pass) image subagents show a parent placeholder through generation and remove it after success [0.25ms]
+(pass) failed image subagents show an error while cancelled runs stop showing a placeholder [0.05ms]
+
+apps\desktop\test\subagent-message-ownership.test.ts:
+(pass) a completed child stays with the dispatch segment when a later user turn reuses its run id [0.21ms]
+
+apps\desktop\test\subagent-messages.test.ts:
+(pass) live child reasoning and the following answer remain visible [0.35ms]
+(pass) nested subagent messages retain task, ordered tool result, and live text [0.18ms]
+(pass) a failed worker settles its nested thread on reload [0.04ms]
+(pass) internal runtime inputs are hidden while task and literal follow-ups remain intact [0.06ms]
+
+apps\desktop\test\subagent-navigation.test.tsx:
+(pass) dispatch and follow-up tools resolve the same child by structured IDs [0.24ms]
+(pass) agent title is a separate accessible button beside the tool disclosure [1.15ms]
+
+apps\desktop\test\subagent-thread.test.tsx:
+(pass) subagent detail uses the official bottom-following viewport including trailing content [0.22ms]
+(pass) subagent bottom anchoring is isolated from the parent thread's top anchoring [3.73ms]
+(pass) opening completed or failed history still initializes a bottom viewport [1.49ms]
+
+apps\desktop\test\synchronized-animation.test.ts:
+(pass) staggered mounts share the document origin for both rotation and arc animations [4.38ms]
+(pass) remounted and recreated animations rejoin the same clock without resetting other instances [0.06ms]
+(pass) reduced-motion elements with no animations remain static [0.04ms]
+(pass) animations on another timeline keep their own origin [0.03ms]
+
+apps\desktop\test\thread-auto-scroll.test.ts:
+(pass) scroll restoration remembers and restores scroll position per session [0.18ms]
+(pass) new turn stays at its user bubble while content grows, then follows after explicit bottom navigation [0.12ms]
+(pass) a newly sent user message is revealed above the composer in a narrowed chat [0.03ms]
+
+apps\desktop\test\thread-scroll-restoration.test.ts:
+(pass) returning to a running turn restores before frames and never replays smooth placement [1.30ms]
+(pass) restoration leaves the next new user turn's official smooth placement intact [0.28ms]
+(pass) first entry still positions a newly submitted turn [0.14ms]
+(pass) completed history restores without needing an active anchor [0.12ms]
+(pass) missing message refs defer restoration until the official store registers them [0.16ms]
+(pass) reading snapshots survive page remounts, remain per-session and are pruned on deletion [0.14ms]
+
+apps\desktop\test\tool-call.test.ts:
+(pass) tool states do not mark pending or failed calls as successful [0.06ms]
+(pass) tool request and result stay readable and bounded [0.12ms]
+(pass) empty command output falls back to a visible failure message [0.04ms]
+(pass) official ToolCall displays actual request, result, and failure state [1.03ms]
+(pass) framed command output has one visible card [0.79ms]
+(pass) empty running command shows a status instead of a blank terminal [0.54ms]
+
+apps\desktop\test\tool-duration.test.ts:
+(pass) short command durations stay meaningful instead of showing zero seconds [0.26ms]
+(pass) normal command durations keep the existing whole-second display [0.11ms]
+(pass) the active Chinese command title stays in present tense [0.03ms]
+
+apps\desktop\test\tool-group-summary.test.ts:
+(pass) completed groups describe every operation in first-occurrence order [0.18ms]
+(pass) toolGroupSummary displays all files completely instead of only one file [0.05ms]
+(pass) toolGroupSummary describes mixed search and multiple file reads completely [0.03ms]
+(pass) Codex style group summary counts changed files once and keeps targets in detail rows [0.17ms]
+(pass) structured file changes from custom tools are classified as edits [0.06ms]
+(pass) failed actions are not described as completed work [0.07ms]
+(pass) toolTarget preserves search pattern instead of discarding it for directory name [0.15ms]
+
+apps\desktop\test\tool-group-view.test.tsx:
+(pass) completed timeline uses a category summary even when timing data is present [3.61ms]
+(pass) failed command changes the group title without erasing successful edits [2.34ms]
+(pass) the active tool group opens and uses the running command as its title [3.64ms]
+(pass) failed commands use the compact tool row instead of a separate card [2.18ms]
+(pass) expanded failed command has one result frame and a bounded output area [0.62ms]
+
+apps\desktop\test\tool-presentation.test.ts:
+(pass) edit uses Pi's structured patch, or its edits when the result was truncated [0.28ms]
+(pass) write shows the written content as the new file [0.05ms]
+(pass) read, shell and grep get their dedicated views by tool name [0.38ms]
+(pass) other tools are never guessed into diffs, file writes, searches or terminals [0.09ms]
+(pass) image blocks, text and unknown data [0.13ms]
+
+apps\desktop\test\tool-preview.test.ts:
+(pass) partial arguments preview available changes without inventing old file contents [0.17ms]
+(pass) tool lifecycle distinguishes generation, queue, execution, approval, and completion [0.08ms]
+
+apps\desktop\test\tool-summary-overflow.test.tsx:
+(pass) summary text is constrained independently from the disclosure icon [1.20ms]
+(pass) active summary retains the full target even when its display uses a basename [0.66ms]
+(pass) individual calls use container width, preserve full targets and keep diff counts separate [0.70ms]
+(pass) no character limit or three-target cutoff can discard data before rendering [0.17ms]
+
+apps\desktop\test\tool-timeline-state.test.ts:
+(pass) the title follows the latest running tool, not the first pending tool [0.07ms]
+(pass) finished tools have a completed title even while the assistant continues [0.09ms]
+(pass) waiting approval outranks later prepared calls [0.03ms]
+
+apps\desktop\test\vite-dependency-patches.test.ts:
+(pass) editing patch contents invalidates Vite's config hash even when timestamps are unchanged [2.23ms]
+(pass) unchanged patches reuse the cache and all declared inputs are watched [1.37ms]
+
+apps\desktop\test\workspace-file-navigation.test.ts:
+(pass) maps absolute and relative file evidence within the workspace [0.07ms]
+(pass) rejects external paths and parent traversal [0.03ms]
+(pass) resolves root relative document links inside a Windows workspace [0.04ms]
+(pass) normalizes native Windows directories before resolving links and parent segments [0.04ms]
+(pass) preserves POSIX and UNC absolute destinations [0.03ms]
+(pass) requires a base for relative paths and rejects control characters [0.01ms]
+
+apps\desktop\test\workspace-view-state.test.ts:
+(pass) workspace-view-state robustness & ownership > Windows 路径分隔符正规化 normalizePath [0.15ms]
+(pass) workspace-view-state robustness & ownership > 多 directory 并行请求：每个目录独立 generation，都能正常合并进文件树 [0.64ms]
+(pass) workspace-view-state robustness & ownership > 同 directory 乱序：旧 generation 晚回包不覆盖新结果 [0.15ms]
+(pass) workspace-view-state robustness & ownership > Old error 晚到不污染已切换的新文件内容与状态 [0.31ms]
+(pass) workspace-view-state robustness & ownership > Refresh / resetViewData 提升 Epoch：所有旧请求全部被 drop [0.18ms]
+(pass) workspace-view-state robustness & ownership > Back（clearOpenFile / clearGitDiff）后晚回包不重新选中 [0.34ms]
+(pass) workspace-view-state robustness & ownership > 带 requestId 且 untracked 的回包绝不作为 global 接受（防重复回包污染全局） [0.07ms]
+(pass) workspace-view-state robustness & ownership > 发送失败（send 返回 false）立即清除 tracked 请求并设置错误，不发生内存泄漏 [0.19ms]
+(pass) workspace-view-state robustness & ownership > clearTrackedWorkspaceRequests 清空全部未决请求并终止 loading [0.15ms]
+(pass) workspace-view-state robustness & ownership > 关闭后重建同一标签时，旧请求不能写入新视图 [0.21ms]
+
+7 tests failed:
+(fail) manual compaction stays attached to its session and reloads as a timeline marker [5.07ms]
+(fail) legacy compaction completion without a marker clears progress without crashing [0.40ms]
+(fail) an interrupted compaction replaces its running marker with an error row [0.23ms]
+(fail) automatic compaction events appear in the same conversation timeline [0.46ms]
+(fail) local image previews authorize the original file and reuse its asset URL [3.30ms]
+
+ 716 pass
+ 7 fail
+ 2 errors
+ 15602 expect() calls
+Ran 723 tests across 137 files. [26.93s]

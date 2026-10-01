@@ -30,12 +30,16 @@
 - `mention-colors.css` 共享输入框和正文的主题色，`markdown-file-link.css` 实现 16px 图标、3px 间距、无底色行内流、hover 虚线及键盘焦点。
 - `MarkdownFileLink` 复用 Radix Tooltip 和 `openWorkspaceFile`，保留自定义标签，悬停显示完整工作区路径和行号。Enter / Space 与点击都打开文件侧栏。
 - `markdown-file-reference.ts` 解析 Windows / POSIX / 相对路径、file URI、编码空格与 Unicode、`:line:column`、`#Lline` 及行号范围。`urlTransform` 只为确认的文件 anchor 保留原目标，其他协议继续由 react-markdown 过滤，图片不放开 file 协议。
-- HTTP(S) 与协议相对网址打开浏览器侧栏，引用编号继续走引用组件，页内锚点和 mailto 保持链接语义。工作区外文件引用显示路径，但不可点击；现有文件读取协议仅支持工作区内文件。
-- 文件侧栏目标携带 line / column / endLine；`WorkspaceFileContent` 将目标行或范围高亮，并只滚动文件视口。列号保留在导航数据和提示中，目前以所在行为定位单位。
+- HTTP(S) 与协议相对网址打开浏览器侧栏，引用编号继续走引用组件，页内锚点和 mailto 保持链接语义。文件引用通过独立的 `file.preview` 协议打开右侧阅读器，支持工作区外的绝对路径；文档内相对引用从当前文档目录解析。
+- 文件侧栏目标携带 line / column / endLine；`FileReader` 在有行号时默认展示源码，`WorkspaceFileContent` 将目标行或范围高亮，并只滚动文件视口。普通 Markdown 文件默认渲染文档，可切换源码。列号保留在导航数据和提示中，目前以所在行为定位单位。
 - `SyntaxHighlighter` 的文件模式保留前置空行和缩进，为加载时的纯文本与完成后的 Shiki 输出提供相同的行标记，避免 trim 导致错位；普通代码块行为不变。
 - 从实际图标注册表提取缺少的 18 个类型图标，公共类型继续复用项目资源。脚本 `work/codex-input-link-26-928/extract-file-icons.ts`，来源、偏移和 SHA256 见同目录 `file-icons-manifest.json`。
 
-## 验证
+## 文件阅读器后续更新
+
+2026-10-01 已补齐独立文件标签、Markdown 阅读模式、图片/PDF/HTML/音视频预览、Windows 原生路径解析和标签请求隔离。新建文件标签使用 `file` 类型；目录浏览器保留 `files` 类型。具体逆向证据、格式支持范围与最新验证结果见 [Codex 文件阅读器对齐记录](codex-file-reader-26.928.2636.md)。
+
+## 前一轮文件引用验证
 
 - `bun test`：文件引用解析、真实 Markdown 渲染、图标与自定义标签、工作区边界、引用编号和纯文本行号保留，共 11 项通过。
 - 文件变更视图回归 6 项通过；输入框链接回归单独运行 15 项通过。合并进程运行视图和输入框测试会触发 Lexical `CAN_USE_DOM` 初始化顺序错误，仅用原有 `run-file-changes-view.test.tsx` 和 `composer-link.test.ts` 也能复现；此问题不影响上述分进程验证，未扩大本次修改范围。

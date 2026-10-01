@@ -1,0 +1,85 @@
+bun test v1.3.14 (0d9b296a)
+
+apps\agent-runtime\test\event-persistence.test.ts:
+(pass) persistent event journal > current markers skip history parsing while legacy automatic markers recover their position [12.11ms]
+(pass) persistent event journal > loads completed and interrupted context markers for the requested session [3.47ms]
+(pass) persistent event journal > restores events and continues sequence after reopening SQLite [10.84ms]
+
+apps\agent-runtime\test\event-replay.test.ts:
+(pass) event ordering and reconnect replay > keeps monotonic sequence across a restored seed and filters replay [0.14ms]
+(pass) event ordering and reconnect replay > wraps repeatedly, restores unsorted history, and preserves session filtering [0.28ms]
+(pass) event ordering and reconnect replay > zero capacity retains sequence continuity without storing payloads [0.09ms]
+
+apps\agent-runtime\test\session-search.test.ts:
+(pass) session search avoids per-session message loading and preserves title/content semantics [8.83ms]
+(pass) session search preserves Chinese and Unicode folding for ASCII queries [3.04ms]
+(pass) session search picks the first inserted match on equal timestamps and titles take precedence [2.94ms]
+(pass) session search merges recent title and content hits before applying the result limit [8.59ms]
+
+apps\agent-runtime\test\subagent-publisher.test.ts:
+(pass) coalesced text contains each delta once and does not query or transmit history [34.77ms]
+(pass) a state boundary supersedes pending deltas and completion closes the stream [37.10ms]
+(pass) concurrent children retain ownership and disposal cancels unsent work [37.14ms]
+(pass) reasoning deltas coalesce by block with text and preserve block completion [21.68ms]
+(pass) a full snapshot supersedes pending reasoning and text without duplicating them [24.12ms]
+
+apps\agent-runtime\test\subagents.test.ts:
+(pass) capability subagent routing > always lists the temporary general agent with its configured or inherited model [0.73ms]
+(pass) capability subagent routing > normalizes the five supported capability agents as built-in profiles [0.20ms]
+(pass) capability subagent routing > keeps normalization idempotent and does not duplicate built-ins [0.62ms]
+(pass) capability subagent routing > keeps saved profile positions when configuration is synchronized [0.38ms]
+(pass) capability subagent routing > resolves only what the user configured and reports the rest as unavailable [0.29ms]
+(pass) capability subagent routing > normalizes malformed persisted values and keeps instructions in prompt [0.18ms]
+(pass) capability subagent routing > removes the retired search built-in from saved profiles without deleting custom agents [0.22ms]
+(pass) capability subagent routing > accepts atomic settings synchronization over the protocol [3.80ms]
+(pass) keeps parallel subagent transcripts separate across restart and removes them with a rewritten parent turn [7.19ms]
+(pass) delegation has its own permission while child tools retain their normal gate [0.80ms]
+(pass) two delegation calls launch independent Pi runs before either finishes [11.84ms]
+(pass) persists the initial child turn exactly once [17.71ms]
+(pass) capability dispatch uses the configured model with the parent's attachments and refuses unconfigured capabilities [28.19ms]
+(pass) scheduler admits queued children in FIFO order [0.31ms]
+
+apps\desktop\test\compaction-ranges.test.ts:
+(pass) reasoning on both sides of compaction stays in its own execution region [0.28ms]
+(pass) reasoning display changes do not move compaction across tools or answer text [0.05ms]
+(pass) compaction splits a tool group at the recorded boundary [0.03ms]
+(pass) start, consecutive and trailing compactions retain order without losing content [0.07ms]
+(pass) hidden parts do not shift the boundary and empty messages still show running compaction [0.03ms]
+(pass) split process sections share one disclosure and one status after the last activity [0.11ms]
+(pass) a compaction immediately before the answer keeps the divider after the marker [0.04ms]
+(pass) compaction stays at its event boundary inside the collapsible execution [0.08ms]
+(pass) compaction after a completed answer remains at the end of the reply [0.04ms]
+(pass) interleaved media does not shift a subagent or compaction marker [0.08ms]
+
+apps\desktop\test\conversation-rail-layout.test.ts:
+(pass) rail measurement preserves active and visible turns through gaps and shared turn ids [0.79ms]
+(pass) a long conversation only measures search boundaries instead of all earlier turns [0.86ms]
+(pass) navigation visibility uses 48 CSS pixels of measured gutter at every zoom [0.06ms]
+(pass) visibility measures the fixed column even when a user bubble has ample left space [0.12ms]
+(pass) sidebar changes and zoom use live column bounds on the chosen side [0.05ms]
+(pass) unavailable or unlaid-out content keeps the rail unmounted [0.06ms]
+
+apps\desktop\test\dock-terminal-session.test.ts:
+(pass) 会话切换后复用原 PTY，只有关闭标签才终止进程 [0.64ms]
+(pass) 创建中的终端被关闭后，排队的 kill 不会漏掉 PTY [0.16ms]
+(pass) dispose can release a blocked write without replaying old input [0.20ms]
+(pass) restart can release a blocked write without replaying old input [22.27ms]
+
+apps\desktop\test\runtime-message-converter.test.ts:
+(pass) streaming and unrelated tool updates reuse saved history conversions [0.55ms]
+(pass) local preview resolution updates only the owning user message [0.11ms]
+(pass) legacy tool results invalidate their run and unchanged regrouped calls remain cached [0.15ms]
+(pass) child images and segment window changes refresh their owning saved answer [0.26ms]
+(pass) image generation state and error details stay live without invalidating completed history [0.07ms]
+
+apps\desktop\test\subagent-messages.test.ts:
+(pass) live child reasoning and the following answer remain visible [0.29ms]
+(pass) nested subagent messages retain task, ordered tool result, and live text [0.15ms]
+(pass) a failed worker settles its nested thread on reload [0.03ms]
+(pass) internal runtime inputs are hidden while task and literal follow-ups remain intact [0.07ms]
+(pass) streamed child text and reasoning reuse saved messages while changed tasks and results refresh [0.09ms]
+
+ 59 pass
+ 0 fail
+ 324 expect() calls
+Ran 59 tests across 10 files. [635.00ms]

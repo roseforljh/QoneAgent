@@ -1,0 +1,47 @@
+bun test v1.3.14 (0d9b296a)
+
+apps\desktop\test\chat-run-error.test.ts:
+(pass) ordinary commands and direct model metadata requests use the current UI language [5.02ms]
+(pass) child deltas preserve transcript references, route to the parent session, and settle with a full snapshot [1.02ms]
+(pass) MCP loading survives the saved list and clears on success or failure [0.88ms]
+(pass) restores a key preset credential when the saved MCP list arrives [15.61ms]
+(pass) shows an install hint when an MCP preset cannot find Node.js/npm [0.31ms]
+(pass) session creation requires an imported selected workspace and stays available during another run [0.56ms]
+(pass) switching sessions while one is running keeps the run alive [0.83ms]
+(pass) removing a workspace refreshes sessions to exclude its orphaned chats [0.29ms]
+(pass) resending after a failed reply merges the user turn and starts execution again [1.44ms]
+(pass) retry of a rejected optimistic turn sends a new message without replacing an unsaved id [0.21ms]
+(pass) stopping the first run clears a title spinner even when title generation never replies [0.14ms]
+(pass) a failed title request clears its spinner [0.18ms]
+(pass) an active run snapshot fills in the run id while the optimistic UI is already running [0.11ms]
+(pass) accepted agent run requests a run snapshot when the start event is missed [0.16ms]
+(pass) stop requested before run id arrives is sent once the run starts [0.34ms]
+(pass) live assistant parts and reloaded parts keep the same Pi order [160.74ms]
+(pass) one Pi message streams text and tool blocks in order before message completion [53.49ms]
+(pass) tool execution start creates live parts before the tool completes [1.84ms]
+(pass) completed Pi tool arguments are prepared before execution starts [0.13ms]
+(pass) reloaded tool rows restore the Pi tool-call id [0.24ms]
+(pass) reloaded legacy tool rows use the persisted assistant part id [0.09ms]
+(pass) streaming tool arguments update one preview without entering prose or completing the tool [0.30ms]
+(pass) reasoning streams separately, settles at block end and survives completed message reload [104.80ms]
+(pass) interleaved background text, reasoning, tools and approvals survive switching and creation [66.64ms]
+(pass) a background completion saves its answer without stopping the foreground run [0.54ms]
+(pass) overlapping pending run requests keep errors and acknowledgements with their sessions [0.40ms]
+(pass) a queued follow-up stays with its background session and starts after completion [31.46ms]
+runtime_send failed 911 |     setupConcurrentSessions();
+912 |     sendFailure = (command) => command.type === "agent.run" && command.sessionId === "background-a"
+913 |       ? new Promise<void>((_resolve, reject) => { rejectSend = reject; }) : Promise.resolve();
+914 |     useStore.getState().runAgent("A will fail");
+915 |     startConcurrentRun("background-b");
+916 |     rejectSend!(new Error("transport down"));
+                          ^
+error: transport down
+      at <anonymous> (C:\Users\33039\Desktop\QoneAgent\apps\desktop\test\chat-run-error.test.ts:916:21)
+
+(pass) a delayed transport failure clears only the pending background run [15.44ms]
+(pass) late snapshots preserve a pending user turn and live background tools [1.72ms]
+
+ 29 pass
+ 0 fail
+ 176 expect() calls
+Ran 29 tests across 1 file. [1220.00ms]

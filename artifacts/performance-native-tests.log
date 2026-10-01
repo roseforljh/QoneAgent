@@ -1,0 +1,16 @@
+   Compiling qone-agent v0.0.1 (C:\Users\33039\Desktop\QoneAgent\apps\desktop\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.83s
+     Running unittests src\main.rs (target\debug\deps\qone_agent-5c85cbadaf49c140.exe)
+
+running 8 tests
+test conpty::tests::blocked_input_does_not_hold_the_terminal_registry ... ok
+test conpty::tests::powershell_prompt_and_interactive_input ... ok
+test creds::tests::parses_manifest_and_rejects_invalid_counts ... ok
+test creds::tests::splits_large_unicode_secrets_without_losing_characters ... ok
+test creds::tests::stores_and_restores_large_secret_in_credential_manager ... ok
+test sidecar_tests::blocked_sidecar_input_does_not_hold_the_lifecycle_lock ... ok
+test sidecar_tests::queued_commands_are_rejected_after_restart ... ok
+test sidecar_tests::runtime_sends_keep_fifo_order_on_blocking_workers ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
