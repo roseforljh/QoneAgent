@@ -148,10 +148,11 @@ export function mountThreadScrollController(options: ControllerOptions) {
     else if (["ArrowDown", "End", "PageDown"].includes(event.key)) gesture(false, target);
     else if (event.key === " " || event.key === "Spacebar") gesture(event.shiftKey, target);
   };
-  const pointer = (event: PointerEvent) => {
-    // Cancel smooth navigation on any pointer gesture, but preserve normal button actions.
-    if (animation !== null) hold();
-    if (event.target instanceof Element && event.target.closest('[data-slot="collapsible"], [data-slot="assistant-execution"], [data-slot="tool-timeline"], [data-slot="tool-call"], [data-slot="reasoning"], [data-slot="sources"]')) hold();
+  const pointer = () => {
+    // Cancel smooth navigation on any pointer gesture. A disclosure click is
+    // not a scroll gesture: keep bottom following active so its height
+    // animation remains visible above the sticky footer.
+    cancelAnimation();
   };
   const touchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY; };
   const touchMove = (event: TouchEvent) => {

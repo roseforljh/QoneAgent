@@ -180,7 +180,7 @@ const ProjectGroup: FC<ProjectGroupProps> = ({ dragGroup, label, workspaces, ses
         <button type="button" className="q-sidebar-section-label text-muted-foreground hover:text-foreground flex min-w-0 flex-1 items-center gap-1 px-1.5 text-sm font-semibold transition-colors"
           onClick={() => setOpen((value) => !value)} aria-expanded={open}>
           <span>{label}</span>
-          <ChevronDownIcon className={cn("size-3.5 shrink-0 transition-[transform,opacity] group-hover/section:opacity-100", open ? "opacity-0" : "-rotate-90 opacity-100")} />
+          <ChevronDownIcon className={cn("size-3.5 shrink-0 transition-[transform,rotate,opacity] group-hover/section:opacity-100", open ? "opacity-0" : "-rotate-90 opacity-100")} />
         </button>
         {actions}
       </div>

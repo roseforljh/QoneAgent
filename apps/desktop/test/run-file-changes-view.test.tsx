@@ -30,6 +30,39 @@ test("multiple files have review rows and clickable line counts", () => {
   expect(markup).not.toContain("Show diff");
 });
 
+test("nine files default to three rows with six more, while totals cover the entire run", () => {
+  const multiple: RunFileChanges = { nodes: Array.from({ length: 9 }, (_, index) => ({ ...changes.nodes[0]!, path: `src/File${index}.ts`, name: `File${index}.ts` })), totalAdditions: 162, totalDeletions: 36 };
+  const markup = renderToStaticMarkup(<RunFileChangesCard changes={multiple} onReview={() => {}} />);
+  expect(markup).toContain("Edited 9 files");
+  expect(markup).toContain("Show 6 more files");
+  expect(markup).toContain('aria-expanded="false"');
+  expect(markup).toContain('aria-controls=');
+  expect(markup.match(/data-slot="run-file-change"/g)).toHaveLength(3);
+  expect(markup).not.toContain("src/File3.ts");
+  expect(markup).toContain("+162");
+  expect(markup).toContain("−36");
+  expect(markup).not.toContain("overflow-y-auto");
+});
+
+test("three files need no expansion and four files report one remaining file", () => {
+  const nodes = Array.from({ length: 4 }, (_, index) => ({ ...changes.nodes[0]!, path: `src/File${index}.ts`, name: `File${index}.ts` }));
+  const three = renderToStaticMarkup(<RunFileChangesCard changes={{ ...changes, nodes: nodes.slice(0, 3) }} />);
+  expect(three.match(/data-slot="run-file-change"/g)).toHaveLength(3);
+  expect(three).not.toContain('data-slot="run-file-changes-toggle"');
+  const four = renderToStaticMarkup(<RunFileChangesCard changes={{ ...changes, nodes }} />);
+  expect(four).toContain("Show 1 more file");
+});
+
+test("display paths separate dimmed directories from filenames across path formats", () => {
+  for (const path of ["src/deep/folder/A.ts", "C:\\Repo\\deep\\A.ts", "A.ts"]) {
+    const multiple = { ...changes, nodes: [...changes.nodes, { ...changes.nodes[0]!, path: "src/B.ts", name: "B.ts" }] };
+    const markup = renderToStaticMarkup(<RunFileChangesCard changes={multiple} displayPath={(file) => file.name === "A.ts" ? path : file.path} onReview={() => {}} />);
+    expect(markup).toContain('data-slot="file-change-filename" class="max-w-full shrink-0 truncate text-foreground">A.ts</span>');
+    expect(markup).toContain('aria-label="View changes: src/A.ts"');
+    if (path !== "A.ts") expect(markup).toContain(`truncate text-foreground/50">${path.replaceAll("\\", "/").slice(0, -4)}</span>`);
+  }
+});
+
 test("no files produces no attachment", () => {
   expect(renderToStaticMarkup(<RunFileChangesCard changes={{ nodes: [], totalAdditions: 0, totalDeletions: 0 }} />)).toBe("");
 });

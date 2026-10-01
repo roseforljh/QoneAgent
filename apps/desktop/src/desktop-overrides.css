@@ -135,6 +135,8 @@ body {
 
 /* Assistant prose shares the chat scale and reading rhythm. */
 .aui-thread-root .q-assistant-text .aui-md {
+  /* Codex MarkdownRoot: max(code size, chat size * .875). */
+  --q-chat-small-font-size: max(var(--q-text-xs), calc(var(--q-text-base) * .875));
   font-family: var(--q-font-sans);
   font-size: var(--q-text-base);
   font-weight: var(--q-weight-regular);
@@ -162,6 +164,7 @@ body {
 }
 .aui-thread-root .q-assistant-text .aui-md p {
   margin-block: 0 var(--q-text-base);
+  font-size: inherit;
   line-height: inherit;
 }
 .aui-thread-root .q-assistant-text .aui-md p:last-child {
@@ -171,6 +174,7 @@ body {
   margin-block: 0;
   margin-inline-start: 0;
   padding-inline-start: calc(var(--q-text-base) * 1.625);
+  font-size: inherit;
   line-height: inherit;
 }
 .aui-thread-root .q-assistant-text .aui-md li {
@@ -186,11 +190,19 @@ body {
 .aui-thread-root .q-assistant-text .aui-md strong {
   font-weight: 600;
 }
+.aui-thread-root .q-assistant-text .aui-md table {
+  font-size: var(--q-chat-small-font-size);
+  line-height: calc(var(--q-text-base) * 1.625);
+}
+.aui-thread-root .q-assistant-text .aui-md :is(th, td) {
+  font-size: inherit;
+}
 .aui-thread-root .q-assistant-text .aui-md .aui-md-inline-code {
   border-radius: 4px;
   background: color-mix(in srgb, var(--foreground) 6%, transparent);
   padding: 0.08em 0.3em;
-  font-size: var(--q-text-sm);
+  /* Codex InlineCode follows the surrounding paragraph, list or table. */
+  font-size: .92em;
   font-weight: 400;
 }
 

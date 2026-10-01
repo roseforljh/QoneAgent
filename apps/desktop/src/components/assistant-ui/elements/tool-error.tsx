@@ -2,10 +2,11 @@
 
 import { CodexAlertCircleIcon as AlertCircleIcon, CodexChevronRightIcon as ChevronRightIcon, CodexLoader2Icon as Loader2Icon, CodexRotateCwIcon as RotateCwIcon } from "../execution-icons";
 
-import { useId, type ComponentProps } from "react";
+import { useCallback, useId, type ComponentProps } from "react";
+import { useThreadViewportStore } from "@assistant-ui/react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../ui/collapsible";
 import { cn } from "../../../lib/utils";
-import { detailViewport, field, mono, paper } from "./surfaces";
+import { detailViewport, FadeScroll, field, mono, paper } from "./surfaces";
 
 export function ToolError({
   name,
@@ -51,6 +52,11 @@ export function ToolError({
   onOpenChange: (open: boolean) => void;
 }) {
   const panelId = useId();
+  const threadViewportStore = useThreadViewportStore({ optional: true });
+  const getScrollViewport = useCallback(
+    () => threadViewportStore?.getState().element.viewport ?? null,
+    [threadViewportStore],
+  );
   return (
     <Collapsible
       data-slot="tool-error"
@@ -76,15 +82,16 @@ export function ToolError({
       </CollapsibleTrigger>
       <CollapsibleContent id={panelId} className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up motion-reduce:animate-none">
         <div className="pt-3">
-          <div
+          <FadeScroll
             className={cn(
               field,
               detailViewport,
               "whitespace-pre-wrap break-words rounded-xl px-3 py-2 font-mono text-xs leading-relaxed text-foreground/60 [overflow-wrap:anywhere]",
             )}
+            getScrollViewport={getScrollViewport}
           >
             {message}
-          </div>
+          </FadeScroll>
           {(onSkip || onRetry) && <div className="mt-3 flex items-center justify-end gap-2">
             {onSkip && <button
               type="button"

@@ -2,7 +2,8 @@
 
 import { CodexChevronRightIcon as ChevronRightIcon, CodexXIcon, type ExecutionIcon } from "../execution-icons";
 
-import { useId, useRef, type ReactNode } from "react";
+import { useCallback, useId, useRef, type ReactNode } from "react";
+import { useThreadViewportStore } from "@assistant-ui/react";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -80,6 +81,11 @@ export function ToolTimeline({
   className,
 }: ToolTimelineProps) {
   const disclosureRef = useRef<HTMLDivElement>(null);
+  const threadViewportStore = useThreadViewportStore({ optional: true });
+  const getScrollViewport = useCallback(
+    () => threadViewportStore?.getState().element.viewport ?? null,
+    [threadViewportStore],
+  );
   const panelId = useId();
   return (
     <Collapsible
@@ -121,7 +127,7 @@ export function ToolTimeline({
         {canExpand && <ChevronRightIcon data-slot="tool-disclosure-chevron" className="size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover/trigger:opacity-75 group-focus-visible/trigger:opacity-100 group-data-[state=open]/trigger:opacity-100 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />}
       </CollapsibleTrigger>
       <MeasuredCollapse id={panelId} open={open && canExpand} className="outline-none">
-        <FadeScroll className={cn(regionViewport, "overflow-x-hidden")}>
+        <FadeScroll className={cn(regionViewport, "overflow-x-hidden")} getScrollViewport={getScrollViewport}>
           <div className="flex flex-col gap-2 ps-3 pt-2">
               {children ?? take(steps, visibleSteps).map((step, index, shown) => <ToolTimelineRow key={step.id ?? step.chip} step={step} active={streaming && index === shown.length - 1}>
                 {renderStep?.(step, index)}

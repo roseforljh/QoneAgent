@@ -2,7 +2,8 @@
 
 import { CodexClock3Icon as Clock3Icon, CodexXIcon as XIcon, type ExecutionIcon } from "../execution-icons";
 
-import { useId, useRef, type ReactNode } from "react";
+import { useCallback, useId, useRef, type ReactNode } from "react";
+import { useThreadViewportStore } from "@assistant-ui/react";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -63,6 +64,11 @@ export function ToolCall({
   className,
 }: ToolCallProps) {
   const disclosureRef = useRef<HTMLDivElement>(null);
+  const threadViewportStore = useThreadViewportStore({ optional: true });
+  const getScrollViewport = useCallback(
+    () => threadViewportStore?.getState().element.viewport ?? null,
+    [threadViewportStore],
+  );
   const panelId = useId();
   const target = fullTarget || query;
   const title = [running ? activeLabel : label, targetAction ? undefined : target].filter(Boolean).join(" ");
@@ -108,7 +114,10 @@ export function ToolCall({
       </div>}
       <MeasuredCollapse id={panelId} open={open} className="outline-none">
         {open && <div data-slot="tool-result-panel" className={cn("mt-1.5", !resultHasOwnFrame && "overflow-hidden rounded-lg border border-border/40 bg-muted/20 dark:bg-muted/10 shadow-xs")}>
-          <FadeScroll className={cn(failed ? detailViewport : regionViewport, resultHasOwnFrame ? "pe-2" : "p-2.5")}>{result}</FadeScroll>
+          <FadeScroll
+            className={cn(failed ? detailViewport : regionViewport, resultHasOwnFrame ? "pe-2" : "p-2.5")}
+            getScrollViewport={getScrollViewport}
+          >{result}</FadeScroll>
         </div>}
       </MeasuredCollapse>
     </Collapsible>

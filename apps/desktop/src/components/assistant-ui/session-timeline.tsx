@@ -229,7 +229,11 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   const fullSummary = toolGroupSummary(steps, locale, { fullTargets: true });
   const fullActiveLabel = activePart && activeStep
     ? describeActive(activePart, { ...activeStep, target: activeStep.fullTarget ?? activeStep.target })
-    : thinking ? activeLabel : fullSummary;
+    : thinking ? activeLabel : "";
+  // While a stage is running, keep the header tied to the latest live action.
+  // The authored stage title becomes the resting summary after the work settles.
+  const liveLabel = activeLabel || title || restingLabel;
+  const liveFullLabel = fullActiveLabel || title || fullSummary;
 
   const stepsById = useMemo(() => new Map(steps.map((step, index) => [step.id, index])), [steps]);
   const details = activityRanges?.flatMap((range) => {
@@ -262,9 +266,7 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
       onOpenChange={setOpen}
       restingLabel={title ?? restingLabel}
       fullSummary={title ?? fullSummary}
-      fullActiveLabel={title ?? fullActiveLabel}
-      activeLabel={title ?? activeLabel}
-      headerIcon={title || thinking ? undefined : (toolWorking ? activeStep : undefined)?.icon ?? summaryStep?.icon}
+      headerIcon={thinking ? undefined : (toolWorking ? activeStep : undefined)?.icon ?? (title ? undefined : summaryStep?.icon)}
       headerStat={title ? undefined : headerStat}
       canExpand={steps.length > 0 || Boolean(details?.length)}
       failureLabel={title && steps.some((step) => step.failed) ? t("chat.toolGroupFailedMany", { count: steps.filter((step) => step.failed).length }) : undefined}
@@ -272,6 +274,8 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
       renderStep={(_, index) => <ToolCallEntry part={executedToolParts[index]} step={steps[index]} prepared={preparedIds.has(executedToolParts[index]?.toolCallId ?? "")} messageRunning={messageRunning} />}
       children={details}
       className="q-tool-timeline max-w-2xl"
+      fullActiveLabel={liveFullLabel}
+      activeLabel={liveLabel}
     />
   );
 };

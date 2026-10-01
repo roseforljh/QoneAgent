@@ -1,4 +1,5 @@
 import { useConversationStore } from "./conversation-context";
+import { useShallow } from "zustand/react/shallow";
 import { useConversationMessages } from "./use-conversation-messages";
 import { subagentImagesByRun } from "./subagent-images";
 import { addComposerHistory } from "./composer-history";
@@ -22,7 +23,21 @@ import { useMessageQueueAdapter } from "./use-message-queue-adapter";
 const attachmentAdapter = new QoneAttachmentAdapter();
 
 export function useSideConversationRuntime(sessionId: string) {
-  const state = useConversationStore((state) => state);
+  const state = useConversationStore(useShallow((state) => ({
+    queueLoadedSessionId: state.queueLoadedSessionId,
+    queueItems: state.queueItems,
+    editingQueueItem: state.editingQueueItem,
+    activeRunId: state.activeRunId,
+    subagents: state.subagents,
+    messages: state.messages,
+    streaming: state.streaming,
+    streamingParts: state.streamingParts,
+    running: state.running,
+    modelConfigs: state.modelConfigs,
+    selectedModelId: state.selectedModelId,
+    chatRunError: state.chatRunError,
+    toolCalls: state.toolCalls,
+  })));
   const connected = useStore((global) => global.connected);
   const workspaceReady = useStore((global) => {
     const workspaceId = global.sideChats[sessionId]?.workspaceId;
@@ -73,7 +88,15 @@ export function useSideConversationRuntime(sessionId: string) {
   const steers = useSteeringMessages(queue, queueAdapter, state.queueItems, state.activeRunId);
   const childImagesByRun = useMemo(() => subagentImagesByRun(state.subagents), [state.subagents]);
   const messages = useConversationMessages({
-    ...state, childImagesByRun,
+    messages: state.messages,
+    streaming: state.streaming,
+    streamingParts: state.streamingParts,
+    running: state.running,
+    activeRunId: state.activeRunId,
+    currentSessionId: sessionId,
+    chatRunError: state.chatRunError,
+    toolCalls: state.toolCalls,
+    childImagesByRun,
     selectedModel: state.modelConfigs.find((model) => model.id === state.selectedModelId),
   }, steers);
   const runtime = useExternalStoreRuntime({

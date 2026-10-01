@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useExternalStoreRuntime, type ThreadMessageLike } from "@assistant-ui/react";
 import { AssistantParts } from "../src/components/assistant-ui/assistant-parts";
 import { ACTIVITY_TITLE_TOOL } from "@qone/protocol";
+import { useStore } from "../src/store";
 
 function Fixture({ content, running = false }: { content: ThreadMessageLike["content"]; running?: boolean }) {
   const messages: ThreadMessageLike[] = [{ id: "activity-phases", role: "assistant", status: running ? { type: "running" } : { type: "complete", reason: "stop" }, content }];
@@ -27,6 +28,27 @@ test("authored stage purposes replace category lists while the real renderer pre
   const completed = renderToStaticMarkup(<Fixture content={content} />);
   expect(completed).toContain('title="排查生命周期为何被覆盖"');
   expect(completed).not.toContain("已读取文件，运行了一个命令");
+});
+
+test("a running authored stage shows the latest operation and settles on its purpose", () => {
+  const content: ThreadMessageLike["content"] = [
+    stage("inspect", "排查命令执行安全"),
+    read("source"),
+    { type: "tool-call", toolName: "powershell", toolCallId: "verify", args: { command: "bun test" } },
+  ];
+  const serverState = useStore.getInitialState();
+  const previous = serverState.toolCalls;
+  try {
+    serverState.toolCalls = [{ toolCallId: "verify", toolName: "powershell", runId: "run", status: "running", args: { command: "bun test" } }];
+    const running = renderToStaticMarkup(<Fixture running content={content} />);
+    expect(running).toMatch(/<button[^>]+title="[^"]*bun test/);
+
+    serverState.toolCalls = [{ toolCallId: "verify", toolName: "powershell", runId: "run", status: "success", args: { command: "bun test" } }];
+    const completed = renderToStaticMarkup(<Fixture content={content} />);
+    expect(completed).toContain('title="排查命令执行安全"');
+  } finally {
+    serverState.toolCalls = previous;
+  }
 });
 
 test("a purpose is visible immediately and the next declaration creates the next stage", () => {

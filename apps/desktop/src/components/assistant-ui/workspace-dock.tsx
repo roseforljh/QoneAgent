@@ -943,7 +943,8 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                   {tab.view === "file" && tab.fileTarget && <FileReader tabId={tab.id} workspaceId={tab.workspaceId} sessionId={sessionId} target={tab.fileTarget} active={active} refreshNonce={tab.refreshNonce ?? 0} />}
                   {tab.view === "git" && tabWorkspaceId && <GitView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "changes" && tab.changesTarget && <RunChangesPanel target={tab.changesTarget} />}
-                  {tab.view === "sideChat" && sideChats[tab.id] && <SideConversationPanel session={sideChats[tab.id]} />}
+                  {/* Keep one assistant-ui/Lexical tree alive; queue execution is session-scoped and survives tab unmounts. */}
+                  {active && tab.view === "sideChat" && sideChats[tab.id] && <SideConversationPanel session={sideChats[tab.id]} />}
                   {active && tab.view === "mcp" && <DockMcpView refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "skills" && <DockSkillsView workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "subagents" && <SubagentPanel selectedId={selectedSubagentId} onSelect={setSelectedSubagentId} onClose={() => closeTab(tab.id)} />}
