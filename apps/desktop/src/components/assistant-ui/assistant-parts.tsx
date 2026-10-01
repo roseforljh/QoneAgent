@@ -4,6 +4,7 @@ import { MarkdownText } from "./markdown-text";
 import { GenerativeUIPresentation, SessionTimeline } from "./session-timeline";
 import { assistantPartRanges, assistantRangeSections, executionDisplayBlocks, hasVisibleAnswer, type AssistantPartRange } from "./assistant-part-ranges";
 import { AssistantExecution } from "./assistant-execution";
+import { executionStatusAtStart } from "./execution-disclosure-state";
 import { RunFileChangesAttachment } from "./run-file-changes-attachment";
 import { Image } from "./elements/image";
 import { ImageGallery } from "./elements/image-gallery";
@@ -66,9 +67,7 @@ export const AssistantParts: FC = () => {
   const finalAnswerStarted = hasVisibleAnswer(parts, sections.answer);
   const firstActivityRange = sections.activity[0];
   const disclosureStartIndex = firstActivityRange && ("index" in firstActivityRange ? firstActivityRange.index : firstActivityRange.startIndex);
-  const statusAtStart = finalAnswerStarted && runStatus !== "cancelled" && runStatus !== "interrupted"
-    || runStatus === "created" || runStatus === "running" || runStatus === "paused" || runStatus === "waiting_approval"
-    || !runStatus && messageRunning;
+  const statusAtStart = executionStatusAtStart(finalAnswerStarted, runStatus, messageRunning);
 
   const renderRange = (range: AssistantPartRange) => {
     if (range.type === "reasoning") return <MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />;

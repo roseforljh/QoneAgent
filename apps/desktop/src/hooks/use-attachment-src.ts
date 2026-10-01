@@ -31,8 +31,10 @@ const useFileSrc = (file: File | undefined) => {
   return entry !== undefined && entry.file === file ? entry.url : undefined;
 };
 
+type AttachmentPreviewSource = { file?: File; src?: string; localPath?: string };
+
 export const useAttachmentSrc = () => {
-  const { file, src, localPath } = useAuiState(
+  const source = useAuiState(
     useShallow((s): { file?: File; src?: string; localPath?: string } => {
       if (s.attachment.type !== "image") return {};
       if (s.attachment.file) {
@@ -45,7 +47,11 @@ export const useAttachmentSrc = () => {
       return { src };
     }),
   );
+  return useAttachmentPreviewSrc(source);
+};
 
+/** Shared by attachment chips and queued input thumbnails. */
+export const useAttachmentPreviewSrc = ({ file, src, localPath }: AttachmentPreviewSource) => {
   const [preview, setPreview] = useState<{ path: string; url: string } | undefined>();
   useEffect(() => {
     if (!localPath) return;

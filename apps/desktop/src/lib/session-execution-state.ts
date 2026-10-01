@@ -16,6 +16,16 @@ export function emptySessionState() {
 export type SessionExecutionState = Pick<AgentState, keyof ReturnType<typeof emptySessionState>>;
 const sessionKeys = Object.keys(emptySessionState()) as (keyof SessionExecutionState)[];
 
+/** Runtime state can reset; unsent edits remain owned by their conversations. */
+export function queueEditsOnDisconnect(state: Pick<AgentState, "editingQueueItem" | "backgroundSessions">) {
+  return {
+    editingQueueItem: state.editingQueueItem,
+    backgroundSessions: Object.fromEntries(Object.entries(state.backgroundSessions)
+      .filter(([, session]) => session.editingQueueItem)
+      .map(([id, session]) => [id, { ...emptySessionState(), editingQueueItem: session.editingQueueItem }])),
+  };
+}
+
 function snapshot(state: AgentState): SessionExecutionState {
   return Object.fromEntries(sessionKeys.map((key) => [key, state[key]])) as SessionExecutionState;
 }

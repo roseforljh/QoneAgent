@@ -1,5 +1,6 @@
 import { translate, type Locale } from "../../localization";
 import type { ToolActivityCategory } from "./tool-activity-category";
+import type { ToolIntegration } from "./tool-integration";
 
 export interface ToolGroupSummaryStep {
   verb: string;
@@ -9,9 +10,11 @@ export interface ToolGroupSummaryStep {
   category?: ToolActivityCategory;
   filePaths?: string[];
   failed?: boolean;
+  integration?: ToolIntegration;
 }
 
 const CATEGORY_ORDER: readonly ToolActivityCategory[] = [
+  "integration",
   "file-change",
   "exploration",
   "command",
@@ -22,6 +25,7 @@ const CATEGORY_LABELS = {
   "file-change": ["chat.toolGroupFileChangeOne", "chat.toolGroupFileChangeMany"],
   exploration: ["chat.toolGroupExplorationOne", "chat.toolGroupExplorationMany"],
   command: ["chat.toolGroupCommandOne", "chat.toolGroupCommandMany"],
+  integration: ["chat.toolGroupToolOne", "chat.toolGroupToolMany"],
   tool: ["chat.toolGroupToolOne", "chat.toolGroupToolMany"],
 } as const;
 
@@ -35,6 +39,7 @@ export function toolGroupSummary(
   if (categorized) {
     const counts = new Map<ToolActivityCategory, number>();
     const changedPaths = new Set<string>();
+    const integrationNames = new Set<string>();
     let failedCount = 0;
     for (const step of steps) {
       if (step.failed) {
@@ -42,6 +47,10 @@ export function toolGroupSummary(
         continue;
       }
       const category = step.category ?? "tool";
+      if (category === "integration") {
+        integrationNames.add(step.integration?.name ?? step.verb);
+        continue;
+      }
       if (category === "file-change") {
         if (step.filePaths?.length) {
           step.filePaths.forEach((path) => changedPaths.add(path));
@@ -64,6 +73,17 @@ export function toolGroupSummary(
         const label = translate(locale, key);
         return locale === "en" && index > 0 ? label[0]!.toLowerCase() + label.slice(1) : label;
       });
+    if (integrationNames.size > 0) {
+      const names = [...integrationNames];
+      const sourceList = locale === "en"
+        ? new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(names)
+        : names.join("、");
+      const insertionIndex = CATEGORY_ORDER
+        .slice(0, CATEGORY_ORDER.indexOf("integration"))
+        .filter((category) => (counts.get(category) ?? 0) > 0)
+        .length;
+      parts.splice(insertionIndex, 0, translate(locale, names.length === 1 ? "chat.toolGroupIntegrationOne" : "chat.toolGroupIntegrationMany", { sources: sourceList }));
+    }
     if (failedCount > 0) {
       const label = translate(locale, failedCount === 1 ? "chat.toolGroupFailedOne" : "chat.toolGroupFailedMany", { count: failedCount });
       parts.push(locale === "en" && parts.length > 0 ? label[0]!.toLowerCase() + label.slice(1) : label);

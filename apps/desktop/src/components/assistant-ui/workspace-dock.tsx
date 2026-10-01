@@ -58,6 +58,11 @@ import {
   requestWorkspaceGit, requestWorkspaceGitDiff, useWorkspaceViewState, useWorkspaceViewStore,
 } from "../../lib/workspace-view-state";
 import "./workspace-dock.css";
+import { SideConversationPanel } from "./side-conversation-panel";
+import { closeSideConversation } from "../../lib/side-conversation";
+import { confirmDestructiveAction } from "../../lib/confirm-action";
+import { localizeError } from "../../lib/error-localization";
+import sideChatIcon from "../../assets/codex-icons/plus-chat-bubble-right-light-16.svg";
 
 const DOCK_VIEWS: readonly DockView[] = ["session", "terminal", "files", "git", "browser", "mcp", "skills", "subagents"];
 const isDockView = (value: unknown): value is DockView =>
@@ -415,6 +420,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
 }) {
   const { t } = useLocale();
   const workspaces = useStore((state) => state.workspaces);
+  const sideChats = useStore((state) => state.sideChats);
   const [openTabs, setOpenTabs] = useState<DockTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>();
   const [selectedSubagentId, setSelectedSubagentId] = useState<string>();
@@ -434,6 +440,25 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     for (const tab of openTabsRef.current) if (tab.view === "terminal") closeDockTerminalResource(tab.id);
   }, []);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  useEffect(() => {
+    const sessions = Object.values(sideChats).filter((session) => session.sideChat?.parentSessionId === sessionId);
+    const known = new Set(openTabsRef.current.filter((tab) => tab.view === "sideChat").map((tab) => tab.id));
+    const added = sessions.filter((session) => !known.has(session.id));
+    setOpenTabs((tabs) => [
+      ...tabs.filter((tab) => tab.view !== "sideChat" || Boolean(sideChats[tab.id])),
+      ...added.map((session) => ({ id: session.id, view: "sideChat" as const, workspaceId: session.workspaceId })),
+    ]);
+    if (added.length) {
+      setActiveTabId(added.at(-1)!.id); setLauncherOpen(false); setCollapsed(false);
+    } else {
+      setActiveTabId((selected) => {
+        const index = openTabsRef.current.findIndex((tab) => tab.id === selected && tab.view === "sideChat" && !sideChats[tab.id]);
+        if (index < 0) return selected;
+        const remaining = openTabsRef.current.filter((tab) => tab.view !== "sideChat" || Boolean(sideChats[tab.id]));
+        return remaining[Math.max(0, index - 1)]?.id;
+      });
+    }
+  }, [sideChats, sessionId]);
   useEffect(() => { if (!scopeActive) setLauncherOpen(false); }, [scopeActive]);
   useEffect(() => setSelectedSubagentId(undefined), [sessionId]);
   const [terminalStatus, setTerminalStatus] = useState<Record<string, { status: "starting" | "ready" | "exited" | "error"; detail?: string }>>({});
@@ -626,13 +651,25 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     setCollapsed(false);
   };
 
-  const closeTab = (closingId: string) => {
-    const closingIndex = openTabs.findIndex((tab) => tab.id === closingId);
+  const closingSideChats = useRef(new Set<string>());
+  const closeTab = async (closingId: string) => {
+    const session = useStore.getState().sideChats[closingId];
+    if (session) {
+      if (closingSideChats.current.has(closingId)) return;
+      closingSideChats.current.add(closingId);
+      try {
+        if (!await confirmDestructiveAction(t("chat.sideChatCloseConfirm"))) return;
+        if (!await closeSideConversation(session)) return;
+      } catch (error) { useStore.setState({ lastError: localizeError(error) }); return; }
+      finally { closingSideChats.current.delete(closingId); }
+    }
+    const tabs = openTabsRef.current;
+    const closingIndex = tabs.findIndex((tab) => tab.id === closingId);
     if (closingIndex < 0) return;
-    const remaining = openTabs.filter((tab) => tab.id !== closingId);
+    const remaining = tabs.filter((tab) => tab.id !== closingId);
     setLauncherOpen(false);
     setOpenTabs(remaining);
-    if (openTabs[closingIndex]?.view === "terminal") closeDockTerminalResource(closingId);
+    if (tabs[closingIndex]?.view === "terminal") closeDockTerminalResource(closingId);
     terminalApiRefs.current.delete(closingId);
     setTerminalStatus((current) => {
       const next = { ...current };
@@ -684,6 +721,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   }, [activeTabId, openTabs, collapsed, scopeActive, workspaceId]);
 
   const tabMeta: Record<DockView, { icon: LucideIcon; label: string }> = {
+    sideChat: { icon: BotMessageSquareIcon, label: t("chat.sideChat") },
     session: { icon: ListTodoIcon, label: t("dock.session") },
     terminal: { icon: SquareTerminalIcon, label: t("dock.terminal") },
     files: { icon: FolderTreeIcon, label: t("dock.files") },
@@ -773,7 +811,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                 const duplicateCount = openTabs.filter((item) => item.view === tab.view).length;
                 const fileName = tab.fileTarget?.path.split(/[\\/]/).at(-1);
                 const workspace = workspaces.find((item) => item.id === (tab.workspaceId ?? workspaceId));
-                const tabBaseLabel = tab.view === "file" && fileName ? fileName : tab.view === "terminal" && workspace?.path ? workspace.path : label;
+                const tabBaseLabel = tab.view === "sideChat" ? sideChats[tab.id]?.title ?? label : tab.view === "file" && fileName ? fileName : tab.view === "terminal" && workspace?.path ? workspace.path : label;
                 const tabLabel = tab.view !== "file" && duplicateCount > 1 ? `${tabBaseLabel} ${openTabs.slice(0, index + 1).filter((item) => item.view === tab.view).length}` : tabBaseLabel;
                 const terminalState = terminalStatus[tab.id]?.status ?? "starting";
                 return (
@@ -787,7 +825,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                       tabIndex={active ? 0 : -1}
                       className="flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden ps-2.5 text-start"
                     >
-                      {tab.view === "terminal" ? <span className="q-dock-terminal-tab-icon relative flex size-4 shrink-0 items-center text-foreground/55" data-status={terminalState} title={terminalStatus[tab.id]?.detail}>
+                      {tab.view === "sideChat" ? <CodexIcon src={sideChatIcon} className="size-4 shrink-0 text-foreground/55" /> : tab.view === "terminal" ? <span className="q-dock-terminal-tab-icon relative flex size-4 shrink-0 items-center text-foreground/55" data-status={terminalState} title={terminalStatus[tab.id]?.detail}>
                         <CodexIcon src={terminalIcon} className="size-4" />
                       </span> : tab.view === "file" && tab.fileTarget
                         ? <CodexIcon src={attachmentFileIcon(tab.fileTarget.path, "")} className="size-4 shrink-0 text-foreground/55" />
@@ -846,6 +884,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                   {tab.view === "file" && tab.fileTarget && <FileReader tabId={tab.id} workspaceId={tab.workspaceId} sessionId={sessionId} target={tab.fileTarget} active={active} refreshNonce={tab.refreshNonce ?? 0} />}
                   {tab.view === "git" && tabWorkspaceId && <GitView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "changes" && tab.changesTarget && <RunChangesPanel target={tab.changesTarget} />}
+                  {tab.view === "sideChat" && sideChats[tab.id] && <SideConversationPanel session={sideChats[tab.id]} />}
                   {active && tab.view === "mcp" && <DockMcpView refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "skills" && <DockSkillsView workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "subagents" && <SubagentPanel selectedId={selectedSubagentId} onSelect={setSelectedSubagentId} onClose={() => closeTab(tab.id)} />}

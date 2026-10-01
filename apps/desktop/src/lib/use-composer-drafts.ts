@@ -8,6 +8,7 @@ export function useComposerDrafts(runtime: AssistantRuntime) {
   const sessionId = useStore((state) => state.currentSessionId);
   const sessions = useStore((state) => state.sessions);
   const sessionsLoaded = useStore((state) => state.sessionsLoaded);
+  const sideChats = useStore((state) => state.sideChats);
 
   useEffect(() => bindComposerDrafts(
     runtime,
@@ -16,6 +17,6 @@ export function useComposerDrafts(runtime: AssistantRuntime) {
   ), [runtime, sessionId]);
 
   useEffect(() => {
-    if (sessionsLoaded) composerDrafts.prune(sessions.map((session) => session.id));
-  }, [sessions, sessionsLoaded]);
+    if (sessionsLoaded) composerDrafts.prune([...sessions.map((session) => session.id), ...Object.keys(sideChats)]);
+  }, [sessions, sessionsLoaded, sideChats]);
 }

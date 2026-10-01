@@ -3,6 +3,7 @@ import { sessionStore } from "./lib/session-execution-state";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore, initBridge, type ToolCall } from "./store";
 import { reportStartup } from "./lib/startup-diagnostic";
+import { localizeError } from "./lib/error-localization";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -17,10 +18,14 @@ import { isImageModel } from "./lib/image-model-config";
 import { selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { localImagePreview } from "./lib/local-image-preview";
-import { expandComposerCommand } from "./lib/composer-command";
+import { extractComposerPrompt } from "./lib/composer-prompt";
 import { addComposerHistory } from "./lib/composer-history";
 import { useComposerDrafts } from "./lib/use-composer-drafts";
+import { composerDrafts } from "./lib/composer-drafts";
+import { queueMessageDraft } from "./lib/queue-composer-edit";
 import { createQoneMessageQueue, getQoneMessageQueue } from "./lib/qone-message-queue";
+import { appendSteeringMessages, useSteeringMessages } from "./lib/use-steering-messages";
+import { useMessageQueueAdapter } from "./lib/use-message-queue-adapter";
 import { QoneAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { ScopedWorkspaceDocks } from "./components/assistant-ui/scoped-workspace-docks";
@@ -68,23 +73,6 @@ function ThemeButton({ theme, onToggle }: { theme: Theme; onToggle: () => void }
 
 const attachmentAdapter = new QoneAttachmentAdapter();
 
-const extractText = (message: AppendMessage): string => {
-  const partsText = message.content
-    .filter((part): part is { type: "text"; text: string } => part.type === "text")
-    .map((part) => part.text)
-    .join("");
-  return partsText.trim();
-};
-
-const extractComposerPrompt = (message: AppendMessage): { text: string; goal: boolean } => {
-  const raw = extractText(message);
-  const directive = /:qone-tool\[[^\]\n]*\]\{name=qone-goal\}\s*/giu;
-  const legacy = /^\s*@goal\b\s*/iu;
-  if (directive.test(raw)) return { text: expandComposerCommand(raw.replace(directive, "").trim()), goal: true };
-  if (legacy.test(raw)) return { text: expandComposerCommand(raw.replace(legacy, "").trim()), goal: true };
-  return { text: expandComposerCommand(raw), goal: false };
-};
-
 function useQoneRuntime(pendingRun: { current: { text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null }) {
   const { t } = useLocale();
   const messages = useStore((s) => s.messages);
@@ -113,6 +101,8 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const queue = useMemo(() => currentSessionId && connected ? getQoneMessageQueue(currentSessionId) ?? createQoneMessageQueue({
     sessionId: currentSessionId,
     isRunning: () => sessionStore(useStore, currentSessionId).getState().running || Boolean(useStore.getState().compactionStatuses[currentSessionId]),
+    getActiveRunId: () => sessionStore(useStore, currentSessionId).getState().activeRunId,
+    getFollowUpQueueMode: () => useStore.getState().followUpQueueMode,
     isDuplicate: (message, attachments) => {
       const state = sessionStore(useStore, currentSessionId).getState();
       const previous = [...state.messages].reverse().find((item) => item.role === "user");
@@ -123,25 +113,37 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       if (!state.editingQueueItem || state.currentSessionId !== currentSessionId) return false;
       const activeQueue = getQoneMessageQueue(currentSessionId);
       const localId = activeQueue?.getLocalId(state.editingQueueItem.id);
-      if (!activeQueue || !localId) return false;
-      activeQueue.edit(localId, message, state.editingQueueItem.attachments);
-      useStore.setState({ editingQueueItem: undefined });
+      if (!activeQueue || !localId) { useStore.setState({ editingQueueItem: undefined }); return false; }
+      void activeQueue.edit(localId, message).then((saved) => {
+        if (!saved) return;
+        const owner = sessionStore(useStore, currentSessionId);
+        if (owner.getState().editingQueueItem?.id === state.editingQueueItem?.id) owner.setState({ editingQueueItem: undefined });
+      }).catch((error) => {
+        // Restore by conversation, including after its composer unmounts.
+        if (!composerDrafts.get(currentSessionId)) composerDrafts.set(currentSessionId, queueMessageDraft(message));
+        useStore.setState({ lastError: localizeError(error) });
+      });
       return true;
     },
     send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); if (prompt.text.trim()) addComposerHistory(prompt.text); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId); },
-    steer: (message, queueItemId, attachments) => {
+    steer: (message, queueItemId, attachments, targetRunId) => {
       const state = sessionStore(useStore, currentSessionId).getState();
-      if (!state.activeRunId) return Promise.resolve(false);
+      if (!targetRunId || state.activeRunId !== targetRunId || !state.running) return Promise.resolve(false);
       const prompt = extractComposerPrompt(message);
       if (prompt.text.trim()) addComposerHistory(prompt.text);
-      return steerAgent({ sessionId: currentSessionId, runId: state.activeRunId, queueItemId, message: prompt.text, attachments });
+      return steerAgent({ sessionId: currentSessionId, runId: targetRunId, queueItemId, message: prompt.text, attachments });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
     onError: (message) => useStore.setState({ lastError: message }),
   }) : null, [currentSessionId, connected, runAgent, steerAgent]);
 
+  const queueAdapter = useMessageQueueAdapter(queue);
+  const submittedSteers = useSteeringMessages(queue, queueAdapter, queueItems, activeRunId);
+
   useEffect(() => {
-    if (queue && currentSessionId && queueLoadedSessionId === currentSessionId) hydrateSessionQueue(queue, queueItems);
+    if (queue && currentSessionId && queueLoadedSessionId === currentSessionId) {
+      hydrateSessionQueue(queue, queueItems, sessionStore(useStore, currentSessionId).getState().editingQueueItem?.id);
+    }
   }, [queue, currentSessionId, queueLoadedSessionId, queueItems]);
   useEffect(() => {
     if (queue && currentSessionId) bindSessionQueue(currentSessionId, queue);
@@ -154,14 +156,16 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     : undefined;
   const answerError = !hasStreamingAssistant && chatRunError?.sessionId === currentSessionId && !imageGenerationError ? chatRunError : undefined;
   const runtimeMessages = useMemo(() => {
-    if (hasStreamingAssistant) return [...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts.length ? streamingParts : undefined, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }];
+    // An empty current segment is authoritative: undefined would replay legacy tools from this run.
+    if (hasStreamingAssistant) return appendSteeringMessages([...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }], submittedSteers);
     if (imageGenerationError) return [...messages, { id: `image-error:${imageGenerationError.id}`, role: "assistant", content: "", createdAt: Date.now() }];
     if (answerError) return insertChatRunErrorMessage(messages, answerError, `${t("chat.runFailed")}\n${answerError.detail || t("chat.runFailedDetail")}`);
     return messages;
-  }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError, answerError, t]);
+  }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError, answerError, submittedSteers, t]);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
+  const imageAttachmentMessages = useMemo(() => appendSteeringMessages(messages, submittedSteers), [messages, submittedSteers]);
   useEffect(() => {
-    const paths = [...new Set(messages.flatMap((message) => message.attachments?.flatMap((attachment) =>
+    const paths = [...new Set(imageAttachmentMessages.flatMap((message) => message.attachments?.flatMap((attachment) =>
       attachment.type === "image" && attachment.localPath ? [attachment.localPath] : []) ?? []))];
     let active = true;
     void Promise.all(paths.map(async (path) => {
@@ -180,7 +184,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       });
     });
     return () => { active = false; };
-  }, [messages]);
+  }, [imageAttachmentMessages]);
   const imageWindows = useMemo(() => {
     const windows = new Map<string, { after?: number; through?: number }>();
     const lastAssistantByRun = new Map<string, number>();
@@ -258,8 +262,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       if (state.editingQueueItem && state.currentSessionId === currentSessionId && queue) {
         const localId = queue.getLocalId(state.editingQueueItem.id);
         if (localId) {
-          queue.edit(localId, message, state.editingQueueItem.attachments);
-          useStore.setState({ editingQueueItem: undefined });
+          if (await queue.edit(localId, message)) sessionStore(useStore, currentSessionId).setState({ editingQueueItem: undefined });
           return;
         }
       }
@@ -284,7 +287,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       if (source) runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId));
     },
     onCancel: async () => stopAgent(),
-    queue: queue?.adapter,
+    queue: queueAdapter,
     adapters: { threadList, attachments: attachmentAdapter },
   });
 

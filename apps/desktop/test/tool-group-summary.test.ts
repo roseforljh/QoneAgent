@@ -72,6 +72,21 @@ test("failed actions are not described as completed work", () => {
   expect(toolGroupSummary(steps.slice(1), "zh-CN")).toBe("一个操作失败");
 });
 
+test("integration calls use the integration name in Codex-style summaries", () => {
+  const context7 = { id: "mcp-context7", name: "Context7", logo: "context7.svg" };
+  const playwright = { id: "mcp-playwright", name: "Playwright", logo: "playwright.svg" };
+  expect(toolGroupSummary([
+    { verb: "调用", category: "integration", integration: context7 },
+    { verb: "调用", category: "integration", integration: context7 },
+    { verb: "调用", category: "integration", integration: playwright },
+    { verb: "运行", category: "command" },
+  ], "zh-CN")).toBe("已使用 Context7、Playwright 集成，运行了一个命令");
+  expect(toolGroupSummary([
+    { verb: "Call", category: "integration", integration: context7 },
+    { verb: "Call", category: "integration", integration: playwright },
+  ], "en")).toBe("Used Context7 and Playwright integrations");
+});
+
 test("toolTarget preserves search pattern instead of discarding it for directory name", () => {
   const grepCall = {
     toolName: "grep",

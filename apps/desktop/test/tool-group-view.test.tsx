@@ -5,6 +5,7 @@ import { SessionTimeline } from "../src/components/assistant-ui/session-timeline
 import { ToolCall } from "../src/components/assistant-ui/elements/tool-call";
 import { ToolResultView } from "../src/components/assistant-ui/elements/tool-result";
 import { useStore } from "../src/store";
+import { toolIntegration } from "../src/components/assistant-ui/tool-integration";
 
 function Fixture() {
   const messages: ThreadMessageLike[] = [{
@@ -30,6 +31,7 @@ test("completed timeline uses a category summary even when timing data is presen
     expect(html).toMatch(/读取了文件|Read files/);
     expect(html).not.toMatch(/读取 1 项|Read ×1|搜索 1 项|Search ×1/);
     expect(html).not.toMatch(/耗时|Worked for/);
+    expect(html).not.toMatch(/data-slot="tool-call"[\s\S]*?data-slot="codex-icon"/);
   } finally {
     useStore.setState({ toolCalls: previous });
   }
@@ -79,6 +81,38 @@ test("the active tool group opens and uses the running command as its title", ()
     expect(html).toMatch(/title="[^"]*gradlew test/);
   } finally {
     useStore.setState({ toolCalls: previous });
+  }
+});
+
+function IntegrationFixture() {
+  const messages: ThreadMessageLike[] = [{
+    id: "context7-call", role: "assistant", status: { type: "complete", reason: "stop" },
+    content: [{
+      type: "tool-call", toolName: "mcp:mcp-context7:resolve-library-id", toolCallId: "context7-call",
+      args: { libraryName: "assistant-ui" }, result: "done",
+    }],
+  }];
+  const runtime = useExternalStoreRuntime({ messages, convertMessage: (message: ThreadMessageLike) => message, onNew: async () => {} });
+  return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{
+    AssistantMessage: () => <MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={1} /></MessagePrimitive.Root>,
+  }} /></AssistantRuntimeProvider>;
+}
+
+test("MCP execution rows use the configured integration title and logo", () => {
+  const previousServers = useStore.getState().mcpServers;
+  const previousCalls = useStore.getState().toolCalls;
+  try {
+    useStore.setState({
+      mcpServers: [{ id: "mcp-context7", name: "Context7", connected: true }],
+      toolCalls: [{ toolCallId: "context7-call", toolName: "mcp:mcp-context7:resolve-library-id", runId: "test", status: "success" }],
+    });
+    expect(useStore.getState().mcpServers[0]?.name).toBe("Context7");
+    expect(toolIntegration("mcp:mcp-context7:resolve-library-id", useStore.getState().mcpServers)?.name).toBe("Context7");
+    const html = renderToStaticMarkup(<IntegrationFixture />);
+    expect(html).toMatch(/已使用 Context7 集成|Used Context7 integration/);
+    expect(html).toContain("context7-logo");
+  } finally {
+    useStore.setState({ mcpServers: previousServers, toolCalls: previousCalls });
   }
 });
 

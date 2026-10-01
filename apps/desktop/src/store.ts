@@ -5,7 +5,7 @@ import { sessionStore, switchSessionState, type SessionExecutionState } from "./
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
-import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
+import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, loadFollowUpQueueMode, saveFollowUpQueueMode, type FollowUpQueueMode, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
 import { trackWorkspaceRequest, untrackWorkspaceRequest, useWorkspaceViewStore } from "./lib/workspace-view-state";
@@ -89,6 +89,8 @@ export interface AgentState {
   contextUsage?: { sessionId: string; model: string; tokens: number; contextWindow: number };
   contextUsageRequestId?: string;
   sessions: SessionInfo[];
+  sideChats: Record<string, SessionInfo>;
+  sideChatTransfers: Record<string, QueueItemInfo>;
   searchResults: SessionSearchResult[];
   searchLoading: boolean;
   activeSearchQuery: string;
@@ -98,6 +100,8 @@ export interface AgentState {
   runOptionsBySession: Record<string, SessionRunOptions>;
   defaultPermissionMode: RunPermissionMode;
   draftRunOptions: SessionRunOptions;
+  followUpQueueMode: FollowUpQueueMode;
+  setFollowUpQueueMode: (mode: FollowUpQueueMode) => void;
   skills: SkillInfo[];
   plugins: PluginInfo[];
   mcpServers: McpServerInfo[];
@@ -170,8 +174,8 @@ export interface AgentState {
   pauseGoal: () => void;
   resumeGoal: () => void;
   clearGoal: () => void;
-  stopAgent: () => void;
-  steerAgent: (input: { sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }) => Promise<boolean>;
+  stopAgent: (sessionId?: string) => void;
+  steerAgent: (input: { sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }) => Promise<boolean | undefined>;
   approve: (id: string) => void;
   reject: (id: string) => void;
   setPermission: (rule: Omit<PermissionRuleInfo, "updatedAt">) => void;
@@ -597,7 +601,7 @@ export const useStore = create<AgentState>((set, get) => ({
       get().createSessionForWorkspace(workspaceId);
       return;
     }
-    const session = get().sessions.find((item) => item.id === sid);
+    const session = get().sessions.find((item) => item.id === sid) ?? get().sideChats[sid];
     if (!session?.workspaceId || !get().workspaces.some((workspace) => workspace.id === session.workspaceId)) return;
     if (get().running || get().compactionStatuses[sid]) return;
     if (!hasTauriBridge()) { set({ lastError: t("error.runtimeDisconnected") }); return; }
@@ -655,8 +659,8 @@ export const useStore = create<AgentState>((set, get) => ({
     }
   },
 
-  stopAgent: () => {
-    const { currentSessionId, activeRunId, running } = get();
+  stopAgent: (sessionId) => {
+    const { currentSessionId, activeRunId, running } = sessionStore(useStore, sessionId).getState();
     if (!currentSessionId || !running) return;
     stopRequestedSessionIds.add(currentSessionId);
     if (activeRunId) stopRun(currentSessionId, activeRunId);
@@ -669,8 +673,8 @@ export const useStore = create<AgentState>((set, get) => ({
 
   steerAgent: async ({ sessionId, runId, queueItemId, message, attachments }) => {
     const requestId = rid();
-    return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => { steerRequests.delete(requestId); resolve(false); }, 15_000);
+    return new Promise<boolean | undefined>((resolve) => {
+      const timer = setTimeout(() => { steerRequests.delete(requestId); resolve(undefined); }, 15_000);
       steerRequests.set(requestId, {
         resolve: (accepted) => { clearTimeout(timer); steerRequests.delete(requestId); resolve(accepted); },
       });
@@ -745,6 +749,14 @@ export const useStore = create<AgentState>((set, get) => ({
     saveRunOptions(runOptionsBySession);
     return { selectedModelId: id, runOptionsBySession };
   }),
+
+  followUpQueueMode: loadFollowUpQueueMode(),
+  sideChats: {},
+  sideChatTransfers: {},
+  setFollowUpQueueMode: (mode) => {
+    saveFollowUpQueueMode(mode);
+    set({ followUpQueueMode: mode });
+  },
   setRunPermissionMode: (mode) => set((state) => {
     const sid = state.currentSessionId;
     if (!sid) return { draftRunOptions: { ...state.draftRunOptions, permissionMode: mode } };

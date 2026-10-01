@@ -26,6 +26,18 @@ test("streaming and unrelated tool updates reuse saved history conversions", () 
   expect(convert({ ...active, content: "new delta" }, next)).not.toBe(convert(active, next));
 });
 
+test("an empty streamed segment after steering does not replay tools from an earlier segment of the same run", () => {
+  const convert = createMessageConverter();
+  const previous: ChatMessage = { id: "before-steer", role: "assistant", runId: "run", content: "", parts: [
+    { type: "tool-call", toolName: "read", toolCallId: "old-tool", args: {}, result: "done", messageSequence: 1 },
+  ] };
+  const next = { ...context(), running: true, toolCallsByRun: new Map<string, ToolCall[]>([["run", [
+    { toolCallId: "old-tool", toolName: "read", runId: "run", status: "success", result: "done" },
+  ]]]) };
+  expect(convert(previous, next).content).toMatchObject([{ type: "tool-call", toolCallId: "old-tool" }]);
+  expect(convert({ id: "streaming", role: "assistant", runId: "run", content: "", parts: [] }, next).content).toEqual([]);
+});
+
 test("local preview resolution updates only the owning user message", () => {
   const convert = createMessageConverter();
   const image: ChatMessage = { id: "image", role: "user", content: "", attachments: [{

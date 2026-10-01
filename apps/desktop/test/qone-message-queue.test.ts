@@ -230,7 +230,7 @@ test("deleting an item while editing does not release it for dispatch", async ()
   expect(queue.adapter.items).toHaveLength(0);
 });
 
-test("editing a later item lets earlier items dispatch and holds only once it reaches the head", async () => {
+test("editing detaches the item so the rest of the queue keeps dispatching", async () => {
   let running = true;
   const sent: string[] = [];
   const queue = createQoneMessageQueue({
@@ -255,11 +255,13 @@ test("editing a later item lets earlier items dispatch and holds only once it re
   running = false;
   queue.controller.notifyIdle();
   await flush();
-  expect(sent).toEqual(["A"]);
+  expect(sent).toEqual(["A", "C"]);
 
-  queue.edit(editing, message("B2"));
+  await queue.edit(editing, message("B2"));
+  running = false;
+  queue.controller.notifyIdle();
   await flush();
-  expect(sent).toEqual(["A", "B2"]);
+  expect(sent).toEqual(["A", "C", "B2"]);
 });
 
 test("attachment errors are reported instead of silently swallowed", async () => {

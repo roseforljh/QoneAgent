@@ -3,7 +3,7 @@ import type { BrowserDockRequest } from "./browser-dock";
 import type { RunChangesTarget } from "./run-changes-navigation";
 import type { WorkspaceFileLocation, WorkspaceFileTarget } from "./workspace-file-navigation";
 
-export type DockView = "session" | "terminal" | "files" | "file" | "git" | "browser" | "mcp" | "skills" | "subagents" | "changes";
+export type DockView = "session" | "terminal" | "files" | "file" | "git" | "browser" | "mcp" | "skills" | "subagents" | "changes" | "sideChat";
 export type DockFileTarget = WorkspaceFileLocation & { path: string; requestId: string };
 export type DockTab = { id: string; view: DockView; workspaceId?: string; browserTarget?: BrowserDockRequest; fileTarget?: DockFileTarget; changesTarget?: RunChangesTarget; refreshNonce?: number };
 export interface DockScope {

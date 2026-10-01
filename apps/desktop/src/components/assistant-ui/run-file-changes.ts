@@ -33,14 +33,13 @@ function pathKey(value: string) {
   return /^[a-z]:\//i.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized;
 }
 
-/** Derive, never accumulate, from the existing run-bound tool results. */
-export function collectRunFileChanges(runId: string, calls: readonly ToolCall[], messages: readonly ChatMessage[]): RunFileChanges {
+function mergeToolCallsForRun(runId: string, calls: readonly ToolCall[], messages: readonly ChatMessage[]): ToolCall[] {
   const byId = new Map<string, ToolCall>();
   for (const message of messages) {
     if (message.runId !== runId || message.role !== "assistant") continue;
     for (const part of message.parts ?? []) {
       if (part.type !== "tool-call") continue;
-      byId.set(part.toolCallId, { toolCallId: part.toolCallId, runId, toolName: part.toolName, args: part.args, result: part.result, status: part.isError ? "failed" : part.result === undefined ? "running" : "success" });
+      byId.set(part.toolCallId, { toolCallId: part.toolCallId, runId: message.runId, toolName: part.toolName, args: part.args, result: part.result, status: part.isError ? "failed" : part.result === undefined ? "running" : "success" });
     }
   }
   for (const call of calls) {
@@ -51,7 +50,12 @@ export function collectRunFileChanges(runId: string, calls: readonly ToolCall[],
     byId.set(call.toolCallId, saved && toolFileChanges(saved.result).length && !toolFileChanges(call.result).length
       ? { ...call, result: saved.result } : { ...saved, ...call, result: call.result ?? saved?.result });
   }
-  return collectToolFileChanges([...byId.values()]);
+  return [...byId.values()];
+}
+
+/** Derive, never accumulate, from the existing run-bound tool results. */
+export function collectRunFileChanges(runId: string, calls: readonly ToolCall[], messages: readonly ChatMessage[]): RunFileChanges {
+  return collectToolFileChanges(mergeToolCallsForRun(runId, calls, messages));
 }
 
 /** The same net change calculation also serves a bounded activity group. */

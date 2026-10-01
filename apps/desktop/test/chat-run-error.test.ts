@@ -7,7 +7,9 @@ const commands: RuntimeCommand[] = [];
 let sendFailure: ((command: RuntimeCommand) => Promise<void>) | undefined;
 let onRuntimeEvent: ((event: { payload: string }) => void) | undefined;
 
+const originalTauriCore = { ...await import("@tauri-apps/api/core") };
 mock.module("@tauri-apps/api/core", () => ({
+  ...originalTauriCore,
   invoke: async (command: string, args?: { cmd?: string; key?: string }) => {
     if (command === "runtime_send" && args?.cmd) {
       const parsed = JSON.parse(args.cmd) as RuntimeCommand;
@@ -945,4 +947,36 @@ test("late snapshots preserve a pending user turn and live background tools", ()
     expect(useStore.getState().running).toBe(true);
     emitFor("background-a", "agent.completed");
   } finally { useStore.setState(previous, true); }
+});
+
+test("steer history atomically replaces transient tools before the delivered event", async () => {
+  const { createQoneMessageQueue, getQoneMessageQueue, setQoneMessageQueue } = await import("../src/lib/qone-message-queue");
+  const previous = useStore.getState();
+  const oldQueue = getQoneMessageQueue("steer-history");
+  const parts = [{ type: "tool-call" as const, toolCallId: "old", toolName: "read", args: {}, result: "done", messageSequence: 1 }];
+  const queue = createQoneMessageQueue({ sessionId: "steer-history", isRunning: () => true,
+    send: () => {}, steer: async () => true, sync: () => {},
+  });
+  try {
+    useStore.setState({ currentSessionId: "steer-history", activeRunId: "steer-run", running: true,
+      messages: [], streaming: "old text", streamingParts: parts, preparedToolCallIds: ["old"], activeMessageSequence: 1,
+    });
+    setQoneMessageQueue("steer-history", queue);
+    queue.adapter.enqueue({ role: "user", parentId: null, sourceId: null, runConfig: {}, createdAt: new Date(),
+      metadata: { custom: {} }, content: [{ type: "text", text: "new direction" }], attachments: [],
+    });
+    const localId = queue.adapter.items[0]!.id;
+    const id = queue.getPersistentId(localId)!;
+    queue.steerNow(localId);
+    emit({ type: "session.messages", sessionId: "steer-history", messages: [
+      { id: "previous-segment", sessionId: "steer-history", role: "assistant", content: "old text", parts, runId: "steer-run", createdAt: 1 },
+      { id, sessionId: "steer-history", role: "user", content: "new direction", runId: "steer-run", createdAt: 2 },
+    ] });
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual(["previous-segment", id]);
+    expect(useStore.getState().streamingParts).toEqual([]);
+    expect(useStore.getState().streaming).toBe("");
+    expect(useStore.getState().activeMessageSequence).toBeUndefined();
+    expect(useStore.getState().preparedToolCallIds).toEqual([]);
+    expect(useStore.getState().running).toBe(true);
+  } finally { setQoneMessageQueue("steer-history", oldQueue); useStore.setState(previous, true); }
 });

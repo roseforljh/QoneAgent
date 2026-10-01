@@ -3,10 +3,10 @@ import { useStore } from "../store";
 import { getQoneMessageQueue, setQoneMessageQueue } from "./qone-message-queue";
 
 const hydrated = new WeakSet<object>();
-export function hydrateSessionQueue(queue: NonNullable<ReturnType<typeof getQoneMessageQueue>>, items: QueueItemInfo[]) {
+export function hydrateSessionQueue(queue: NonNullable<ReturnType<typeof getQoneMessageQueue>>, items: QueueItemInfo[], editingItemId?: string) {
   if (hydrated.has(queue)) return;
   hydrated.add(queue);
-  queue.restore(items);
+  queue.restore(items, editingItemId);
 }
 
 const bindings = new Map<string, () => void>();
@@ -20,14 +20,15 @@ export function bindSessionQueue(sessionId: string, queue: NonNullable<ReturnTyp
     Boolean(state.currentSessionId === sessionId ? state.running : state.backgroundSessions[sessionId]?.running) ||
     Boolean(state.compactionStatuses[sessionId]);
   let wasBusy = busy(useStore.getState());
-  let sessionExists = useStore.getState().sessions.some((session) => session.id === sessionId);
+  const exists = (state: ReturnType<typeof useStore.getState>) => state.sessions.some((session) => session.id === sessionId) || Boolean(state.sideChats[sessionId]);
+  let sessionExists = exists(useStore.getState());
   const unsubscribe = useStore.subscribe((state, previous) => {
-    if (state.sessions !== previous.sessions) sessionExists = state.sessions.some((session) => session.id === sessionId);
+    if (state.sessions !== previous.sessions || state.sideChats !== previous.sideChats) sessionExists = exists(state);
     if (!state.connected || !sessionExists) {
-      queue.controller.hold();
+      queue.suspend();
       unsubscribe();
       bindings.delete(sessionId);
-      setQoneMessageQueue(sessionId, undefined);
+      if (!queue.hasTransfers()) setQoneMessageQueue(sessionId, undefined);
       return;
     }
     const isBusy = busy(state);
@@ -39,4 +40,5 @@ export function bindSessionQueue(sessionId: string, queue: NonNullable<ReturnTyp
   bindings.set(sessionId, unsubscribe);
   if (wasBusy) queue.controller.notifyBusy();
   else { queue.controller.notifyIdle(); queue.releaseIdle(); }
+  queue.resume();
 }

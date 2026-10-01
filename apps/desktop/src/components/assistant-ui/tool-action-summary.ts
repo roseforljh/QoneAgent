@@ -28,6 +28,11 @@ function compactText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function displayToolName(toolName: string): string {
+  if (toolName.startsWith("mcp:")) return toolName.split(":").at(-1) || "tool";
+  return toolName;
+}
+
 export function commandForTool(part: ToolActionPart, call?: ToolCall): string | undefined {
   const args = { ...asObject(call?.args), ...asObject(part.args) };
   const command = firstString([args.command, args.cmd, args.script, args.shellCommand]);
@@ -63,7 +68,7 @@ export function toolTarget(part: ToolActionPart, call?: ToolCall): string {
     const normalized = path.trim().replace(/[\\/]+$/, "");
     return compactText(normalized.split(/[\\/]/).at(-1) || normalized);
   }
-  return compactText(firstString([args.pattern, args.query, args.url, args.name]) ?? part.toolName);
+  return compactText(firstString([args.pattern, args.query, args.url, args.name]) ?? displayToolName(part.toolName));
 }
 
 export function toolFullTarget(part: ToolActionPart, call?: ToolCall): string {
@@ -84,7 +89,7 @@ export function toolFullTarget(part: ToolActionPart, call?: ToolCall): string {
   const path = firstString([args.path, args.file]);
   if (path) return path;
 
-  return firstString([args.pattern, args.query, args.url, args.name]) ?? part.toolName;
+  return firstString([args.pattern, args.query, args.url, args.name]) ?? displayToolName(part.toolName);
 }
 
 function elapsedSeconds(call: ToolCall | undefined, now: number): number | undefined {

@@ -14,6 +14,7 @@ import loader2 from "../../assets/codex-icons/spinner-quarter-graded-regular-16.
 import rotateCw from "../../assets/codex-icons/arrow-rotate-clockwise-regular-20.svg";
 import arrowLeft from "../../assets/codex-icons/arrow-left-md-light-16.svg";
 import check from "../../assets/codex-icons/checkmark-md-light-16.svg";
+import mcp from "../../assets/codex-icons/mcp-light-16.svg";
 
 export type ExecutionIcon = ComponentType<HTMLAttributes<HTMLSpanElement> & { size?: number }>;
 
@@ -37,3 +38,4 @@ export const CodexLoader2Icon = icon(loader2);
 export const CodexRotateCwIcon = icon(rotateCw);
 export const CodexArrowLeftIcon = icon(arrowLeft);
 export const CodexCheckIcon = icon(check);
+export const CodexMcpIcon = icon(mcp);

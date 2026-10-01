@@ -21,10 +21,13 @@ import { openSubagent, subagentForTool } from "./subagent-navigation";
 import { toolFileActivities } from "./file-change-activity-data";
 import { FileChangeActivityRow } from "./file-change-activity";
 import { collectToolFileChanges } from "./run-file-changes";
+import { integrationIcon, toolIntegration, type ToolIntegration } from "./tool-integration";
+import { isIntegrationTool } from "./tool-activity-category";
+import type { McpServerInfo } from "@qone/protocol";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
-type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string; filePaths?: string[]; failed?: boolean };
+type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string; filePaths?: string[]; failed?: boolean; integration?: ToolIntegration };
 const GenerativeUISurface = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUISurface }));
 
 const TOOL_META: Record<string, ToolMeta> = {
@@ -44,18 +47,29 @@ const TOOL_META: Record<string, ToolMeta> = {
   web_fetch: { verb: { zh: "联网", en: "Fetch" }, icon: FileSearchIcon },
 };
 
-function toStep(part: ToolPartState, locale: string, call?: StoreToolCall): SessionTimelineStep {
+function toStep(part: ToolPartState, locale: string, call: StoreToolCall | undefined, servers: readonly McpServerInfo[]): SessionTimelineStep {
   const meta = TOOL_META[part.toolName];
   const verb = meta?.verb[locale === "en" ? "en" : "zh"] ?? part.toolName;
   const target = toolTarget(part, call);
   const fullTarget = toolFullTarget(part, call);
   const done = call?.status === "success" || (call === undefined && part.result !== undefined && !part.isError);
   const result = call?.result ?? part.result;
-  const category = toolActivityCategory(part.toolName, result);
+  const integration = toolIntegration(part.toolName, servers);
+  const baseCategory = toolActivityCategory(part.toolName, result);
+  const category = baseCategory === "tool" && isIntegrationTool(part.toolName) ? "integration" : baseCategory;
   const filePaths = category === "file-change" && result !== undefined
     ? toolFileChanges(result).map((change) => change.path)
     : [];
-  return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: category === "file-change" ? PenLineIcon : meta?.icon ?? WrenchIcon, done, category, filePaths, failed: toolCallStatus(part, call) === "failed" };
+  return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: integration ? integrationIcon(integration) : category === "file-change" ? PenLineIcon : meta?.icon ?? WrenchIcon, done, category, integration, filePaths, failed: toolCallStatus(part, call) === "failed" };
+}
+
+function completedToolLabel(step: SessionTimelineStep, locale: string, t: ReturnType<typeof useLocale>["t"]): string {
+  if (step.integration) return t("chat.toolGroupIntegrationOne", { sources: step.integration.name });
+  if (step.category === "file-change") return t("chat.toolGroupFileChangeOne");
+  if (step.category === "exploration") return t("chat.toolGroupExplorationOne");
+  if (step.category === "command") return t("chat.toolGroupCommandOne");
+  if (step.category === "tool") return t("chat.toolGroupToolOne");
+  return locale === "en" ? step.verb : step.verb;
 }
 
 const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean }> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
@@ -80,7 +94,11 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
     ? editing ? t("chat.toolGeneratingEdit") : t("chat.toolGenerating", { operation: step.verb })
     : status === "queued" ? t("chat.toolQueued")
       : status === "waiting" ? t("chat.toolApprovalPending")
-        : editing ? t("chat.toolApplyingEdit") : toolActivityCategory(part.toolName) === "command" ? t("chat.toolRunningCommand") : t("chat.toolWorking");
+        : editing ? t("chat.toolApplyingEdit")
+          : step.integration ? t("chat.toolUsingIntegration", { name: step.integration.name })
+            : toolActivityCategory(part.toolName) === "command" ? t("chat.toolRunningCommand")
+              : step.category === "exploration" ? t("chat.toolActiveOperation", { operation: step.verb })
+                : t("chat.toolCalling");
   const preview = editing && status !== "success" && status !== "failed";
   const presentationText = presentation ? toolPresentationSummary(presentation, locale) : undefined;
   const resultText = toolResultText(
@@ -105,7 +123,7 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
   return (
     <ToolCall
       icon={showIcon ? step.icon : undefined}
-      label={status === "queued" || status === "waiting" ? activeLabel : failed ? t("chat.toolActionFailed", { operation: step.verb }) : locale === "en" ? part.toolName : step.verb}
+      label={status === "queued" || status === "waiting" ? activeLabel : failed ? t("chat.toolActionFailed", { operation: step.integration?.name ?? step.verb }) : completedToolLabel(step, locale, t)}
       activeLabel={activeLabel}
       query={step.chip}
       fullTarget={step.fullTarget}
@@ -149,6 +167,7 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
     [parts, startIndex, endIndex],
   );
   const liveToolCalls = useStore((state) => state.toolCalls);
+  const mcpServers = useStore((state) => state.mcpServers);
   const preparedToolCallIds = useStore((state) => state.preparedToolCallIds);
   const preparedIds = useMemo(() => new Set(preparedToolCallIds), [preparedToolCallIds]);
   const liveCallsById = useMemo(
@@ -158,8 +177,8 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
   // Show the row from block start, including while arguments are generated.
   const executedToolParts = toolParts;
   const steps = useMemo(
-    () => executedToolParts.map((part) => toStep(part, locale, liveCallsById.get(part.toolCallId))),
-    [executedToolParts, liveCallsById, locale],
+    () => executedToolParts.map((part) => toStep(part, locale, liveCallsById.get(part.toolCallId), mcpServers)),
+    [executedToolParts, liveCallsById, locale, mcpServers],
   );
   const activeIndex = useMemo(
     () => selectActiveToolIndex(executedToolParts, liveCallsById, preparedIds, messageRunning),
@@ -176,6 +195,7 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
   const activeCall = activePart ? liveCallsById.get(activePart.toolCallId) : undefined;
   const lastIndex = steps.length - 1;
   const lastStep = lastIndex >= 0 ? steps[lastIndex] : undefined;
+  const summaryStep = steps.find((step) => step.integration) ?? lastStep;
   const headerStat = useMemo(() => {
     const changes = collectToolFileChanges(executedToolParts.map((part) => {
       const call = liveCallsById.get(part.toolCallId);
@@ -224,7 +244,7 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
       fullSummary={fullSummary}
       fullActiveLabel={fullActiveLabel}
       activeLabel={activeLabel}
-      headerIcon={(activeStep ?? lastStep)?.icon}
+      headerIcon={(toolWorking ? activeStep : undefined)?.icon ?? summaryStep?.icon}
       headerStat={headerStat}
       stats={[]}
       renderStep={(_, index) => <ToolCallEntry part={executedToolParts[index]} step={steps[index]} prepared={preparedIds.has(executedToolParts[index]?.toolCallId ?? "")} messageRunning={messageRunning} />}

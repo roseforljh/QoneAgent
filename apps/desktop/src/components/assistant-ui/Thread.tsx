@@ -33,30 +33,28 @@ import { RunOptionsPopover } from "./run-options-popover";
 import { EllipsisDots, ShimmerLabel } from "./elements/surfaces";
 import { ConversationMapAui } from "./elements/conversation-map.aui";
 import { ContextCompactionMarker } from "./context-compaction-marker";
+import { RunFileChangesSummary } from "./run-file-changes-summary";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
 import { ThreadScrollFollower } from "./thread-scroll-follower";
 import "./thread-viewport.css";
 import "./composer-queue.css";
+import { ComposerQueue } from "./composer-queue";
 import { useStore } from "../../store";
 import { getThreadScrollState, pruneThreadScrollStates } from "../../lib/thread-scroll-state";
 import { useLocale } from "../../localization";
 import { pickNativeAttachmentFiles, pickNativeAttachmentFolder, useNativeFileDrop } from "../../lib/native-file-drop";
 import { hasTauriBridge } from "../../store";
-import { fileFromDataUrl, getQoneMessageQueue } from "../../lib/qone-message-queue";
-import { createNativeAttachmentFile } from "../../lib/native-attachment-file";
+import { getQoneMessageQueue } from "../../lib/qone-message-queue";
 import { ComposerQueueEnterPlugin } from "./composer-queue-enter";
 import { ComposerHistoryPlugin } from "./composer-history";
-import { DropdownMenu } from "radix-ui";
 import {
   ActionBarPrimitive,
   AuiIf,
   ComposerPrimitive,
-  QueueItemPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useAui,
   useAuiState,
-  type QueueItemState,
 } from "@assistant-ui/react";
 import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 import {
@@ -69,9 +67,7 @@ import {
   SquareIcon,
   FolderPlusIcon,
   Loader2Icon,
-  PencilIcon,
   TargetIcon,
-  Trash2Icon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FC, type RefObject } from "react";
 
@@ -143,9 +139,8 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root relative bg-background text-foreground flex h-full flex-col items-stretch px-4 [--q-chat-bg:var(--background)]"
       style={{
-        ["--composer-bg" as string]: "var(--color-muted)",
+        ["--composer-bg" as string]: "var(--q-surface)",
         ["--composer-radius" as string]: "var(--radius-thread)",
-        ["--composer-padding" as string]: "8px",
       }}
     >
       {conversationLoading ? (
@@ -207,6 +202,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
 
           <ThreadPrimitive.ViewportFooter className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-transparent pb-2">
             <ThreadScrollToBottom />
+            {canChat && <RunFileChangesSummary />}
             <div className="relative z-1 mx-auto w-full q-composer-content">
               {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
             </div>
@@ -253,112 +249,8 @@ const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canCha
 };
 
 const composerInputClass =
-  "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-9 w-full resize-none bg-transparent px-2.5 py-1 text-sm leading-6 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1";
+  "aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-11 w-full resize-none bg-transparent px-3 py-0 text-sm leading-5 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-3 [&_.aui-lexical-placeholder]:py-0";
 const composerNodes = [ComposerLinkNode, ComposerUnlinkedNode] as const;
-
-const CodexQueueIcon: FC<{ className?: string }> = ({ className = "size-4 shrink-0 text-muted-foreground/70" }) => (
-  <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path
-      d="M2.66797 11V3.33301C2.66797 2.96574 2.96574 2.66797 3.33301 2.66797C3.70028 2.66797 3.99805 2.96574 3.99805 3.33301V11C3.99805 11.7109 3.99894 12.2044 4.03027 12.5879C4.06098 12.9634 4.11776 13.175 4.19824 13.333L4.26856 13.459C4.44487 13.7465 4.69781 13.9808 5 14.1348L5.12988 14.1904C5.27366 14.2419 5.46311 14.2797 5.74512 14.3027C6.12864 14.3341 6.62197 14.335 7.33301 14.335H15L15.0674 14.3418L14.1123 13.3867L14.0273 13.2822C13.8571 13.0242 13.8854 12.6735 14.1123 12.4463C14.3397 12.2189 14.6911 12.1906 14.9492 12.3613L15.0537 12.4463L17.1367 14.5293C17.3964 14.7889 17.3963 15.21 17.1367 15.4697L15.0537 17.5537C14.794 17.8134 14.372 17.8134 14.1123 17.5537C13.8526 17.294 13.8526 16.872 14.1123 16.6123L15.0664 15.6582L15 15.665H7.33301C6.64392 15.665 6.08696 15.6647 5.63672 15.6279C5.23614 15.5952 4.87531 15.5309 4.53906 15.3867L4.39649 15.3193C3.87528 15.0538 3.43887 14.6502 3.13477 14.1543L3.0127 13.9365C2.82084 13.5599 2.74153 13.1541 2.7041 12.6963C2.66732 12.2461 2.66797 11.6889 2.66797 11ZM15.665 15C15.665 15.0226 15.6594 15.0444 15.6572 15.0664L15.7256 14.999L15.6572 14.9316C15.6595 14.9541 15.665 14.9769 15.665 15ZM11.666 8.91797L11.8008 8.93164C12.1036 8.99381 12.3311 9.2618 12.3311 9.58301C12.3311 9.90422 12.1036 10.1722 11.8008 10.2344L11.666 10.248H7.5C7.13273 10.248 6.83496 9.95028 6.83496 9.58301C6.83496 9.21574 7.13273 8.91797 7.5 8.91797H11.666ZM14.166 4.33496L14.3008 4.34863C14.6036 4.41083 14.8311 4.67881 14.8311 5C14.8309 5.32109 14.6035 5.58924 14.3008 5.65137L14.166 5.66504H7.5C7.13284 5.66504 6.83514 5.36712 6.83496 5C6.83496 4.63273 7.13273 4.33496 7.5 4.33496H14.166Z"
-      fill="currentColor"
-    />
-  </svg>
-);
-
-const CodexSteerIcon: FC<{ className?: string }> = ({ className = "size-3.5 shrink-0" }) => (
-  <svg className={className} width="14" height="14" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path
-      d="M13.1293 7.34753C13.3565 7.12027 13.7081 7.09207 13.9662 7.26257L14.0707 7.34753L18.0707 11.3475C18.3304 11.6072 18.3304 12.0292 18.0707 12.2889L14.0707 16.2889C13.811 16.5486 13.389 16.5486 13.1293 16.2889C12.8696 16.0292 12.8696 15.6072 13.1293 15.3475L15.9935 12.4833H6.59998C4.57585 12.4833 2.93494 10.8424 2.93494 8.81824V5.31824C2.93494 4.95097 3.23271 4.6532 3.59998 4.6532C3.96724 4.6532 4.26501 4.95097 4.26501 5.31824V8.81824C4.26501 10.1078 5.31039 11.1532 6.59998 11.1532H15.9935L13.1293 8.28894L13.0443 8.18445C12.8738 7.92632 12.902 7.5748 13.1293 7.34753Z"
-      fill="currentColor"
-    />
-  </svg>
-);
-
-const CodexMoreIcon: FC<{ className?: string }> = ({ className = "size-3.5 shrink-0" }) => (
-  <svg className={className} width="14" height="14" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-    <circle cx="4" cy="10" r="1.75" />
-    <circle cx="10" cy="10" r="1.75" />
-    <circle cx="16" cy="10" r="1.75" />
-  </svg>
-);
-
-const QueueItemRow: FC<{ queueItem: QueueItemState; steering: boolean; onEdit: () => void }> = ({ queueItem, steering, onEdit }) => {
-  const { t } = useLocale();
-  return (
-    <div
-      role="listitem"
-      className="q-composer-queue-item group flex min-h-[36px] min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:bg-foreground/[0.04]"
-    >
-      <div
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 overflow-hidden"
-        onClick={onEdit}
-        title={queueItem.prompt}
-      >
-        <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/70">
-          <CodexQueueIcon />
-        </span>
-        <QueueItemPrimitive.Text
-          className="min-w-0 flex-1 truncate text-xs leading-5 text-foreground/85 select-none"
-          title={queueItem.prompt}
-        />
-      </div>
-      {steering ? (
-        <span className="shrink-0 text-xs text-muted-foreground">{t("chat.steerPending")}</span>
-      ) : (
-        <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
-          <QueueItemPrimitive.Steer asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              title={t("chat.queueSteer")}
-              aria-label={t("chat.queueSteer")}
-              className="h-6 w-auto gap-1 rounded-md px-1.5 text-xs font-normal text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
-            >
-              <CodexSteerIcon className="size-3.5 shrink-0" />
-              <span>{t("chat.queueSteer")}</span>
-            </Button>
-          </QueueItemPrimitive.Steer>
-          <QueueItemPrimitive.Remove asChild>
-            <TooltipIconButton
-              tooltip={t("chat.queueRemove")}
-              className="size-6 rounded-md text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
-            >
-              <Trash2Icon className="size-3.5" aria-hidden />
-            </TooltipIconButton>
-          </QueueItemPrimitive.Remove>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                type="button"
-                title={t("chat.queueMore")}
-                aria-label={t("chat.queueMore")}
-                className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:outline-none"
-              >
-                <CodexMoreIcon className="size-3.5" />
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                className="q-sidebar-menu z-50 min-w-32 rounded-lg border border-border/60 bg-popover p-1 text-xs shadow-md"
-                side="top"
-                align="end"
-                sideOffset={6}
-              >
-                <DropdownMenu.Item
-                  className="q-sidebar-menu-item flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground outline-none hover:bg-foreground/10"
-                  onSelect={onEdit}
-                >
-                  <PencilIcon className="size-3.5 text-muted-foreground" />
-                  <span>{t("chat.queueEdit")}</span>
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-        </div>
-      )}
-    </div>
-  );
-};
 
 const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const aui = useAui();
@@ -418,61 +310,18 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
     <>
     <GoalStatusBar />
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
-      <div className="q-composer-rail">
-        <div className="q-composer-queue" role="list" aria-label={t("chat.queueLabel")}>
-          <ComposerPrimitive.Queue>
-          {({ queueItem }) => {
-            const activeQueue = sessionId ? getQoneMessageQueue(sessionId) : undefined;
-            const persistentId = activeQueue?.getPersistentId(queueItem.id);
-            if (persistentId && editingQueueItem?.id === persistentId) return null;
-            // The local steer lane changes the moment steering starts, before
-            // the runtime snapshot catches up.
-            const steering = Boolean(activeQueue?.adapter.steerItems.some((item) => item.id === queueItem.id));
-            return <QueueItemRow queueItem={queueItem} steering={steering} onEdit={() => {
-              if (!activeQueue || !persistentId) return;
-              const item = activeQueue.getItem(persistentId);
-              if (!item) return;
-              // Loading the queued message replaces the composer; never discard an unsent draft.
-              if (!aui.composer().getState().isEmpty) {
-                useStore.setState({ lastError: t("chat.queueEditDraftBlocked") });
-                return;
-              }
-              if (!activeQueue.beginEdit(queueItem.id)) return;
-              useStore.setState({ editingQueueItem: item });
-              aui.composer().setText(item.text);
-              void aui.composer().clearAttachments().then(async () => {
-                for (const attachment of item.attachments ?? []) {
-                  if (attachment.localPath) {
-                    await aui.composer().addAttachment(createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0, attachment.type === "folder"));
-                  } else {
-                    await aui.composer().addAttachment({
-                      id: crypto.randomUUID(),
-                      type: attachment.type,
-                      name: attachment.name,
-                      contentType: attachment.mimeType,
-                      content: attachment.type === "image"
-                        ? [{ type: "image", image: attachment.data, filename: attachment.name }]
-                        : [{ type: "file", data: attachment.data, filename: attachment.name, mimeType: attachment.mimeType }],
-                    });
-                  }
-                }
-              }).catch(() => undefined);
-            }} />;
-          }}
-          </ComposerPrimitive.Queue>
-        </div>
-      </div>
+      <ComposerQueue />
       <ComposerPrimitive.Unstable_TriggerPopoverRoot>
       <ComposerPrimitive.AttachmentDropzone asChild>
         <div
           ref={shellRef}
           data-slot="aui_composer-shell"
-          className="relative z-10 border-foreground/10 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
+          className="q-composer-shell relative z-10 flex w-full cursor-text flex-col gap-0 rounded-(--composer-radius) bg-(--composer-bg) p-0 transition-[border-color,box-shadow] data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
         >
           {editingQueueItem && (
             <div className="flex items-center justify-between px-2.5 py-1 text-xs text-muted-foreground" role="status">
               <span>{t("chat.queueEditing")}</span>
-              <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); useStore.setState({ editingQueueItem: undefined }); void aui.composer().reset(); }}>{t("common.cancel")}</button>
+              <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { void aui.composer().reset(); useStore.setState({ editingQueueItem: undefined }); if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); }}>{t("common.cancel")}</button>
             </div>
           )}
           <ComposerAttachments />
@@ -516,9 +365,11 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
   const isRunning = useAuiState((state) => state.thread.isRunning);
   const showSend = useAuiState((state) => !state.thread.isRunning || (state.thread.capabilities.queue && state.composer.canSend));
   const compacting = useStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
-  const sendLabel = t(isRunning ? "chat.queueSend" : "chat.sendMessage");
+  const editing = useStore((state) => Boolean(state.editingQueueItem));
+  const queueing = useStore((state) => state.followUpQueueMode === "queue");
+  const sendLabel = t(editing ? "chat.queueSave" : isRunning ? queueing ? "chat.queueSend" : "chat.queueSteer" : "chat.sendMessage");
   return (
-    <div className="aui-composer-action-wrapper relative flex items-center justify-between">
+    <div className="aui-composer-action-wrapper relative flex min-h-7 items-center justify-between gap-2 px-2 pb-2 mt-1">
       <div className="flex items-center gap-1">
         <ComposerToolsPopover open={mentionOpen} onToggle={onToggleMention} />
         <RunOptionsPopover />

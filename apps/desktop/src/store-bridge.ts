@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent } from "@qone/protocol";
 import { saveRunOptions } from "./lib/run-options";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
-import { sessionStore, switchSessionState } from "./lib/session-execution-state";
+import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
 import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
 import {
   clearTrackedWorkspaceRequests,
@@ -17,6 +17,7 @@ import {
   dispatchWorkspaceGitDiff,
 } from "./lib/workspace-view-state";
 import type { ToolCall } from "./store";
+import { handleSideConversationEvent, retrySideConversationTransfers } from "./lib/side-conversation";
 
 const rid = () => crypto.randomUUID();
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
@@ -47,7 +48,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
         return {
           connected: false,
-          backgroundSessions: {},
+          ...queueEditsOnDisconnect(st),
           runningSessionIds: [],
           compactionStatuses: {},
           autoCompactionStatuses: {},
@@ -64,7 +65,6 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           preparedToolCallIds: [],
           queueItems: [],
           queueLoadedSessionId: undefined,
-          editingQueueItem: undefined,
           ...(st.running && st.currentSessionId && userMessage ? {
             chatRunError: { sessionId: st.currentSessionId, userMessageId: userMessage.id, detail: t("error.runtimeExited") },
           } : {}),
@@ -82,6 +82,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       return;
     }
     if (msg.type === "error" && msg.localization) msg.message = localizeError(msg);
+    if (handleSideConversationEvent(msg)) return;
     if (msg.type === "model.metadata-resolved") {
       const pending = metadataRequests.get(msg.requestId);
       if (msg.models.every((model) => model.sources && ["contextWindow", "maxTokens", "reasoning", "input", "output"].every((field) => typeof model.sources[field as keyof typeof model.sources] === "string"))) pending?.resolve(msg.models);
@@ -119,6 +120,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (!handshakeRequests.delete(msg.requestId)) break;
         setMetadataLookupSupported(Boolean(msg.capabilities?.includes("model.resolve-metadata") && msg.capabilities?.includes("model.metadata-sources")));
         eventStore.setState({ connected: true, runtimeCapabilities: msg.capabilities ?? [], ...(msg.compaction ?? {}) });
+        retrySideConversationTransfers();
         s.send({ type: "session.list", requestId: rid() });
         s.send({ type: "workspace.list", requestId: rid() });
         s.send({ type: "model.list", requestId: rid() });
@@ -189,6 +191,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         const storedModelId = selected ? state.runOptionsBySession[selected.id]?.modelId : undefined;
         eventStore.setState({
           sessions: msg.sessions,
+          ...(msg.sideChats ? { sideChats: Object.fromEntries(msg.sideChats.map((session) => [session.id, session])) } : {}),
           sessionsLoaded: true,
           currentSessionId: selected?.id,
           currentWorkspaceId: selected?.workspaceId ?? state.currentWorkspaceId,
@@ -252,11 +255,18 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             createdAt: m.createdAt,
             goalId: m.goalId,
           }));
+          const queue = getQoneMessageQueue(msg.sessionId);
+          const deliveredSteer = messages.some((message) => message.role === "user"
+            && message.runId === eventStore.getState().activeRunId
+            && queue?.adapter.steerItems.some((item) => queue.getPersistentId(item.id) === message.id));
+          if (deliveredSteer) clearDelta(msg.sessionId);
           eventStore.setState((st) => {
             const pendingIds = new Set([...pendingAgentRuns.values()].filter((pending) => pending.sessionId === msg.sessionId).map((pending) => pending.userMessageId));
             if (st.chatRunError) pendingIds.add(st.chatRunError.userMessageId);
             const merged = [...messages, ...st.messages.filter((message) => pendingIds.has(message.id) && !messages.some((saved) => saved.id === message.id))];
-            return { messagesLoadingSessionId: undefined, messages: merged, compactions: msg.compactions ?? [], toolCalls: alignToolCallIds(st.toolCalls, merged) };
+            return { messagesLoadingSessionId: undefined, messages: merged, compactions: msg.compactions ?? [], toolCalls: alignToolCallIds(st.toolCalls, merged),
+              ...(deliveredSteer ? { streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [] } : {}),
+            };
           });
         }
         break;
