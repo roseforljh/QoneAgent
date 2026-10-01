@@ -16,6 +16,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 mod native_error;
 use native_error::NativeError;
 mod native_copy;
+mod webview_policy;
 use native_copy::{NativeCopy, NativeCopyState, set_native_copy};
 
 fn ensure_global_instructions_file() -> Result<(), String> {
@@ -594,6 +595,7 @@ fn frontend_diagnostic(message: String) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(webview_policy::init())
         .on_page_load(|_webview, payload| {
             #[cfg(debug_assertions)]
             eprintln!("[qone:page] {:?} {}", payload.event(), payload.url());
