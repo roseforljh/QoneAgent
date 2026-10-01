@@ -37,3 +37,14 @@ test("failed mutation evidence keeps the failed row without showing an applied d
   expect(html).toContain('data-slot="tool-target-link"');
   expect(html).not.toContain('data-slot="aui-diff-viewer"');
 });
+
+test("successful deletion keeps path actions and diff disclosure without opening the removed file", () => {
+  const activity = { path: "src/removed.ts", changeKind: "deleted" as const };
+  const deleted = renderToStaticMarkup(<FileChangeActivityRow activity={activity} onOpenFile={() => {}} />);
+  expect(deleted).not.toContain('data-slot="tool-target-link"');
+  expect(deleted).toContain("data-workspace-path-context-menu-trigger");
+  expect(deleted).toContain('tabindex="0"');
+  expect(deleted).toContain('aria-label="Show diff for removed.ts"');
+  const failed = renderToStaticMarkup(<FileChangeActivityRow activity={activity} status="failed" onOpenFile={() => {}} />);
+  expect(failed).toContain('data-slot="tool-target-link"');
+});

@@ -23,6 +23,7 @@ import "./sidebar-menu.css";
 import { MorphingSpinner } from "./morphing-spinner";
 import { SidebarSessionTitle } from "./sidebar-session-title";
 import { SidebarSessionActions } from "./sidebar-session-pin-action";
+import { SidebarContextMenu } from "./sidebar-menu";
 import { useSidebarDrag } from "../../hooks/use-sidebar-drag";
 import "./sidebar-drag.css";
 
@@ -136,14 +137,25 @@ export const ThreadListItem: FC = () => {
   const { t } = useLocale();
   const session = sessions.find((item) => item.id === id);
   const pinned = useSidebarPreferences((s) => s.priorityIds.includes(id));
+  const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(session?.title ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (renaming) inputRef.current?.select(); }, [renaming]);
   useEffect(() => { if (!renaming && session) setTitle(session.title); }, [session?.title, renaming]);
   const submitRename = () => { const next = title.trim(); if (next && next !== session?.title) renameSession(id, next); setRenaming(false); };
+  const deleteChat = async () => {
+    if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session?.title ?? t("sidebar.newChat") }))) deleteSession(id);
+  };
 
   return (
+    <SidebarContextMenu
+      pinned={pinned}
+      onTogglePinned={() => togglePriority(id)}
+      onRename={() => setRenaming(true)}
+      onDelete={deleteChat}
+      disabled={renaming}
+    >
     <ThreadListItemPrimitive.Root
       data-slot="aui_thread-list-item"
       className="q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px] transition-colors"
@@ -163,8 +175,9 @@ export const ThreadListItem: FC = () => {
         </span>
         {isRunning && <span className="sr-only">{t("goal.active")}</span>}
       </ThreadListItemPrimitive.Trigger>}
-      {!renaming && <ThreadListItemMore isRunning={isRunning} onRename={() => setRenaming(true)} onDelete={async () => { if (await confirmDestructiveAction(t("session.deleteConfirm", { title: session?.title ?? t("sidebar.newChat") }))) deleteSession(id); }} />}
+      {!renaming && <ThreadListItemMore isRunning={isRunning} onRename={() => setRenaming(true)} onDelete={deleteChat} />}
     </ThreadListItemPrimitive.Root>
+    </SidebarContextMenu>
   );
 };
 

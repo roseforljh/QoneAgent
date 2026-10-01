@@ -1,3 +1,4 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useAui } from "@assistant-ui/react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -13,7 +14,6 @@ import {
   KEY_ESCAPE_COMMAND,
   type LexicalEditor,
 } from "lexical";
-import { useStore } from "../../store";
 import { getCombinedComposerHistory } from "../../lib/composer-history";
 
 /**
@@ -92,9 +92,9 @@ export function ComposerHistoryPlugin({ menuOpen }: { menuOpen: boolean }) {
   const [editor] = useLexicalComposerContext();
   const aui = useAui();
 
-  const sessionId = useStore((state) => state.currentSessionId);
-  const messages = useStore((state) => state.messages);
-  const editingQueueItem = useStore((state) => state.editingQueueItem);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const messages = useConversationStore((state) => state.messages);
+  const editingQueueItem = useConversationStore((state) => state.editingQueueItem);
 
   const historyIndexRef = useRef<number>(-1);
   const savedDraftRef = useRef<string>("");

@@ -1,0 +1,50 @@
+/* Compact actions: 16px glyph + 3px padding + 1px border, 2px between controls. */
+.q-message-actions { display: flex; align-items: center; gap: 2px; }
+.q-user-message-actions { margin-inline: 4px; }
+.q-message-action-button {
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--q-subtle);
+  box-shadow: none;
+  scale: 1;
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease, scale .15s ease;
+}
+.q-message-action-icon { width: 16px; height: 16px; flex-shrink: 0; }
+.q-message-action-button:is(:hover, :focus-visible):not(:disabled) {
+  background: var(--q-hover);
+  color: var(--foreground);
+}
+.q-message-action-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--foreground) 14%, transparent);
+  scale: .96;
+}
+.q-user-message-action-slot,
+.q-assistant-message-action-slot {
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+}
+.q-assistant-message-action-slot { padding-top: 6px; }
+.q-user-message-action-slot:empty,
+.q-assistant-message-action-slot:empty { display: none; }
+.q-user-message-group:is(:hover, :focus-within) > .q-user-message-action-slot,
+.q-assistant-message-group:is(:hover, :focus-within) > .q-assistant-message-action-slot {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .q-user-message-action-slot,
+  .q-assistant-message-action-slot { opacity: 1; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-message-action-button,
+  .q-user-message-action-slot,
+  .q-assistant-message-action-slot { transition: none; }
+}

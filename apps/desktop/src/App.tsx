@@ -1,3 +1,5 @@
+import { useConversationMessages } from "./lib/use-conversation-messages";
+import { PendingApprovals } from "./components/assistant-ui/pending-approvals";
 import { bindSessionQueue, hydrateSessionQueue } from "./lib/session-queue-lifecycle";
 import { sessionStore } from "./lib/session-execution-state";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -12,19 +14,16 @@ import {
   type ExternalStoreThreadListAdapter,
 } from "@assistant-ui/react";
 import { sameUserInput, type MessageAttachmentInfo, type PluginInfo } from "@qone/protocol";
-import { createMessageConverter, convertedMessage } from "./lib/runtime-message-converter";
-import { insertChatRunErrorMessage } from "./lib/chat-run-error-message";
-import { isImageModel } from "./lib/image-model-config";
+import { convertedMessage } from "./lib/runtime-message-converter";
 import { selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
-import { localImagePreview } from "./lib/local-image-preview";
 import { extractComposerPrompt } from "./lib/composer-prompt";
 import { addComposerHistory } from "./lib/composer-history";
 import { useComposerDrafts } from "./lib/use-composer-drafts";
 import { composerDrafts } from "./lib/composer-drafts";
 import { queueMessageDraft } from "./lib/queue-composer-edit";
 import { createQoneMessageQueue, getQoneMessageQueue } from "./lib/qone-message-queue";
-import { appendSteeringMessages, useSteeringMessages } from "./lib/use-steering-messages";
+import { useSteeringMessages } from "./lib/use-steering-messages";
 import { useMessageQueueAdapter } from "./lib/use-message-queue-adapter";
 import { QoneAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
@@ -34,7 +33,6 @@ import { ProjectSection } from "./components/assistant-ui/project-section";
 import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
 import { Link, useLocation } from "@tanstack/react-router";
-import { ApprovalCard } from "./components/tool-ui/ToolCard";
 import { ArrowLeft, Moon, Sun, X } from "lucide-react";
 import { CodexIcon } from "./components/ui/CodexIcon";
 import sidebarIcon from "./assets/codex-icons/sidebar-light-16.svg";
@@ -102,7 +100,6 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     sessionId: currentSessionId,
     isRunning: () => sessionStore(useStore, currentSessionId).getState().running || Boolean(useStore.getState().compactionStatuses[currentSessionId]),
     getActiveRunId: () => sessionStore(useStore, currentSessionId).getState().activeRunId,
-    getFollowUpQueueMode: () => useStore.getState().followUpQueueMode,
     isDuplicate: (message, attachments) => {
       const state = sessionStore(useStore, currentSessionId).getState();
       const previous = [...state.messages].reverse().find((item) => item.role === "user");
@@ -149,65 +146,11 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     if (queue && currentSessionId) bindSessionQueue(currentSessionId, queue);
   }, [queue, currentSessionId]);
 
-  const hasStreamingAssistant = running;
-  const selectedModel = modelConfigs.find((config) => config.id === selectedModelId);
-  const imageGenerationError = !hasStreamingAssistant && chatRunError && chatRunError.sessionId === currentSessionId && chatRunError.userMessageId && isImageModel(selectedModel)
-    ? messages.find((message) => message.id === chatRunError.userMessageId)
-    : undefined;
-  const answerError = !hasStreamingAssistant && chatRunError?.sessionId === currentSessionId && !imageGenerationError ? chatRunError : undefined;
-  const runtimeMessages = useMemo(() => {
-    // An empty current segment is authoritative: undefined would replay legacy tools from this run.
-    if (hasStreamingAssistant) return appendSteeringMessages([...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }], submittedSteers);
-    if (imageGenerationError) return [...messages, { id: `image-error:${imageGenerationError.id}`, role: "assistant", content: "", createdAt: Date.now() }];
-    if (answerError) return insertChatRunErrorMessage(messages, answerError, `${t("chat.runFailed")}\n${answerError.detail || t("chat.runFailedDetail")}`);
-    return messages;
-  }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError, answerError, submittedSteers, t]);
-  const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
-  const imageAttachmentMessages = useMemo(() => appendSteeringMessages(messages, submittedSteers), [messages, submittedSteers]);
-  useEffect(() => {
-    const paths = [...new Set(imageAttachmentMessages.flatMap((message) => message.attachments?.flatMap((attachment) =>
-      attachment.type === "image" && attachment.localPath ? [attachment.localPath] : []) ?? []))];
-    let active = true;
-    void Promise.all(paths.map(async (path) => {
-      try { return [path, await localImagePreview(path)] as const; }
-      catch { return undefined; }
-    })).then((entries) => {
-      if (!active) return;
-      setImagePreviews((current) => {
-        const next = { ...current };
-        let changed = false;
-        for (const entry of entries) if (entry && next[entry[0]] !== entry[1]) {
-          next[entry[0]] = entry[1];
-          changed = true;
-        }
-        return changed ? next : current;
-      });
-    });
-    return () => { active = false; };
-  }, [imageAttachmentMessages]);
-  const imageWindows = useMemo(() => {
-    const windows = new Map<string, { after?: number; through?: number }>();
-    const lastAssistantByRun = new Map<string, number>();
-    for (const message of messages) {
-      if (message.role !== "assistant" || !message.runId) continue;
-      windows.set(message.id, {
-        after: lastAssistantByRun.get(message.runId),
-        through: message.createdAt,
-      });
-      if (message.createdAt !== undefined) lastAssistantByRun.set(message.runId, message.createdAt);
-    }
-    if (running && activeRunId) windows.set("streaming", { after: lastAssistantByRun.get(activeRunId) });
-    return windows;
-  }, [messages, running, activeRunId]);
-  const toolCallsByRun = useMemo(() => {
-    const grouped = new Map<string, ToolCall[]>();
-    for (const call of toolCalls) {
-      const current = grouped.get(call.runId) ?? [];
-      current.push(call);
-      grouped.set(call.runId, current);
-    }
-    return grouped;
-  }, [toolCalls]);
+  const convertedMessages = useConversationMessages({
+    messages, streaming, streamingParts, running, activeRunId, currentSessionId,
+    selectedModel: modelConfigs.find((config) => config.id === selectedModelId),
+    chatRunError, toolCalls, childImagesByRun,
+  }, submittedSteers);
 
   const threads = useMemo<ExternalStoreThreadData<"regular">[]>(
     () => sortSidebarSessions(sessions, {
@@ -235,15 +178,6 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       send({ type: "session.list", requestId: crypto.randomUUID() });
     },
   }), [threads, currentSessionId, newSession, selectSession, send, sessions, t]);
-
-  const convertMessage = useMemo(createMessageConverter, []);
-  const convertedMessages = useMemo(() => {
-    const context = {
-      imagePreviews, toolCallsByRun, imageWindows, childImagesByRun, running,
-      imageModel: isImageModel(selectedModel), imageGenerationError, chatRunErrorDetail: chatRunError?.detail,
-    };
-    return runtimeMessages.map((message) => convertMessage(message, context));
-  }, [runtimeMessages, convertMessage, imagePreviews, toolCallsByRun, imageWindows, childImagesByRun, running, selectedModel, imageGenerationError, chatRunError?.detail]);
 
   const runtime = useExternalStoreRuntime({
     messages: convertedMessages,
@@ -321,17 +255,6 @@ function ThreadLoadingFallback() {
         <ComposerLoadingSkeleton />
       </div>
     </div>
-  );
-}
-
-function PendingApprovals() {
-  const approvals = useStore((s) => s.approvals);
-  const approve = useStore((s) => s.approve);
-  const reject = useStore((s) => s.reject);
-  return (
-    <>
-      {approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} onApprove={() => approve(approval.id)} onReject={() => reject(approval.id)} />)}
-    </>
   );
 }
 

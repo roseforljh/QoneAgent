@@ -17,6 +17,13 @@ type Pending = {
 const requests = new Map<string, Pending>();
 const closes = new Map<string, { session: SessionInfo; resolve: (closed: boolean) => void; reject: (error: Error) => void }>();
 
+/** Create a reference fork without touching the parent's composer or queue. */
+export function openSideConversation(sessionId: string): Promise<boolean> {
+  const state = useStore.getState();
+  if (!state.connected) return Promise.reject(new Error(t("error.runtimeDisconnected")));
+  return createSideConversation({ type: "session.side-chat.create", requestId: crypto.randomUUID(), sessionId, title: t("chat.sideChat") });
+}
+
 export function openQueuedSideConversation(item: QueueItemInfo): Promise<boolean> {
   const state = useStore.getState();
   if (!state.connected) return Promise.reject(new Error(t("error.runtimeDisconnected")));
@@ -33,13 +40,19 @@ export function openQueuedSideConversation(item: QueueItemInfo): Promise<boolean
   }
   const requestId = crypto.randomUUID();
   const command: Pending["command"] = { type: "session.side-chat.create", requestId, sessionId: item.sessionId, queueItemId: item.id };
+  return createSideConversation(command, item);
+}
+
+function createSideConversation(command: Pending["command"], item?: QueueItemInfo): Promise<boolean> {
+  const state = useStore.getState();
+  const { requestId, sessionId } = command;
   return new Promise((resolve, reject) => {
     requests.set(requestId, {
       command, resolve, reject,
-      options: { ...state.runOptionsBySession[item.sessionId], modelId: state.runOptionsBySession[item.sessionId]?.modelId ?? state.selectedModelId,
-        permissionMode: state.runOptionsBySession[item.sessionId]?.permissionMode ?? state.defaultPermissionMode },
+      options: { ...state.runOptionsBySession[sessionId], modelId: state.runOptionsBySession[sessionId]?.modelId ?? state.selectedModelId,
+        permissionMode: state.runOptionsBySession[sessionId]?.permissionMode ?? state.defaultPermissionMode },
     });
-    useStore.setState((current) => ({ sideChatTransfers: { ...current.sideChatTransfers, [requestId]: item } }));
+    if (item) useStore.setState((current) => ({ sideChatTransfers: { ...current.sideChatTransfers, [requestId]: item } }));
     // An IPC error can arrive after the runtime committed. Keep ownership
     // pending; reconnect retries the same idempotent transfer, never the input.
     void state.send(command).then((sent) => {
@@ -51,7 +64,7 @@ export function openQueuedSideConversation(item: QueueItemInfo): Promise<boolean
 export function retrySideConversationTransfers() {
   for (const { command } of requests.values()) {
     void useStore.getState().send(command);
-    const queue = getQoneMessageQueue(command.sessionId);
+    const queue = command.queueItemId ? getQoneMessageQueue(command.sessionId) : undefined;
     if (queue) bindSessionQueue(command.sessionId, queue);
   }
   for (const session of Object.values(useStore.getState().sideChats)) {

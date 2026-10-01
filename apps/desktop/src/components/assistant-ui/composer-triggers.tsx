@@ -1,3 +1,4 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { useEffect, useMemo, type FC } from "react";
 import {
   ComposerPrimitive,
@@ -7,7 +8,7 @@ import {
   type Unstable_SlashCommand,
 } from "@assistant-ui/react";
 import { useLocale } from "../../localization";
-import { hasTauriBridge, useStore } from "../../store";
+import { hasTauriBridge } from "../../store";
 import { ComposerMenuItem } from "./elements/composer";
 import { ComposerSlashRow, ComposerToolRow, getComposerTools, type ComposerSlashEntry, type ComposerTool } from "./composer-tools";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
@@ -29,20 +30,20 @@ export const ComposerTriggers: FC<{
   onSlashStateChange: (open: boolean) => void;
 }> = ({ onToolSelect, onCommandSelect, onMentionStateChange, onSlashStateChange }) => {
   const { t } = useLocale();
-  const send = useStore((state) => state.send);
-  const connected = useStore((state) => state.connected);
-  const skills = useStore((state) => state.skills);
-  const mcpServers = useStore((state) => state.mcpServers);
-  const currentWorkspaceId = useStore((state) => state.currentWorkspaceId);
-  const draftWorkspaceId = useStore((state) => state.draftWorkspaceId);
-  const currentSessionId = useStore((state) => state.currentSessionId);
-  const selectedModelId = useStore((state) => state.selectedModelId);
-  const compacting = useStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
-  const messageCount = useStore((state) => state.messages.length);
-  const messagesLoadingSessionId = useStore((state) => state.messagesLoadingSessionId);
-  const running = useStore((state) => state.running);
+  const send = useConversationStore((state) => state.send);
+  const connected = useConversationStore((state) => state.connected);
+  const skills = useConversationStore((state) => state.skills);
+  const mcpServers = useConversationStore((state) => state.mcpServers);
+  const currentWorkspaceId = useConversationStore((state) => state.currentWorkspaceId);
+  const draftWorkspaceId = useConversationStore((state) => state.draftWorkspaceId);
+  const currentSessionId = useConversationStore((state) => state.currentSessionId);
+  const selectedModelId = useConversationStore((state) => state.selectedModelId);
+  const compacting = useConversationStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
+  const messageCount = useConversationStore((state) => state.messages.length);
+  const messagesLoadingSessionId = useConversationStore((state) => state.messagesLoadingSessionId);
+  const running = useConversationStore((state) => state.running);
   const workspaceId = currentSessionId ? currentWorkspaceId : draftWorkspaceId ?? currentWorkspaceId;
-  const workspacePath = useStore((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.path);
+  const workspacePath = useConversationStore((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.path);
   const canCompact = connected && !!currentSessionId && !!selectedModelId && messageCount > 0 && messagesLoadingSessionId !== currentSessionId && !running
     && !compacting;
   const canUseGoal = connected && !!(currentWorkspaceId || draftWorkspaceId);

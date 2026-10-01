@@ -17,11 +17,13 @@ import qqmailLogo from "../../assets/qqmail-logo.svg";
 import neteaseMailLogo from "../../assets/netease-mail-logo.svg";
 import globeLogo from "../../assets/codex-icons/globe-light-16.svg";
 import { CodexMcpIcon, type ExecutionIcon } from "./execution-icons";
+import { translate, type Locale } from "../../localization";
 
 export interface ToolIntegration {
   id: string;
   name: string;
   logo: string;
+  kind?: "source";
 }
 
 const BUILTIN_MCP_LOGOS: Record<string, string> = {
@@ -59,7 +61,7 @@ const BUILTIN_MCP_NAMES: Record<string, string> = {
 };
 
 const BUILTIN_TOOLS: Record<string, ToolIntegration> = {
-  qone_web_read: { id: "web", name: "网页", logo: globeLogo },
+  qone_web_read: { id: "web", name: "网页", logo: globeLogo, kind: "source" },
   qone_github_public: { id: "github", name: "GitHub", logo: githubLogo },
 };
 
@@ -73,17 +75,18 @@ function mcpServerId(toolName: string): string | undefined {
 export function toolIntegration(
   toolName: string,
   servers: readonly McpServerInfo[],
+  locale: Locale = "zh-CN",
 ): ToolIntegration | undefined {
-  const builtin = BUILTIN_TOOLS[toolName];
-  if (builtin) return builtin;
+  const builtin = Object.hasOwn(BUILTIN_TOOLS, toolName) ? BUILTIN_TOOLS[toolName] : undefined;
+  if (builtin) return builtin.id === "web" ? { ...builtin, name: translate(locale, "chat.toolSourceWeb") } : builtin;
 
   const configuredServer = servers.find((item) => toolName.startsWith(`mcp:${item.id}:`));
   const serverId = configuredServer?.id ?? mcpServerId(toolName);
   if (!serverId) return undefined;
   return {
     id: serverId,
-    name: configuredServer?.name || BUILTIN_MCP_NAMES[serverId] || serverId,
-    logo: BUILTIN_MCP_LOGOS[serverId] ?? mcpLogo,
+    name: configuredServer?.name || (Object.hasOwn(BUILTIN_MCP_NAMES, serverId) ? BUILTIN_MCP_NAMES[serverId] : undefined) || serverId,
+    logo: Object.hasOwn(BUILTIN_MCP_LOGOS, serverId) ? BUILTIN_MCP_LOGOS[serverId]! : mcpLogo,
   };
 }
 

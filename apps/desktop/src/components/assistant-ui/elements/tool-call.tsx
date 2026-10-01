@@ -64,6 +64,8 @@ export function ToolCall({
 }: ToolCallProps) {
   const disclosureRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
+  const target = fullTarget || query;
+  const title = [running ? activeLabel : label, targetAction ? undefined : target].filter(Boolean).join(" ");
   return (
     <Collapsible
       ref={disclosureRef}
@@ -74,15 +76,15 @@ export function ToolCall({
       className={cn("min-w-0 w-full max-w-full", className)}
     >
       {header ? header(panelId) : <div className="flex min-w-0 max-w-full items-center gap-1.5">
-        <CollapsibleTrigger aria-controls={panelId} title={`${running ? activeLabel : label} ${fullTarget || query}`} className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent">
+        <CollapsibleTrigger aria-controls={panelId} title={title} className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent">
           {Icon && <Icon className="size-3.5 shrink-0 opacity-60 transition-opacity group-hover/trigger:opacity-90" />}
-          <OverflowFade title={fullTarget || query}>
+          <OverflowFade title={target || undefined}>
             <span className="inline-flex items-center gap-1.5">
               <SwapLabel active={running ? 0 : 1} className="shrink-0 text-start font-medium">
                 <ShimmerLabel active={running} className="relative inline-block leading-none">{activeLabel}</ShimmerLabel>
                 <>{label}</>
               </SwapLabel>
-              {!targetAction && <ShimmerLabel active={running} className={cn(mono, "text-current")}>{query}</ShimmerLabel>}
+              {!targetAction && query && <ShimmerLabel active={running} className={cn(mono, "text-current")}>{query}</ShimmerLabel>}
             </span>
           </OverflowFade>
           {stat && !targetAction && (

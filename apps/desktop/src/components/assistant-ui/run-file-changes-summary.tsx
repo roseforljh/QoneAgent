@@ -1,6 +1,6 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { motion } from "motion/react";
 import { useMemo } from "react";
-import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { openRunChanges } from "../../lib/run-changes-navigation";
 import { ChangeCounts } from "./elements/change-counts";
@@ -9,11 +9,11 @@ import { collectRunFileChanges } from "./run-file-changes";
 /** Codex-style current-run summary shown directly above the composer. */
 export function RunFileChangesSummary() {
   const { t } = useLocale();
-  const sessionId = useStore((state) => state.currentSessionId);
-  const activeRunId = useStore((state) => state.activeRunId);
-  const running = useStore((state) => state.running);
-  const calls = useStore((state) => state.toolCalls);
-  const messages = useStore((state) => state.messages);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const activeRunId = useConversationStore((state) => state.activeRunId);
+  const running = useConversationStore((state) => state.running);
+  const calls = useConversationStore((state) => state.toolCalls);
+  const messages = useConversationStore((state) => state.messages);
   const changes = useMemo(() => activeRunId ? collectRunFileChanges(activeRunId, calls, messages) : undefined, [activeRunId, calls, messages]);
 
   if (!sessionId || !running || !activeRunId || !changes?.nodes.length) return null;

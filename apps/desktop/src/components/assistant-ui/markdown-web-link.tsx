@@ -5,6 +5,7 @@ import { linkFaviconUrl } from "../../lib/link-favicon";
 import { cn } from "../../lib/utils";
 import { CodexIcon } from "../ui/CodexIcon";
 import { composerLinkAppearance } from "./composer-link-appearance";
+import { WebLinkContextMenu } from "./dock-context-menu";
 import "./markdown-web-link.css";
 
 function WebsiteIcon({ href }: { href: string }) {
@@ -27,7 +28,7 @@ function WebsiteIcon({ href }: { href: string }) {
 export function MarkdownWebLink({ className, href, title, children, onClick, ...props }: ComponentProps<"a">) {
   const website = href != null && /^(?:https?:)?\/\//i.test(href);
   const bareUrl = website && typeof children === "string" && children.trim() === href;
-  return <a {...props} href={href} title={title ?? href} className={cn("aui-md-a q-markdown-web-link", className)}
+  const link = <a {...props} href={href} title={title ?? href} className={cn("aui-md-a q-markdown-web-link", className)}
     data-breakable-url={bareUrl ? "" : undefined}
     onClick={(event) => {
       onClick?.(event);
@@ -38,4 +39,5 @@ export function MarkdownWebLink({ className, href, title, children, onClick, ...
     {website && <WebsiteIcon href={href} />}
     <span className="q-markdown-web-link-label">{children}</span>
   </a>;
+  return website && href ? <WebLinkContextMenu href={href}>{link}</WebLinkContextMenu> : link;
 }

@@ -21,7 +21,7 @@ export function ConfirmationDialogHost() {
             <AlertDialog.Description>{request?.message}</AlertDialog.Description>
           </div>
           <div className="q-confirm-actions">
-            <AlertDialog.Cancel asChild><Button variant="ghost" size="sm" onClick={() => resolveConfirmation(false)}>{t("common.cancel")}</Button></AlertDialog.Cancel>
+            <AlertDialog.Cancel asChild><Button variant="secondary" size="sm" onClick={() => resolveConfirmation(false)}>{t("common.cancel")}</Button></AlertDialog.Cancel>
             <AlertDialog.Action asChild><Button variant="destructive" size="sm" onClick={() => resolveConfirmation(true)}>{t("common.delete")}</Button></AlertDialog.Action>
           </div>
         </AlertDialog.Content>

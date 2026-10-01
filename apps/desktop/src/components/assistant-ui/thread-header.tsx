@@ -6,10 +6,13 @@ import sidebarIcon from "../../assets/codex-icons/sidebar-light-16.svg";
 import moreIcon from "../../assets/codex-icons/ellipsis-horizontal-light-20.svg";
 import terminalIcon from "../../assets/codex-icons/terminal-light-20.svg";
 import branchIcon from "../../assets/codex-icons/branch-light-20.svg";
+import sideChatIcon from "../../assets/codex-icons/plus-chat-bubble-right-light-16.svg";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { useSidebarPreferences } from "../../lib/sidebar-preferences";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
+import { openSideConversation } from "../../lib/side-conversation";
+import { localizeError } from "../../lib/error-localization";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import "./sidebar-menu.css";
 import "./thread-header.css";
@@ -22,6 +25,7 @@ export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
   const { t } = useLocale();
   const sessionId = useStore((state) => state.currentSessionId);
   const session = useStore((state) => state.sessions.find((item) => item.id === state.currentSessionId));
+  const canCreateSideChat = useStore((state) => Boolean(state.connected && session?.workspaceId && state.workspaces.some((workspace) => workspace.id === session.workspaceId) && !session.sideChat));
   const renameSession = useStore((state) => state.renameSession);
   const deleteSession = useStore((state) => state.deleteSession);
   const pinned = useSidebarPreferences((state) => Boolean(sessionId && state.priorityIds.includes(sessionId)));
@@ -30,6 +34,11 @@ export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
   const [title, setTitle] = useState("");
   const cancelRename = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const createSideChat = async () => {
+    if (!sessionId || !canCreateSideChat) return;
+    try { await openSideConversation(sessionId); }
+    catch (error) { useStore.setState({ lastError: localizeError(error) }); }
+  };
 
   useEffect(() => {
     setRenaming(false);
@@ -99,6 +108,9 @@ export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content className="q-sidebar-menu" side="bottom" align="end" sideOffset={6} collisionPadding={8}>
+              {session && <DropdownMenu.Item className="q-sidebar-menu-item" disabled={!canCreateSideChat} onSelect={() => void createSideChat()}>
+                <CodexIcon src={sideChatIcon} className="size-4" /><span>{t("chat.newSideChat")}</span>
+              </DropdownMenu.Item>}
               {menuViews.map(({ view, icon: Icon, label }) => (
                 <DropdownMenu.Item key={view} className="q-sidebar-menu-item" onSelect={() => toggleDockView(view)}>
                   <Icon className="size-4" /><span>{label}</span>

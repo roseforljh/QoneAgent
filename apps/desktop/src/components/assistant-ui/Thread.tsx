@@ -1,7 +1,8 @@
+import { useConversationStore, useConversationStoreApi } from "../../lib/conversation-context";
+import { conversationSession } from "../../lib/session-execution-state";
 import { localizeError } from "../../lib/error-localization";
 import { ComposerAttachments, ComposerAddAttachment } from "./elements/attachment.aui";
-import { File } from "./elements/file";
-import { UserImageThumbnail } from "./elements/user-image-thumbnail";
+import { UserMessage, UserMessageContent, UserMessageAttachments } from "./user-message";
 import { ComposerToolsPopover, type ComposerTool } from "./composer-tools";
 import { ComposerTriggers } from "./composer-triggers";
 import { ComposerEditorBridge, type ComposerMentionControls, type InsertComposerCommand, type InsertComposerTool } from "./composer-editor-bridge";
@@ -26,6 +27,7 @@ import { messageDaySeparators } from "./message-day-separators";
 import { MessageSourcesView } from "./message-sources-view";
 import { AssistantContext, AssistantMemoryChips } from "./assistant-context";
 import { TooltipIconButton } from "./tooltip-icon-button";
+import { AssistantMessageActions, UserMessageActions } from "./message-actions";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
@@ -36,8 +38,10 @@ import { ContextCompactionMarker } from "./context-compaction-marker";
 import { RunFileChangesSummary } from "./run-file-changes-summary";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
 import { ThreadScrollFollower } from "./thread-scroll-follower";
+import { ThreadScrollToBottom } from "./thread-scroll-to-bottom";
 import "./thread-viewport.css";
 import "./composer-queue.css";
+import "./composer-actions.css";
 import { ComposerQueue } from "./composer-queue";
 import { useStore } from "../../store";
 import { getThreadScrollState, pruneThreadScrollStates } from "../../lib/thread-scroll-state";
@@ -48,7 +52,6 @@ import { getQoneMessageQueue } from "../../lib/qone-message-queue";
 import { ComposerQueueEnterPlugin } from "./composer-queue-enter";
 import { ComposerHistoryPlugin } from "./composer-history";
 import {
-  ActionBarPrimitive,
   AuiIf,
   ComposerPrimitive,
   MessagePrimitive,
@@ -58,10 +61,7 @@ import {
 } from "@assistant-ui/react";
 import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 import {
-  CheckIcon,
-  ChevronDownIcon,
   CornerDownRightIcon,
-  CopyIcon,
   MicIcon,
   RefreshCwIcon,
   SquareIcon,
@@ -73,22 +73,24 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 
 export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const { locale, t } = useLocale();
-  const sessions = useStore((state) => state.sessions);
-  const workspaces = useStore((state) => state.workspaces);
-  const currentSessionId = useStore((state) => state.currentSessionId);
-  const draftWorkspaceId = useStore((state) => state.draftWorkspaceId);
-  const creatingSession = useStore((state) => state.creatingSession);
-  const sessionsLoaded = useStore((state) => state.sessionsLoaded);
-  const workspacesLoaded = useStore((state) => state.workspacesLoaded);
-  const messagesLoadingSessionId = useStore((state) => state.messagesLoadingSessionId);
+  const sessions = useConversationStore((state) => state.sessions);
+  const sideChats = useConversationStore((state) => state.sideChats);
+  const session = useConversationStore(conversationSession);
+  const workspaces = useConversationStore((state) => state.workspaces);
+  const currentSessionId = useConversationStore((state) => state.currentSessionId);
+  const draftWorkspaceId = useConversationStore((state) => state.draftWorkspaceId);
+  const creatingSession = useConversationStore((state) => state.creatingSession);
+  const sessionsLoaded = useConversationStore((state) => state.sessionsLoaded);
+  const workspacesLoaded = useConversationStore((state) => state.workspacesLoaded);
+  const messagesLoadingSessionId = useConversationStore((state) => state.messagesLoadingSessionId);
   useEffect(() => {
-    if (sessionsLoaded) pruneThreadScrollStates(sessions.map((session) => session.id));
-  }, [sessions, sessionsLoaded]);
+    if (sessionsLoaded) pruneThreadScrollStates([...sessions.map((session) => session.id), ...Object.keys(sideChats)]);
+  }, [sessions, sideChats, sessionsLoaded]);
   const threadMessages = useAuiState((state) => state.thread.messages);
-  const chatRunError = useStore((state) => state.chatRunError);
-  const compactions = useStore((state) => state.compactions);
-  const compactionStatus = useStore((state) => state.currentSessionId ? state.compactionStatuses[state.currentSessionId] : undefined);
-  const autoCompactionStatus = useStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
+  const chatRunError = useConversationStore((state) => state.chatRunError);
+  const compactions = useConversationStore((state) => state.compactions);
+  const compactionStatus = useConversationStore((state) => state.currentSessionId ? state.compactionStatuses[state.currentSessionId] : undefined);
+  const autoCompactionStatus = useConversationStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
   const [today, setToday] = useState(() => new Date());
   useEffect(() => {
     const nextMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
@@ -124,7 +126,6 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const daySeparators = useMemo(() => messageDaySeparators(threadMessages, pairedUserIdByAssistant, today), [threadMessages, pairedUserIdByAssistant, today]);
   const dayFormatter = useMemo(() => new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }), [locale]);
   const canChat = (() => {
-    const session = sessions.find((item) => item.id === currentSessionId);
     return Boolean(
       (session?.workspaceId && workspaces.some((workspace) => workspace.id === session.workspaceId)) ||
       (draftWorkspaceId && workspaces.some((workspace) => workspace.id === draftWorkspaceId)),
@@ -137,6 +138,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const messageListRef = useRef<HTMLDivElement>(null);
   return (
     <ThreadPrimitive.Root
+      data-conversation-id={currentSessionId}
       className="aui-root aui-thread-root relative bg-background text-foreground flex h-full flex-col items-stretch px-4 [--q-chat-bg:var(--background)]"
       style={{
         ["--composer-bg" as string]: "var(--q-surface)",
@@ -165,12 +167,13 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           scrollToBottomOnThreadSwitch={false}
           className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto"
         >
+          <ThreadScrollFollower contentRef={messageListRef}>
           <ConversationMapAui />
-          <ThreadScrollFollower contentRef={messageListRef} />
           <div ref={messageListRef} className="q-message-list relative flex w-full min-w-0 flex-col gap-5 pt-4">
             <div data-conversation-rail-content aria-hidden="true" className="pointer-events-none invisible absolute inset-x-0 top-0 mx-auto h-0 w-full q-thread-content" />
             <ThreadPrimitive.Messages>
               {({ message }) => {
+                if (message.id === session?.sideChat?.boundaryMessageId) return <div className="mx-auto w-full q-thread-content border-y border-border/60 py-3 text-center text-xs text-muted-foreground">{t("chat.sideChatBoundary")}</div>;
                 if (message.role === "user" && pairedUserIds.has(message.id)) return null;
                 const date = daySeparators.get(message.id);
                 return (
@@ -181,7 +184,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
                     data-static-turn={message.id !== latestAssistantId && message.id !== threadMessages.at(-1)?.id ? "" : undefined}
                   >
                     {message.role === "user"
-                      ? <UserMessage messageId={message.id} />
+                      ? <UserMessage />
                       : <AssistantMessage
                         userMessageId={pairedUserIdByAssistant.get(message.id)}
                         showLatestExtras={message.id === latestAssistantId}
@@ -198,15 +201,16 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
               }}
             </ThreadPrimitive.Messages>
           </div>
-          <div className="mx-auto w-full q-thread-content empty:hidden">{children}</div>
+          <div data-thread-end-content className="mx-auto w-full q-thread-content empty:hidden">{children}</div>
 
-          <ThreadPrimitive.ViewportFooter className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-transparent pb-2">
+          <ThreadPrimitive.ViewportFooter data-thread-scroll-footer className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-transparent pb-2">
             <ThreadScrollToBottom />
             {canChat && <RunFileChangesSummary />}
             <div className="relative z-1 mx-auto w-full q-composer-content">
               {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
             </div>
           </ThreadPrimitive.ViewportFooter>
+          </ThreadScrollFollower>
         </ThreadPrimitive.Viewport>
       </AuiIf>
       </>}
@@ -216,7 +220,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
 
 const ProjectImportPrompt: FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { t } = useLocale();
-  const chooseWorkspace = useStore((state) => state.chooseWorkspace);
+  const chooseWorkspace = useConversationStore((state) => state.chooseWorkspace);
   return <div className={cn("q-project-required", compact && "q-project-required-compact")}>
     {!compact && <><p className="q-project-required-title">{t("chat.projectRequired")}</p><p className="q-project-required-description">{t("chat.projectRequiredDescription")}</p></>}
     <button type="button" className="q-project-import-button" onClick={chooseWorkspace}><FolderPlusIcon className="size-4" />{t("chat.importProject")}</button>
@@ -254,11 +258,13 @@ const composerNodes = [ComposerLinkNode, ComposerUnlinkedNode] as const;
 
 const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const aui = useAui();
+  const owner = useConversationStoreApi();
+  const session = useConversationStore(conversationSession);
   const { t } = useLocale();
-  const sessionId = useStore((state) => state.currentSessionId);
-  const compactSession = useStore((state) => state.compactSession);
-  const compacting = useStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
-  const editingQueueItem = useStore((state) => state.editingQueueItem);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const compactSession = useConversationStore((state) => state.compactSession);
+  const compacting = useConversationStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
+  const editingQueueItem = useConversationStore((state) => state.editingQueueItem);
   const insertToolRef = useRef<InsertComposerTool | null>(null);
   const insertCommandRef = useRef<InsertComposerCommand | null>(null);
   const mentionControlsRef = useRef<ComposerMentionControls | null>(null);
@@ -310,7 +316,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
     <>
     <GoalStatusBar />
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
-      <ComposerQueue />
+      <ComposerQueue allowSideChat={!session?.sideChat} />
       <ComposerPrimitive.Unstable_TriggerPopoverRoot>
       <ComposerPrimitive.AttachmentDropzone asChild>
         <div
@@ -321,7 +327,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
           {editingQueueItem && (
             <div className="flex items-center justify-between px-2.5 py-1 text-xs text-muted-foreground" role="status">
               <span>{t("chat.queueEditing")}</span>
-              <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { void aui.composer().reset(); useStore.setState({ editingQueueItem: undefined }); if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); }}>{t("common.cancel")}</button>
+              <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { void aui.composer().reset(); owner.setState({ editingQueueItem: undefined }); if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); }}>{t("common.cancel")}</button>
             </div>
           )}
           <ComposerAttachments />
@@ -346,17 +352,17 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
 
 const GoalStatusBar: FC = () => {
   const { t } = useLocale();
-  const goal = useStore((state) => state.goal);
-  const pause = useStore((state) => state.pauseGoal);
-  const resume = useStore((state) => state.resumeGoal);
-  const clear = useStore((state) => state.clearGoal);
+  const goal = useConversationStore((state) => state.goal);
+  const pause = useConversationStore((state) => state.pauseGoal);
+  const resume = useConversationStore((state) => state.resumeGoal);
+  const clear = useConversationStore((state) => state.clearGoal);
   if (!goal) return null;
   const status = goal.waitingReason ? t("goal.waiting") : goal.status === "active" ? t("goal.active") : goal.status === "paused" ? t("goal.paused") : goal.status === "blocked" ? t("goal.blocked") : t("goal.complete");
   return <div className="mx-auto mb-2 flex w-full q-composer-content items-center gap-2 rounded-xl border border-foreground/10 bg-muted/30 px-3 py-2 text-xs" role="status">
     <span className="flex min-w-0 flex-1 items-center gap-1.5"><TargetIcon className="size-3.5 shrink-0 text-primary" /><strong className="shrink-0">Goal · {status}</strong><span className="truncate text-muted-foreground" title={goal.objective}>{goal.objective}</span></span>
-    {goal.status === "active" && !goal.waitingReason && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={pause}>{t("goal.pause")}</button>}
-    {(goal.status === "paused" || goal.status === "blocked" || Boolean(goal.waitingReason)) && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={resume}>{t("goal.resume")}</button>}
-    <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={clear}>{t("goal.clear")}</button>
+    {goal.status === "active" && !goal.waitingReason && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={() => pause()}>{t("goal.pause")}</button>}
+    {(goal.status === "paused" || goal.status === "blocked" || Boolean(goal.waitingReason)) && <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={() => resume()}>{t("goal.resume")}</button>}
+    <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground" onClick={() => clear()}>{t("goal.clear")}</button>
   </div>;
 };
 
@@ -364,17 +370,16 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
   const { t } = useLocale();
   const isRunning = useAuiState((state) => state.thread.isRunning);
   const showSend = useAuiState((state) => !state.thread.isRunning || (state.thread.capabilities.queue && state.composer.canSend));
-  const compacting = useStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
-  const editing = useStore((state) => Boolean(state.editingQueueItem));
-  const queueing = useStore((state) => state.followUpQueueMode === "queue");
-  const sendLabel = t(editing ? "chat.queueSave" : isRunning ? queueing ? "chat.queueSend" : "chat.queueSteer" : "chat.sendMessage");
+  const compacting = useConversationStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
+  const editing = useConversationStore((state) => Boolean(state.editingQueueItem));
+  const sendLabel = t(editing ? "chat.queueSave" : isRunning ? "chat.queueSend" : "chat.sendMessage");
   return (
     <div className="aui-composer-action-wrapper relative flex min-h-7 items-center justify-between gap-2 px-2 pb-2 mt-1">
-      <div className="flex items-center gap-1">
+      <div className="q-composer-actions-leading flex min-w-0 items-center gap-1">
         <ComposerToolsPopover open={mentionOpen} onToggle={onToggleMention} />
         <RunOptionsPopover />
       </div>
-      <div className="flex items-center gap-1">
+      <div className="q-composer-actions-trailing flex min-w-0 flex-1 items-center justify-end gap-1">
         <AssistantContext />
         <ModelPicker />
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
@@ -425,131 +430,22 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
   );
 };
 
-const ThreadScrollToBottom: FC = () => {
-  const { t } = useLocale();
-  return (
-    <ThreadPrimitive.ScrollToBottom asChild>
-      <TooltipIconButton
-        tooltip={t("chat.scrollToBottom")}
-        className="bg-background absolute -top-10 z-10 self-center rounded-full border p-2 disabled:invisible dark:border-white/15 dark:bg-[#2a2a2a]"
-      >
-        <ChevronDownIcon className="size-5" />
-      </TooltipIconButton>
-    </ThreadPrimitive.ScrollToBottom>
-  );
-};
-
-const assistantActionClassName =
-  "flex size-7 items-center justify-center rounded-md bg-transparent! shadow-none! text-muted-foreground transition-colors hover:bg-transparent! hover:shadow-none! hover:text-foreground";
-
-const retryUserMessage = (messageId: string) => {
-  const state = useStore.getState();
+const retryUserMessage = (messageId: string, owner: ReturnType<typeof useConversationStoreApi>) => {
+  const state = owner.getState();
   const source = state.messages.find((message) => message.id === messageId && message.role === "user");
   if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId));
 };
 
-const UserMessageText: FC<{ paired?: boolean }> = ({ paired = false }) => {
-  const hasText = useAuiState((state) => state.message.parts.some(
-    (part) => part.type === "text" && part.text.length > 0,
-  ));
-  if (!hasText) return null;
-
-  return (
-    <div className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-full" : "max-w-[70%]")}>
-      <MessagePrimitive.Parts>
-        {({ part }) => part.type === "text" ? <span className="whitespace-pre-wrap">{part.text}</span> : null}
-      </MessagePrimitive.Parts>
-    </div>
-  );
-};
-
-const UserMessage: FC<{ messageId: string }> = ({ messageId }) => {
-  const { t } = useLocale();
-  return (
-    <MessagePrimitive.Root className="q-message-root q-message-user relative mx-auto flex w-full q-thread-content flex-col items-end gap-1">
-      <PairUserAttachments />
-      <UserMessageText />
-
-      <div className="q-message-action-slot flex items-center">
-        <ActionBarPrimitive.Root hideWhenRunning autohide="never" className="flex items-center gap-0.5">
-          <ActionBarPrimitive.Copy asChild>
-            <TooltipIconButton tooltip={t("chat.copyMessage")} side="top" className={assistantActionClassName}>
-              <AuiIf condition={(s) => s.message.isCopied}>
-                <CheckIcon className="size-4" />
-              </AuiIf>
-              <AuiIf condition={(s) => !s.message.isCopied}>
-                <CopyIcon className="size-4" />
-              </AuiIf>
-            </TooltipIconButton>
-          </ActionBarPrimitive.Copy>
-          <TooltipIconButton tooltip={t("chat.retryMessage")} side="top" className={assistantActionClassName} onClick={() => retryUserMessage(messageId)}>
-            <RefreshCwIcon className="size-4" />
-          </TooltipIconButton>
-        </ActionBarPrimitive.Root>
-      </div>
-    </MessagePrimitive.Root>
-  );
-};
-
-const PairUserContent: FC = () => {
-  return (
-    <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-fit max-w-[75%] flex-col items-end gap-0.5 self-end">
-      <UserMessageText paired />
-    </MessagePrimitive.Root>
-  );
-};
-
-const PairUserAttachments: FC = () => {
-  const hasAttachments = useAuiState((state) => state.message.parts.some(
-    (part) => part.type === "file" || part.type === "image",
-  ));
-  if (!hasAttachments) return null;
-
-  return (
-    <div className="q-message-user-attachments flex w-fit max-w-[75%] min-w-0 flex-wrap items-end justify-end gap-2 self-end">
-      <MessagePrimitive.Parts>
-        {({ part }) => {
-          if (part.type === "file") return <div className="w-48 max-w-full min-w-0"><File {...part} /></div>;
-          if (part.type === "image") return <UserImageThumbnail {...part} />;
-          return null;
-        }}
-      </MessagePrimitive.Parts>
-    </div>
-  );
-};
-
-const PairUserActions: FC = () => {
-  const { t } = useLocale();
-  const messageId = useAuiState((state) => state.message.id);
-
-  return (
-    <ActionBarPrimitive.Root hideWhenRunning autohide="never" className="flex items-center gap-0.5">
-      <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip={t("chat.copyMessage")} side="top" className={assistantActionClassName}>
-          <AuiIf condition={(s) => s.message.isCopied}>
-            <CheckIcon className="size-4" />
-          </AuiIf>
-          <AuiIf condition={(s) => !s.message.isCopied}>
-            <CopyIcon className="size-4" />
-          </AuiIf>
-        </TooltipIconButton>
-      </ActionBarPrimitive.Copy>
-      <TooltipIconButton tooltip={t("chat.retryMessage")} side="top" className={assistantActionClassName} onClick={() => retryUserMessage(messageId)}>
-        <RefreshCwIcon className="size-4" />
-      </TooltipIconButton>
-    </ActionBarPrimitive.Root>
-  );
-};
-
 const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; betweenContent?: ReactNode }> = ({ userMessageId, showLatestExtras, betweenContent }) => {
+  const owner = useConversationStoreApi();
   const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
-  const answerError = useStore((state) => {
+  const answerError = useConversationStore((state) => {
     const error = state.chatRunError;
     if (!error || error.sessionId !== state.currentSessionId) return undefined;
     return messageId === chatRunErrorMessageId(error.userMessageId) ? error : undefined;
   });
-  const runId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
+  const runId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
   const runIds = useMemo(() => runId ? [runId] : [], [runId]);
   return (
       <MessagePair
@@ -562,20 +458,20 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
         userContent={userMessageId ? (
           <ThreadPrimitive.Unstable_MessageById
             messageId={userMessageId}
-            components={{ Message: PairUserContent }}
+            components={{ Message: UserMessageContent }}
           />
         ) : undefined}
         userContentIsSurface={Boolean(userMessageId)}
         userAttachmentContent={userMessageId ? (
           <ThreadPrimitive.Unstable_MessageById
             messageId={userMessageId}
-            components={{ Message: PairUserAttachments }}
+            components={{ Message: UserMessageAttachments }}
           />
         ) : undefined}
         userActions={userMessageId ? (
           <ThreadPrimitive.Unstable_MessageById
             messageId={userMessageId}
-            components={{ Message: PairUserActions }}
+            components={{ Message: UserMessageActions }}
           />
         ) : undefined}
         betweenContent={betweenContent}
@@ -584,7 +480,7 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
             {answerError ? <div className="flex flex-col gap-1 text-sm leading-relaxed" role="alert">
               <p className="font-medium text-foreground">{t("chat.runFailed")}</p>
               <p className="whitespace-pre-wrap break-words text-muted-foreground">{answerError.detail || t("chat.runFailedDetail")}</p>
-              <button type="button" className="mt-1 flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground" onClick={() => retryUserMessage(answerError.userMessageId)}>
+              <button type="button" className="mt-1 flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground" onClick={() => retryUserMessage(answerError.userMessageId, owner)}>
                 <RefreshCwIcon className="size-3.5" />{t("chat.retryMessage")}
               </button>
             </div> : <AssistantParts />}
@@ -596,44 +492,24 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
             </>}
           </MessagePrimitive.Root>
         }
-        actions={answerError ? <></> :
-          <div className="flex items-center gap-1">
-            <ActionBarPrimitive.Root hideWhenRunning autohide="never" className="flex items-center gap-0.5">
-            <ActionBarPrimitive.Copy asChild>
-              <TooltipIconButton tooltip={t("chat.copyMessage")} side="top" className={assistantActionClassName}>
-                <AuiIf condition={(s) => s.message.isCopied}>
-                  <CheckIcon className="size-4" />
-                </AuiIf>
-                <AuiIf condition={(s) => !s.message.isCopied}>
-                  <CopyIcon className="size-4" />
-                </AuiIf>
-              </TooltipIconButton>
-            </ActionBarPrimitive.Copy>
-            <ActionBarPrimitive.Reload asChild>
-              <TooltipIconButton tooltip={t("chat.retryMessage")} side="top" className={assistantActionClassName}>
-                <RefreshCwIcon className="size-4" />
-              </TooltipIconButton>
-            </ActionBarPrimitive.Reload>
-            </ActionBarPrimitive.Root>
-          </div>
-        }
+        actions={answerError ? <></> : <AssistantMessageActions />}
       />
   );
 };
 
 const AgentPreparation: FC = () => {
   const { t } = useLocale();
-  const activeRunId = useStore((state) => state.activeRunId);
-  const compacting = useStore((state) => Boolean(activeRunId && state.currentSessionId
+  const activeRunId = useConversationStore((state) => state.activeRunId);
+  const compacting = useConversationStore((state) => Boolean(activeRunId && state.currentSessionId
     && state.autoCompactionStatuses[state.currentSessionId]?.runId === activeRunId));
-  const request = useStore((state) => state.modelRequest);
+  const request = useConversationStore((state) => state.modelRequest);
   const requestStartedAt = request?.runId === activeRunId ? request?.startedAt : undefined;
   const [now, setNow] = useState(Date.now);
   const messageRunning = useAuiState((state) => state.message.status?.type === "running");
-  const activeMessageSequence = useStore((state) => state.activeMessageSequence);
-  const streaming = useStore((state) => state.streaming);
-  const streamingParts = useStore((state) => state.streamingParts);
-  const toolCalls = useStore((state) => state.toolCalls);
+  const activeMessageSequence = useConversationStore((state) => state.activeMessageSequence);
+  const streaming = useConversationStore((state) => state.streaming);
+  const streamingParts = useConversationStore((state) => state.streamingParts);
+  const toolCalls = useConversationStore((state) => state.toolCalls);
   const toolCallsById = useMemo(
     () => new Map(toolCalls.map((call) => [call.toolCallId, call] as const)),
     [toolCalls],

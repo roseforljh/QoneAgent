@@ -11,8 +11,8 @@ import { FadeScroll } from "./elements/surfaces";
 import { WorkspaceFileContent } from "./workspace-file-content";
 import { MarkdownDocument } from "./markdown-document";
 
-export function FilePreviewContent({ file, source, target, active, revision }: {
-  file: FilePreviewInfo; source: boolean; target: DockFileTarget; active: boolean; revision: string;
+export function FilePreviewContent({ file, source, target, active, revision, relativePath }: {
+  file: FilePreviewInfo; source: boolean; target: DockFileTarget; active: boolean; revision: string; relativePath?: string;
 }) {
   const { t } = useLocale();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -22,7 +22,7 @@ export function FilePreviewContent({ file, source, target, active, revision }: {
   const [failedRevision, setFailedRevision] = useState<string>();
   useEffect(() => { if (!active) { videoRef.current?.pause(); audioRef.current?.pause(); } }, [active]);
   if (source || file.kind === "text") return <FadeScroll data-file-viewport className="min-h-0 flex-1">
-    <WorkspaceFileContent code={file.content ?? ""} language={languageForFile(file.absolutePath)} target={target} active={active} />
+    <WorkspaceFileContent path={file.absolutePath} relativePath={relativePath} code={file.content ?? ""} language={languageForFile(file.absolutePath)} target={target} active={active} />
   </FadeScroll>;
   if (file.kind === "markdown") return <FadeScroll data-file-viewport className="min-h-0 flex-1"><MarkdownDocument text={file.content ?? ""} /></FadeScroll>;
   if (file.kind === "html") return <iframe title={file.absolutePath} sandbox="" referrerPolicy="no-referrer" srcDoc={file.content} className="min-h-0 w-full flex-1 border-0 bg-white" />;

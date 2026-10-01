@@ -27,6 +27,7 @@ import type {
 } from "@assistant-ui/react";
 import { cn } from "../../../lib/utils";
 import { useStore } from "../../../store";
+import { ImageContextMenu } from "../dock-context-menu";
 
 const extensionForMimeType = (mimeType?: string): string => {
   switch (mimeType) {
@@ -159,6 +160,10 @@ const saveImagePart = async (
 
 function reportSaveError(error: unknown): void {
   useStore.setState({ lastError: localizeError(error) });
+}
+
+function saveImageFromContextMenu(src: string, filename?: string): void {
+  void saveImagePart({ image: src, filename }).catch(reportSaveError);
 }
 
 const imageVariants = cva(
@@ -406,14 +411,16 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
       <div className="flex min-h-0 w-full flex-1 items-center justify-center">
         {failedSrc === src
           ? <ImageOffIcon className="size-10 text-white/40" aria-label={t("image.loadFailed")} />
-          : <img
-              data-slot="image-zoom-content"
-              src={src}
-              alt={alt ?? t("image.content")}
-              className="aui-image-zoom-content max-h-full max-w-full object-contain"
-              onClick={(event) => event.stopPropagation()}
-              onError={() => setFailedSrc(src)}
-            />}
+          : <ImageContextMenu src={src} onSave={() => saveImageFromContextMenu(src, filename)}>
+              <img
+                data-slot="image-zoom-content"
+                src={src}
+                alt={alt ?? t("image.content")}
+                className="aui-image-zoom-content max-h-full max-w-full object-contain"
+                onClick={(event) => event.stopPropagation()}
+                onError={() => setFailedSrc(src)}
+              />
+            </ImageContextMenu>}
       </div>
     </div>,
     document.body,
@@ -430,6 +437,7 @@ function ImageZoom({ src, alt, filename, children }: ImageZoomProps) {
   }, []);
 
   return <>
+    <ImageContextMenu src={src} onSave={() => saveImageFromContextMenu(src, filename)}>
     <div
       ref={triggerRef}
       onClick={() => setIsOpen(true)}
@@ -445,6 +453,7 @@ function ImageZoom({ src, alt, filename, children }: ImageZoomProps) {
     >
       {children}
     </div>
+    </ImageContextMenu>
     {isOpen && <ImageLightbox src={src} alt={alt ?? t("image.preview")} filename={filename} onClose={handleClose} />}
   </>;
 }

@@ -1,7 +1,8 @@
 import type { ComponentProps } from "react";
 import type { ThreadPrimitive } from "@assistant-ui/react";
+import type { ThreadFollowSnapshot } from "./thread-scroll-policy";
 
-type ScrollRestoration = NonNullable<ComponentProps<typeof ThreadPrimitive.Viewport>["scrollRestoration"]>;
+type ScrollRestoration = NonNullable<ComponentProps<typeof ThreadPrimitive.Viewport>["scrollRestoration"]> & { follow?: ThreadFollowSnapshot };
 
 // UI state only: retained across page unmounts, isolated by conversation.
 const snapshots = new Map<string, ScrollRestoration>();

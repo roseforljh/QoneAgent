@@ -1,6 +1,6 @@
 "use client";
 
-import { CodexChevronRightIcon as ChevronRightIcon, type ExecutionIcon } from "../execution-icons";
+import { CodexChevronRightIcon as ChevronRightIcon, CodexXIcon, type ExecutionIcon } from "../execution-icons";
 
 import { useId, useRef, type ReactNode } from "react";
 import {
@@ -41,9 +41,23 @@ export interface ToolTimelineProps {
   fullActiveLabel?: string;
   headerIcon?: ExecutionIcon;
   headerStat?: { added: number; removed: number };
+  canExpand?: boolean;
+  failureLabel?: string;
   stats: TimelineStat[];
   renderStep?: (step: TimelineStep, index: number) => ReactNode;
+  children?: ReactNode;
   className?: string;
+}
+
+export function ToolTimelineRow({ step, active = false, children }: { step: TimelineStep; active?: boolean; children?: ReactNode }) {
+  const Icon = step.icon;
+  return <div className="fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-foreground/55 flex min-w-0 items-start gap-2 text-[13.5px] duration-300">
+    <Icon className="mt-1.5 size-3.5 shrink-0 transition-colors duration-300 text-foreground/55" />
+    {children ?? <>
+      <ShimmerLabel active={active} className="relative inline-block leading-none">{step.verb}</ShimmerLabel>
+      <span className="bg-foreground/[0.06] text-foreground/70 rounded-md px-1.5 py-0.5 font-mono text-xs">{step.chip}</span>
+    </>}
+  </div>;
 }
 
 export function ToolTimeline({
@@ -58,8 +72,11 @@ export function ToolTimeline({
   fullActiveLabel,
   headerIcon: HeaderIcon,
   headerStat,
+  canExpand = true,
+  failureLabel,
   stats,
   renderStep,
+  children,
   className,
 }: ToolTimelineProps) {
   const disclosureRef = useRef<HTMLDivElement>(null);
@@ -68,14 +85,16 @@ export function ToolTimeline({
     <Collapsible
       ref={disclosureRef}
       data-slot="tool-timeline"
-      open={open}
+      data-status={failureLabel ? "failed" : undefined}
+      open={open && canExpand}
       onOpenChange={onOpenChange}
       className={cn("min-w-0 w-full max-w-full", className)}
     >
       <CollapsibleTrigger
+        disabled={!canExpand}
         aria-controls={panelId}
         title={streaming ? fullActiveLabel ?? activeLabel : fullSummary ?? restingLabel}
-        className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent"
+        className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-normal transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent"
       >
         {HeaderIcon && <HeaderIcon className="size-3.5 shrink-0 opacity-60 transition-opacity group-hover/trigger:opacity-90" />}
         <OverflowFade>
@@ -98,35 +117,15 @@ export function ToolTimeline({
             {headerStat.removed > 0 && <span className="text-rose-600 dark:text-rose-400 font-medium">−{headerStat.removed}</span>}
           </span>
         )}
-        <ChevronRightIcon data-slot="tool-disclosure-chevron" className="size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover/trigger:opacity-75 group-focus-visible/trigger:opacity-100 group-data-[state=open]/trigger:opacity-100 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />
+        {failureLabel && <span title={failureLabel} role="img" aria-label={failureLabel}><CodexXIcon className="size-3.5 shrink-0 text-destructive" /></span>}
+        {canExpand && <ChevronRightIcon data-slot="tool-disclosure-chevron" className="size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover/trigger:opacity-75 group-focus-visible/trigger:opacity-100 group-data-[state=open]/trigger:opacity-100 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />}
       </CollapsibleTrigger>
-      <MeasuredCollapse id={panelId} open={open} className="outline-none">
+      <MeasuredCollapse id={panelId} open={open && canExpand} className="outline-none">
         <FadeScroll className={cn(regionViewport, "overflow-x-hidden")}>
           <div className="flex flex-col gap-2 ps-3 pt-2">
-              {take(steps, visibleSteps).map((step, index, shown) => {
-                const Icon = step.icon;
-                const active = streaming && index === shown.length - 1;
-
-                return (
-                  <div
-                    key={step.id ?? step.chip}
-                    className="fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-foreground/55 flex min-w-0 items-start gap-2 text-[13.5px] duration-300"
-                  >
-                    <Icon className={cn("mt-1.5 size-3.5 shrink-0 transition-colors duration-300", "text-foreground/55")} />
-                    {renderStep ? renderStep(step, index) : <>
-                      <ShimmerLabel
-                        active={active}
-                        className="relative inline-block leading-none"
-                      >
-                        {step.verb}
-                      </ShimmerLabel>
-                      <span className="bg-foreground/[0.06] text-foreground/70 rounded-md px-1.5 py-0.5 font-mono text-xs">
-                        {step.chip}
-                      </span>
-                    </>}
-                  </div>
-                );
-              })}
+              {children ?? take(steps, visibleSteps).map((step, index, shown) => <ToolTimelineRow key={step.id ?? step.chip} step={step} active={streaming && index === shown.length - 1}>
+                {renderStep?.(step, index)}
+              </ToolTimelineRow>)}
               {stats.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {stats.map((stat) => (

@@ -5,7 +5,7 @@ import { sessionStore, switchSessionState, type SessionExecutionState } from "./
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
-import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, loadFollowUpQueueMode, saveFollowUpQueueMode, type FollowUpQueueMode, type SessionRunOptions } from "./lib/run-options";
+import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
 import { trackWorkspaceRequest, untrackWorkspaceRequest, useWorkspaceViewStore } from "./lib/workspace-view-state";
@@ -100,8 +100,6 @@ export interface AgentState {
   runOptionsBySession: Record<string, SessionRunOptions>;
   defaultPermissionMode: RunPermissionMode;
   draftRunOptions: SessionRunOptions;
-  followUpQueueMode: FollowUpQueueMode;
-  setFollowUpQueueMode: (mode: FollowUpQueueMode) => void;
   skills: SkillInfo[];
   plugins: PluginInfo[];
   mcpServers: McpServerInfo[];
@@ -171,22 +169,22 @@ export interface AgentState {
   selectSession: (id: string) => void;
   searchSessions: (query: string) => void;
   runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean, sessionId?: string) => void;
-  pauseGoal: () => void;
-  resumeGoal: () => void;
-  clearGoal: () => void;
+  pauseGoal: (sessionId?: string) => void;
+  resumeGoal: (sessionId?: string) => void;
+  clearGoal: (sessionId?: string) => void;
   stopAgent: (sessionId?: string) => void;
   steerAgent: (input: { sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }) => Promise<boolean | undefined>;
-  approve: (id: string) => void;
-  reject: (id: string) => void;
+  approve: (id: string, sessionId?: string) => void;
+  reject: (id: string, sessionId?: string) => void;
   setPermission: (rule: Omit<PermissionRuleInfo, "updatedAt">) => void;
   refreshWorkspace: (id?: string) => void;
-  setSelectedModel: (id: string) => void;
-  setRunPermissionMode: (mode: RunPermissionMode) => void;
+  setSelectedModel: (id: string, sessionId?: string) => void;
+  setRunPermissionMode: (mode: RunPermissionMode, sessionId?: string) => void;
   setDefaultPermissionMode: (mode: RunPermissionMode) => void;
-  setRunThinking: (modelId: string, level: RunThinkingLevel) => void;
+  setRunThinking: (modelId: string, level: RunThinkingLevel, sessionId?: string) => void;
   setCompactionSettings: (settings: { autoCompactionEnabled: boolean; compactionThreshold: number }) => void;
-  compactSession: () => void;
-  refreshContextUsage: () => void;
+  compactSession: (sessionId?: string) => void;
+  refreshContextUsage: (sessionId?: string) => void;
 }
 
 const rid = () => crypto.randomUUID();
@@ -667,9 +665,9 @@ export const useStore = create<AgentState>((set, get) => ({
     else void get().send({ type: "session.runs", requestId: rid(), sessionId: currentSessionId });
   },
 
-  pauseGoal: () => { const sessionId = get().currentSessionId; if (sessionId) void get().send({ type: "goal.pause", requestId: rid(), sessionId }); },
-  resumeGoal: () => { const sessionId = get().currentSessionId; if (sessionId) void get().send({ type: "goal.resume", requestId: rid(), sessionId }); },
-  clearGoal: () => { const sessionId = get().currentSessionId; if (sessionId) void get().send({ type: "goal.clear", requestId: rid(), sessionId }); },
+  pauseGoal: (sessionId = get().currentSessionId) => { if (sessionId) void get().send({ type: "goal.pause", requestId: rid(), sessionId }); },
+  resumeGoal: (sessionId = get().currentSessionId) => { if (sessionId) void get().send({ type: "goal.resume", requestId: rid(), sessionId }); },
+  clearGoal: (sessionId = get().currentSessionId) => { if (sessionId) void get().send({ type: "goal.clear", requestId: rid(), sessionId }); },
 
   steerAgent: async ({ sessionId, runId, queueItemId, message, attachments }) => {
     const requestId = rid();
@@ -684,14 +682,14 @@ export const useStore = create<AgentState>((set, get) => ({
     });
   },
 
-  approve: (id) => {
+  approve: (id, sessionId) => {
     get().send({ type: "tool.approve", requestId: rid(), approvalId: id });
-    set((s) => ({ approvals: s.approvals.filter((a) => a.id !== id) }));
+    sessionStore(useStore, sessionId).setState((s) => ({ approvals: s.approvals.filter((a) => a.id !== id) }));
   },
 
-  reject: (id) => {
+  reject: (id, sessionId) => {
     get().send({ type: "tool.reject", requestId: rid(), approvalId: id });
-    set((s) => ({ approvals: s.approvals.filter((a) => a.id !== id) }));
+    sessionStore(useStore, sessionId).setState((s) => ({ approvals: s.approvals.filter((a) => a.id !== id) }));
   },
 
   setPermission: (rule) => get().send({ type: "permission.set", requestId: rid(), ...rule }),
@@ -702,7 +700,8 @@ export const useStore = create<AgentState>((set, get) => ({
     set(next);
     void get().send({ type: "compaction.settings.set", requestId: rid(), ...next });
   },
-  compactSession: () => {
+  compactSession: (sessionId) => {
+    const { getState: get, setState: set } = sessionStore(useStore, sessionId);
     const { currentSessionId, selectedModelId, connected, compactionStatuses, messages, messagesLoadingSessionId, running } = get();
     if (!connected || !currentSessionId || !selectedModelId) {
       set({ lastError: t("error.compactionPrerequisites") });
@@ -720,7 +719,8 @@ export const useStore = create<AgentState>((set, get) => ({
       });
     });
   },
-  refreshContextUsage: () => {
+  refreshContextUsage: (sessionId) => {
+    const { getState: get, setState: set } = sessionStore(useStore, sessionId);
     const { connected, currentSessionId, selectedModelId } = get();
     if (!connected || !currentSessionId || !selectedModelId) return;
     const requestId = rid();
@@ -736,8 +736,8 @@ export const useStore = create<AgentState>((set, get) => ({
     get().send({ type: "workspace.git", requestId: rid(), workspaceId: id });
   },
 
-  setSelectedModel: (id) => set((state) => {
-    const sid = state.currentSessionId;
+  setSelectedModel: (id, sessionId) => set((state) => {
+    const sid = sessionId ?? state.currentSessionId;
     if (!sid) return {
       selectedModelId: id,
       draftRunOptions: { ...state.draftRunOptions, modelId: id },
@@ -747,18 +747,13 @@ export const useStore = create<AgentState>((set, get) => ({
       [sid]: { ...state.runOptionsBySession[sid], modelId: id },
     };
     saveRunOptions(runOptionsBySession);
-    return { selectedModelId: id, runOptionsBySession };
+    return { ...(sid === state.currentSessionId ? { selectedModelId: id } : {}), runOptionsBySession };
   }),
 
-  followUpQueueMode: loadFollowUpQueueMode(),
   sideChats: {},
   sideChatTransfers: {},
-  setFollowUpQueueMode: (mode) => {
-    saveFollowUpQueueMode(mode);
-    set({ followUpQueueMode: mode });
-  },
-  setRunPermissionMode: (mode) => set((state) => {
-    const sid = state.currentSessionId;
+  setRunPermissionMode: (mode, sessionId) => set((state) => {
+    const sid = sessionId ?? state.currentSessionId;
     if (!sid) return { draftRunOptions: { ...state.draftRunOptions, permissionMode: mode } };
     const runOptionsBySession = { ...state.runOptionsBySession, [sid]: { ...state.runOptionsBySession[sid], permissionMode: mode } };
     saveRunOptions(runOptionsBySession);
@@ -768,8 +763,8 @@ export const useStore = create<AgentState>((set, get) => ({
     saveDefaultPermissionMode(mode);
     set({ defaultPermissionMode: mode });
   },
-  setRunThinking: (modelId, level) => set((state) => {
-    const sid = state.currentSessionId;
+  setRunThinking: (modelId, level, sessionId) => set((state) => {
+    const sid = sessionId ?? state.currentSessionId;
     if (!sid) return { draftRunOptions: { ...state.draftRunOptions, thinkingByModel: { ...state.draftRunOptions.thinkingByModel, [modelId]: level } } };
     const current = state.runOptionsBySession[sid];
     const runOptionsBySession = { ...state.runOptionsBySession, [sid]: { ...current, thinkingByModel: { ...current?.thinkingByModel, [modelId]: level } } };

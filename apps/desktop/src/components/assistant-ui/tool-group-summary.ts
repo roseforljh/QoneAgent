@@ -18,6 +18,7 @@ const CATEGORY_ORDER: readonly ToolActivityCategory[] = [
   "file-change",
   "exploration",
   "command",
+  "web-search",
   "tool",
 ];
 
@@ -27,6 +28,7 @@ const CATEGORY_LABELS = {
   command: ["chat.toolGroupCommandOne", "chat.toolGroupCommandMany"],
   integration: ["chat.toolGroupToolOne", "chat.toolGroupToolMany"],
   tool: ["chat.toolGroupToolOne", "chat.toolGroupToolMany"],
+  "web-search": ["chat.toolSearchedWeb", "chat.toolSearchedWeb"],
 } as const;
 
 /** Summarize the work performed, not the duration of the last model message. */
@@ -40,6 +42,7 @@ export function toolGroupSummary(
     const counts = new Map<ToolActivityCategory, number>();
     const changedPaths = new Set<string>();
     const integrationNames = new Set<string>();
+    let integrationsOnly = true;
     let failedCount = 0;
     for (const step of steps) {
       if (step.failed) {
@@ -49,6 +52,7 @@ export function toolGroupSummary(
       const category = step.category ?? "tool";
       if (category === "integration") {
         integrationNames.add(step.integration?.name ?? step.verb);
+        if (step.integration?.kind === "source") integrationsOnly = false;
         continue;
       }
       if (category === "file-change") {
@@ -65,24 +69,22 @@ export function toolGroupSummary(
       counts.set(category, (counts.get(category) ?? 0) + 1);
     }
     counts.set("file-change", (counts.get("file-change") ?? 0) + changedPaths.size);
-    const parts = CATEGORY_ORDER
-      .filter((category) => (counts.get(category) ?? 0) > 0)
-      .map((category, index) => {
-        const count = counts.get(category)!;
-        const key = CATEGORY_LABELS[category][count === 1 ? 0 : 1];
-        const label = translate(locale, key);
-        return locale === "en" && index > 0 ? label[0]!.toLowerCase() + label.slice(1) : label;
-      });
-    if (integrationNames.size > 0) {
-      const names = [...integrationNames];
-      const sourceList = locale === "en"
-        ? new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(names)
-        : names.join("、");
-      const insertionIndex = CATEGORY_ORDER
-        .slice(0, CATEGORY_ORDER.indexOf("integration"))
-        .filter((category) => (counts.get(category) ?? 0) > 0)
-        .length;
-      parts.splice(insertionIndex, 0, translate(locale, names.length === 1 ? "chat.toolGroupIntegrationOne" : "chat.toolGroupIntegrationMany", { sources: sourceList }));
+    const parts: string[] = [];
+    for (const category of CATEGORY_ORDER) {
+      let label: string;
+      if (category === "integration") {
+        if (!integrationNames.size) continue;
+        const names = [...integrationNames];
+        const sources = locale === "en"
+          ? new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(names)
+          : names.join("、");
+        label = translate(locale, integrationsOnly ? names.length === 1 ? "chat.toolGroupIntegrationOne" : "chat.toolGroupIntegrationMany" : "chat.toolGroupSource", { sources });
+      } else {
+        const count = counts.get(category) ?? 0;
+        if (!count) continue;
+        label = translate(locale, CATEGORY_LABELS[category][count === 1 ? 0 : 1]);
+      }
+      parts.push(locale === "en" && parts.length > 0 ? label[0]!.toLowerCase() + label.slice(1) : label);
     }
     if (failedCount > 0) {
       const label = translate(locale, failedCount === 1 ? "chat.toolGroupFailedOne" : "chat.toolGroupFailedMany", { count: failedCount });

@@ -17,6 +17,7 @@ test("real Markdown link rendering retains Windows href, custom label and file i
       {"[主题样式](C:/Repo/src/theme.css:12) / [主区样式](src/App.tsx#L3) / [网页](https://example.com) / [章节](#section)"}
     </ReactMarkdown>);
     expect(markup.match(/data-file-reference=/g)).toHaveLength(2);
+    expect(markup.match(/data-workspace-path-context-menu-trigger/g)).toHaveLength(2);
     expect(markup).toContain("主题样式</a>");
     expect(markup).toContain("file-css-26-928.svg");
     expect(markup).toContain("file-react-26-928.svg");
@@ -27,6 +28,13 @@ test("real Markdown link rendering retains Windows href, custom label and file i
     expect(markup).toContain('href="#section"');
     expect(markup).not.toContain('node="');
   } finally { Object.assign(state, original, { currentSessionId: original.currentSessionId }); }
+});
+
+test("unresolved file references retain disabled navigation with their path menu", () => {
+  const markup = renderToStaticMarkup(<MarkdownLink href="src/Unknown.ts">Unknown</MarkdownLink>);
+  expect(markup).toContain('aria-disabled="true"');
+  expect(markup).toContain('tabindex="-1"');
+  expect(markup).toContain("data-workspace-path-context-menu-trigger");
 });
 
 test("workspace-external references open in the file preview tab", () => {

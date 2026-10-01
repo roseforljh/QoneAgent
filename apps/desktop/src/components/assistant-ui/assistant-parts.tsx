@@ -1,3 +1,4 @@
+import { useConversationStore, useConversationStoreApi } from "../../lib/conversation-context";
 import { Fragment, useMemo, type FC } from "react";
 import { MessagePrimitive, useAuiState, type PartState } from "@assistant-ui/react";
 import { MarkdownText } from "./markdown-text";
@@ -9,14 +10,14 @@ import { RunFileChangesAttachment } from "./run-file-changes-attachment";
 import { Image } from "./elements/image";
 import { ImageGallery } from "./elements/image-gallery";
 import { ImageGeneration } from "./elements/image-generation";
-import { useStore } from "../../store";
 import { SubagentMedia } from "./subagent-view";
 import { Reasoning } from "./reasoning";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { compactionDisplayIndex, positionedAssistantRanges, type PositionedCompaction } from "./compaction-ranges";
+import { executionActivityItems } from "./execution-activity-items";
 
-function regenerateCurrentTurn(messageId: string): void {
-  const state = useStore.getState();
+function regenerateCurrentTurn(messageId: string, owner: ReturnType<typeof useConversationStoreApi>): void {
+  const state = owner.getState();
   const messageIndex = messageId === "streaming" ? state.messages.length : state.messages.findIndex((message) => message.id === messageId);
   const source = state.messages.slice(0, messageIndex < 0 ? state.messages.length : messageIndex).reverse().find((message) => message.role === "user");
   if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId));
@@ -31,6 +32,7 @@ const AssistantImageGallery: FC<{ parts: VisibleImagePart[] }> = ({ parts }) => 
 };
 
 const PendingImageGeneration: FC = () => {
+  const owner = useConversationStoreApi();
   const generation = useAuiState((state) => {
     const custom = state.message.metadata?.custom;
     if (!custom || typeof custom !== "object") return undefined;
@@ -42,7 +44,7 @@ const PendingImageGeneration: FC = () => {
   });
   const messageId = useAuiState((state) => state.message.id);
   if (!generation) return null;
-  return <ImageGeneration prompt={generation.prompt} error={generation.error} generating={!generation.error} onRegenerate={() => regenerateCurrentTurn(messageId)} />;
+  return <ImageGeneration prompt={generation.prompt} error={generation.error} generating={!generation.error} onRegenerate={() => regenerateCurrentTurn(messageId, owner)} />;
 };
 
 export const AssistantParts: FC = () => {
@@ -51,10 +53,10 @@ export const AssistantParts: FC = () => {
   const ranges = useMemo(() => assistantPartRanges(parts), [parts]);
   const messageId = useAuiState((state) => state.message.id);
   const messageRunning = useAuiState((state) => state.message.status?.type === "running");
-  const runId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
-  const runStatus = useStore((state) => state.runs.find((run) => run.id === runId)?.status);
-  const compactions = useStore((state) => state.compactions);
-  const pending = useStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
+  const runId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
+  const runStatus = useConversationStore((state) => state.runs.find((run) => run.id === runId)?.status);
+  const compactions = useConversationStore((state) => state.compactions);
+  const pending = useConversationStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
   const positionedRanges = useMemo(() => {
     const markers: PositionedCompaction[] = compactions.flatMap((marker) => marker.runId === runId && marker.partIndex !== undefined
       ? [{ ...marker, partIndex: marker.partIndex, startedAt: marker.createdAt }] : []);
@@ -68,6 +70,11 @@ export const AssistantParts: FC = () => {
   const firstActivityRange = sections.activity[0];
   const disclosureStartIndex = firstActivityRange && ("index" in firstActivityRange ? firstActivityRange.index : firstActivityRange.startIndex);
   const statusAtStart = executionStatusAtStart(finalAnswerStarted, runStatus, messageRunning);
+  const toolCalls = useConversationStore((state) => state.toolCalls);
+  const activityItems = useMemo(() => {
+    const calls = new Map(toolCalls.map((call) => [call.toolCallId, call]));
+    return displayBlocks.map((block) => executionActivityItems(block.ranges, parts, calls));
+  }, [displayBlocks, parts, toolCalls]);
 
   const renderRange = (range: AssistantPartRange) => {
     if (range.type === "reasoning") return <MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />;
@@ -94,7 +101,8 @@ export const AssistantParts: FC = () => {
     {displayBlocks.map((block, index) => block.kind === "persistent"
       ? <Fragment key={`persistent-${index}`}>{block.ranges.map(renderRange)}</Fragment>
       : <AssistantExecution key={`activity-${index}`} ranges={block.ranges} statusRanges={sections.activity} finalAnswerStarted={finalAnswerStarted} disclosureStartIndex={disclosureStartIndex} showStatus={index === (statusAtStart ? 0 : lastActivityBlockIndex)} statusAtStart={statusAtStart}>
-          {block.ranges.map(renderRange)}
+          {activityItems[index]?.map((item) => item.kind === "part" ? renderRange(item.range)
+            : <SessionTimeline key={`activity-${item.startIndex}`} startIndex={item.startIndex} endIndex={item.endIndex} activityRanges={item.ranges} title={item.title} />)}
         </AssistantExecution>)}
     {sections.answer.map(renderRange)}
     <SubagentMedia />

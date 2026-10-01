@@ -8,6 +8,7 @@ import { removeFilePreview, requestFilePreview, useFilePreviewStore } from "../.
 import { FileReferenceContext } from "../../lib/file-reference-context";
 import { fileReferenceDirectory, workspaceRelativeFilePath } from "../../lib/workspace-file-navigation";
 import { FilePreviewContent } from "./file-preview-content";
+import { WorkspacePathContextMenu } from "./dock-context-menu";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { CodexIcon } from "../ui/CodexIcon";
 import { attachmentFileIcon } from "../../lib/attachment-file-kind";
@@ -51,7 +52,9 @@ export default function FileReader({ tabId, workspaceId, sessionId, target, acti
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={name}>
       <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-border/50 px-3 py-2">
         <CodexIcon src={attachmentFileIcon(name, file?.mimeType ?? "")} className="size-4 shrink-0 text-foreground/60" />
-        <span title={file?.absolutePath ?? target.path} className="min-w-0 flex-1 truncate text-xs text-foreground/70">{file?.absolutePath ?? target.path}</span>
+        <WorkspacePathContextMenu path={file?.absolutePath ?? target.path} onOpenExternal={file ? () => void openExternal() : undefined}>
+          <span tabIndex={0} title={file?.absolutePath ?? target.path} className="min-w-0 flex-1 truncate text-xs text-foreground/70 focus-visible:outline-2 focus-visible:outline-ring">{file?.absolutePath ?? target.path}</span>
+        </WorkspacePathContextMenu>
         {file && <span className="shrink-0 text-[11px] text-muted-foreground">{new Intl.NumberFormat(locale, { style: "unit", unit: "byte", unitDisplay: "short" }).format(file.size)}</span>}
         {sourceAvailable && <>
           <TooltipIconButton tooltip={t("dock.filePreview")} aria-pressed={!source} onClick={() => setSource(false)} className="size-7"><CodexIcon src={documentIcon} className="size-4" /></TooltipIconButton>
@@ -63,7 +66,7 @@ export default function FileReader({ tabId, workspaceId, sessionId, target, acti
       {file?.truncated && <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 py-2 text-xs text-muted-foreground"><span>{t("dock.fileTruncated")}</span><button type="button" onClick={() => setFull(true)} disabled={view?.loading} className="shrink-0 text-primary disabled:opacity-50">{t("dock.fileLoadFull")}</button></div>}
       {error ? <div role="alert" className="px-6 py-8 text-sm"><p className="break-words text-destructive">{error}</p><button type="button" disabled={!connected || !supported} onClick={() => setRetry((value) => value + 1)} className="mt-3 text-primary disabled:opacity-50">{t("dock.fileRetry")}</button></div>
         : !file ? <p role="status" className="px-6 py-8 text-sm text-muted-foreground">{t("dock.fileLoading")}</p>
-        : <FilePreviewContent file={file} source={source && sourceAvailable} target={target} active={active} revision={view!.requestId} />}
+        : <FilePreviewContent file={file} relativePath={workspaceRoot ? workspaceRelativeFilePath(file.absolutePath, workspaceRoot) : undefined} source={source && sourceAvailable} target={target} active={active} revision={view!.requestId} />}
       {file?.kind === "binary" && <button type="button" onClick={() => void openExternal()} className="mx-auto mb-8 rounded-lg border border-border px-4 py-2 text-sm text-foreground transition-colors hover:bg-muted">{t("dock.fileOpenExternal")}</button>}
     </section>
   </FileReferenceContext.Provider>;

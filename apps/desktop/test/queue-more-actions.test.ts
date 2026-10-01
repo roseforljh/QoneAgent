@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import type { AppendMessage } from "@assistant-ui/react";
 import type { QueueItemInfo } from "@qone/protocol";
 import { createQoneMessageQueue } from "../src/lib/qone-message-queue";
-import type { FollowUpQueueMode } from "../src/lib/run-options";
 
 const message = (text: string): AppendMessage => ({ role: "user", parentId: null, sourceId: null, runConfig: {}, createdAt: new Date(), metadata: { custom: {} }, content: [{ type: "text", text }], attachments: [] });
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -14,37 +13,44 @@ function deferred<T>() {
 }
 function fixture() {
   let running = true;
-  let mode: FollowUpQueueMode = "queue";
   let snapshot: QueueItemInfo[] = [];
   const sent: string[] = [];
   const steered: string[] = [];
   const queue = createQoneMessageQueue({
-    sessionId: "parent", isRunning: () => running, getActiveRunId: () => "parent-run", getFollowUpQueueMode: () => mode,
+    sessionId: "parent", isRunning: () => running, getActiveRunId: () => "parent-run",
     send: (input) => { sent.push(input.content[0]?.type === "text" ? input.content[0].text : ""); running = true; },
     steer: async (input) => { steered.push(input.content[0]?.type === "text" ? input.content[0].text : ""); return true; },
     sync: (items) => { snapshot = items; },
   });
-  return { queue, sent, steered, snapshot: () => snapshot, mode: (next: FollowUpQueueMode) => { mode = next; }, idle: () => { running = false; queue.controller.notifyIdle(); } };
+  return { queue, sent, steered, snapshot: () => snapshot, idle: () => { running = false; queue.controller.notifyIdle(); } };
 }
 
-test("queue preference affects later submissions immediately and preserves waiting messages", async () => {
+test("ordinary running submissions always remain in FIFO, including assistant-ui steer calls", async () => {
   const f = fixture();
   f.queue.adapter.steer(message("waiting")); await tick();
   const waitingId = f.queue.getPersistentId(f.queue.adapter.items[0]!.id);
-  f.mode("steer");
-  f.queue.adapter.steer(message("live input")); await tick();
-  expect(f.steered).toEqual(["live input"]);
-  expect(f.queue.adapter.items.map((item) => item.prompt)).toEqual(["waiting"]);
+  f.queue.adapter.steer({ ...message("live input"), steer: true }); await tick();
+  expect(f.steered).toEqual([]);
+  expect(f.queue.adapter.items.map((item) => item.prompt)).toEqual(["waiting", "live input"]);
   expect(f.queue.getPersistentId(f.queue.adapter.items[0]!.id)).toBe(waitingId);
-  f.mode("queue"); f.queue.adapter.steer(message("next waiting")); await tick();
-  expect(f.steered).toEqual(["live input"]);
-  expect(f.queue.adapter.items.map((item) => item.prompt)).toEqual(["waiting", "next waiting"]);
 });
 
-test("disabled queueing still starts an ordinary run when idle", async () => {
-  const f = fixture(); f.mode("steer"); f.idle();
+test("an ordinary submission still starts the run when idle", async () => {
+  const f = fixture(); f.idle();
   f.queue.adapter.steer(message("idle input")); await tick();
   expect(f.sent).toEqual(["idle input"]); expect(f.steered).toEqual([]);
+});
+
+test("the explicit row steer path is separate from ordinary composer submission", async () => {
+  const f = fixture();
+  f.queue.adapter.enqueue(message("waiting"));
+  await tick();
+  expect(f.steered).toEqual([]);
+  const localId = f.queue.adapter.items[0]!.id;
+  f.queue.steerNow(localId);
+  await tick();
+  expect(f.steered).toEqual(["waiting"]);
+  expect(f.queue.adapter.items).toEqual([]);
 });
 
 test("side transfer detaches only its input and does not block the parent's next run", async () => {

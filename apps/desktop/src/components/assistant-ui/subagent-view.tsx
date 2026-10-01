@@ -1,3 +1,4 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { CodexArrowLeftIcon as ArrowLeftIcon, CodexCheckIcon as CheckIcon, CodexChevronRightIcon as ChevronRightIcon, CodexXIcon as XIcon, CodexLoader2Icon, CodexClock3Icon } from "./execution-icons";
 import { useEffect, useMemo, useState, type FC } from "react";
 import { MessagePrimitive, ThreadPrimitive, useAuiState } from "@assistant-ui/react";
@@ -31,11 +32,11 @@ export const SubagentMedia: FC = () => {
   const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
   const messageParts = useAuiState((state) => state.message.parts);
-  const activeRunId = useStore((state) => state.activeRunId);
-  const messageRunId = useStore((state) => state.messages.find((message) => message.id === messageId)?.runId);
-  const messages = useStore((state) => state.messages);
-  const allSubagents = useStore((state) => state.subagents);
-  const models = useStore((state) => state.modelConfigs);
+  const activeRunId = useConversationStore((state) => state.activeRunId);
+  const messageRunId = useConversationStore((state) => state.messages.find((message) => message.id === messageId)?.runId);
+  const messages = useConversationStore((state) => state.messages);
+  const allSubagents = useConversationStore((state) => state.subagents);
+  const models = useConversationStore((state) => state.modelConfigs);
   const runId = messageId === "streaming" ? activeRunId : messageRunId;
   // Media belongs to the message that dispatched the child, even after later turns reuse it.
   const subagents = useMemo(
@@ -92,9 +93,9 @@ const SubagentTranscript: FC = () => {
 
 export const SubagentPanel: FC<{ selectedId?: string; onSelect: (id?: string) => void; onClose: () => void }> = ({ selectedId, onSelect, onClose }) => {
   const { locale } = useLocale();
-  const subagents = useStore((state) => state.subagents);
-  const subagentConfig = useStore((state) => state.subagentConfig);
-  const modelConfigs = useStore((state) => state.modelConfigs);
+  const subagents = useConversationStore((state) => state.subagents);
+  const subagentConfig = useConversationStore((state) => state.subagentConfig);
+  const modelConfigs = useConversationStore((state) => state.modelConfigs);
   const now = useClock(subagents.some((item) => active(item.status)));
   const selected = subagents.find((item) => item.id === selectedId);
   const messages = useMemo(() => selected ? subagentMessages(selected) : [], [selected]);

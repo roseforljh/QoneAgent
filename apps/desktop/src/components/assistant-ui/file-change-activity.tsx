@@ -1,7 +1,8 @@
+import { conversationSession } from "../../lib/session-execution-state";
+import { useConversationStore } from "../../lib/conversation-context";
 import { useMemo, useState } from "react";
-import { useStore } from "../../store";
 import { useLocale } from "../../localization";
-import { openWorkspaceFile, workspaceRelativeFilePath } from "../../lib/workspace-file-navigation";
+import { openWorkspaceFile, resolveFileReferencePath, workspaceRelativeFilePath } from "../../lib/workspace-file-navigation";
 import { FileChangeHeader } from "./elements/file-change-header";
 import { ToolCall } from "./elements/tool-call";
 import { ToolResultView } from "./elements/tool-result";
@@ -22,15 +23,16 @@ export interface FileChangeActivityProps {
 export function FileChangeActivityRow({ activity, status = "success", operation, activeLabel, fallbackText, showIcon = true, onOpenFile }: FileChangeActivityProps) {
   const { locale, t } = useLocale();
   const [open, setOpen] = useState(false);
-  const sessionId = useStore((state) => state.currentSessionId);
-  const workspace = useStore((state) => {
-    const workspaceId = state.sessions.find((session) => session.id === state.currentSessionId)?.workspaceId;
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const workspace = useConversationStore((state) => {
+    const workspaceId = conversationSession(state)?.workspaceId;
     return state.workspaces.find((item) => item.id === workspaceId);
   });
   const { path, changeKind, presentation } = activity;
   const name = path.replaceAll("\\", "/").split("/").at(-1) || path;
   const relativePath = workspace ? workspaceRelativeFilePath(path, workspace.path) : undefined;
-  const navigate = onOpenFile ? () => onOpenFile(path) : sessionId && workspace && relativePath
+  const fileRemoved = status === "success" && changeKind === "deleted";
+  const navigate = fileRemoved ? undefined : onOpenFile ? () => onOpenFile(path) : sessionId && workspace && relativePath
     ? () => openWorkspaceFile({ sessionId, workspaceId: workspace.id, path: relativePath }) : undefined;
   const visiblePresentation = status === "failed" ? undefined : presentation;
   const stat = useMemo(() => visiblePresentation && status === "success" ? toolDiffStats(visiblePresentation) : undefined, [visiblePresentation, status]);
@@ -51,6 +53,7 @@ export function FileChangeActivityRow({ activity, status = "success", operation,
   return <div data-slot="file-change-activity" data-change-kind={changeKind} className="min-w-0 flex-1">
     <ToolCall label={label} activeLabel={liveLabel} query={name} fullTarget={path}
       header={(panelId) => <FileChangeHeader label={running ? liveLabel : label} name={name} path={path} open={open} panelId={panelId}
+        menuPath={resolveFileReferencePath(path, workspace?.path)} fileRemoved={fileRemoved}
         diffLabel={locale === "en" ? `${open ? "Collapse" : "Show"} diff for ${name}` : `${open ? "收起" : "展开"}${name}的差异`}
         fileLabel={locale === "en" ? `Open file: ${path}` : `打开文件：${path}`} onOpenFile={navigate}
         running={running} failed={status === "failed"} waiting={status === "waiting"} showIcon={showIcon} changeKind={changeKind} stat={stat} />}

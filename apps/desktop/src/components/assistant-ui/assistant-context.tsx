@@ -1,7 +1,7 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { useEffect, useState, type FC } from "react";
 import { ComposerContext } from "./elements/composer";
 import { MemoryChips, type MemoryChip } from "./elements/memory-chips";
-import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 
 const PROFILE_KEY = "qone-personalization-profile";
@@ -44,17 +44,17 @@ export const AssistantMemoryChips: FC<{ visible: boolean }> = ({ visible }) => {
 
 export const AssistantContext: FC = () => {
   const { t } = useLocale();
-  const sessionId = useStore((state) => state.currentSessionId);
-  const modelConfigs = useStore((state) => state.modelConfigs);
-  const selectedModelId = useStore((state) => state.selectedModelId);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const modelConfigs = useConversationStore((state) => state.modelConfigs);
+  const selectedModelId = useConversationStore((state) => state.selectedModelId);
   const selectedModel = modelConfigs.find((config) => config.id === selectedModelId);
-  const connected = useStore((state) => state.connected);
-  const running = useStore((state) => state.running);
-  const loadingSessionId = useStore((state) => state.messagesLoadingSessionId);
-  const latestMessageId = useStore((state) => state.messages.at(-1)?.id);
-  const compacting = useStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
-  const contextUsage = useStore((state) => state.contextUsage);
-  const refreshContextUsage = useStore((state) => state.refreshContextUsage);
+  const connected = useConversationStore((state) => state.connected);
+  const running = useConversationStore((state) => state.running);
+  const loadingSessionId = useConversationStore((state) => state.messagesLoadingSessionId);
+  const latestMessageId = useConversationStore((state) => state.messages.at(-1)?.id);
+  const compacting = useConversationStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
+  const contextUsage = useConversationStore((state) => state.contextUsage);
+  const refreshContextUsage = useConversationStore((state) => state.refreshContextUsage);
 
   useEffect(() => {
     if (connected && sessionId && selectedModelId && !running && !compacting && loadingSessionId !== sessionId) refreshContextUsage();

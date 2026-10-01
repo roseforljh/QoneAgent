@@ -51,6 +51,23 @@ export function removeDockTab(scope: DockScope, id: string): DockScope {
   return { ...scope, openTabs, activeTabId: scope.activeTabId === id ? openTabs[Math.max(0, index - 1)]?.id : scope.activeTabId, collapsed: !openTabs.length || scope.collapsed };
 }
 
+/** Snapshot the targets, then use the single-tab close path until cancellation. */
+export async function closeDockTabsToRight(tabs: readonly DockTab[], anchorId: string, close: (id: string) => Promise<boolean>): Promise<void> {
+  const index = tabs.findIndex((tab) => tab.id === anchorId);
+  if (index < 0) return;
+  for (const tab of tabs.slice(index + 1).reverse()) {
+    if (!await close(tab.id)) break;
+  }
+}
+
+/** Snapshot all tabs except the anchor, then use the single-tab close path. */
+export async function closeDockTabsExcept(tabs: readonly DockTab[], anchorId: string, close: (id: string) => Promise<boolean>): Promise<void> {
+  if (!tabs.some((tab) => tab.id === anchorId)) return;
+  for (const tab of [...tabs].reverse()) {
+    if (tab.id !== anchorId && !await close(tab.id)) break;
+  }
+}
+
 export function dockActiveView(scope: DockScope): DockView | undefined {
   return scope.collapsed ? undefined : scope.openTabs.find((tab) => tab.id === scope.activeTabId)?.view;
 }

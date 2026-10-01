@@ -1,6 +1,6 @@
 import { toolFileChanges } from "@qone/protocol";
 
-export type ToolActivityCategory = "file-change" | "exploration" | "command" | "integration" | "tool";
+export type ToolActivityCategory = "file-change" | "exploration" | "command" | "integration" | "web-search" | "tool";
 
 const FILE_CHANGE_TOOLS = new Set(["edit", "write", "apply_patch"]);
 const EXPLORATION_TOOLS = new Set(["read", "grep", "find", "glob", "ls"]);
@@ -15,6 +15,7 @@ export function toolActivityCategory(toolName: string, result?: unknown): ToolAc
   if (FILE_CHANGE_TOOLS.has(toolName)) return "file-change";
   if (EXPLORATION_TOOLS.has(toolName)) return "exploration";
   if (isCommandTool({ toolName })) return "command";
+  if (toolName === "web_search") return "web-search";
   return result !== undefined && toolFileChanges(result).length > 0 ? "file-change" : "tool";
 }
 

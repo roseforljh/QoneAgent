@@ -1,9 +1,9 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { useEffect, useRef, useState, type CSSProperties, type FC, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AssistantModalPrimitive } from "@assistant-ui/react";
 import { CheckIcon, SnowflakeIcon } from "lucide-react";
 import type { RunPermissionMode } from "@qone/protocol";
 import { useLocale, type MessageKey } from "../../localization";
-import { useStore } from "../../store";
 import { PermissionGrant, type GrantScope } from "./elements/permission-grant";
 import { Dialog, DialogContent } from "../ui/dialog";
 import penguinUrl from "../../assets/qone-penguin.png";
@@ -187,11 +187,11 @@ export const ThinkingWave: FC<{
 export const RunOptionsPopover: FC = () => {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
-  const sessionId = useStore((state) => state.currentSessionId);
-  const options = useStore((state) => sessionId ? state.runOptionsBySession[sessionId] : state.draftRunOptions);
-  const setPermission = useStore((state) => state.setRunPermissionMode);
-  const defaultPermissionMode = useStore((state) => state.defaultPermissionMode);
-  const setDefaultPermissionMode = useStore((state) => state.setDefaultPermissionMode);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const options = useConversationStore((state) => sessionId ? state.runOptionsBySession[sessionId] : state.draftRunOptions);
+  const setPermission = useConversationStore((state) => state.setRunPermissionMode);
+  const defaultPermissionMode = useConversationStore((state) => state.defaultPermissionMode);
+  const setDefaultPermissionMode = useConversationStore((state) => state.setDefaultPermissionMode);
   const [grantScope, setGrantScope] = useState<GrantScope | "pending" | null>(null);
   const [grantDialogOpen, setGrantDialogOpen] = useState(false);
   const [modeBeforeGrant, setModeBeforeGrant] = useState<RunPermissionMode>("ask");
@@ -223,7 +223,7 @@ export const RunOptionsPopover: FC = () => {
   };
 
   return <AssistantModalPrimitive.Root unstable_openOnRunStart={false} open={open} onOpenChange={setOpen}>
-    <span className="q-reveal-zone -m-1 inline-flex p-1">
+    <span className="q-run-options-trigger-zone q-reveal-zone -m-1 inline-flex p-1">
       <AssistantModalPrimitive.Trigger asChild>
         <button type="button" className="q-run-options-trigger" data-state={open ? "open" : "closed"} data-open={open} data-permission-mode={permissionMode} aria-label={`${t("composer.permissions")}：${modeLabel}`} aria-expanded={open}>
           <CodexIcon src={modeIcon} className="size-[15px] shrink-0" />

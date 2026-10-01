@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { DockFileTarget } from "../../lib/dock-state";
 import { SyntaxHighlighter } from "./elements/shiki-highlighter";
+import { CodeContextMenu } from "./dock-context-menu";
 import "./workspace-file-content.css";
 
 /** Scroll only the file viewport; never pull the conversation along with it. */
@@ -20,11 +21,13 @@ export function locateFileLines(container: HTMLElement, target?: Pick<DockFileTa
   viewport.scrollTop = Math.max(0, viewport.scrollTop + lineRect.top - viewportRect.top - (viewport.clientHeight - lineRect.height) / 2);
 }
 
-export function WorkspaceFileContent({ code, language, target, active }: {
+export function WorkspaceFileContent({ code, language, target, active, path, relativePath }: {
   code: string;
   language: string;
   target?: DockFileTarget;
   active: boolean;
+  path?: string;
+  relativePath?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -36,8 +39,8 @@ export function WorkspaceFileContent({ code, language, target, active }: {
     observer.observe(container, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, [code, language, target?.requestId, active]);
-  return <div ref={ref} className="q-workspace-file-content">
+  return <CodeContextMenu path={path} relativePath={relativePath}><div ref={ref} tabIndex={0} className="q-workspace-file-content focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">
     <SyntaxHighlighter code={code} language={language} preserveWhitespace lineMarkers
       className="min-h-full [&_pre]:m-0! [&_pre]:rounded-none! [&_pre]:border-0! [&_pre]:bg-transparent! [&_pre]:px-3! [&_pre]:py-2.5! [&_pre]:text-xs! [&_pre]:leading-relaxed" />
-  </div>;
+  </div></CodeContextMenu>;
 }

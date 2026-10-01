@@ -1,29 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { useConversationStore } from "./conversation-context";
+import { useConversationMessages } from "./use-conversation-messages";
+import { subagentImagesByRun } from "./subagent-images";
+import { addComposerHistory } from "./composer-history";
+import { useEffect, useMemo } from "react";
 import { useExternalStoreRuntime, type AppendMessage } from "@assistant-ui/react";
 import { sameUserInput } from "@qone/protocol";
-import { useStore, type ChatMessage } from "../store";
-import { emptySessionState, sessionStore } from "./session-execution-state";
+import { useStore } from "../store";
+import { sessionStore } from "./session-execution-state";
 import { createQoneMessageQueue, getQoneMessageQueue } from "./qone-message-queue";
 import { bindSessionQueue, hydrateSessionQueue } from "./session-queue-lifecycle";
-import { createMessageConverter, convertedMessage } from "./runtime-message-converter";
+import { convertedMessage } from "./runtime-message-converter";
 import { QoneAttachmentAdapter } from "./file-attachment-adapter";
 import { extractComposerPrompt } from "./composer-prompt";
 import { serializeMessageAttachments } from "./message-attachments";
 import { localizeError } from "./error-localization";
-import { localImagePreview } from "./local-image-preview";
 import { bindComposerDrafts, composerDrafts } from "./composer-drafts";
 import { queueMessageDraft } from "./queue-composer-edit";
-import { insertChatRunErrorMessage } from "./chat-run-error-message";
-import { useLocale } from "../localization";
-import { appendSteeringMessages, useSteeringMessages } from "./use-steering-messages";
+import { useSteeringMessages } from "./use-steering-messages";
 import { useMessageQueueAdapter } from "./use-message-queue-adapter";
 
-const empty = emptySessionState();
 const attachmentAdapter = new QoneAttachmentAdapter();
 
 export function useSideConversationRuntime(sessionId: string) {
-  const { t } = useLocale();
-  const state = useStore((global) => global.backgroundSessions[sessionId]) ?? empty;
+  const state = useConversationStore((state) => state);
   const connected = useStore((global) => global.connected);
   const workspaceReady = useStore((global) => {
     const workspaceId = global.sideChats[sessionId]?.workspaceId;
@@ -33,13 +32,13 @@ export function useSideConversationRuntime(sessionId: string) {
   const owner = useMemo(() => sessionStore(useStore, sessionId), [sessionId]);
   const submit = (message: AppendMessage, queueItemId: string | undefined, attachments: Awaited<ReturnType<typeof serializeMessageAttachments>>) => {
     const prompt = extractComposerPrompt(message);
+    if (prompt.text.trim()) addComposerHistory(prompt.text);
     useStore.getState().runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, sessionId);
   };
   const queue = useMemo(() => ready ? getQoneMessageQueue(sessionId) ?? createQoneMessageQueue({
     sessionId,
-    isRunning: () => owner.getState().running,
+    isRunning: () => owner.getState().running || Boolean(useStore.getState().compactionStatuses[sessionId]),
     getActiveRunId: () => owner.getState().activeRunId,
-    getFollowUpQueueMode: () => useStore.getState().followUpQueueMode,
     isDuplicate: (message, attachments) => {
       const state = owner.getState();
       const previous = [...state.messages].reverse().find((item) => item.role === "user");
@@ -70,30 +69,15 @@ export function useSideConversationRuntime(sessionId: string) {
     if (queue && state.queueLoadedSessionId === sessionId) hydrateSessionQueue(queue, state.queueItems, state.editingQueueItem?.id);
   }, [queue, sessionId, state.queueLoadedSessionId, state.queueItems, state.editingQueueItem?.id]);
   useEffect(() => { if (queue) bindSessionQueue(sessionId, queue); }, [queue, sessionId]);
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-  useEffect(() => {
-    let active = true;
-    const paths = [...new Set(state.messages.flatMap((message) => message.attachments?.flatMap((attachment) => attachment.type === "image" && attachment.localPath ? [attachment.localPath] : []) ?? []))];
-    void Promise.all(paths.map(async (path) => {
-      try { return [path, await localImagePreview(path)] as const; } catch { return undefined; }
-    })).then((entries) => { if (active) setPreviews(Object.fromEntries(entries.filter((entry) => entry !== undefined))); });
-    return () => { active = false; };
-  }, [state.messages]);
-  const convert = useMemo(createMessageConverter, []);
   const queueAdapter = useMessageQueueAdapter(queue);
   const steers = useSteeringMessages(queue, queueAdapter, state.queueItems, state.activeRunId);
-  const messages = useMemo(() => {
-    const history = appendSteeringMessages(state.messages, steers);
-    const source: ChatMessage[] = state.running ? [...history, {
-      id: "streaming", role: "assistant", content: state.streaming, parts: state.streamingParts,
-      runId: state.activeRunId, createdAt: state.messages.at(-1)?.createdAt,
-    }] : state.chatRunError ? insertChatRunErrorMessage(history, state.chatRunError, `${t("chat.runFailed")}\n${state.chatRunError.detail}`) : history;
-    return source.map((message) => convert(message, {
-      imagePreviews: previews, toolCallsByRun: new Map(), imageWindows: new Map(), childImagesByRun: new Map(), running: state.running, imageModel: false,
-    }));
-  }, [state.messages, steers, state.running, state.streaming, state.streamingParts, state.activeRunId, state.chatRunError, previews, convert, t]);
+  const childImagesByRun = useMemo(() => subagentImagesByRun(state.subagents), [state.subagents]);
+  const messages = useConversationMessages({
+    ...state, childImagesByRun,
+    selectedModel: state.modelConfigs.find((model) => model.id === state.selectedModelId),
+  }, steers);
   const runtime = useExternalStoreRuntime({
-    messages, isRunning: state.running, convertMessage: convertedMessage,
+    messages, isRunning: state.running, isDisabled: !ready, convertMessage: convertedMessage,
     onNew: async (message) => {
       const localId = state.editingQueueItem && queue?.getLocalId(state.editingQueueItem.id);
       if (localId && queue) {
@@ -101,6 +85,12 @@ export function useSideConversationRuntime(sessionId: string) {
         return;
       }
       submit(message, undefined, await serializeMessageAttachments(message));
+    },
+    onReload: async (parentId) => {
+      if (!parentId) return;
+      const state = owner.getState();
+      const source = state.messages.find((message) => message.id === parentId && message.role === "user");
+      if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), sessionId);
     },
     onCancel: async () => useStore.getState().stopAgent(sessionId),
     adapters: { attachments: attachmentAdapter },

@@ -9,7 +9,7 @@ import folderIcon from "../../assets/codex-icons/folder-light-16.svg";
 import folderOpenIcon from "../../assets/codex-icons/folder-open-light-16.svg";
 import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import { useEffect, useRef, useState, type FC, type ReactNode } from "react";
-import { SidebarEntityMenu, SidebarMenu } from "./sidebar-menu";
+import { SidebarContextMenu, SidebarEntityMenu, SidebarMenu } from "./sidebar-menu";
 import { useLocale } from "../../localization";
 import { groupProjectSidebarSessions, sortSidebarWorkspaces, useSidebarPreferences } from "../../lib/sidebar-preferences";
 import { MorphingSpinner } from "./morphing-spinner";
@@ -48,6 +48,13 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = ({ session, 
   };
 
   return (
+    <SidebarContextMenu
+      pinned={priority}
+      onTogglePinned={togglePinned}
+      onRename={() => setRenaming(true)}
+      onDelete={deleteChat}
+      disabled={renaming}
+    >
     <motion.div layout="position" data-active={active || undefined}
       data-sidebar-drag-id={renaming ? undefined : session.id} data-sidebar-drag-kind="session" data-sidebar-drag-group={dragGroup}
       className={cn("q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px]", renaming && "bg-muted")}>
@@ -71,6 +78,7 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = ({ session, 
         </SidebarSessionActions>
       )}
     </motion.div>
+    </SidebarContextMenu>
   );
 };
 
@@ -100,36 +108,46 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
 
   return (
     <motion.div layout="position" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} className="relative">
-      <div data-sidebar-drag-id={renaming ? undefined : workspace.id} data-sidebar-drag-kind="workspace"
-        data-sidebar-drag-group={pinned ? "workspace:pinned" : "workspace:regular"}
-        className={cn("q-sidebar-project-row group relative flex h-[30px] items-center rounded-[10px] transition-colors", renaming && "bg-muted")}>
-        {renaming ? (
-          <input ref={inputRef} value={name} onChange={(event) => setName(event.target.value)} onBlur={submitRename}
-            onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setName(workspace.name); setRenaming(false); } }}
-            className="border-input bg-background focus:border-ring mx-1 h-7 min-w-0 flex-1 rounded-md border px-2 text-xs outline-none"
-            aria-label={t("sidebar.renameProject")} />
-        ) : (
-          <button type="button" data-sidebar-drag-handle="" className={cn(rowButtonClass, "q-sidebar-project-trigger")}
-            onClick={() => { selectWorkspace(workspace.id); setExpanded((value) => !value); }}
-            title={workspace.path} aria-expanded={expanded}>
-            <CodexIcon src={expanded ? folderOpenIcon : folderIcon} className="text-muted-foreground size-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            {pinned && <PinIcon className="q-sidebar-project-pin text-muted-foreground size-3 shrink-0" />}
-          </button>
-        )}
-        {!renaming && (
-          <div className="q-sidebar-project-actions flex shrink-0 items-center gap-1">
-            <SidebarEntityMenu pinned={pinned} onTogglePinned={() => togglePinWorkspace(workspace.id)}
-              onRename={() => setRenaming(true)} onDelete={deleteProject}
-              ariaLabel={t("sidebar.projectOptions", { name: workspace.name })} />
-            <button type="button" className="text-muted-foreground hover:text-foreground grid size-6 shrink-0 place-items-center rounded-md"
-              aria-label={t("sidebar.newChatInProject", { name: workspace.name })} title={t("sidebar.newChat")}
-              onClick={() => { setExpanded(true); newSessionInWorkspace(workspace.id); }}>
-              <CodexIcon src={plusIcon} className="size-3.5" />
+      <SidebarContextMenu
+        pinned={pinned}
+        onTogglePinned={() => togglePinWorkspace(workspace.id)}
+        onRename={() => setRenaming(true)}
+        onDelete={deleteProject}
+        onNewChat={() => { setExpanded(true); newSessionInWorkspace(workspace.id); }}
+        newChatLabel={t("sidebar.newChatInProject", { name: workspace.name })}
+        disabled={renaming}
+      >
+        <div data-sidebar-drag-id={renaming ? undefined : workspace.id} data-sidebar-drag-kind="workspace"
+          data-sidebar-drag-group={pinned ? "workspace:pinned" : "workspace:regular"}
+          className={cn("q-sidebar-project-row group relative flex h-[30px] items-center rounded-[10px] transition-colors", renaming && "bg-muted")}>
+          {renaming ? (
+            <input ref={inputRef} value={name} onChange={(event) => setName(event.target.value)} onBlur={submitRename}
+              onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setName(workspace.name); setRenaming(false); } }}
+              className="border-input bg-background focus:border-ring mx-1 h-7 min-w-0 flex-1 rounded-md border px-2 text-xs outline-none"
+              aria-label={t("sidebar.renameProject")} />
+          ) : (
+            <button type="button" data-sidebar-drag-handle="" className={cn(rowButtonClass, "q-sidebar-project-trigger")}
+              onClick={() => { selectWorkspace(workspace.id); setExpanded((value) => !value); }}
+              title={workspace.path} aria-expanded={expanded}>
+              <CodexIcon src={expanded ? folderOpenIcon : folderIcon} className="text-muted-foreground size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+              {pinned && <PinIcon className="q-sidebar-project-pin text-muted-foreground size-3 shrink-0" />}
             </button>
-          </div>
-        )}
-      </div>
+          )}
+          {!renaming && (
+            <div className="q-sidebar-project-actions flex shrink-0 items-center gap-1">
+              <SidebarEntityMenu pinned={pinned} onTogglePinned={() => togglePinWorkspace(workspace.id)}
+                onRename={() => setRenaming(true)} onDelete={deleteProject}
+                ariaLabel={t("sidebar.projectOptions", { name: workspace.name })} />
+              <button type="button" className="text-muted-foreground hover:text-foreground grid size-6 shrink-0 place-items-center rounded-md"
+                aria-label={t("sidebar.newChatInProject", { name: workspace.name })} title={t("sidebar.newChat")}
+                onClick={() => { setExpanded(true); newSessionInWorkspace(workspace.id); }}>
+                <CodexIcon src={plusIcon} className="size-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      </SidebarContextMenu>
       <AnimatePresence initial={false}>
         {expanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">

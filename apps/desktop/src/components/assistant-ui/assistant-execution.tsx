@@ -1,3 +1,4 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { CodexChevronRightIcon as ChevronRightIcon } from "./execution-icons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useAuiState } from "@assistant-ui/react";
@@ -5,8 +6,7 @@ import { useEffect, useMemo, useRef, useState, type FC, type ReactNode } from "r
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { useLocale } from "../../localization";
 import { formatDuration } from "../../lib/utils";
-import { useStore } from "../../store";
-import type { RunInfo } from "@qone/protocol";
+import { ACTIVITY_TITLE_TOOL, type RunInfo } from "@qone/protocol";
 import type { AssistantPartRange } from "./assistant-part-ranges";
 import { executionCollapsed, useExecutionDisclosureState } from "./execution-disclosure-state";
 import "./assistant-execution.css";
@@ -67,18 +67,18 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
   const messageId = useAuiState((state) => state.message.id);
   const messageRunning = useAuiState((state) => state.message.status?.type === "running");
   const parts = useAuiState((state) => state.message.parts);
-  const sessionId = useStore((state) => state.currentSessionId);
-  const activeRunId = useStore((state) => state.activeRunId);
-  const messageRunId = useStore((state) => state.messages.find((message) => message.id === messageId)?.runId);
-  const runs = useStore((state) => state.runs);
-  const toolCalls = useStore((state) => state.toolCalls);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const activeRunId = useConversationStore((state) => state.activeRunId);
+  const messageRunId = useConversationStore((state) => state.messages.find((message) => message.id === messageId)?.runId);
+  const runs = useConversationStore((state) => state.runs);
+  const toolCalls = useConversationStore((state) => state.toolCalls);
 
   const toolParts = useMemo(() => {
     const visibleParts: Extract<typeof parts[number], { type: "tool-call" }>[] = [];
     for (const range of statusRanges) {
       if (range.type !== "tools") continue;
       for (const part of parts.slice(range.startIndex, range.endIndex)) {
-        if (part.type === "tool-call") visibleParts.push(part);
+        if (part.type === "tool-call" && part.toolName !== ACTIVITY_TITLE_TOOL) visibleParts.push(part);
       }
     }
     return visibleParts;

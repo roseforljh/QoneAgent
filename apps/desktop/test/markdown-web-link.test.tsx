@@ -13,6 +13,7 @@ test("known Codex service links reuse their glyph and make no favicon request", 
   expect(markup).toContain('title="仓库"');
   expect(markup).not.toContain("faviconV2");
   expect(markup).not.toContain("text-primary");
+  expect(markup).toContain("data-web-link-context-menu-trigger");
 });
 
 test("unknown websites request a favicon with a visible generic fallback", () => {
@@ -50,6 +51,7 @@ test("mail, page anchors and unsafe protocols do not request favicons", () => {
     expect(markup).toContain(`href="${href}"`);
     expect(markup).not.toContain("q-markdown-web-link-icon");
     expect(markup).not.toContain("faviconV2");
+    expect(markup).not.toContain("data-web-link-context-menu-trigger");
   }
   for (const href of ["javascript:alert(1)", "data:image/png;base64,AA", "file:///C:/A.png", "invalid URL", "mailto:hello@example.com"]) {
     expect(linkFaviconUrl(href)).toBeUndefined();

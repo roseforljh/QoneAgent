@@ -1,7 +1,5 @@
 import type { RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
 
-export type FollowUpQueueMode = "queue" | "steer";
-
 export type SessionRunOptions = {
   modelId?: string;
   permissionMode?: RunPermissionMode;
@@ -29,18 +27,6 @@ export function loadRunOptions(): Record<string, SessionRunOptions> {
 
 export function saveRunOptions(options: Record<string, SessionRunOptions>): void {
   try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(options)); } catch { /* unavailable storage */ }
-}
-
-// Codex's followUpQueueMode is a composer preference shared by conversations.
-const QUEUE_MODE_STORAGE_KEY = "qone-follow-up-queue-mode";
-export function loadFollowUpQueueMode(): FollowUpQueueMode {
-  try {
-    const value = window.localStorage.getItem(QUEUE_MODE_STORAGE_KEY);
-    return value === "steer" || value === "interrupt" ? "steer" : "queue";
-  } catch { return "queue"; }
-}
-export function saveFollowUpQueueMode(mode: FollowUpQueueMode): void {
-  try { window.localStorage.setItem(QUEUE_MODE_STORAGE_KEY, mode); } catch { /* unavailable storage */ }
 }
 
 export function loadDefaultPermissionMode(): RunPermissionMode {

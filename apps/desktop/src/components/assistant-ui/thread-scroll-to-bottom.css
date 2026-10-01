@@ -1,0 +1,50 @@
+/* Codex PPs / Pe / waveDot: h-8 w-8, 6 spacing above footer, 1s stepped wave. */
+.q-thread-bottom-anchor { position: relative; height: 0; }
+.q-thread-scroll-to-bottom {
+  position: absolute;
+  z-index: 30;
+  inset-inline-end: 50%;
+  bottom: calc(100% + 6 * var(--spacing));
+  transform: translateX(50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(8 * var(--spacing));
+  height: calc(8 * var(--spacing));
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--q-surface);
+  background-clip: padding-box;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--animation-duration, 150ms) ease-in-out;
+}
+.q-thread-scroll-to-bottom[data-visible="true"] { opacity: 1; pointer-events: auto; }
+.q-thread-scroll-to-bottom:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.q-thread-bottom-arrow { width: calc(4 * var(--spacing)); height: calc(4 * var(--spacing)); color: var(--foreground); }
+.q-thread-scroll-to-bottom[data-working="true"] .q-thread-bottom-arrow { display: none !important; }
+.q-thread-bottom-dots { display: flex; align-items: center; justify-content: center; gap: var(--spacing); }
+.q-thread-bottom-dots > span {
+  width: var(--spacing);
+  height: var(--spacing);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--foreground) 70%, transparent);
+}
+.q-thread-scroll-to-bottom:is(:hover, :focus-visible) .q-thread-bottom-dots { display: none; }
+.q-thread-scroll-to-bottom:is(:hover, :focus-visible) .q-thread-bottom-arrow { display: inline-block !important; }
+@keyframes q-thread-bottom-wave {
+  0%, 10%, 100% { transform: translateY(0); }
+  25% { animation-timing-function: steps(6, end); transform: translateY(1.2px); }
+  55% { transform: translateY(-2px); }
+  70% { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .q-thread-bottom-dots > span { animation: q-thread-bottom-wave 1s steps(3, end) infinite; }
+  .q-thread-bottom-dots > span:nth-child(2) { animation-delay: .1s; }
+  .q-thread-bottom-dots > span:nth-child(3) { animation-delay: .2s; }
+}
+@media (prefers-reduced-motion: reduce) { .q-thread-scroll-to-bottom { transition: none; } }
+@media print { .q-thread-scroll-to-bottom { display: none; } }

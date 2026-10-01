@@ -1,4 +1,5 @@
-import type { Locale } from "../../localization";
+import type { Locale, MessageKey } from "../../localization";
+import { ACTIVITY_TITLE_TOOL } from "@qone/protocol";
 import { translate } from "../../localization";
 import { formatDuration } from "../../lib/utils";
 import type { ToolCall } from "../../store";
@@ -28,27 +29,58 @@ function compactText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function displayToolName(toolName: string): string {
-  if (toolName.startsWith("mcp:")) return toolName.split(":").at(-1) || "tool";
-  return toolName;
+const OPERATION_LABELS = new Map<string, readonly [MessageKey, MessageKey]>([
+  [ACTIVITY_TITLE_TOOL, ["chat.toolUpdatingStageTitle", "chat.toolUpdatedStageTitle"]],
+  ["read", ["chat.toolReading", "chat.toolRead"]],
+  ["grep", ["chat.toolSearching", "chat.toolSearched"]],
+  ["find", ["chat.toolFinding", "chat.toolFound"]],
+  ["glob", ["chat.toolFinding", "chat.toolFound"]],
+  ["ls", ["chat.toolListing", "chat.toolListed"]],
+  ["write", ["chat.toolWriting", "chat.toolWritten"]],
+  ["edit", ["chat.toolEditing", "chat.toolEdited"]],
+  ["apply_patch", ["chat.toolPatching", "chat.toolPatched"]],
+  ["web_search", ["chat.toolSearchingWeb", "chat.toolSearchedWeb"]],
+  ["web_fetch", ["chat.toolReadingWeb", "chat.toolReadWeb"]],
+]);
+const QUERY_TOOLS = new Set(["grep", "find", "glob", "search", "web_search"]);
+
+/** Individual rows describe an action; category summaries belong to group headers. */
+export function toolOperationLabels(part: ToolActionPart, operation: string, locale: Locale): { active: string; completed: string } {
+  const keys = OPERATION_LABELS.get(part.toolName);
+  if (keys) return { active: translate(locale, keys[0]), completed: translate(locale, keys[1]) };
+  if (isCommandTool(part)) return {
+    active: translate(locale, "chat.toolRunningCommand"),
+    completed: translate(locale, "chat.toolRanCommand"),
+  };
+  return {
+    active: translate(locale, "chat.toolCallingOperation", { operation }),
+    completed: translate(locale, "chat.toolCalledOperation", { operation }),
+  };
+}
+
+export function toolPreparationLabel(part: ToolActionPart, step: { verb: string; integration?: { name: string } }, locale: Locale): string {
+  if (step.integration) return translate(locale, "chat.toolPreparingIntegration", { name: step.integration.name });
+  if (OPERATION_LABELS.has(part.toolName) || isCommandTool(part)) return translate(locale, "chat.toolPreparingAction", {
+    operation: locale === "en" ? step.verb.toLowerCase() : step.verb,
+  });
+  return translate(locale, "chat.toolPreparingOperation");
 }
 
 export function commandForTool(part: ToolActionPart, call?: ToolCall): string | undefined {
-  const args = { ...asObject(call?.args), ...asObject(part.args) };
+  if (!isCommandTool(part)) return undefined;
+  const args = { ...asObject(part.args), ...asObject(call?.args) };
   const command = firstString([args.command, args.cmd, args.script, args.shellCommand]);
   if (command) return command;
-  return isCommandTool(part)
-    ? firstString([part.args, call?.args])
-    : undefined;
+  return firstString([call?.args, part.args]);
 }
 
 export function toolTarget(part: ToolActionPart, call?: ToolCall): string {
-  const args = { ...asObject(call?.args), ...asObject(part.args) };
+  const args = { ...asObject(part.args), ...asObject(call?.args) };
   const command = commandForTool(part, call);
   if (command) return compactText(command);
 
   const toolName = part.toolName.toLowerCase();
-  const isSearchOrFind = ["grep", "find", "glob", "search"].some((name) => toolName.includes(name));
+  const isSearchOrFind = QUERY_TOOLS.has(toolName);
 
   if (isSearchOrFind) {
     const pattern = firstString([args.pattern, args.query]);
@@ -68,16 +100,16 @@ export function toolTarget(part: ToolActionPart, call?: ToolCall): string {
     const normalized = path.trim().replace(/[\\/]+$/, "");
     return compactText(normalized.split(/[\\/]/).at(-1) || normalized);
   }
-  return compactText(firstString([args.pattern, args.query, args.url, args.name]) ?? displayToolName(part.toolName));
+  return compactText(firstString([args.pattern, args.query, args.url, args.name, args.command, args.cmd]) ?? "");
 }
 
 export function toolFullTarget(part: ToolActionPart, call?: ToolCall): string {
-  const args = { ...asObject(call?.args), ...asObject(part.args) };
+  const args = { ...asObject(part.args), ...asObject(call?.args) };
   const command = commandForTool(part, call);
   if (command) return command;
 
   const toolName = part.toolName.toLowerCase();
-  const isSearchOrFind = ["grep", "find", "glob", "search"].some((name) => toolName.includes(name));
+  const isSearchOrFind = QUERY_TOOLS.has(toolName);
 
   if (isSearchOrFind) {
     const pattern = firstString([args.pattern, args.query]);
@@ -89,7 +121,7 @@ export function toolFullTarget(part: ToolActionPart, call?: ToolCall): string {
   const path = firstString([args.path, args.file]);
   if (path) return path;
 
-  return firstString([args.pattern, args.query, args.url, args.name]) ?? displayToolName(part.toolName);
+  return firstString([args.pattern, args.query, args.url, args.name, args.command, args.cmd]) ?? "";
 }
 
 function elapsedSeconds(call: ToolCall | undefined, now: number): number | undefined {
@@ -106,7 +138,7 @@ function formatToolDuration(seconds: number, locale: Locale): string {
 
 export function toolActionSummary(
   part: ToolActionPart,
-  step: { verb: string; target: string },
+  step: { verb: string; target: string; integration?: { name: string } },
   call: ToolCall | undefined,
   active: boolean,
   now: number,
@@ -125,7 +157,8 @@ export function toolActionSummary(
       ? translate(locale, "chat.toolSummaryCompletedCommandFallback")
       : translate(locale, "chat.toolSummaryCompletedCommand", { duration: formatToolDuration(duration, locale) });
   }
-  if (active) return translate(locale, "chat.toolSummaryRunning", { operation: step.verb, target: step.target });
+  const labels = toolOperationLabels(part, step.verb, locale);
+  if (active) return [step.integration ? translate(locale, "chat.toolUsingIntegration", { name: step.integration.name }) : labels.active, step.target].filter(Boolean).join(" ");
   if (failed) return translate(locale, "chat.toolSummaryFailed", { operation: step.verb, target: step.target });
-  return translate(locale, "chat.toolSummaryCompleted", { operation: step.verb, target: step.target });
+  return [labels.completed, step.target].filter(Boolean).join(" ");
 }

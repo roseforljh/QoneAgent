@@ -8,9 +8,9 @@ const reactDist = dirname(Bun.resolveSync("@assistant-ui/react", import.meta.dir
 const { ExternalStoreRuntimeCore } = await import(join(reactDist, "legacy-runtime/runtime-cores/external-store/ExternalStoreRuntimeCore.js"));
 const { AssistantRuntimeImpl } = await import(join(reactDist, "legacy-runtime/runtime/AssistantRuntime.js"));
 
-function liveRuntime(queue: QueueBundle) {
+function liveRuntime(queue: QueueBundle, runtimeRunning = true) {
   let store = createMessageQueueAdapterStore(queue);
-  const adapter = () => ({ messages: [], isRunning: true, onNew: async () => {}, queue: store.getSnapshot() });
+  const adapter = () => ({ messages: [], isRunning: runtimeRunning, onNew: async () => {}, queue: store.getSnapshot() });
   const core = new ExternalStoreRuntimeCore(adapter());
   const runtime = new AssistantRuntimeImpl(core);
   let snapshot = store.getSnapshot();
@@ -59,6 +59,23 @@ test("the first composer send publishes its waiting row without typing again or 
     await view.runtime.thread.composer.send();
     expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["first input"]);
     expect(view.visible()).toEqual(["first input"]);
+  } finally { view.dispose(); }
+});
+
+test("a normal send stays queued even when assistant-ui uses its steer submission path", async () => {
+  const steered: string[] = [];
+  const queue = createQoneMessageQueue({ sessionId: "mode-refresh", isRunning: () => true,
+    getActiveRunId: () => "active-run",
+    send: () => { throw new Error("the active run must not be replaced"); },
+    steer: async (message) => { steered.push(message.content[0]?.type === "text" ? message.content[0].text : ""); return true; }, sync: () => {},
+  });
+  const view = liveRuntime(queue, false);
+  try {
+    await submit(view, "already waiting");
+    await submit(view, "first input after disabling");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(steered).toEqual([]);
+    expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["already waiting", "first input after disabling"]);
   } finally { view.dispose(); }
 });
 

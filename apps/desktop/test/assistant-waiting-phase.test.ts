@@ -1,9 +1,19 @@
 import { expect, test } from "bun:test";
 import { assistantWaitingPhase } from "../src/components/assistant-ui/assistant-waiting-phase";
-import type { AssistantMessagePart } from "@qone/protocol";
+import { ACTIVITY_TITLE_TOOL, type AssistantMessagePart } from "@qone/protocol";
 
 const tool: AssistantMessagePart = { type: "tool-call", toolCallId: "read-1", toolName: "read", args: { path: "file.ts" }, messageSequence: 1 };
 const base = { messageRunning: true, compacting: false, hasCurrentText: false, hasReasoning: false, requestStartedAt: undefined };
+
+test("an authored stage owns the waiting shimmer until commentary or media closes it", () => {
+  const title: AssistantMessagePart = { ...tool, toolCallId: "stage", toolName: ACTIVITY_TITLE_TOOL, args: { title: "Investigate lifecycle transitions" }, result: "recorded" };
+  const done = { ...tool, result: "done" };
+  expect(assistantWaitingPhase({ ...base, parts: [title, done], toolCallsById: new Map() })).toBeUndefined();
+  expect(assistantWaitingPhase({ ...base, parts: [title, { type: "text", text: "Next", messageSequence: 2 }, done], toolCallsById: new Map() })).toBe("thinking");
+  expect(assistantWaitingPhase({ ...base, parts: [title, { type: "image", image: "image", messageSequence: 2 }, done], toolCallsById: new Map() })).toBe("thinking");
+  expect(assistantWaitingPhase({ ...base, parts: [{ ...title, args: { title: " " } }, done], toolCallsById: new Map() })).toBe("thinking");
+  expect(assistantWaitingPhase({ ...base, parts: [{ ...title, isError: true }, done], toolCallsById: new Map() })).toBe("thinking");
+});
 
 test("automatic compaction owns the waiting indicator until it finishes", () => {
   const calls = new Map([["read-1", { status: "success" as const }]]);

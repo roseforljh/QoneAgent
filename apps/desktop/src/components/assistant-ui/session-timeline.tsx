@@ -1,21 +1,23 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { CodexFileSearchIcon as FileSearchIcon, CodexPenLineIcon as PenLineIcon, CodexSearchIcon as SearchIcon, CodexTerminalIcon as TerminalIcon, CodexWrenchIcon as WrenchIcon, type ExecutionIcon } from "./execution-icons";
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState, type FC } from "react";
-import { useAuiState, type PartState } from "@assistant-ui/react";
+import { MessagePrimitive, useAuiState, type PartState } from "@assistant-ui/react";
 import {
   ToolTimeline,
+  ToolTimelineRow,
   type TimelineStep,
 } from "./elements/tool-timeline";
 import { ToolCall } from "./elements/tool-call";
 import { ToolResultView } from "./elements/tool-result";
 import { formatToolPayload, toolActivity, toolCallStatus, toolResultText } from "./tool-call-display";
 import { detectToolPreview } from "./tool-preview";
-import { toolActionSummary, toolFullTarget, toolTarget } from "./tool-action-summary";
+import { toolActionSummary, toolFullTarget, toolOperationLabels, toolPreparationLabel, toolTarget } from "./tool-action-summary";
 import { detectToolPresentation, toolDiffStats, toolPresentationSummary } from "./tool-presentation";
-import { useLocale } from "../../localization";
+import { useLocale, type Locale } from "../../localization";
 import { toolGroupSummary } from "./tool-group-summary";
-import { useStore, type ToolCall as StoreToolCall } from "../../store";
+import type { ToolCall as StoreToolCall } from "../../store";
 import { toolActivityCategory } from "./tool-activity-category";
-import { toolFileChanges } from "@qone/protocol";
+import { ACTIVITY_TITLE_TOOL, toolFileChanges } from "@qone/protocol";
 import { selectActiveToolIndex } from "./tool-timeline-state";
 import { openSubagent, subagentForTool } from "./subagent-navigation";
 import { toolFileActivities } from "./file-change-activity-data";
@@ -24,6 +26,9 @@ import { collectToolFileChanges } from "./run-file-changes";
 import { integrationIcon, toolIntegration, type ToolIntegration } from "./tool-integration";
 import { isIntegrationTool } from "./tool-activity-category";
 import type { McpServerInfo } from "@qone/protocol";
+import type { AssistantPartRange } from "./assistant-part-ranges";
+import { Reasoning } from "./reasoning";
+import { ContextCompactionMarker } from "./context-compaction-marker";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
@@ -31,6 +36,7 @@ type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string;
 const GenerativeUISurface = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUISurface }));
 
 const TOOL_META: Record<string, ToolMeta> = {
+  [ACTIVITY_TITLE_TOOL]: { verb: { zh: "更新执行阶段", en: "Update execution stage" }, icon: WrenchIcon },
   read: { verb: { zh: "读取", en: "Read" }, icon: FileSearchIcon },
   write: { verb: { zh: "写入", en: "Write" }, icon: PenLineIcon },
   edit: { verb: { zh: "编辑", en: "Edit" }, icon: PenLineIcon },
@@ -43,18 +49,18 @@ const TOOL_META: Record<string, ToolMeta> = {
   powershell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
   shell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
   exec: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
-  web_search: { verb: { zh: "联网", en: "Search" }, icon: SearchIcon },
-  web_fetch: { verb: { zh: "联网", en: "Fetch" }, icon: FileSearchIcon },
+  web_search: { verb: { zh: "搜索网页", en: "Search the web" }, icon: SearchIcon },
+  web_fetch: { verb: { zh: "读取网页", en: "Read a web page" }, icon: FileSearchIcon },
 };
 
-function toStep(part: ToolPartState, locale: string, call: StoreToolCall | undefined, servers: readonly McpServerInfo[]): SessionTimelineStep {
-  const meta = TOOL_META[part.toolName];
-  const verb = meta?.verb[locale === "en" ? "en" : "zh"] ?? part.toolName;
+function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undefined, servers: readonly McpServerInfo[]): SessionTimelineStep {
+  const meta = Object.hasOwn(TOOL_META, part.toolName) ? TOOL_META[part.toolName] : undefined;
+  const integration = toolIntegration(part.toolName, servers, locale);
+  const verb = meta?.verb[locale === "en" ? "en" : "zh"] ?? integration?.name ?? part.toolName;
   const target = toolTarget(part, call);
   const fullTarget = toolFullTarget(part, call);
   const done = call?.status === "success" || (call === undefined && part.result !== undefined && !part.isError);
   const result = call?.result ?? part.result;
-  const integration = toolIntegration(part.toolName, servers);
   const baseCategory = toolActivityCategory(part.toolName, result);
   const category = baseCategory === "tool" && isIntegrationTool(part.toolName) ? "integration" : baseCategory;
   const filePaths = category === "file-change" && result !== undefined
@@ -63,23 +69,14 @@ function toStep(part: ToolPartState, locale: string, call: StoreToolCall | undef
   return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: integration ? integrationIcon(integration) : category === "file-change" ? PenLineIcon : meta?.icon ?? WrenchIcon, done, category, integration, filePaths, failed: toolCallStatus(part, call) === "failed" };
 }
 
-function completedToolLabel(step: SessionTimelineStep, locale: string, t: ReturnType<typeof useLocale>["t"]): string {
-  if (step.integration) return t("chat.toolGroupIntegrationOne", { sources: step.integration.name });
-  if (step.category === "file-change") return t("chat.toolGroupFileChangeOne");
-  if (step.category === "exploration") return t("chat.toolGroupExplorationOne");
-  if (step.category === "command") return t("chat.toolGroupCommandOne");
-  if (step.category === "tool") return t("chat.toolGroupToolOne");
-  return locale === "en" ? step.verb : step.verb;
-}
-
 const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean }> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
   const { locale, t } = useLocale();
   const [open, setOpen] = useState(false);
-  const call = useStore((state) => state.toolCalls.find((item) => item.toolCallId === part.toolCallId));
+  const call = useConversationStore((state) => state.toolCalls.find((item) => item.toolCallId === part.toolCallId));
   const messageId = useAuiState((state) => state.message.id);
-  const sessionId = useStore((state) => state.currentSessionId);
-  const parentRunId = useStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
-  const subagents = useStore((state) => state.subagents);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const parentRunId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
+  const subagents = useConversationStore((state) => state.subagents);
   const subagent = subagentForTool(part, call?.args, subagents, sessionId, parentRunId);
   const status = toolActivity(part, call, prepared, messageRunning);
   const failed = String(status) === "failed";
@@ -90,15 +87,14 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
   const livePresentation = useMemo(() => detectToolPreview(part.toolName, args), [part.toolName, args]);
   const presentation = normalizedResult ?? (status !== "success" && status !== "failed" ? livePresentation : undefined);
   const editing = livePresentation?.kind === "diff" || livePresentation?.kind === "file" || step.icon === PenLineIcon;
+  const operationLabels = toolOperationLabels(part, step.verb, locale);
   const activeLabel = status === "generating"
-    ? editing ? t("chat.toolGeneratingEdit") : t("chat.toolGenerating", { operation: step.verb })
+    ? editing ? t("chat.toolGeneratingEdit") : toolPreparationLabel(part, step, locale)
     : status === "queued" ? t("chat.toolQueued")
       : status === "waiting" ? t("chat.toolApprovalPending")
         : editing ? t("chat.toolApplyingEdit")
           : step.integration ? t("chat.toolUsingIntegration", { name: step.integration.name })
-            : toolActivityCategory(part.toolName) === "command" ? t("chat.toolRunningCommand")
-              : step.category === "exploration" ? t("chat.toolActiveOperation", { operation: step.verb })
-                : t("chat.toolCalling");
+            : operationLabels.active;
   const preview = editing && status !== "success" && status !== "failed";
   const presentationText = presentation ? toolPresentationSummary(presentation, locale) : undefined;
   const resultText = toolResultText(
@@ -123,7 +119,8 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
   return (
     <ToolCall
       icon={showIcon ? step.icon : undefined}
-      label={status === "queued" || status === "waiting" ? activeLabel : failed ? t("chat.toolActionFailed", { operation: step.integration?.name ?? step.verb }) : completedToolLabel(step, locale, t)}
+      label={status === "queued" || status === "waiting" ? activeLabel : failed ? t("chat.toolActionFailed", { operation: step.integration?.name ?? step.verb })
+        : step.integration ? t(step.integration.kind === "source" ? "chat.toolGroupSource" : "chat.toolGroupIntegrationOne", { sources: step.integration.name }) : operationLabels.completed}
       activeLabel={activeLabel}
       query={step.chip}
       fullTarget={step.fullTarget}
@@ -152,7 +149,7 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
   );
 };
 
-export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ startIndex, endIndex }) => {
+export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activityRanges?: readonly AssistantPartRange[]; title?: string }> = ({ startIndex, endIndex, activityRanges, title }) => {
   const { locale, t } = useLocale();
   const [runningClosed, setRunningClosed] = useState(false);
   const [completedOpen, setCompletedOpen] = useState(false);
@@ -166,16 +163,18 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
     () => parts.slice(startIndex, endIndex).filter((part): part is ToolPartState => part.type === "tool-call" && (part.toolName !== "present" || Boolean(part.isError))),
     [parts, startIndex, endIndex],
   );
-  const liveToolCalls = useStore((state) => state.toolCalls);
-  const mcpServers = useStore((state) => state.mcpServers);
-  const preparedToolCallIds = useStore((state) => state.preparedToolCallIds);
+  const liveToolCalls = useConversationStore((state) => state.toolCalls);
+  const mcpServers = useConversationStore((state) => state.mcpServers);
+  const preparedToolCallIds = useConversationStore((state) => state.preparedToolCallIds);
   const preparedIds = useMemo(() => new Set(preparedToolCallIds), [preparedToolCallIds]);
   const liveCallsById = useMemo(
     () => new Map(liveToolCalls.map((call) => [call.toolCallId, call])),
     [liveToolCalls],
   );
   // Show the row from block start, including while arguments are generated.
-  const executedToolParts = toolParts;
+  const executedToolParts = useMemo(() => toolParts.filter((part) =>
+    part.toolName !== ACTIVITY_TITLE_TOOL || toolCallStatus(part, liveCallsById.get(part.toolCallId)) === "failed"
+  ), [toolParts, liveCallsById]);
   const steps = useMemo(
     () => executedToolParts.map((part) => toStep(part, locale, liveCallsById.get(part.toolCallId), mcpServers)),
     [executedToolParts, liveCallsById, locale, mcpServers],
@@ -185,9 +184,15 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
     [executedToolParts, liveCallsById, preparedIds, messageRunning],
   );
   const toolWorking = activeIndex >= 0;
-  const open = toolWorking ? !runningClosed : completedOpen;
+  const lastRange = activityRanges?.at(-1);
+  const lastPart = lastRange?.type === "reasoning" ? parts[lastRange.index] : undefined;
+  const thinking = !toolWorking && messageRunning && lastPart?.type === "reasoning" && Boolean(lastPart.text.trim()) && lastPart.status.type === "running";
+  const awaitingStageWork = Boolean(title) && messageRunning && endIndex === parts.length;
+  const stageCompacting = Boolean(title) && activityRanges?.some((range) => range.type === "compaction" && range.marker.status === "running");
+  const working = toolWorking || thinking || awaitingStageWork || Boolean(stageCompacting);
+  const open = working ? !runningClosed : completedOpen;
   const setOpen = (nextOpen: boolean) => {
-    if (toolWorking) setRunningClosed(!nextOpen);
+    if (working) setRunningClosed(!nextOpen);
     else setCompletedOpen(nextOpen);
   };
   const activePart = activeIndex >= 0 ? executedToolParts[activeIndex] : undefined;
@@ -216,19 +221,34 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
   const restingLabel = toolGroupSummary(steps, locale);
   const activity = activePart ? toolActivity(activePart, activeCall, preparedIds.has(activePart.toolCallId), messageRunning) : undefined;
   const describeActive = (part: ToolPartState, step: SessionTimelineStep) => activity === "generating"
-    ? `${t("chat.toolGenerating", { operation: step.verb })} · ${step.target}`
-    : activity === "queued" ? `${t("chat.toolQueued")} · ${step.target}`
-      : activity === "waiting" ? `${t("chat.toolApprovalPending")} · ${step.target}`
+    ? [step.category === "file-change" ? t("chat.toolGeneratingEdit") : toolPreparationLabel(part, step, locale), step.target].filter(Boolean).join(" · ")
+    : activity === "queued" ? [t("chat.toolQueued"), step.target].filter(Boolean).join(" · ")
+      : activity === "waiting" ? [t("chat.toolApprovalPending"), step.target].filter(Boolean).join(" · ")
         : toolActionSummary(part, step, activeCall, true, now, locale);
-  const activeLabel = activePart && activeStep ? describeActive(activePart, activeStep) : "";
+  const activeLabel = thinking ? t("chat.reasoningActive") : activePart && activeStep ? describeActive(activePart, activeStep) : "";
   const fullSummary = toolGroupSummary(steps, locale, { fullTargets: true });
   const fullActiveLabel = activePart && activeStep
     ? describeActive(activePart, { ...activeStep, target: activeStep.fullTarget ?? activeStep.target })
-    : fullSummary;
+    : thinking ? activeLabel : fullSummary;
 
-  if (steps.length === 0) return null;
+  const stepsById = useMemo(() => new Map(steps.map((step, index) => [step.id, index])), [steps]);
+  const details = activityRanges?.flatMap((range) => {
+    if (range.type === "reasoning") return [<MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />];
+    if (range.type === "compaction") return [<ContextCompactionMarker key={range.marker.id} {...range.marker} />];
+    if (range.type !== "tools") return [];
+    return parts.slice(range.startIndex, range.endIndex).flatMap((part) => {
+      if (part.type !== "tool-call") return [];
+      const index = stepsById.get(part.toolCallId);
+      if (index === undefined) return [];
+      return [<ToolTimelineRow key={part.toolCallId} step={steps[index]}>
+        <ToolCallEntry part={part} step={steps[index]} prepared={preparedIds.has(part.toolCallId)} messageRunning={messageRunning} />
+      </ToolTimelineRow>];
+    });
+  });
 
-  if (steps.length === 1) {
+  if (steps.length === 0 && !title) return null;
+
+  if (steps.length === 1 && !title) {
     const part = executedToolParts[0];
     return <ToolCallEntry showIcon part={part} step={steps[0]} prepared={preparedIds.has(part.toolCallId)} messageRunning={messageRunning} />;
   }
@@ -237,17 +257,20 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number }> = ({ 
     <ToolTimeline
       steps={steps}
       visibleSteps={steps.length}
-      streaming={toolWorking}
+      streaming={working}
       open={open}
       onOpenChange={setOpen}
-      restingLabel={restingLabel}
-      fullSummary={fullSummary}
-      fullActiveLabel={fullActiveLabel}
-      activeLabel={activeLabel}
-      headerIcon={(toolWorking ? activeStep : undefined)?.icon ?? summaryStep?.icon}
-      headerStat={headerStat}
+      restingLabel={title ?? restingLabel}
+      fullSummary={title ?? fullSummary}
+      fullActiveLabel={title ?? fullActiveLabel}
+      activeLabel={title ?? activeLabel}
+      headerIcon={title || thinking ? undefined : (toolWorking ? activeStep : undefined)?.icon ?? summaryStep?.icon}
+      headerStat={title ? undefined : headerStat}
+      canExpand={steps.length > 0 || Boolean(details?.length)}
+      failureLabel={title && steps.some((step) => step.failed) ? t("chat.toolGroupFailedMany", { count: steps.filter((step) => step.failed).length }) : undefined}
       stats={[]}
       renderStep={(_, index) => <ToolCallEntry part={executedToolParts[index]} step={steps[index]} prepared={preparedIds.has(executedToolParts[index]?.toolCallId ?? "")} messageRunning={messageRunning} />}
+      children={details}
       className="q-tool-timeline max-w-2xl"
     />
   );

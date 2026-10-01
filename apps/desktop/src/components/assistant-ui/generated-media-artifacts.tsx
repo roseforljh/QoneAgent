@@ -1,3 +1,4 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { localizeError } from "../../lib/error-localization";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { AudioLinesIcon, FilmIcon, FolderOpenIcon } from "lucide-react";
@@ -7,7 +8,7 @@ import { useLocale } from "../../localization";
 
 /** Generated files remain on disk; this card keeps them accessible after reopening a chat. */
 export const GeneratedMediaArtifacts: FC<{ runIds: readonly string[] }> = ({ runIds }) => {
-  const artifacts = useStore((state) => state.artifacts);
+  const artifacts = useConversationStore((state) => state.artifacts);
   const { locale } = useLocale();
   const visible = useMemo(() => {
     const ids = new Set(runIds);

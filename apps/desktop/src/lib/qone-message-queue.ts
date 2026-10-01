@@ -6,7 +6,6 @@ import {
   type QueueItemState,
 } from "@assistant-ui/react";
 import type { MessageAttachmentInfo, QueueItemInfo } from "@qone/protocol";
-import type { FollowUpQueueMode } from "./run-options";
 import { sameUserInput } from "@qone/protocol";
 import { serializeMessageAttachments } from "./message-attachments";
 import { createNativeAttachmentFile } from "./native-attachment-file";
@@ -19,7 +18,6 @@ type QueueCallbacks = {
   isDuplicate?: (message: AppendMessage, attachments: MessageAttachmentInfo[]) => boolean;
   send: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[]) => void;
   steer: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[], targetRunId?: string) => Promise<boolean | undefined>;
-  getFollowUpQueueMode?: () => FollowUpQueueMode;
   sync: (items: QueueItemInfo[]) => void;
   onError?: (message: string) => void;
 };
@@ -338,17 +336,10 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       }
     },
     steer(message: AppendMessage) {
-      // assistant-ui calls adapter.steer for the default mid-run Composer
-      // send. The menu changes this default between FIFO queueing and the
-      // current run's steer lane; the explicit row action still uses move().
-      if (callbacks.getFollowUpQueueMode?.() !== "steer" || !callbacks.isRunning()) {
-        adapter.enqueue(message);
-        return;
-      }
-      const before = controller.adapter.items;
+      // assistant-ui may route a normal running submission through steer().
+      // Qone keeps that submission in FIFO; only the row's explicit Steer
+      // action calls move() and sends immediately.
       adapter.enqueue(message);
-      const localId = findNewId(before, controller.adapter.items);
-      if (localId) adapter.move(localId, { lane: "steer", insertAfter: null });
     },
     move(localId: string, placement: { lane?: "queue" | "steer"; insertAfter?: string | null; insertBefore?: string | null }) {
       if (transfers.has(localId)) return;

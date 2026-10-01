@@ -8,8 +8,8 @@ const variantClasses: Record<ButtonVariant, string> = {
   default: "bg-primary text-primary-foreground hover:bg-primary/80",
   ghost: "hover:bg-accent hover:text-accent-foreground",
   outline: "border bg-background hover:bg-accent hover:text-accent-foreground",
-  secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-  destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+  secondary: "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_srgb,var(--secondary),var(--secondary-foreground)_8%)] active:bg-[color-mix(in_srgb,var(--secondary),var(--secondary-foreground)_14%)]",
+  destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90 active:bg-destructive/80",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

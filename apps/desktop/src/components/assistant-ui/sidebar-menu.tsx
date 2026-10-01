@@ -1,4 +1,4 @@
-import { DropdownMenu } from "radix-ui";
+import { ContextMenu, DropdownMenu } from "radix-ui";
 import { ChevronRightIcon } from "lucide-react";
 import { CodexIcon } from "../ui/CodexIcon";
 import moreIcon from "../../assets/codex-icons/ellipsis-horizontal-light-16.svg";
@@ -12,6 +12,8 @@ import { useLocale, type MessageKey } from "../../localization";
 import { useSidebarPreferences, type ChatSort, type SidebarLayout } from "../../lib/sidebar-preferences";
 import "./sidebar-menu.css";
 import { cn } from "../../lib/utils";
+import { openContextMenuFromKeyboard } from "../../lib/context-menu";
+import type { ReactElement } from "react";
 
 const layouts: { value: SidebarLayout; label: MessageKey }[] = [
   { value: "project", label: "sidebar.byProject" },
@@ -114,5 +116,56 @@ export function SidebarEntityMenu({
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+/** Row gestures reuse the same callbacks as the visible overflow button. */
+export function SidebarContextMenu({
+  children,
+  pinned,
+  onTogglePinned,
+  onRename,
+  onDelete,
+  onNewChat,
+  newChatLabel,
+  disabled = false,
+}: {
+  children: ReactElement;
+  pinned: boolean;
+  onTogglePinned: () => void;
+  onRename: () => void;
+  onDelete: () => void | Promise<void>;
+  onNewChat?: () => void;
+  newChatLabel?: string;
+  disabled?: boolean;
+}) {
+  const { t } = useLocale();
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild disabled={disabled} onKeyDown={disabled ? undefined : openContextMenuFromKeyboard} data-sidebar-context-menu-trigger>
+        {children}
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="q-sidebar-menu" data-sidebar-context-menu>
+          {onNewChat && <ContextMenu.Item className="q-sidebar-menu-item" onSelect={onNewChat}>
+            <CodexIcon src={plusIcon} className="size-4" />
+            <span>{newChatLabel ?? t("sidebar.newChat")}</span>
+          </ContextMenu.Item>}
+          <ContextMenu.Item className="q-sidebar-menu-item" onSelect={onTogglePinned}>
+            <CodexIcon src={pinned ? pinOffIcon : pinIcon} className="size-4" />
+            <span>{t(pinned ? "sidebar.unpin" : "sidebar.pin")}</span>
+          </ContextMenu.Item>
+          <ContextMenu.Item className="q-sidebar-menu-item" onSelect={onRename}>
+            <CodexIcon src={pencilIcon} className="size-4" />
+            <span>{t("sidebar.rename")}</span>
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="my-1 h-px bg-border/60 dark:bg-white/10" />
+          <ContextMenu.Item className="q-sidebar-menu-item q-sidebar-menu-item-danger" onSelect={onDelete}>
+            <CodexIcon src={trashIcon} className="size-4" />
+            <span>{t("common.delete")}</span>
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }

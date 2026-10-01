@@ -1,0 +1,7 @@
+/* Both groups must shrink inside their own composer, including dock panels. */
+.aui-composer-action-wrapper { min-width: 0; }
+.q-composer-actions-leading { flex: 0 1 auto; }
+.q-composer-actions-trailing { flex: 1 1 auto; }
+.q-composer-actions-leading > :not(.q-run-options-trigger-zone),
+.q-composer-actions-trailing > :not(.q-model-picker-trigger) { flex-shrink: 0; }
+.q-run-options-trigger-zone { min-width: 0; flex-shrink: 1; }

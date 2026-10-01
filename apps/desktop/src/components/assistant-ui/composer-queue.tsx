@@ -1,3 +1,4 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { ComposerPrimitive, QueueItemPrimitive, useAui, useAuiState, type AppendMessage, type QueueItemState } from "@assistant-ui/react";
 import { Loader2Icon } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
@@ -39,8 +40,6 @@ type QueueRowProps = {
 
 function QueueItemRow({ itemId, queueItem, message, steering = false, editing = false, detached = false, onSteer, onEdit, onDelete, onOpenSideChat, transferring = false }: QueueRowProps) {
   const { t } = useLocale();
-  const queueing = useStore((state) => state.followUpQueueMode === "queue");
-  const setMode = useStore((state) => state.setFollowUpQueueMode);
   const image = message?.attachments?.find((attachment) => attachment.type === "image");
   const nativePath = (image?.file as File & { qoneLocalPath?: string } | undefined)?.qoneLocalPath;
   const previewSrc = useAttachmentPreviewSrc({
@@ -74,7 +73,7 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
           : <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate select-none" />}
       </div>
     </div>
-    {transferring ? <span className="shrink-0 text-xs text-muted-foreground" role="status">{t("chat.queueOpeningSideChat")}</span> : <div className="q-composer-queue-actions flex shrink-0 items-center gap-1 text-muted-foreground">
+    {transferring ? <span className="sr-only" role="status">{t("chat.queueOpeningSideChat")}</span> : <div className="q-composer-queue-actions flex shrink-0 items-center gap-1 text-muted-foreground">
       {steering ? <span className="sr-only" role="status">{t("chat.steerPending")}</span> : <Button
         variant="ghost"
         size="icon-sm"
@@ -100,9 +99,6 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
             {onOpenSideChat && <DropdownMenu.Item className="q-sidebar-menu-item" onSelect={onOpenSideChat}>
               <CodexIcon src={sideChatIcon} className="size-4 text-muted-foreground" /><span>{t("chat.queueOpenSideChat")}</span>
             </DropdownMenu.Item>}
-            <DropdownMenu.Item className="q-sidebar-menu-item" onSelect={() => setMode(queueing ? "steer" : "queue")}>
-              <CodexQueueIcon className="size-4 text-muted-foreground" /><span>{t(queueing ? "chat.queueDisable" : "chat.queueEnable")}</span>
-            </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>}
@@ -113,10 +109,10 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
 export function ComposerQueue({ sessionId: ownerSessionId, allowSideChat = true }: { sessionId?: string; allowSideChat?: boolean } = {}) {
   const aui = useAui();
   const { t } = useLocale();
-  const selectedSessionId = useStore((state) => state.currentSessionId);
+  const selectedSessionId = useConversationStore((state) => state.currentSessionId);
   const sessionId = ownerSessionId ?? selectedSessionId;
-  const editingQueueItem = useStore((state) => state.currentSessionId === sessionId ? state.editingQueueItem : state.backgroundSessions[sessionId ?? ""]?.editingQueueItem);
-  const transfers = useStore((state) => state.sideChatTransfers);
+  const editingQueueItem = useConversationStore((state) => state.currentSessionId === sessionId ? state.editingQueueItem : state.backgroundSessions[sessionId ?? ""]?.editingQueueItem);
+  const transfers = useConversationStore((state) => state.sideChatTransfers);
   const queueItems = useAuiState((state) => state.composer.queue);
   const conversationMessages = useAuiState((state) => state.thread.messages);
   const queue = sessionId ? getQoneMessageQueue(sessionId) : undefined;

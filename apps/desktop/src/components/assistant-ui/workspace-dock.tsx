@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from "react";
 import { Popover } from "radix-ui";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { motion, useMotionValueEvent, useReducedMotion } from "motion/react";
 import {
   ArrowLeftIcon,
@@ -35,7 +36,7 @@ import { useLocale } from "../../localization";
 import { onOpenBrowserInDock, type BrowserDockRequest } from "../../lib/browser-dock";
 import { SubagentPanel } from "./subagent-view";
 import { OPEN_SUBAGENT_EVENT } from "./subagent-navigation";
-import { OPEN_WORKSPACE_FILE_EVENT, type WorkspaceFileTarget } from "../../lib/workspace-file-navigation";
+import { OPEN_WORKSPACE_FILE_EVENT, resolveFileReferencePath, type WorkspaceFileTarget } from "../../lib/workspace-file-navigation";
 import { OPEN_RUN_CHANGES_EVENT, runChangesTab, type RunChangesTarget } from "../../lib/run-changes-navigation";
 import { RunChangesPanel } from "./run-changes-panel";
 import FileReader from "./file-reader";
@@ -51,8 +52,7 @@ import { CodexIcon } from "../ui/CodexIcon";
 import terminalIcon from "../../assets/codex-icons/terminal-light-16.svg";
 import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import closeIcon from "../../assets/codex-icons/xmark-md-light-16.svg";
-import type { DockTab, DockView } from "../../lib/dock-state";
-import { filePreviewTab } from "../../lib/dock-state";
+import { closeDockTabsExcept, closeDockTabsToRight, filePreviewTab, type DockTab, type DockView } from "../../lib/dock-state";
 import {
   initWorkspaceView, removeWorkspaceView, requestWorkspaceFiles, requestWorkspaceFileRead,
   requestWorkspaceGit, requestWorkspaceGitDiff, useWorkspaceViewState, useWorkspaceViewStore,
@@ -63,6 +63,7 @@ import { closeSideConversation } from "../../lib/side-conversation";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { localizeError } from "../../lib/error-localization";
 import sideChatIcon from "../../assets/codex-icons/plus-chat-bubble-right-light-16.svg";
+import { CodeContextMenu, DockTabContextMenu, WorkspacePathContextMenu } from "./dock-context-menu";
 
 const DOCK_VIEWS: readonly DockView[] = ["session", "terminal", "files", "git", "browser", "mcp", "skills", "subagents"];
 const isDockView = (value: unknown): value is DockView =>
@@ -129,37 +130,47 @@ function TreeRows({
   expanded,
   onToggle,
   onOpen,
+  workspacePath,
+  onOpenExternal,
 }: {
   nodes: TreeNode[];
   depth: number;
   expanded: ReadonlySet<string>;
   onToggle: (path: string) => void;
   onOpen: (path: string) => void;
+  workspacePath?: string;
+  onOpenExternal: (path: string) => void;
 }) {
   return (
     <>
       {nodes.map((node) => (
         <div key={node.path}>
-          <button
-            type="button"
-            onClick={() => (node.dir ? onToggle(node.path) : onOpen(node.path))}
-            className="text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground flex w-full min-w-0 items-center gap-1.5 py-1 pe-2 text-start text-sm transition-colors"
-            style={{ paddingInlineStart: `${10 + depth * 14}px` }}
+          <WorkspacePathContextMenu
+            path={resolveFileReferencePath(node.path, workspacePath) ?? node.path}
+            onOpen={node.dir ? undefined : () => onOpen(node.path)}
+            onOpenExternal={node.dir || !workspacePath ? undefined : () => onOpenExternal(resolveFileReferencePath(node.path, workspacePath) ?? node.path)}
           >
-            {node.dir ? (
-              <ChevronRightIcon className={cn("size-3 shrink-0 text-foreground/40 transition-transform duration-150", expanded.has(node.path) && "rotate-90")} />
-            ) : (
-              <span className="size-3 shrink-0" />
-            )}
-            {node.dir ? (
-              <FolderIcon className="size-3.5 shrink-0 text-sky-500/80 dark:text-sky-400/80" />
-            ) : (
-              <FileIcon className="size-3.5 shrink-0 text-foreground/40" />
-            )}
-            <span className="truncate">{node.name}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => (node.dir ? onToggle(node.path) : onOpen(node.path))}
+              className="text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground flex w-full min-w-0 items-center gap-1.5 py-1 pe-2 text-start text-sm transition-colors"
+              style={{ paddingInlineStart: `${10 + depth * 14}px` }}
+            >
+              {node.dir ? (
+                <ChevronRightIcon className={cn("size-3 shrink-0 text-foreground/40 transition-transform duration-150", expanded.has(node.path) && "rotate-90")} />
+              ) : (
+                <span className="size-3 shrink-0" />
+              )}
+              {node.dir ? (
+                <FolderIcon className="size-3.5 shrink-0 text-sky-500/80 dark:text-sky-400/80" />
+              ) : (
+                <FileIcon className="size-3.5 shrink-0 text-foreground/40" />
+              )}
+              <span className="truncate">{node.name}</span>
+            </button>
+          </WorkspacePathContextMenu>
           {node.dir && expanded.has(node.path) && (
-            <TreeRows nodes={node.children} depth={depth + 1} expanded={expanded} onToggle={onToggle} onOpen={onOpen} />
+            <TreeRows nodes={node.children} depth={depth + 1} expanded={expanded} onToggle={onToggle} onOpen={onOpen} workspacePath={workspacePath} onOpenExternal={onOpenExternal} />
           )}
         </div>
       ))}
@@ -172,6 +183,7 @@ function FilesView({ tabId, workspaceId, refreshNonce, fileTarget, active }: { t
   const send = useStore((s) => s.send);
   const state = useWorkspaceViewState(tabId);
   const view = state?.workspaceId === workspaceId ? state : undefined;
+  const workspacePath = useStore((s) => s.workspaces.find((item) => item.id === workspaceId)?.path);
   const files = view?.files;
   const openFile = view?.openFile;
   const selected = view?.selectedFilePath;
@@ -250,6 +262,8 @@ function FilesView({ tabId, workspaceId, refreshNonce, fileTarget, active }: { t
             <p className="px-3 py-3 text-sm text-foreground/50">{t("dock.fileLoading")}</p>
           ) : (
             <WorkspaceFileContent
+              path={resolveFileReferencePath(selected, workspacePath)}
+              relativePath={selected}
               code={content}
               language={languageForPath(selected)}
               target={fileTarget?.path === selected ? fileTarget : undefined}
@@ -266,7 +280,15 @@ function FilesView({ tabId, workspaceId, refreshNonce, fileTarget, active }: { t
 
   return (
     <FadeScroll className="min-h-0 flex-1 py-1.5">
-      <TreeRows nodes={tree} depth={0} expanded={expanded} onToggle={toggle} onOpen={open} />
+      <TreeRows
+        nodes={tree}
+        depth={0}
+        expanded={expanded}
+        onToggle={toggle}
+        onOpen={open}
+        workspacePath={workspacePath}
+        onOpenExternal={(path) => void openPath(path).catch((error) => useStore.setState({ lastError: localizeError(error) }))}
+      />
     </FadeScroll>
   );
 }
@@ -299,6 +321,7 @@ function GitView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspac
   const send = useStore((s) => s.send);
   const state = useWorkspaceViewState(tabId);
   const view = state?.workspaceId === workspaceId ? state : undefined;
+  const workspacePath = useStore((s) => s.workspaces.find((item) => item.id === workspaceId)?.path);
   const gitStatus = view?.gitStatus ?? "";
   const gitEntries = view?.gitEntries;
   const gitLoaded = view?.gitLoaded;
@@ -343,7 +366,14 @@ function GitView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspac
           {workspaceError ? <p className="px-1 py-1 text-sm text-red-500/80">{workspaceError}</p> : diff === undefined ? (
             <p className="px-1 py-1 text-xs text-foreground/50">{t("dock.fileLoading")}</p>
           ) : diff.trim() ? (
-            <DiffViewer patch={diff} language={languageForPath(selected)} showIcon showStats size="default" className="min-w-full" />
+            <CodeContextMenu
+              path={resolveFileReferencePath(selected, workspacePath)}
+              relativePath={selected}
+            >
+              <div tabIndex={0} className="min-w-full">
+                <DiffViewer patch={diff} language={languageForPath(selected)} showIcon showStats size="default" className="min-w-full" />
+              </div>
+            </CodeContextMenu>
           ) : (
             <p className="px-1 py-1 text-xs text-foreground/50">{t("dock.untrackedChange")}</p>
           )}
@@ -360,19 +390,28 @@ function GitView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspac
 
   return (
     <FadeScroll className="min-h-0 flex-1 py-1.5">
-      {entries.map((entry) => (
-        <button
-          key={`${entry.code}:${entry.path}`}
-          type="button"
-          onClick={() => open(entry.path)}
-          className="text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground flex w-full min-w-0 items-center gap-2 px-3 py-1 text-start text-sm transition-colors"
-        >
-          <span className={cn(mono, "w-5 shrink-0 text-center", GIT_STATUS_COLORS[entry.code] ?? "text-foreground/45")}>
-            {entry.code === "??" ? "U" : entry.code}
-          </span>
-          <span className="truncate">{entry.path}</span>
-        </button>
-      ))}
+      {entries.map((entry) => {
+        const absolutePath = resolveFileReferencePath(entry.path, workspacePath);
+        return (
+          <WorkspacePathContextMenu
+            key={`${entry.code}:${entry.path}`}
+            path={absolutePath ?? entry.path}
+            onOpen={() => open(entry.path)}
+            onOpenExternal={entry.code === "D" || !absolutePath ? undefined : () => void openPath(absolutePath).catch((error) => useStore.setState({ lastError: localizeError(error) }))}
+          >
+            <button
+              type="button"
+              onClick={() => open(entry.path)}
+              className="text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground flex w-full min-w-0 items-center gap-2 px-3 py-1 text-start text-sm transition-colors"
+            >
+              <span className={cn(mono, "w-5 shrink-0 text-center", GIT_STATUS_COLORS[entry.code] ?? "text-foreground/45")}>
+                {entry.code === "??" ? "U" : entry.code}
+              </span>
+              <span className="truncate">{entry.path}</span>
+            </button>
+          </WorkspacePathContextMenu>
+        );
+      })}
     </FadeScroll>
   );
 }
@@ -652,23 +691,24 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   };
 
   const closingSideChats = useRef(new Set<string>());
-  const closeTab = async (closingId: string) => {
+  const closeTab = async (closingId: string): Promise<boolean> => {
     const session = useStore.getState().sideChats[closingId];
     if (session) {
-      if (closingSideChats.current.has(closingId)) return;
+      if (closingSideChats.current.has(closingId)) return false;
       closingSideChats.current.add(closingId);
       try {
-        if (!await confirmDestructiveAction(t("chat.sideChatCloseConfirm"))) return;
-        if (!await closeSideConversation(session)) return;
-      } catch (error) { useStore.setState({ lastError: localizeError(error) }); return; }
+        if (!await confirmDestructiveAction(t("chat.sideChatCloseConfirm"))) return false;
+        if (!await closeSideConversation(session)) return false;
+      } catch (error) { useStore.setState({ lastError: localizeError(error) }); return false; }
       finally { closingSideChats.current.delete(closingId); }
     }
     const tabs = openTabsRef.current;
     const closingIndex = tabs.findIndex((tab) => tab.id === closingId);
-    if (closingIndex < 0) return;
+    if (closingIndex < 0) return true;
     const remaining = tabs.filter((tab) => tab.id !== closingId);
     setLauncherOpen(false);
-    setOpenTabs(remaining);
+    openTabsRef.current = remaining;
+    setOpenTabs((current) => current.filter((tab) => tab.id !== closingId));
     if (tabs[closingIndex]?.view === "terminal") closeDockTerminalResource(closingId);
     terminalApiRefs.current.delete(closingId);
     setTerminalStatus((current) => {
@@ -676,9 +716,18 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
       delete next[closingId];
       return next;
     });
-    if (activeTabId === closingId) {
-      setActiveTabId(remaining[Math.max(0, closingIndex - 1)]?.id);
-    }
+    setActiveTabId((selected) => selected === closingId ? remaining[Math.max(0, closingIndex - 1)]?.id : selected);
+    return true;
+  };
+
+  const closingBatch = useRef(false);
+  const closeTabs = async (anchorId: string, mode: "other" | "right") => {
+    if (closingBatch.current || !openTabsRef.current.some((tab) => tab.id === anchorId)) return;
+    closingBatch.current = true;
+    try {
+      if (mode === "other") activateTab(anchorId);
+      await (mode === "other" ? closeDockTabsExcept : closeDockTabsToRight)(openTabsRef.current, anchorId, closeTab);
+    } finally { closingBatch.current = false; }
   };
 
   const closePanel = () => {
@@ -815,27 +864,37 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                 const tabLabel = tab.view !== "file" && duplicateCount > 1 ? `${tabBaseLabel} ${openTabs.slice(0, index + 1).filter((item) => item.view === tab.view).length}` : tabBaseLabel;
                 const terminalState = terminalStatus[tab.id]?.status ?? "starting";
                 return (
-                  <div key={tab.id} data-dock-tab={tab.id} className={cn("q-workspace-dock-tab group flex h-8 min-w-0 items-center rounded-lg", active && "is-active")}>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      title={tabLabel}
-                      onClick={() => activateTab(tab.id)}
-                      tabIndex={active ? 0 : -1}
-                      className="flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden ps-2.5 text-start"
-                    >
-                      {tab.view === "sideChat" ? <CodexIcon src={sideChatIcon} className="size-4 shrink-0 text-foreground/55" /> : tab.view === "terminal" ? <span className="q-dock-terminal-tab-icon relative flex size-4 shrink-0 items-center text-foreground/55" data-status={terminalState} title={terminalStatus[tab.id]?.detail}>
-                        <CodexIcon src={terminalIcon} className="size-4" />
-                      </span> : tab.view === "file" && tab.fileTarget
-                        ? <CodexIcon src={attachmentFileIcon(tab.fileTarget.path, "")} className="size-4 shrink-0 text-foreground/55" />
-                        : <Icon className="size-4 shrink-0 text-foreground/55" />}
-                      <span className="truncate text-sm text-foreground/85">{tabLabel}</span>
-                    </button>
-                    <button type="button" aria-label={`${t("dock.closePanel")}: ${tabLabel}`} onClick={() => closeTab(tab.id)} className="q-workspace-dock-tab-close me-1 flex size-6 shrink-0 items-center justify-center rounded-md text-foreground/45 hover:bg-foreground/10 hover:text-foreground">
-                      <CodexIcon src={closeIcon} className="size-3.5" />
-                    </button>
-                  </div>
+                  <DockTabContextMenu
+                    key={tab.id}
+                    onClose={() => void closeTab(tab.id)}
+                    onCloseOther={openTabs.length > 1 ? () => void closeTabs(tab.id, "other") : undefined}
+                    onCloseRight={index < openTabs.length - 1 ? () => void closeTabs(tab.id, "right") : undefined}
+                    filePath={tab.view === "file" && tab.fileTarget
+                      ? resolveFileReferencePath(tab.fileTarget.path, workspace?.path) ?? tab.fileTarget.path
+                      : undefined}
+                  >
+                    <div data-dock-tab={tab.id} className={cn("q-workspace-dock-tab group flex h-8 min-w-0 items-center rounded-lg", active && "is-active")}>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        title={tabLabel}
+                        onClick={() => activateTab(tab.id)}
+                        tabIndex={active ? 0 : -1}
+                        className="flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden ps-2.5 text-start"
+                      >
+                        {tab.view === "sideChat" ? <CodexIcon src={sideChatIcon} className="size-4 shrink-0 text-foreground/55" /> : tab.view === "terminal" ? <span className="q-dock-terminal-tab-icon relative flex size-4 shrink-0 items-center text-foreground/55" data-status={terminalState} title={terminalStatus[tab.id]?.detail}>
+                          <CodexIcon src={terminalIcon} className="size-4" />
+                        </span> : tab.view === "file" && tab.fileTarget
+                          ? <CodexIcon src={attachmentFileIcon(tab.fileTarget.path, "")} className="size-4 shrink-0 text-foreground/55" />
+                          : <Icon className="size-4 shrink-0 text-foreground/55" />}
+                        <span className="truncate text-sm text-foreground/85">{tabLabel}</span>
+                      </button>
+                      <button type="button" aria-label={`${t("dock.closePanel")}: ${tabLabel}`} onClick={() => closeTab(tab.id)} className="q-workspace-dock-tab-close me-1 flex size-6 shrink-0 items-center justify-center rounded-md text-foreground/45 hover:bg-foreground/10 hover:text-foreground">
+                        <CodexIcon src={closeIcon} className="size-3.5" />
+                      </button>
+                    </div>
+                  </DockTabContextMenu>
                 );
               })}
               <div className="relative shrink-0 ps-1.5">

@@ -6,6 +6,7 @@ import { CopyIcon, RefreshCwIcon } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { ghostButton } from "./surfaces";
 import { take } from "../utils/range";
+import "../message-actions.css";
 
 export interface MessagePairProps extends Omit<
   ComponentProps<"div">,
@@ -46,9 +47,9 @@ export function MessagePair({
   const { t } = useLocale();
   const shown = take(words, visibleWords);
   const userSurfaceClass = cn(
-    "min-w-0 max-w-[75%] self-end break-words text-start",
+    "min-w-0 max-w-[70%] self-end break-words text-start",
     variant === "bubble"
-      ? "rounded-2xl bg-foreground/[0.05] dark:bg-foreground/[0.07] px-4 py-2.5 text-foreground text-[14.5px] leading-relaxed shadow-xs"
+      ? "q-user-message-bubble"
       : "text-foreground/90 text-end",
   );
 
@@ -59,7 +60,7 @@ export function MessagePair({
       {...props}
     >
       {showUser && (
-        <div className="group/user flex w-full flex-col items-end gap-1">
+        <div className="q-user-message-group flex w-full flex-col items-end gap-1">
           {userAttachmentContent}
           {userContent ? (
             userContentIsSurface ? userContent : <div className={userSurfaceClass}>{userContent}</div>
@@ -67,14 +68,14 @@ export function MessagePair({
             <p className={userSurfaceClass}>{userMessage}</p>
           )}
           {userActions && (
-            <div className="pointer-events-none flex items-center gap-1 pt-0.5 opacity-0 transition-opacity duration-150 group-focus-within/user:pointer-events-auto group-focus-within/user:opacity-100 group-hover/user:pointer-events-auto group-hover/user:opacity-100 motion-reduce:transition-none">
+            <div className="q-user-message-action-slot">
               {userActions}
             </div>
           )}
         </div>
       )}
       {betweenContent}
-      <div className="group/message flex w-full flex-col items-start">
+      <div className="q-assistant-message-group flex w-full flex-col items-start">
         {assistantContent ?? (
           <p className="min-h-[4.25rem] text-[15px] leading-[1.7]">
             {shown.map((word, index) => {
@@ -98,7 +99,7 @@ export function MessagePair({
             })}
           </p>
         )}
-        <div className="pointer-events-none flex items-center gap-1 pt-1.5 opacity-0 transition-opacity duration-200 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 group-hover/message:pointer-events-auto group-hover/message:opacity-100 motion-reduce:transition-none">
+        <div className="q-assistant-message-action-slot">
           {actions ?? (
             <>
               <button

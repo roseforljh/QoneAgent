@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { toolGroupSummary } from "../src/components/assistant-ui/tool-group-summary";
-import { toolFullTarget, toolTarget } from "../src/components/assistant-ui/tool-action-summary";
+import { commandForTool, toolActionSummary, toolFullTarget, toolOperationLabels, toolPreparationLabel, toolTarget } from "../src/components/assistant-ui/tool-action-summary";
 import { toolActivityCategory } from "../src/components/assistant-ui/tool-activity-category";
 
 test("completed groups describe every operation in first-occurrence order", () => {
@@ -85,6 +85,11 @@ test("integration calls use the integration name in Codex-style summaries", () =
     { verb: "Call", category: "integration", integration: context7 },
     { verb: "Call", category: "integration", integration: playwright },
   ], "en")).toBe("Used Context7 and Playwright integrations");
+  expect(toolGroupSummary([
+    { verb: "Call", category: "integration", integration: context7 },
+    { verb: "Run", category: "command" },
+    { verb: "Read", category: "exploration" },
+  ], "en")).toBe("Used Context7 integration, read files, and ran a command");
 });
 
 test("toolTarget preserves search pattern instead of discarding it for directory name", () => {
@@ -108,4 +113,80 @@ test("toolTarget preserves search pattern instead of discarding it for directory
   };
   expect(toolTarget(readCall)).toBe("Thread.tsx");
   expect(toolFullTarget(readCall)).toBe("apps/desktop/src/components/Thread.tsx");
+});
+
+test("missing or partial arguments never turn the tool name into a target", () => {
+  for (const toolName of ["read", "grep", "ls", "powershell", "custom_tool", "mcp:context7:resolve-library-id"]) {
+    const part = { toolName, args: { path: "  " } };
+    expect(toolTarget(part)).toBe("");
+    expect(toolFullTarget(part)).toBe("");
+  }
+});
+
+test("live arguments take precedence over a stale streamed preview", () => {
+  const call = { toolCallId: "read-live", runId: "test", toolName: "read", status: "success" as const, args: { path: "src/tool-group-summary.ts" } };
+  const part = { toolName: "read", args: { path: "src/toolGroupSummary" } };
+  expect(toolTarget(part, call)).toBe("tool-group-summary.ts");
+  expect(toolFullTarget(part, call)).toBe("src/tool-group-summary.ts");
+  expect(commandForTool({ toolName: "powershell", args: { command: "bun" } }, {
+    ...call, toolName: "powershell", args: { command: "bun test" },
+  })).toBe("bun test");
+});
+
+test("single exploration actions distinguish reads, searches and listings in both languages", () => {
+  expect(toolOperationLabels({ toolName: "read" }, "读取", "zh-CN")).toEqual({ active: "正在读取", completed: "已读取" });
+  expect(toolOperationLabels({ toolName: "grep" }, "Search", "en")).toEqual({ active: "Searching", completed: "Searched" });
+  expect(toolOperationLabels({ toolName: "ls" }, "查看", "zh-CN")).toEqual({ active: "正在列出", completed: "已列出" });
+  expect(toolOperationLabels({ toolName: "powershell" }, "Run", "en")).toEqual({ active: "Running", completed: "Ran" });
+  expect(toolActionSummary({ toolName: "read" }, { verb: "Read", target: "summary.ts" }, undefined, true, 0, "en")).toBe("Reading summary.ts");
+  expect(toolActionSummary({ toolName: "read" }, { verb: "Read", target: "" }, undefined, true, 0, "en")).toBe("Reading");
+  expect(toolActionSummary({ toolName: "read", result: "done" }, { verb: "读取", target: "summary.ts" }, undefined, false, 0, "zh-CN")).toBe("已读取 summary.ts");
+  expect(toolGroupSummary([{ verb: "读取", category: "exploration" }], "zh-CN")).toBe("已读取文件");
+});
+
+test("mutation and custom labels remain semantic without duplicating a missing target", () => {
+  expect(toolOperationLabels({ toolName: "edit" }, "Edit", "en")).toEqual({ active: "Editing", completed: "Edited" });
+  expect(toolOperationLabels({ toolName: "write" }, "写入", "zh-CN")).toEqual({ active: "正在写入", completed: "已写入" });
+  expect(toolOperationLabels({ toolName: "custom_tool" }, "custom_tool", "zh-CN")).toEqual({ active: "正在调用 custom_tool", completed: "已调用 custom_tool" });
+  expect(toolActionSummary({ toolName: "mcp:context7:resolve-library-id" }, { verb: "resolve-library-id", target: "", integration: { name: "Context7" } }, undefined, true, 0, "en")).toBe("Using Context7");
+});
+
+test("preparation titles describe the action and integration without exposing argument generation", () => {
+  expect(toolPreparationLabel({ toolName: "read" }, { verb: "读取" }, "zh-CN")).toBe("正在准备读取");
+  expect(toolPreparationLabel({ toolName: "grep" }, { verb: "Search" }, "en")).toBe("Preparing to search");
+  expect(toolPreparationLabel({ toolName: "mcp:context7:resolve-library-id" }, { verb: "resolve-library-id", integration: { name: "Context7" } }, "en")).toBe("Preparing to use Context7");
+  expect(toolPreparationLabel({ toolName: "custom_tool" }, { verb: "custom_tool" }, "zh-CN")).toBe("正在准备操作…");
+});
+
+test("a command field on an integration is not classified as local shell execution", () => {
+  const part = { toolName: "mcp:github:run-action", args: { command: "repository check" } };
+  expect(commandForTool(part)).toBeUndefined();
+  expect(toolTarget(part)).toBe("repository check");
+  expect(toolActionSummary(part, { verb: "GitHub", target: "repository check", integration: { name: "GitHub" } }, undefined, true, 0, "en")).toBe("Using GitHub repository check");
+});
+
+test("web sources do not claim to be installed integrations", () => {
+  const web = { id: "web", name: "网页", logo: "globe.svg", kind: "source" as const };
+  expect(toolGroupSummary([{ verb: "网页", category: "integration", integration: web }], "zh-CN")).toBe("已使用 网页");
+  expect(toolGroupSummary([
+    { verb: "Web", category: "integration", integration: { ...web, name: "Web" } },
+    { verb: "Context7", category: "integration", integration: { id: "context7", name: "Context7", logo: "context7.svg" } },
+  ], "en")).toBe("Used Web and Context7");
+});
+
+test("custom tool names do not inherit a search schema from a substring", () => {
+  const part = { toolName: "mcp:custom:research_file", args: { path: "src/report.ts", query: "background" } };
+  expect(toolTarget(part)).toBe("report.ts");
+  expect(toolFullTarget(part)).toBe("src/report.ts");
+});
+
+test("web searches and page reads retain their own semantic actions", () => {
+  expect(toolOperationLabels({ toolName: "web_search" }, "搜索网页", "zh-CN")).toEqual({ active: "正在搜索网页", completed: "已搜索网页" });
+  expect(toolOperationLabels({ toolName: "web_fetch" }, "Read a web page", "en")).toEqual({ active: "Reading a web page", completed: "Read a web page" });
+  expect(toolActivityCategory("web_search")).toBe("web-search");
+  expect(toolGroupSummary([
+    { verb: "Search the web", category: "web-search" },
+    { verb: "Search the web", category: "web-search" },
+    { verb: "Read", category: "exploration" },
+  ], "en")).toBe("Read files and searched the web");
 });

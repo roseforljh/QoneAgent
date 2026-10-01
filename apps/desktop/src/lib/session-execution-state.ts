@@ -40,15 +40,25 @@ export function switchSessionState(state: AgentState, sessionId?: string): Parti
 
 type Store = Pick<typeof import("../store").useStore, "getState" | "setState">;
 
+export function conversationSession(state: AgentState, sessionId = state.currentSessionId) {
+  return state.sessions.find((session) => session.id === sessionId) ?? (sessionId ? state.sideChats[sessionId] : undefined);
+}
+
+export function selectSessionState(state: AgentState, sessionId?: string): AgentState {
+  if (!sessionId || state.currentSessionId === sessionId) return state;
+  return {
+    ...state, ...emptySessionState(), ...state.backgroundSessions[sessionId],
+    currentSessionId: sessionId,
+    currentWorkspaceId: conversationSession(state, sessionId)?.workspaceId,
+    selectedModelId: state.runOptionsBySession[sessionId]?.modelId,
+    creatingSession: false,
+  };
+}
+
 /** Route updates without ever changing the real selection or exposing another chat to React. */
 export function sessionStore(store: Store, sessionId?: string): Store {
   if (!sessionId) return store;
-  const getState = (): AgentState => {
-    const state = store.getState();
-    return state.currentSessionId === sessionId ? state : {
-      ...state, ...emptySessionState(), ...state.backgroundSessions[sessionId], currentSessionId: sessionId,
-    };
-  };
+  const getState = (): AgentState => selectSessionState(store.getState(), sessionId);
   const setState: Store["setState"] = (update) => {
     store.setState((state) => {
       const previous = getState();

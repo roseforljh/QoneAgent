@@ -25,6 +25,8 @@ import { TooltipIconButton } from "./tooltip-icon-button";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { externalBrowserUrl, htmlFromDataUrl, isHtmlDataUrl, sandboxPreviewHtml } from "../../lib/browser-dock";
+import { resolveFileReferencePath } from "../../lib/workspace-file-navigation";
+import { WorkspacePathContextMenu } from "./dock-context-menu";
 
 const rid = () => crypto.randomUUID();
 const BROWSER_HOME = "https://www.bing.com";
@@ -306,20 +308,23 @@ export function DockSkillsView({ workspaceId, refreshNonce }: { workspaceId?: st
 
   return (
     <FadeScroll className="min-h-0 flex-1 py-1">
-      {skills.map((skill) => (
-        <button
-          key={skill.id}
-          type="button"
-          onClick={() => openPath(skill.path).catch(() => {})}
-          className="text-foreground/80 hover:bg-foreground/[0.05] flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-start transition-colors"
-        >
-          <WandSparklesIcon className="size-3.5 shrink-0 text-violet-500/80 dark:text-violet-400/80" />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm">{skill.name}</span>
-            {skill.description && <span className="block truncate text-xs text-foreground/45">{skill.description}</span>}
-          </span>
-        </button>
-      ))}
+      {skills.map((skill) => {
+        const path = resolveFileReferencePath(skill.path, workspacePath);
+        const open = () => void openPath(path ?? skill.path).catch((error) => useStore.setState({ lastError: localizeError(error) }));
+        return <WorkspacePathContextMenu key={skill.id} path={path ?? skill.path} onOpenExternal={path ? open : undefined}>
+          <button
+            type="button"
+            onClick={open}
+            className="text-foreground/80 hover:bg-foreground/[0.05] flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-start transition-colors"
+          >
+            <WandSparklesIcon className="size-3.5 shrink-0 text-violet-500/80 dark:text-violet-400/80" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm">{skill.name}</span>
+              {skill.description && <span className="block truncate text-xs text-foreground/45">{skill.description}</span>}
+            </span>
+          </button>
+        </WorkspacePathContextMenu>;
+      })}
     </FadeScroll>
   );
 }

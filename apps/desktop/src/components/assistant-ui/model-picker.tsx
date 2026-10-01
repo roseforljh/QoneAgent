@@ -1,3 +1,4 @@
+import { useConversationStore } from "../../lib/conversation-context";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { CodexIcon } from "../ui/CodexIcon";
@@ -6,7 +7,6 @@ import { Popover } from "radix-ui";
 import type { ProviderApiType } from "@qone/protocol";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
-import { useStore } from "../../store";
 import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, filterPickerModels, readCurrentProvider, getPickerModels } from "../../lib/model-picker-data";
 import { normalizeThinkingLevel, thinkingLevelOptionsForApi, type ThinkingLevel } from "../../lib/model-settings";
 import { ModelLogo } from "./model-logo";
@@ -14,11 +14,11 @@ import { ThinkingWave } from "./run-options-popover";
 import "./model-picker.css";
 
 export const ModelPicker: FC = () => {
-  const modelConfigs = useStore((s) => s.modelConfigs);
-  const selectedModelId = useStore((s) => s.selectedModelId);
-  const setSelectedModel = useStore((s) => s.setSelectedModel);
-  const runOptions = useStore((s) => s.currentSessionId ? s.runOptionsBySession[s.currentSessionId] : s.draftRunOptions);
-  const setThinking = useStore((s) => s.setRunThinking);
+  const modelConfigs = useConversationStore((s) => s.modelConfigs);
+  const selectedModelId = useConversationStore((s) => s.selectedModelId);
+  const setSelectedModel = useConversationStore((s) => s.setSelectedModel);
+  const runOptions = useConversationStore((s) => s.currentSessionId ? s.runOptionsBySession[s.currentSessionId] : s.draftRunOptions);
+  const setThinking = useConversationStore((s) => s.setRunThinking);
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"simple" | "advanced">("simple");
