@@ -9,4 +9,6 @@ test("system prompt keeps execution guidance general instead of forcing source-t
   expect(QONE_SYSTEM_PROMPT).toContain("结论、实际变化、验证结果");
   expect(QONE_SYSTEM_PROMPT).toContain("先说结论");
   expect(QONE_SYSTEM_PROMPT).toContain("避免空话、模板话、翻译腔");
+  expect(QONE_SYSTEM_PROMPT).toContain("多个阶段之间有实质进展或关键发现时");
+  expect(QONE_SYSTEM_PROMPT).toContain("不要只连续输出标题");
 });
