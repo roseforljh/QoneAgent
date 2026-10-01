@@ -105,6 +105,11 @@ export class SessionRepo {
 export class MessageRepo {
   constructor(private db: Db) {}
 
+  hasUserMessage(sessionId: string, messageId: string): boolean {
+    return Boolean(this.db.select({ id: messages.id }).from(messages)
+      .where(and(eq(messages.id, messageId), eq(messages.sessionId, sessionId), eq(messages.role, "user"))).get());
+  }
+
   add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[], parts?: AssistantMessagePart[], goalId?: string) {
     const now = Date.now();
     const row = {
@@ -510,16 +515,20 @@ export class QueueRepo {
 
   constructor(private settingsRepo: SettingsRepo) {}
 
+  private transferred(sessionId: string, itemId: string): boolean {
+    return Boolean(this.settingsRepo.get(`queue:transferred:${sessionId}:${itemId}`));
+  }
+
   list(sessionId: string): QueueItemInfo[] {
     const items = this.settingsRepo.get<QueueItemInfo[]>(`queue:${sessionId}`);
     return Array.isArray(items)
-      ? items.filter((item) => item && item.sessionId === sessionId).sort((a, b) => a.position - b.position)
+      ? items.filter((item) => item && item.sessionId === sessionId && !this.transferred(sessionId, item.id)).sort((a, b) => a.position - b.position)
       : [];
   }
 
   upsert(item: QueueItemInfo): QueueItemInfo[] {
     const items = this.list(item.sessionId).filter((candidate) => candidate.id !== item.id);
-    if (this.consumed.has(item.id)) return items;
+    if (this.consumed.has(item.id) || this.transferred(item.sessionId, item.id)) return items;
     items.push({ ...item, updatedAt: Date.now() });
     const normalized = items.map((candidate, position) => ({ ...candidate, position }));
     this.settingsRepo.set(`queue:${item.sessionId}`, normalized);
@@ -528,7 +537,7 @@ export class QueueRepo {
 
   replace(sessionId: string, next: QueueItemInfo[]): QueueItemInfo[] {
     const normalized = next
-      .filter((item) => item.sessionId === sessionId && !this.consumed.has(item.id))
+      .filter((item) => item.sessionId === sessionId && !this.consumed.has(item.id) && !this.transferred(sessionId, item.id))
       .sort((a, b) => a.position - b.position)
       .map((item, position) => ({ ...item, position }));
     this.settingsRepo.set(`queue:${sessionId}`, normalized);

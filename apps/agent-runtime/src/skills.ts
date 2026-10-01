@@ -76,7 +76,7 @@ async function writeSkillContent(content: string, expectedName?: string): Promis
  * product-facing catalog for the GUI and persistence; it does not create a
  * second skill format.
  */
-export async function createResourceLoader(cwd: string): Promise<{
+export async function createResourceLoader(cwd: string, additionalInstructions?: string): Promise<{
   loader: ResourceLoader;
   skills: SkillInfo[];
 }> {
@@ -94,9 +94,11 @@ export async function createResourceLoader(cwd: string): Promise<{
     // built-in rules so updating the file never replaces product behavior.
     appendSystemPromptOverride: (base) => {
       const instructions = readGlobalInstructions().trim();
-      return instructions
-        ? [...base, QONE_SYSTEM_PROMPT, `## Qone.md\n\n${instructions}`]
-        : [...base, QONE_SYSTEM_PROMPT];
+      return [
+        ...base, QONE_SYSTEM_PROMPT,
+        ...(instructions ? [`## Qone.md\n\n${instructions}`] : []),
+        ...(additionalInstructions ? [additionalInstructions] : []),
+      ];
     },
   });
   await loader.reload();

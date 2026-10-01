@@ -66,6 +66,7 @@ export interface CommandBase {
 export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "ping"; requestId: string }
   | { type: "session.create"; requestId: string; title?: string; workspaceId: string }
+  | { type: "session.side-chat.create"; requestId: string; sessionId: string; queueItemId: string }
   | { type: "session.generate-title"; requestId: string; sessionId: string; prompt: string; model?: string }
   | { type: "session.list"; requestId: string }
   | { type: "session.search"; requestId: string; query: string }
@@ -187,7 +188,8 @@ export type RuntimeEvent =
   | { type: "session.compactionInterrupted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo; message: string }
   | { type: "session.context"; requestId: string; sessionId: string; model: string; tokens: number; contextWindow: number }
   | { type: "session.created"; session: SessionInfo }
-  | { type: "session.list"; sessions: SessionInfo[] }
+  | { type: "session.side-chat.created"; requestId: string; sessionId: string; queueItemId: string; session: SessionInfo }
+  | { type: "session.list"; sessions: SessionInfo[]; sideChats?: SessionInfo[] }
   | { type: "session.search"; requestId: string; query: string; results: SessionSearchResult[] }
   | { type: "session.renamed"; session: SessionInfo }
   | { type: "session.messages"; sessionId: string; messages: MessageInfo[]; compactions?: CompactionMarkerInfo[] }
@@ -250,6 +252,7 @@ export interface SessionInfo {
   workspaceId?: string;
   createdAt: number;
   updatedAt: number;
+  sideChat?: { parentSessionId: string; boundaryMessageId: string };
 }
 
 export interface SessionSearchResult {
@@ -731,6 +734,7 @@ const subagentConfig = z.object({
 const commandSchemas: Record<string, z.ZodTypeAny> = {
   ping: z.object({ type: z.literal("ping"), ...request }),
   "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id }),
+  "session.side-chat.create": z.object({ type: z.literal("session.side-chat.create"), ...request, sessionId: id, queueItemId: id }),
   "session.generate-title": z.object({ type: z.literal("session.generate-title"), ...request, sessionId: id, prompt: z.string().min(1), model: z.string().optional() }),
   "session.list": z.object({ type: z.literal("session.list"), ...request }),
   "session.search": z.object({ type: z.literal("session.search"), ...request, query: z.string().trim().min(1).max(200) }),

@@ -24,6 +24,8 @@ import path from "node:path";
 import { detectImageModel, modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ModelMetadata, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ModelResponseTiming } from "./model-response-timing.js";
+import { SessionInputQueue } from "./session-input-queue.js";
+import { SIDE_CHAT_INSTRUCTIONS } from "./side-conversation.js";
 import { createFileChangeTools } from "./file-change-tools.js";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
@@ -84,10 +86,13 @@ interface PiAdapterHooks {
 // MCP tools are injected through customTools. Skills are loaded through Pi's
 // ResourceLoader rather than exposed as model-callable tools.
 export class PiAdapter {
+  private isSideConversation: (sessionId: string) => boolean = () => false;
+  setSideConversationResolver(resolve: (sessionId: string) => boolean) { this.isSideConversation = resolve; }
   private emit: EmitFn;
   private sessions = new Map<string, AgentSession>();
   private runs = new Map<string, AgentSession>();
   private activeRunIds = new Map<string, string>();
+  private readonly sessionInputs = new SessionInputQueue();
   private runModes = new Map<string, RunPermissionMode>();
   private stoppedRuns = new Set<string>();
   private seq = 0;
@@ -353,6 +358,7 @@ export class PiAdapter {
   }
 
   async disposeSession(sessionId: string): Promise<void> {
+    this.resourceLoaders.delete(`side-chat:${sessionId}`);
     const session = this.sessions.get(sessionId);
     if (session) {
       await session.dispose();
@@ -499,9 +505,11 @@ export class PiAdapter {
     }
 
     const workspacePath = cwd ?? process.cwd();
-    if (!this.resourceLoaders.has(workspacePath)) {
-      const { loader } = await createResourceLoader(workspacePath);
-      this.resourceLoaders.set(workspacePath, loader);
+    const sideConversation = this.isSideConversation(sessionId);
+    const resourceKey = sideConversation ? `side-chat:${sessionId}` : workspacePath;
+    if (!this.resourceLoaders.has(resourceKey)) {
+      const { loader } = await createResourceLoader(workspacePath, sideConversation ? SIDE_CHAT_INSTRUCTIONS : undefined);
+      this.resourceLoaders.set(resourceKey, loader);
     }
     const builtinTools = [
       createReadTool(workspacePath),
@@ -516,7 +524,7 @@ export class PiAdapter {
       : this.customTools;
     const policy = this.subagentPolicy?.();
     const canDelegate = this.delegateSubagent && (!subagentRunId || (policy?.allowNested ?? true)) && subagentDepth < (policy?.maxDepth ?? 3);
-    const subagentTools = createSubagentTools({
+    const subagentTools = sideConversation ? [] : createSubagentTools({
       controller: this.subagentController, delegate: this.delegateSubagent, canDelegate: Boolean(canDelegate),
       eventSessionId, subagentRunId, subagentDepth, modelName, maxConcurrent: policy?.maxConcurrent,
       parentRunId: () => this.activeRunIds.get(sessionId),
@@ -584,7 +592,7 @@ export class PiAdapter {
       (tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? tool.name,
     ]));
 
-    const resourceLoader = this.resourceLoaders.get(workspacePath);
+    const resourceLoader = this.resourceLoaders.get(resourceKey);
     let modelRuntime: ModelRuntime | undefined;
     let model: ReturnType<ModelRuntime["getModel"]> | undefined;
     if (modelName) {
@@ -940,22 +948,36 @@ export class PiAdapter {
     return ![...this.activeRunIds.values()].includes(runId);
   }
 
-  async sendToSession(sessionId: string, message: string, mode: "steer" | "follow_up", attachments?: MessageAttachmentInfo[]): Promise<boolean> {
-    const session = this.activeRunIds.has(sessionId) ? this.sessions.get(sessionId) : undefined;
-    if (!session || !session.isStreaming) return false;
-    const selectedModel = session.agent.state.model;
-    const isGoogle = selectedModel?.api === "google-generative-ai";
-    const isCompletions = selectedModel?.api === "openai-completions";
-    const input = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`).input : undefined;
-    const runId = this.activeRunIds.get(sessionId);
-    const videoAttachmentNotice = runId ? this.rememberVideoAttachments(runId, attachments) : "";
-    const modelAttachments = await materializeModelInputs(attachments, isGoogle, input);
-    const prompt = [videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, input)].filter(Boolean).join("\n");
-    const images = isGoogle ? googleMediaContent(modelAttachments, input)
-      : [...imageContent(modelAttachments, input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), input) : [])];
-    if (mode === "steer") await session.steer(prompt, images);
-    else await session.followUp(prompt, images);
-    return true;
+  async sendToSession(sessionId: string, message: string, mode: "steer" | "follow_up", attachments?: MessageAttachmentInfo[], expectedRunId = this.activeRunIds.get(sessionId)): Promise<boolean> {
+    return this.sessionInputs.run(sessionId, async () => {
+      const session = this.activeRunIds.has(sessionId) ? this.sessions.get(sessionId) : undefined;
+      const isCurrentRun = () => Boolean(expectedRunId && this.activeRunIds.get(sessionId) === expectedRunId
+        && this.sessions.get(sessionId) === session && !this.stoppedRuns.has(expectedRunId) && session?.isStreaming);
+      if (!session || !isCurrentRun()) return false;
+      const selectedModel = session.agent.state.model;
+      const isGoogle = selectedModel?.api === "google-generative-ai";
+      const isCompletions = selectedModel?.api === "openai-completions";
+      const input = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`).input : undefined;
+      const runId = this.activeRunIds.get(sessionId);
+      const videoAttachmentNotice = runId ? this.rememberVideoAttachments(runId, attachments) : "";
+      const modelAttachments = await materializeModelInputs(attachments, isGoogle, input);
+      const prompt = [videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, input)].filter(Boolean).join("\n");
+      const images = isGoogle ? googleMediaContent(modelAttachments, input)
+        : [...imageContent(modelAttachments, input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), input) : [])];
+      // Materializing files can outlive the target run. Never leave an input in
+      // an idle Pi session or accidentally deliver it to its replacement run.
+      if (!isCurrentRun()) return false;
+      if (mode === "steer") await session.steer(prompt, images);
+      else await session.followUp(prompt, images);
+      if (!isCurrentRun()) {
+        // Pi's input handlers also await. Clear orphaned input only if this
+        // still owns the session; a replacement run's queue belongs to it.
+        const activeRun = this.activeRunIds.get(sessionId);
+        if ((!activeRun || activeRun === expectedRunId) && this.sessions.get(sessionId) === session) session.clearQueue();
+        return false;
+      }
+      return true;
+    });
   }
 
   clearSessionQueue(sessionId: string): void { this.sessions.get(sessionId)?.clearQueue(); }

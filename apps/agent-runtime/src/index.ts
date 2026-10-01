@@ -1,5 +1,6 @@
 import { runtimeText, withRuntimeLocale, runtimeErrorInfo } from "./runtime-localization";
 import { CompactionPositions } from "./compaction-position.js";
+import { SideConversationService } from "./side-conversation.js";
 import { repeatedUserMessageId } from "@qone/protocol";
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, SessionSearchResult } from "@qone/protocol";
@@ -69,6 +70,7 @@ const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
 const queueRepo = new QueueRepo(settingsRepo);
+const sideConversations = new SideConversationService(db);
 const compactionPreferences: PiCompactionPreferences = normalizePiCompactionPreferences(
   settingsRepo.get("compaction.settings") ?? DEFAULT_PI_COMPACTION_PREFERENCES,
 );
@@ -264,9 +266,11 @@ function deliverSteer(sessionId: string, runId: string) {
   assistantMessageSequenceByRun.delete(runId);
   messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments);
   queueRepo.remove(sessionId, steer.queueItemId);
-  emit("agent.steer.delivered", { queueItemId: steer.queueItemId }, sessionId, runId);
   sendQueue(sessionId);
+  // Send canonical history before the UI clears transient streaming parts.
+  // This keeps the interrupted assistant/tool segment above the new steer.
   sendMessages(sessionId);
+  emit("agent.steer.delivered", { queueItemId: steer.queueItemId }, sessionId, runId);
 }
 
 function releaseUndeliveredSteers(sessionId: string, runId: string) {
@@ -346,6 +350,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   }));
   return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
 }, compactionPreferences);
+adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
 subagentController = registerSubagentDispatcher({
   adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo,
   config: () => subagentConfig,
@@ -530,6 +535,7 @@ const toInfo = (s: {
   workspaceId: s.workspaceId ?? undefined,
   createdAt: s.createdAt,
   updatedAt: s.updatedAt,
+  sideChat: sideConversations.metadata(s.id),
 });
 
 const emit = (type: string, payload: unknown, sessionId?: string, runId?: string) =>
@@ -561,6 +567,7 @@ function searchSessions(query: string): SessionSearchResult[] {
   if (!needle) return [];
   const results: SessionSearchResult[] = [];
   for (const result of sessionRepo.search(query, 50)) {
+    if (sideConversations.metadata(result.session.id)) continue;
     if (result.match === "title") {
       results.push({ session: toInfo(result.session), match: "title" });
       continue;
@@ -648,6 +655,19 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
     }
 
+    case "session.side-chat.create": {
+      try {
+        const session = sideConversations.create(cmd.sessionId, cmd.queueItemId);
+        send({ type: "session.side-chat.created", requestId: cmd.requestId, sessionId: cmd.sessionId, queueItemId: cmd.queueItemId, session });
+        sendQueue(cmd.sessionId);
+        sendMessages(session.id);
+        sendQueue(session.id);
+      } catch (error) {
+        send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      }
+      return;
+    }
+
     case "session.generate-title": {
       const provisional = provisionalSessionTitle(cmd.prompt);
       const current = sessionRepo.get(cmd.sessionId);
@@ -677,11 +697,11 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
 
     case "session.list": {
       const workspaceIds = new Set(workspaceRepo.list().map((workspace) => workspace.id));
+      const all = sessionRepo.list().filter((session) => session.workspaceId && workspaceIds.has(session.workspaceId)).map(toInfo);
       send({
         type: "session.list",
-        sessions: sessionRepo.list()
-          .filter((session) => session.workspaceId && workspaceIds.has(session.workspaceId))
-          .map(toInfo),
+        sessions: all.filter((session) => !session.sideChat),
+        sideChats: all.filter((session) => session.sideChat),
       });
       return;
     }
@@ -700,12 +720,27 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     }
 
     case "session.delete":
+      if (sideConversations.metadata(cmd.sessionId)) {
+        titleControllers.get(cmd.sessionId)?.abort();
+        const active = runRepo.listBySession(cmd.sessionId).filter((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));
+        for (const run of active) { adapter.stop(run.id); cancelledRuns.add(run.id); }
+        const stopped = await Promise.all(active.map((run) => adapter.waitForRun(run.id)));
+        if (stopped.some((done) => !done)) {
+          send({ type: "error", requestId: cmd.requestId, message: "side conversation is still stopping" });
+          return;
+        }
+      }
+      for (const child of sessionRepo.list().filter((session) => sideConversations.metadata(session.id)?.parentSessionId === cmd.sessionId)) {
+        await handle({ type: "session.delete", requestId: crypto.randomUUID(), sessionId: child.id });
+      }
       await subagentController.dispose(cmd.sessionId);
       await adapter.disposeSession(cmd.sessionId);
       const deletedGoalTimer = goalContinuationTimers.get(cmd.sessionId);
       if (deletedGoalTimer) { clearTimeout(deletedGoalTimer); goalContinuationTimers.delete(cmd.sessionId); }
       const generatedFiles = artifactRepo.listBySession(cmd.sessionId);
       sessionRepo.delete(cmd.sessionId);
+      settingsRepo.set(`queue:${cmd.sessionId}`, []);
+      settingsRepo.set(`side-chat:${cmd.sessionId}`, null);
       await generatedArtifacts.removeFiles(generatedFiles);
       send({ type: "pong", requestId: cmd.requestId });
       return;
@@ -1506,6 +1541,13 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
     }
 
     case "agent.steer": {
+      // Queue identity is the idempotency key, including when delivery won
+      // the race against acknowledgement or a duplicate IPC request arrives.
+      const delivered = () => messageRepo.hasUserMessage(cmd.sessionId, cmd.queueItemId);
+      if (delivered() || pendingSteers.get(cmd.sessionId)?.some((item) => item.queueItemId === cmd.queueItemId)) {
+        send({ type: "pong", requestId: cmd.requestId });
+        return;
+      }
       const session = sessionRepo.get(cmd.sessionId);
       if (!session || !adapter.isRunning(cmd.sessionId)) {
         send({ type: "error", requestId: cmd.requestId, message: runtimeText("index.the_agent_is_no_longer_running_and_cannot_be") });
@@ -1522,11 +1564,11 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       pendingSteers.set(cmd.sessionId, steers);
       let accepted = false;
       try {
-        accepted = await adapter.sendToSession(cmd.sessionId, cmd.message, "steer", cmd.attachments);
+        accepted = await adapter.sendToSession(cmd.sessionId, cmd.message, "steer", cmd.attachments, cmd.runId);
       } catch (error) {
         log.warn("steer rejected", { error: String(error), runId: cmd.runId });
       }
-      if (!accepted) {
+      if (!accepted && !delivered()) {
         const remaining = (pendingSteers.get(cmd.sessionId) ?? []).filter((item) => item !== pending);
         if (remaining.length) pendingSteers.set(cmd.sessionId, remaining);
         else pendingSteers.delete(cmd.sessionId);

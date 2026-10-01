@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { closeDb, openDb, QueueRepo, SessionRepo, SettingsRepo } from "@qone/database";
+import { closeDb, MessageRepo, openDb, QueueRepo, SessionRepo, SettingsRepo } from "@qone/database";
 import { decodeCommand, type QueueItemInfo } from "@qone/protocol";
 
 const item = (sessionId: string, id: string, text: string, position: number): QueueItemInfo => ({
@@ -39,4 +39,19 @@ test("queue protocol accepts sync and steer commands", () => {
   const queued = item("s", "q", "continue", 0);
   expect(decodeCommand(JSON.stringify({ type: "queue.sync", requestId: "r", sessionId: "s", items: [queued] }))?.type).toBe("queue.sync");
   expect(decodeCommand(JSON.stringify({ type: "agent.steer", requestId: "r", sessionId: "s", runId: "run", queueItemId: "q", message: "focus" }))?.type).toBe("agent.steer");
+});
+
+test("delivery identity checks match only user messages in their owning conversation", () => {
+  const db = openDb(":memory:");
+  const sessions = new SessionRepo(db);
+  const a = sessions.create();
+  const b = sessions.create();
+  const messages = new MessageRepo(db);
+  messages.add(a.id, "user", "steered", undefined, undefined, "queue-user");
+  messages.add(a.id, "assistant", "answer", undefined, undefined, "assistant");
+  expect(messages.hasUserMessage(a.id, "queue-user")).toBe(true);
+  expect(messages.hasUserMessage(b.id, "queue-user")).toBe(false);
+  expect(messages.hasUserMessage(a.id, "assistant")).toBe(false);
+  expect(messages.hasUserMessage(a.id, "missing")).toBe(false);
+  closeDb(db);
 });
