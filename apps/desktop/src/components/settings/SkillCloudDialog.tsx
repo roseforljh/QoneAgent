@@ -1,3 +1,4 @@
+import { localizeError } from "../../lib/error-localization";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { CloudDownload, LoaderCircle, Search, X } from "lucide-react";
@@ -137,6 +138,6 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
 }
 
 function formatCloudError(cause: unknown, t: (key: "skills.cloud.timeout") => string): string {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = localizeError(cause);
   return message === SKILL_CATALOG_TIMEOUT ? t("skills.cloud.timeout") : message;
 }

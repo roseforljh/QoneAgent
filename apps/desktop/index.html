@@ -29,7 +29,7 @@
         background: var(--qone-boot-background);
       }
 
-      #root > main[aria-label="正在加载 Qone"] {
+      #root > main[data-qone-boot-label] {
         --qone-boot-sidebar-width: clamp(240px, 275px, min(520px, calc(100vw - 320px)));
         display: flex;
         flex-direction: column;
@@ -102,10 +102,10 @@
   </head>
   <body>
     <div id="root">
-      <main aria-label="正在加载 Qone">
+      <main data-qone-boot-label="startup.loading" aria-label="Loading Qone…">
         <div class="qone-boot-titlebar">
           <div class="qone-boot-nav" aria-hidden="true"><span>‹</span><span>›</span></div>
-          <div class="qone-boot-menu" aria-hidden="true"><span>文件</span><span>编辑</span><span>视图</span><span>帮助</span></div>
+          <div class="qone-boot-menu" aria-hidden="true"><span data-qone-boot-text="startup.file">File</span><span data-qone-boot-text="common.edit">Edit</span><span data-qone-boot-text="startup.view">View</span><span data-qone-boot-text="startup.help">Help</span></div>
           <div class="qone-boot-titlebar-fill"></div>
           <div class="qone-boot-window-controls" aria-hidden="true"><span>−</span><span>□</span><span>×</span></div>
         </div>
@@ -113,17 +113,18 @@
           <aside class="qone-boot-sidebar" aria-hidden="true">
             <div class="qone-boot-brand"><span class="qone-boot-brand-mark"></span><span>Qone</span></div>
             <div class="qone-boot-sidebar-nav">
-              <div class="qone-boot-sidebar-item">✎　新建会话</div>
-              <div class="qone-boot-sidebar-item">◎　应用</div>
+              <div class="qone-boot-sidebar-item" data-qone-boot-text="sidebar.newChat">New chat</div>
+              <div class="qone-boot-sidebar-item" data-qone-boot-text="app.apps">Apps</div>
             </div>
-            <div class="qone-boot-sidebar-section">项目</div>
-            <div class="qone-boot-sidebar-item">▱　正在读取项目…</div>
-            <div class="qone-boot-settings">⚙　设置</div>
+            <div class="qone-boot-sidebar-section" data-qone-boot-text="sidebar.projects">Projects</div>
+            <div class="qone-boot-sidebar-item" data-qone-boot-text="startup.loadingProjects">▱　Loading projects…</div>
+            <div class="qone-boot-settings" data-qone-boot-text="common.settings">Settings</div>
           </aside>
-          <section class="qone-boot-main"><div class="qone-boot-loading">正在加载 Qone…</div></section>
+          <section class="qone-boot-main"><div class="qone-boot-loading" data-qone-boot-text="startup.loading">Loading Qone…</div></section>
         </div>
       </main>
     </div>
+    <script src="/boot-locale.js"></script>
     <script src="/startup-diagnostics.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

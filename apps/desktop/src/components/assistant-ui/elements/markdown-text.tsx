@@ -3,6 +3,7 @@
 import {
   type CodeHeaderProps,
   MarkdownTextPrimitive,
+  type MarkdownTextPrimitiveProps,
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
   useIsMarkdownCodeBlock,
 } from "@assistant-ui/react-markdown";
@@ -66,7 +67,7 @@ function remarkQoneAutolink() {
   };
 }
 
-type MarkdownTextProps = Partial<TextMessagePartProps> & {
+type MarkdownTextProps = Partial<TextMessagePartProps> & Pick<MarkdownTextPrimitiveProps, "urlTransform" | "remarkPlugins"> & {
   components?: Parameters<typeof memoizeMarkdownComponents>[0];
 };
 
@@ -86,8 +87,9 @@ const useShallowStable = <T extends Record<string, unknown> | undefined>(
   return ref.current;
 };
 
-const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
+const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components, urlTransform = markdownUrlTransform, remarkPlugins = [] }) => {
   const stableComponents = useShallowStable(components);
+  const extraRemarkPlugins = remarkPlugins ?? [];
   const markdownComponents = useMemo(() => {
     if (!stableComponents) return defaultComponents;
     return {
@@ -99,8 +101,8 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
   return (
     <MarkdownTextPrimitive
       smooth={false}
-      urlTransform={markdownUrlTransform}
-      remarkPlugins={[remarkQoneGfm, remarkMath, remarkQoneAutolink]}
+      urlTransform={urlTransform}
+      remarkPlugins={[remarkQoneGfm, remarkMath, remarkQoneAutolink, ...extraRemarkPlugins]}
       rehypePlugins={[rehypeKatex]}
       preprocess={(text) => escapeCurrencyDollars(normalizeMultilineDisplayMath(normalizeMathDelimiters(text)))}
       className="aui-md"

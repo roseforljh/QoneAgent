@@ -82,7 +82,7 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
       : status === "waiting" ? t("chat.toolApprovalPending")
         : editing ? t("chat.toolApplyingEdit") : toolActivityCategory(part.toolName) === "command" ? t("chat.toolRunningCommand") : t("chat.toolWorking");
   const preview = editing && status !== "success" && status !== "failed";
-  const presentationText = presentation ? toolPresentationSummary(presentation) : undefined;
+  const presentationText = presentation ? toolPresentationSummary(presentation, locale) : undefined;
   const resultText = toolResultText(
     presentationText,
     result,

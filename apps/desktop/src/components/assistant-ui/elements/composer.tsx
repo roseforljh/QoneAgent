@@ -367,6 +367,7 @@ export function ComposerVoice({
   recording: boolean;
   seconds: number;
 }) {
+  const { t } = useLocale();
   return (
     <div
       data-slot="composer-voice"
@@ -397,9 +398,7 @@ export function ComposerVoice({
           0:{String(seconds).padStart(2, "0")}
         </span>
       ) : (
-        <ShimmerLabel className="text-foreground/55 relative text-sm">
-          Transcribing
-        </ShimmerLabel>
+        <ShimmerLabel className="text-foreground/55 relative text-sm">{t("chat.transcribing")}</ShimmerLabel>
       )}
     </div>
   );
@@ -505,11 +504,12 @@ export function ComposerModelItem({
 
 export function ComposerContext({
   usage,
-  label = "Context",
-  triggerLabel = "Context usage",
+  label,
+  triggerLabel,
   className,
   ...props
 }: Omit<ComponentProps<"div">, "children"> & { usage?: ComposerUsage; label?: string; triggerLabel?: string }) {
+  const { t } = useLocale();
   const fraction = usage && usage.total > 0 ? usage.used / usage.total : 0;
   const warn = fraction > 0.85;
   const circumference = 2 * Math.PI * 5;
@@ -525,7 +525,7 @@ export function ComposerContext({
           <Tooltip.Trigger asChild>
             <button
               type="button"
-              aria-label={triggerLabel}
+              aria-label={triggerLabel ?? t("chat.contextUsage")}
               className={cn(
                 ghostButton,
                 "h-7 w-3.5 bg-transparent! shadow-none! hover:bg-transparent! dark:hover:bg-transparent! hover:shadow-none!",
@@ -559,7 +559,7 @@ export function ComposerContext({
             >
               <div className="flex w-38 flex-col gap-0.5 text-center text-xs leading-[18px] tabular-nums">
                 <p>
-                  <span className="text-foreground/60">{label} </span>
+                  <span className="text-foreground/60">{label ?? t("chat.context")} </span>
                   <span className={warn ? "text-red-500 dark:text-red-400" : undefined}>
                     {usage ? `${Math.round(fraction * 100)}%` : "—"}
                   </span>

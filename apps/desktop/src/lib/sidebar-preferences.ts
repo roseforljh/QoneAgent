@@ -1,4 +1,4 @@
-import type { SessionInfo } from "@qone/protocol";
+import type { SessionInfo, WorkspaceInfo } from "@qone/protocol";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -9,6 +9,7 @@ export interface SidebarPreferences {
   sort: ChatSort;
   manualOrder: string[];
   priorityIds: string[];
+  workspaceOrder: string[];
 }
 
 export const SIDEBAR_STORAGE_KEY = "qone-sidebar-preferences";
@@ -21,6 +22,7 @@ export function parseSidebarPreferences(value: unknown): SidebarPreferences {
     sort: saved.sort === "manual" || saved.sort === "priority" ? saved.sort : "recent",
     manualOrder: ids(saved.manualOrder),
     priorityIds: ids(saved.priorityIds),
+    workspaceOrder: ids(saved.workspaceOrder),
   };
 }
 
@@ -73,14 +75,20 @@ export function moveSidebarSession(order: readonly string[], source: string, tar
   return next;
 }
 
+export function sortSidebarWorkspaces(workspaces: readonly WorkspaceInfo[], order: readonly string[]): WorkspaceInfo[] {
+  const positions = new Map(order.map((id, index) => [id, index]));
+  return [...workspaces].sort((a, b) => (positions.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (positions.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+}
+
 interface SidebarState extends SidebarPreferences {
   setLayout: (layout: SidebarLayout) => void;
   setSort: (sort: ChatSort, sessions: readonly SessionInfo[]) => void;
   togglePriority: (id: string) => void;
   moveSession: (sessions: readonly SessionInfo[], source: string, target: string, after?: boolean) => void;
+  moveWorkspace: (workspaces: readonly WorkspaceInfo[], source: string, target: string, after?: boolean) => void;
 }
 
-export const useSidebarPreferences = create<SidebarState>()(persist((set, get) => ({
+export const createSidebarPreferencesStore = (storage = createJSONStorage<SidebarPreferences>(() => localStorage)) => create<SidebarState>()(persist((set, get) => ({
   ...parseSidebarPreferences(null),
   setLayout: (layout) => set({ layout }),
   setSort: (sort, sessions) => {
@@ -93,12 +101,19 @@ export const useSidebarPreferences = create<SidebarState>()(persist((set, get) =
     ? state.priorityIds.filter((value) => value !== id) : [...state.priorityIds, id] })),
   moveSession: (sessions, source, target, after = false) => {
     const current = get();
-    if (current.sort !== "manual") return;
-    set({ manualOrder: moveSidebarSession(sortSidebarSessions(sessions, current).map((session) => session.id), source, target, after) });
+    if (source === target || !sessions.some((session) => session.id === source) || !sessions.some((session) => session.id === target)) return;
+    set({ sort: "manual", manualOrder: moveSidebarSession(sortSidebarSessions(sessions, current).map((session) => session.id), source, target, after) });
+  },
+  moveWorkspace: (workspaces, source, target, after = false) => {
+    const current = get();
+    if (source === target || !workspaces.some((workspace) => workspace.id === source) || !workspaces.some((workspace) => workspace.id === target)) return;
+    set({ workspaceOrder: moveSidebarSession(sortSidebarWorkspaces(workspaces, current.workspaceOrder).map((workspace) => workspace.id), source, target, after) });
   },
 }), {
   name: SIDEBAR_STORAGE_KEY,
-  storage: createJSONStorage(() => localStorage),
-  partialize: ({ layout, sort, manualOrder, priorityIds }) => ({ layout, sort, manualOrder, priorityIds }),
+  storage,
+  partialize: ({ layout, sort, manualOrder, priorityIds, workspaceOrder }) => ({ layout, sort, manualOrder, priorityIds, workspaceOrder }),
   merge: (saved, current) => ({ ...current, ...parseSidebarPreferences(saved) }),
 }));
+
+export const useSidebarPreferences = createSidebarPreferencesStore();

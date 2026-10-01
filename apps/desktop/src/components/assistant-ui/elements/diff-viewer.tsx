@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import { type ComponentProps, type CSSProperties, useMemo } from "react";
@@ -451,6 +452,7 @@ function DiffViewer({
   size,
   className,
 }: DiffViewerProps) {
+  const { t } = useLocale();
   const diffPatch = patch ?? code;
   const oldContent = oldFile?.content;
   const oldName = oldFile?.name;
@@ -492,9 +494,7 @@ function DiffViewer({
           "border-foreground/10 bg-foreground/[0.025] dark:bg-foreground/[0.04] text-muted-foreground border px-3.5 py-3 font-mono text-xs",
           className,
         )}
-      >
-        No diff content provided
-      </pre>
+      >{t("code.noDiff")}</pre>
     );
   }
 

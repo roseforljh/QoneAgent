@@ -49,7 +49,7 @@ export default function TerminalView({ tabId, workspaceId, active, apiRef, onSta
     const frame = requestAnimationFrame(() => { resourceRef.current?.fit(); resourceRef.current?.focus(); });
     return () => cancelAnimationFrame(frame);
   }, [active, cwd]);
-  return <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden p-2">
-    <div ref={hostRef} className="min-h-0 min-w-0 flex-1 overflow-hidden" tabIndex={0} role="application" aria-label={t("dock.terminal")} onPointerDown={() => resourceRef.current?.focus()} />
+  return <div className="q-dock-terminal flex min-h-0 min-w-0 flex-1 overflow-hidden">
+    <div ref={hostRef} className="q-dock-terminal-host min-h-0 min-w-0 flex-1 overflow-hidden" tabIndex={0} role="application" aria-label={t("dock.terminal")} onPointerDown={() => resourceRef.current?.focus()} />
   </div>;
 }

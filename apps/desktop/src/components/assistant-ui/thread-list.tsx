@@ -23,9 +23,12 @@ import "./sidebar-menu.css";
 import { MorphingSpinner } from "./morphing-spinner";
 import { SidebarSessionTitle } from "./sidebar-session-title";
 import { SidebarSessionActions } from "./sidebar-session-pin-action";
+import { useSidebarDrag } from "../../hooks/use-sidebar-drag";
+import "./sidebar-drag.css";
 
 export const ThreadListRoot: FC<ComponentPropsWithoutRef<typeof ThreadListPrimitive.Root>> = ({ className, ...props }) => {
-  return <ThreadListPrimitive.Root data-slot="aui_thread-list-root" className={cn("flex flex-col gap-0.5", className)} {...props} />;
+  const dragRef = useSidebarDrag();
+  return <ThreadListPrimitive.Root ref={dragRef} data-slot="aui_thread-list-root" className={cn("flex flex-col gap-0.5", className)} {...props} />;
 };
 
 export const ThreadListItems: FC<ComponentPropsWithoutRef<"div">> = ({ className, ...props }) => {
@@ -60,6 +63,8 @@ const ThreadListItemGroups: FC = () => {
   }, [threadIds, priorityIds]);
 
   const groups = useMemo(() => {
+    // Date headings would split a manually ordered list into repeated date groups.
+    if (sort === "manual") return null;
     const itemsById = new Map(threadItems.map((item) => [item.id, item]));
     const dates = threadIds.map((id) => itemsById.get(id)?.lastMessageAt);
     if (!regularIndices.some((index) => dates[index])) return null;
@@ -130,9 +135,7 @@ export const ThreadListItem: FC = () => {
   const deleteSession = useStore((s) => s.deleteSession);
   const { t } = useLocale();
   const session = sessions.find((item) => item.id === id);
-  const sort = useSidebarPreferences((s) => s.sort);
-  const moveSession = useSidebarPreferences((s) => s.moveSession);
-  const [dropEdge, setDropEdge] = useState<"before" | "after" | undefined>();
+  const pinned = useSidebarPreferences((s) => s.priorityIds.includes(id));
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(session?.title ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -144,25 +147,13 @@ export const ThreadListItem: FC = () => {
     <ThreadListItemPrimitive.Root
       data-slot="aui_thread-list-item"
       className="q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px] transition-colors"
-      draggable={sort === "manual"}
-      data-drop-edge={dropEdge}
-      onDragStart={(event) => event.dataTransfer.setData("text/plain", id)}
-      onDragOver={(event) => {
-        if (sort !== "manual") return;
-        event.preventDefault();
-        setDropEdge(event.nativeEvent.offsetY < event.currentTarget.clientHeight / 2 ? "before" : "after");
-      }}
-      onDragLeave={() => setDropEdge(undefined)}
-      onDrop={(event) => {
-        if (sort !== "manual") return;
-        event.preventDefault();
-        const source = event.dataTransfer.getData("text/plain");
-        moveSession(sessions, source, id, event.nativeEvent.offsetY >= event.currentTarget.clientHeight / 2);
-        setDropEdge(undefined);
-      }}
+      data-sidebar-drag-id={renaming ? undefined : id}
+      data-sidebar-drag-kind="session"
+      data-sidebar-drag-group={pinned ? "session:pinned" : "session:list"}
     >
       {renaming ? <input ref={inputRef} value={title} onChange={(event) => setTitle(event.target.value)} onBlur={submitRename} onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setTitle(session?.title ?? ""); setRenaming(false); } }} className="border-input bg-background focus:border-ring mx-1 h-6 min-w-0 flex-1 rounded-md border px-2 text-xs outline-none" aria-label={t("sidebar.renameSession")} /> : <ThreadListItemPrimitive.Trigger
         data-slot="aui_thread-list-item-trigger"
+        data-sidebar-drag-handle=""
         className="q-sidebar-session-trigger text-foreground/95 group-hover:text-foreground group-data-active:text-foreground flex h-full min-w-0 flex-1 items-center rounded-[10px] px-2 text-start outline-none"
       >
         <span data-slot="aui_thread-list-item-title" className="flex min-w-0 flex-1">

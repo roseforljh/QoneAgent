@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from "react";
-import { createPortal } from "react-dom";
-import { AnimatePresence, motion, useMotionValueEvent, useReducedMotion } from "motion/react";
+import { Popover } from "radix-ui";
+import { motion, useMotionValueEvent, useReducedMotion } from "motion/react";
 import {
   ArrowLeftIcon,
   BotMessageSquareIcon,
@@ -17,18 +17,15 @@ import {
   Minimize2Icon,
   PanelRightCloseIcon,
   PlugIcon,
-  PlusIcon,
   RefreshCwIcon,
-  RotateCwIcon,
   SquareTerminalIcon,
-  Trash2Icon,
   WandSparklesIcon,
-  XIcon,
   type LucideIcon,
 } from "lucide-react";
 import type { WorkspaceFileInfo, WorkspaceGitEntry } from "@qone/protocol";
 import { useStore } from "../../store";
 import { TooltipIconButton } from "./tooltip-icon-button";
+import { attachmentFileIcon } from "../../lib/attachment-file-kind";
 import { DiffViewer } from "./elements/diff-viewer";
 import { WorkspaceFileContent } from "./workspace-file-content";
 import { DockBrowserView, DockMcpView, DockSkillsView } from "./dock-extra-views";
@@ -41,6 +38,7 @@ import { OPEN_SUBAGENT_EVENT } from "./subagent-navigation";
 import { OPEN_WORKSPACE_FILE_EVENT, type WorkspaceFileTarget } from "../../lib/workspace-file-navigation";
 import { OPEN_RUN_CHANGES_EVENT, runChangesTab, type RunChangesTarget } from "../../lib/run-changes-navigation";
 import { RunChangesPanel } from "./run-changes-panel";
+import FileReader from "./file-reader";
 import { clampDockWidth, defaultDockWidth, DOCK_WIDTH_STORAGE_KEY, dockWidthBounds, dockWidthFromRatio, dockWidthRatio, dockResizeState } from "../../lib/dock-layout";
 import { usePaneResize } from "../../lib/use-pane-resize";
 import { usePaneMotion } from "../../lib/use-pane-motion";
@@ -48,7 +46,13 @@ import { DOCK_VISIBILITY_TRANSITION } from "../../lib/pane-motion";
 import { NARROW_SCREEN_WIDTH } from "../../lib/sidebar-layout";
 import TerminalView, { type TerminalApi } from "./dock-terminal-view";
 import { closeDockTerminalResource } from "../../lib/dock-terminal-resource";
+import { DockTerminalActions } from "./dock-terminal-actions";
+import { CodexIcon } from "../ui/CodexIcon";
+import terminalIcon from "../../assets/codex-icons/terminal-light-16.svg";
+import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
+import closeIcon from "../../assets/codex-icons/xmark-md-light-16.svg";
 import type { DockTab, DockView } from "../../lib/dock-state";
+import { filePreviewTab } from "../../lib/dock-state";
 import {
   initWorkspaceView, removeWorkspaceView, requestWorkspaceFiles, requestWorkspaceFileRead,
   requestWorkspaceGit, requestWorkspaceGitDiff, useWorkspaceViewState, useWorkspaceViewStore,
@@ -410,6 +414,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   onTabsChange?: (hasTabs: boolean) => void;
 }) {
   const { t } = useLocale();
+  const workspaces = useStore((state) => state.workspaces);
   const [openTabs, setOpenTabs] = useState<DockTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>();
   const [selectedSubagentId, setSelectedSubagentId] = useState<string>();
@@ -466,9 +471,6 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
       window.removeEventListener("resize", measure);
     };
   }, [scopeActive]);
-  const launcherRef = useRef<HTMLDivElement>(null);
-  const launcherMenuRef = useRef<HTMLDivElement>(null);
-  const [launcherPosition, setLauncherPosition] = useState<{ top: number; right: number }>();
   const terminalApiRefs = useRef(new Map<string, MutableRefObject<TerminalApi | undefined>>());
   const getTerminalApiRef = (tabId: string) => {
     let ref = terminalApiRefs.current.get(tabId);
@@ -524,18 +526,11 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     if (!scopeActive) return;
     const showFile = (event: Event) => {
       const target = (event as CustomEvent<WorkspaceFileTarget>).detail;
-      if (!target || target.sessionId !== sessionId || target.workspaceId !== workspaceId) return;
-      const fileTarget = { path: target.path, line: target.line, column: target.column, endLine: target.endLine, requestId: rid() };
+      if (!target || (target.sessionId && target.sessionId !== sessionId) || (target.workspaceId && target.workspaceId !== workspaceId)) return;
+      const tab = filePreviewTab(openTabsRef.current, { ...target, workspaceId: target.workspaceId ?? workspaceId }, rid);
       setLauncherOpen(false);
-      const existing = openTabsRef.current.find((tab) => tab.view === "files" && tab.workspaceId === workspaceId);
-      if (existing) {
-        setOpenTabs((tabs) => tabs.map((tab) => tab.id === existing.id ? { ...tab, fileTarget } : tab));
-        setActiveTabId(existing.id);
-      } else {
-        const tab: DockTab = { id: rid(), view: "files", workspaceId, fileTarget };
-        setOpenTabs((tabs) => [...tabs, tab]);
-        setActiveTabId(tab.id);
-      }
+      setOpenTabs((tabs) => tabs.some((item) => item.id === tab.id) ? tabs.map((item) => item.id === tab.id ? tab : item) : [...tabs, tab]);
+      setActiveTabId(tab.id);
       setCollapsed(false);
     };
     window.addEventListener(OPEN_WORKSPACE_FILE_EVENT, showFile);
@@ -611,39 +606,6 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     event.preventDefault();
     saveWidth(clampDockWidth(width, availableWidth, isNarrowScreen));
   };
-
-  useEffect(() => {
-    if (!launcherOpen) return undefined;
-    const close = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      const path = event.composedPath();
-      const inside = (element: HTMLElement | null) => Boolean(
-        element && (path.includes(element) || (target && element.contains(target))),
-      );
-      if (!inside(launcherRef.current) && !inside(launcherMenuRef.current)) setLauncherOpen(false);
-    };
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, [launcherOpen]);
-
-  useEffect(() => {
-    if (!launcherOpen) {
-      setLauncherPosition(undefined);
-      return undefined;
-    }
-    const update = () => {
-      const rect = launcherRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      setLauncherPosition({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
-    };
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("scroll", update, true);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("scroll", update, true);
-    };
-  }, [launcherOpen]);
 
   useEffect(() => {
     if (view) return;
@@ -725,6 +687,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     session: { icon: ListTodoIcon, label: t("dock.session") },
     terminal: { icon: SquareTerminalIcon, label: t("dock.terminal") },
     files: { icon: FolderTreeIcon, label: t("dock.files") },
+    file: { icon: FileIcon, label: t("dock.file") },
     git: { icon: GitBranchIcon, label: t("dock.git") },
     changes: { icon: GitBranchIcon, label: t("dock.changes") },
     browser: { icon: GlobeIcon, label: t("dock.browser") },
@@ -734,7 +697,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   };
 
   return (
-    <>
+    <Popover.Root open={scopeActive && launcherOpen} onOpenChange={setLauncherOpen}>
       {scopeActive && view && isNarrowScreen && (
         <div
           role="presentation"
@@ -808,50 +771,55 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                 const { icon: Icon, label } = tabMeta[tab.view];
                 const active = activeTabId === tab.id;
                 const duplicateCount = openTabs.filter((item) => item.view === tab.view).length;
-                const tabLabel = duplicateCount > 1 ? `${label} ${openTabs.slice(0, index + 1).filter((item) => item.view === tab.view).length}` : label;
+                const fileName = tab.fileTarget?.path.split(/[\\/]/).at(-1);
+                const workspace = workspaces.find((item) => item.id === (tab.workspaceId ?? workspaceId));
+                const tabBaseLabel = tab.view === "file" && fileName ? fileName : tab.view === "terminal" && workspace?.path ? workspace.path : label;
+                const tabLabel = tab.view !== "file" && duplicateCount > 1 ? `${tabBaseLabel} ${openTabs.slice(0, index + 1).filter((item) => item.view === tab.view).length}` : tabBaseLabel;
                 const terminalState = terminalStatus[tab.id]?.status ?? "starting";
                 return (
-                  <div key={tab.id} data-dock-tab={tab.id} className={cn("q-workspace-dock-tab group flex h-8 min-w-0 flex-1 items-center rounded-lg", active && "is-active")}>
+                  <div key={tab.id} data-dock-tab={tab.id} className={cn("q-workspace-dock-tab group flex h-8 min-w-0 items-center rounded-lg", active && "is-active")}>
                     <button
                       type="button"
                       role="tab"
                       aria-selected={active}
+                      title={tabLabel}
                       onClick={() => activateTab(tab.id)}
                       tabIndex={active ? 0 : -1}
                       className="flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden ps-2.5 text-start"
                     >
-                      {tab.view === "terminal" ? <span className={cn("size-1.5 shrink-0 rounded-full", terminalState === "ready" ? "bg-emerald-500" : terminalState === "error" ? "bg-red-500" : "bg-amber-500")} title={terminalStatus[tab.id]?.detail} /> : null}
-                      <Icon className="size-4 shrink-0 text-foreground/55" />
+                      {tab.view === "terminal" ? <span className="q-dock-terminal-tab-icon relative flex size-4 shrink-0 items-center text-foreground/55" data-status={terminalState} title={terminalStatus[tab.id]?.detail}>
+                        <CodexIcon src={terminalIcon} className="size-4" />
+                      </span> : tab.view === "file" && tab.fileTarget
+                        ? <CodexIcon src={attachmentFileIcon(tab.fileTarget.path, "")} className="size-4 shrink-0 text-foreground/55" />
+                        : <Icon className="size-4 shrink-0 text-foreground/55" />}
                       <span className="truncate text-sm text-foreground/85">{tabLabel}</span>
                     </button>
                     <button type="button" aria-label={`${t("dock.closePanel")}: ${tabLabel}`} onClick={() => closeTab(tab.id)} className="q-workspace-dock-tab-close me-1 flex size-6 shrink-0 items-center justify-center rounded-md text-foreground/45 hover:bg-foreground/10 hover:text-foreground">
-                      <XIcon className="size-3.5" />
+                      <CodexIcon src={closeIcon} className="size-3.5" />
                     </button>
                   </div>
                 );
               })}
-              <div ref={launcherRef} className="relative shrink-0 ps-1.5">
-                <TooltipIconButton
-                  tooltip={t("dock.openWindow")}
-                  onClick={() => setLauncherOpen((open) => !open)}
-                  className={cn("size-8 rounded-md text-foreground/45 hover:text-foreground", launcherOpen && "bg-foreground/10 text-foreground")}
-                >
-                  <PlusIcon className="size-4" />
-                </TooltipIconButton>
+              <div className="relative shrink-0 ps-1.5">
+                <Popover.Trigger asChild>
+                  <TooltipIconButton
+                    tooltip={t("dock.openWindow")}
+                    aria-haspopup="menu"
+                    className={cn("size-8 rounded-md text-foreground/45 hover:text-foreground", launcherOpen && "bg-foreground/10 text-foreground")}
+                  >
+                    <CodexIcon src={plusIcon} className="size-4" />
+                  </TooltipIconButton>
+                </Popover.Trigger>
               </div>
             </div>
             <div className="q-workspace-dock-actions flex shrink-0 items-center gap-0.5 ps-1">
               {view === "terminal" ? (
-                <>
-                  <TooltipIconButton tooltip={t("dock.terminalClear")} onClick={() => activeTabId && terminalApiRefs.current.get(activeTabId)?.current?.clear()} className="size-7">
-                    <Trash2Icon className="size-3.5" />
-                  </TooltipIconButton>
-                  <TooltipIconButton tooltip={t("dock.terminalRestart")} onClick={() => activeTabId && terminalApiRefs.current.get(activeTabId)?.current?.restart()} className="size-7">
-                    <RotateCwIcon className="size-3.5" />
-                  </TooltipIconButton>
-                </>
+                <DockTerminalActions
+                  onClear={() => { if (activeTabId) terminalApiRefs.current.get(activeTabId)?.current?.clear(); }}
+                  onRestart={() => { if (activeTabId) terminalApiRefs.current.get(activeTabId)?.current?.restart(); }}
+                />
               ) : null}
-              {view === "files" || view === "git" || view === "mcp" || view === "skills" ? (
+              {view === "files" || view === "file" || view === "git" || view === "mcp" || view === "skills" ? (
                   <TooltipIconButton tooltip={t("dock.refresh")} onClick={() => setOpenTabs((tabs) => tabs.map((tab) => tab.id === activeTabId ? { ...tab, refreshNonce: (tab.refreshNonce ?? 0) + 1 } : tab))} className="size-7">
                   <RefreshCwIcon className="size-3.5" />
                 </TooltipIconButton>
@@ -875,6 +843,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                   {tab.view === "terminal" && tabWorkspaceId && <TerminalView tabId={tab.id} workspaceId={tabWorkspaceId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
                   {tab.view === "browser" && <DockBrowserView browserId={tab.id} active={active && !launcherOpen && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} />}
                   {tab.view === "files" && tabWorkspaceId && <FilesView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} fileTarget={tab.fileTarget} active={active} />}
+                  {tab.view === "file" && tab.fileTarget && <FileReader tabId={tab.id} workspaceId={tab.workspaceId} sessionId={sessionId} target={tab.fileTarget} active={active} refreshNonce={tab.refreshNonce ?? 0} />}
                   {tab.view === "git" && tabWorkspaceId && <GitView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "changes" && tab.changesTarget && <RunChangesPanel target={tab.changesTarget} />}
                   {active && tab.view === "mcp" && <DockMcpView refreshNonce={tab.refreshNonce ?? 0} />}
@@ -889,17 +858,16 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
           </div>
         </>}
       </motion.div>
-      {scopeActive && launcherOpen && launcherPosition && typeof document !== "undefined" && createPortal(
-        <AnimatePresence>
+      <Popover.Portal>
+        <Popover.Content side="bottom" align="end" sideOffset={8} collisionPadding={12} hideWhenDetached asChild>
           <motion.div
-            ref={launcherMenuRef}
             initial={{ opacity: 0, y: -4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.98 }}
             role="menu"
             onPointerDown={(event) => event.stopPropagation()}
-            className="pointer-events-auto fixed z-[1000] max-h-[min(280px,calc(100dvh-24px))] w-56 overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-popover p-1.5 shadow-2xl"
-            style={{ top: launcherPosition.top, right: launcherPosition.right, transformOrigin: "top right" }}
+            className="pointer-events-auto z-[1000] max-h-[min(280px,var(--radix-popover-content-available-height))] w-56 max-w-[var(--radix-popover-content-available-width)] overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-popover p-1.5 shadow-2xl"
+            style={{ transformOrigin: "var(--radix-popover-content-transform-origin)" }}
           >
             <p className="px-2.5 pb-1.5 pt-1 text-xs font-medium text-foreground/40">{t("dock.openWindow")}</p>
             {([
@@ -926,9 +894,8 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
               </button>
             ))}
           </motion.div>
-        </AnimatePresence>,
-        document.body,
-      )}
-    </>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }

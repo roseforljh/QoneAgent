@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 
 const source = readFileSync(new URL("../public/startup-diagnostics.js", import.meta.url), "utf8");
+const localeSource = readFileSync(new URL("../public/boot-locale.js", import.meta.url), "utf8");
 
-function boot(ready = false) {
+function boot(ready = false, language = "zh-CN") {
   const listeners = new Map<string, (event: unknown) => void>();
   const reports: string[] = [];
   const root = {
@@ -14,14 +15,16 @@ function boot(ready = false) {
     append(...nodes: { textContent: string }[]) { this.children.push(...nodes); },
   };
   const document = {
-    documentElement: { dataset: { qoneBooted: ready ? "true" : undefined } },
+    documentElement: { dataset: { qoneBooted: ready ? "true" : undefined }, lang: "" },
+    querySelectorAll: () => [],
     getElementById: () => root,
     createElement: () => ({ textContent: "", style: { cssText: "" } }),
     addEventListener: (type: string, handler: (event: unknown) => void) => listeners.set(type, handler),
   };
   class Script { constructor(public src: string) {} }
-  runInNewContext(source, {
+  runInNewContext(localeSource + "\n" + source, {
     document,
+    localStorage: { getItem: () => JSON.stringify({ language }) },
     window: {
       addEventListener: document.addEventListener,
       __TAURI_INTERNALS__: { invoke: async (_command: string, { message }: { message: string }) => { reports.push(message); } },
@@ -61,4 +64,12 @@ test("startup diagnostics never replace an already mounted application", () => {
   app.emit("unhandledrejection", { reason: new Error("Later operation failed") });
   expect(app.root.children).toBe(original);
   expect(app.reports).toEqual([]);
+});
+
+test("startup failures follow the saved English setting before modules execute", () => {
+  const app = boot(false, "en");
+  app.emit("error", { target: new app.Script("http://127.0.0.1:1420/src/main.tsx") });
+  expect(app.root.children[0].textContent).toBe("Qone failed to start");
+  expect(app.root.children[1].textContent).toContain("Script failed to load");
+  expect(app.root.children[1].textContent).not.toMatch(/\p{Script=Han}/u);
 });

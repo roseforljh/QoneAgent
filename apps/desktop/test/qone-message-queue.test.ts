@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { AppendMessage } from "@assistant-ui/react";
 import { createQoneMessageQueue } from "../src/lib/qone-message-queue";
+import { translateCurrent } from "../src/localization";
 
 const message = (text: string): AppendMessage => ({
   role: "user",
@@ -273,7 +274,7 @@ test("attachment errors are reported instead of silently swallowed", async () =>
   });
   queue.adapter.enqueue({ ...message("with file"), attachments: [{ id: "a", type: "image", name: "x.bmp", contentType: "image/bmp", status: { type: "complete" }, content: [{ type: "image", image: "data:image/bmp;base64,AA==" }] }] });
   await flush();
-  expect(errors).toEqual(["不支持的图片格式：x.bmp"]);
+  expect(errors).toEqual([translateCurrent("attachment.unsupportedImage", { name: "x.bmp" })]);
 });
 
 const withImage = (data: string): AppendMessage => ({

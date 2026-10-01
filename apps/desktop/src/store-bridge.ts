@@ -1,4 +1,5 @@
 import { translateCurrent as t } from "./localization";
+import { localizeError } from "./lib/error-localization";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -6,6 +7,7 @@ import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDel
 import { saveRunOptions } from "./lib/run-options";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { sessionStore, switchSessionState } from "./lib/session-execution-state";
+import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
 import {
   clearTrackedWorkspaceRequests,
   dispatchFileRead,
@@ -39,7 +41,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       mcpConnectRequests.clear();
       restoredMcpSecrets.clear();
       clearTrackedWorkspaceRequests();
-      for (const request of metadataRequests.values()) request.reject(new Error("Runtime exited"));
+      disconnectFilePreviews();
+      for (const request of metadataRequests.values()) request.reject(new Error(t("error.runtimeExited")));
       useStore.setState((st) => {
         const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
         return {
@@ -63,7 +66,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           queueLoadedSessionId: undefined,
           editingQueueItem: undefined,
           ...(st.running && st.currentSessionId && userMessage ? {
-            chatRunError: { sessionId: st.currentSessionId, userMessageId: userMessage.id, detail: "Runtime exited" },
+            chatRunError: { sessionId: st.currentSessionId, userMessageId: userMessage.id, detail: t("error.runtimeExited") },
           } : {}),
         };
       });
@@ -78,6 +81,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     } catch {
       return;
     }
+    if (msg.type === "error" && msg.localization) msg.message = localizeError(msg);
     if (msg.type === "model.metadata-resolved") {
       const pending = metadataRequests.get(msg.requestId);
       if (msg.models.every((model) => model.sources && ["contextWindow", "maxTokens", "reasoning", "input", "output"].every((field) => typeof model.sources[field as keyof typeof model.sources] === "string"))) pending?.resolve(msg.models);
@@ -333,6 +337,18 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           eventStore.setState((st) => ({ subagents: [...st.subagents.filter((item) => item.id !== msg.subagent.id), msg.subagent].sort((a, b) => a.startedAt - b.startedAt) }));
         }
         break;
+      case "subagent.streaming":
+        eventStore.setState((st) => {
+          const index = st.subagents.findIndex((item) => item.id === msg.id);
+          if (index < 0 || (!msg.delta && !msg.reasoning?.length)) return st;
+          const subagents = [...st.subagents];
+          const item = subagents[index]!;
+          let parts = item.parts;
+          for (const reasoning of msg.reasoning ?? []) parts = applyReasoningDelta(parts, reasoning, reasoning.messageSequence);
+          subagents[index] = { ...item, parts, streaming: msg.delta ? (item.streaming ?? "") + msg.delta : item.streaming };
+          return { subagents };
+        });
+        break;
       case "subagent.query":
       case "subagent.controlled":
         if (msg.subagent.parentSessionId === eventStore.getState().currentSessionId) {
@@ -496,7 +512,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         eventStore.setState({ oauthAuthorization: { requestId: msg.requestId, serverId: msg.serverId, url: msg.url, state: msg.state } });
         openUrl(msg.url).catch((error) => {
           console.error("OAuth browser launch failed", error);
-          eventStore.setState({ lastError: String(error) });
+          eventStore.setState({ lastError: localizeError(error) });
           finishMcpConnection(msg.serverId);
         });
         break;
@@ -504,7 +520,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         eventStore.setState({ githubDeviceAuthorization: msg });
         if (new URL(msg.verificationUri).hostname === "github.com") openUrl(msg.verificationUri).catch((error) => {
           console.error("GitHub login launch failed", error);
-          eventStore.setState({ lastError: String(error) });
+          eventStore.setState({ lastError: localizeError(error) });
         });
         break;
       case "mcp.oauth.saved":
@@ -527,6 +543,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         eventStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
         break;
       case "error":
+        if (dispatchFilePreviewError(msg.requestId, msg.message)) break;
         if (msg.requestId && stopRequests.has(msg.requestId)) {
           const request = stopRequests.get(msg.requestId)!;
           stopRequests.delete(msg.requestId);
@@ -944,6 +961,9 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         break;
       }
+      case "file.preview":
+        dispatchFilePreview(msg);
+        break;
       case "file.read": {
         if (msg.requestId) workspaceRequests.delete(msg.requestId);
         const { shouldUpdateGlobal } = dispatchFileRead(msg, eventStore.getState().currentWorkspaceId);

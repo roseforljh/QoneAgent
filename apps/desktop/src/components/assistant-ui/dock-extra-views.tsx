@@ -1,3 +1,4 @@
+import { localizeError } from "../../lib/error-localization";
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -61,7 +62,7 @@ export function DockBrowserView({ browserId, active, initialUrl, previewHtml, pr
     const host = hostRef.current;
     if (!host) return undefined;
     let alive = true;
-    const session = createDockBrowserSession(invoke, browserId, initialUrl, (error) => setFailed(String(error)), previewHtml);
+    const session = createDockBrowserSession(invoke, browserId, initialUrl, (error) => setFailed(localizeError(error)), previewHtml);
     sessionRef.current = session;
     const sync = () => {
       if (!alive) return;
@@ -140,7 +141,7 @@ export function DockBrowserView({ browserId, active, initialUrl, previewHtml, pr
       const html = currentPreviewHtml ?? (preview === undefined ? undefined : sandboxPreviewHtml(preview));
       if (html) await invoke("browser_open_preview_external", { html });
     } catch (error) {
-      setExternalOpenError(String(error));
+      setExternalOpenError(localizeError(error));
     }
   };
 
@@ -242,7 +243,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
                 <ChevronRightIcon className={cn("size-3 shrink-0 text-foreground/40 transition-transform duration-150", open && "rotate-90")} />
                 <PlugIcon className="size-3.5 shrink-0 text-foreground/45" />
                 <span className="min-w-0 flex-1 truncate text-sm">{server.name}</span>
-                <span className={cn(mono, "shrink-0 text-xs text-foreground/40")}>{server.toolCount ?? 0} tools</span>
+                <span className={cn(mono, "shrink-0 text-xs text-foreground/40")}>{server.toolCount ?? 0} {t("mcp.tools")}</span>
                 <span
                   className={cn("size-1.5 shrink-0 rounded-full", server.connected ? "bg-emerald-500" : server.oauth ? "bg-amber-500" : "bg-foreground/25")}
                   title={connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}

@@ -3,6 +3,7 @@ import type { AppendMessage } from "@assistant-ui/react";
 import { DIRECTORY_MIME_TYPE, decodeCommand, mediaMimeTypeFromName } from "@qone/protocol";
 import { serializeMessageAttachments } from "../src/lib/message-attachments";
 import { createNativeAttachmentFile } from "../src/lib/native-attachment-file";
+import { translateCurrent } from "../src/localization";
 
 test("text and image attachments retain their bytes, names and MIME types", async () => {
   const textFile = new File(["hello Qone"], "notes.txt", { type: "text/plain" });
@@ -22,7 +23,7 @@ test("text and image attachments retain their bytes, names and MIME types", asyn
 
 test("unsupported image formats fail before a message is sent", async () => {
   const input = { attachments: [{ type: "image", name: "vector.svg", contentType: "image/svg+xml", content: [{ type: "image", image: "data:image/svg+xml;base64,PHN2Zz4=" }] }] } as unknown as AppendMessage;
-  expect(serializeMessageAttachments(input)).rejects.toThrow("不支持的图片格式");
+  await expect(serializeMessageAttachments(input)).rejects.toThrow(translateCurrent("attachment.unsupportedImage", { name: "vector.svg" }));
 });
 
 test("large native media keeps only a local file reference", async () => {

@@ -84,6 +84,8 @@ export const AssistantParts: FC = () => {
       return <AssistantImageGallery key={`images-${range.startIndex}`} parts={imageParts} />;
     }
     if (range.type === "presentation") return <GenerativeUIPresentation key={`present-${range.index}`} index={range.index} />;
+    if (range.type === "subagents") return null;
+    if (range.type !== "tools") return null;
     return <SessionTimeline key={`tools-${range.startIndex}`} startIndex={range.startIndex} endIndex={range.endIndex} />;
   };
 

@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import type { BrowserDockRequest } from "./browser-dock";
 import type { RunChangesTarget } from "./run-changes-navigation";
-import type { WorkspaceFileLocation } from "./workspace-file-navigation";
+import type { WorkspaceFileLocation, WorkspaceFileTarget } from "./workspace-file-navigation";
 
-export type DockView = "session" | "terminal" | "files" | "git" | "browser" | "mcp" | "skills" | "subagents" | "changes";
+export type DockView = "session" | "terminal" | "files" | "file" | "git" | "browser" | "mcp" | "skills" | "subagents" | "changes";
 export type DockFileTarget = WorkspaceFileLocation & { path: string; requestId: string };
 export type DockTab = { id: string; view: DockView; workspaceId?: string; browserTarget?: BrowserDockRequest; fileTarget?: DockFileTarget; changesTarget?: RunChangesTarget; refreshNonce?: number };
 export interface DockScope {
@@ -53,4 +53,13 @@ export function removeDockTab(scope: DockScope, id: string): DockScope {
 
 export function dockActiveView(scope: DockScope): DockView | undefined {
   return scope.collapsed ? undefined : scope.openTabs.find((tab) => tab.id === scope.activeTabId)?.view;
+}
+
+/** Each selected document has its own reader; reselecting it preserves the tab. */
+export function filePreviewTab(tabs: readonly DockTab[], target: WorkspaceFileTarget, newId: () => string): DockTab {
+  const existing = tabs.find((tab) => tab.view === "file" && tab.workspaceId === target.workspaceId && tab.fileTarget?.path === target.path);
+  return {
+    ...existing, id: existing?.id ?? newId(), view: "file", workspaceId: target.workspaceId,
+    fileTarget: { path: target.path, line: target.line, column: target.column, endLine: target.endLine, requestId: newId() },
+  };
 }

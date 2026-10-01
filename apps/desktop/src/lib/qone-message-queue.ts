@@ -1,3 +1,4 @@
+import { localizeError } from "../lib/error-localization";
 import {
   createMessageQueue,
   type AppendMessage,
@@ -186,7 +187,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
   };
   controller.subscribe(syncEditHold);
 
-  const reportError = (error: unknown) => callbacks.onError?.(error instanceof Error ? error.message : String(error));
+  const reportError = (error: unknown) => callbacks.onError?.(localizeError(error));
 
   const findNewId = (before: readonly QueueItemState[], after: readonly QueueItemState[]) =>
     after.find((item) => !before.some((candidate) => candidate.id === item.id))?.id;

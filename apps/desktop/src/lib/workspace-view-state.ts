@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { translateCurrent } from "../localization";
 import type { WorkspaceFileInfo, WorkspaceGitEntry, RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 
 export interface WorkspaceViewState {
@@ -412,7 +413,7 @@ export async function requestWorkspaceFiles(
       if (!sent) {
         untrackWorkspaceRequest(requestId);
         if (options.ownerId) {
-          useWorkspaceViewStore.getState().setError(options.ownerId, "Failed to send request");
+          useWorkspaceViewStore.getState().setError(options.ownerId, translateCurrent("error.workspaceSendFailed"));
         }
       }
     } catch (err) {
@@ -456,7 +457,7 @@ export async function requestWorkspaceFileRead(
       if (!sent) {
         untrackWorkspaceRequest(requestId);
         if (options.ownerId) {
-          useWorkspaceViewStore.getState().setError(options.ownerId, "Failed to send request");
+          useWorkspaceViewStore.getState().setError(options.ownerId, translateCurrent("error.workspaceSendFailed"));
         }
       }
     } catch (err) {
@@ -497,7 +498,7 @@ export async function requestWorkspaceGit(
       if (!sent) {
         untrackWorkspaceRequest(requestId);
         if (options.ownerId) {
-          useWorkspaceViewStore.getState().setError(options.ownerId, "Failed to send request");
+          useWorkspaceViewStore.getState().setError(options.ownerId, translateCurrent("error.workspaceSendFailed"));
         }
       }
     } catch (err) {
@@ -543,7 +544,7 @@ export async function requestWorkspaceGitDiff(
       if (!sent) {
         untrackWorkspaceRequest(requestId);
         if (options.ownerId) {
-          useWorkspaceViewStore.getState().setError(options.ownerId, "Failed to send request");
+          useWorkspaceViewStore.getState().setError(options.ownerId, translateCurrent("error.workspaceSendFailed"));
         }
       }
     } catch (err) {

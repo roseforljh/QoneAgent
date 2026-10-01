@@ -1,4 +1,6 @@
+import { localizeError } from "../lib/error-localization";
 import { invoke } from "@tauri-apps/api/core";
+import { translateCurrent } from "../localization";
 import { DIRECTORY_MIME_TYPE, mediaMimeTypeFromName } from "@qone/protocol";
 import type { EventCallback } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -49,12 +51,12 @@ const isInside = (element: HTMLElement | null, position: DropPosition) => {
 };
 
 export async function pickNativeAttachmentFiles(): Promise<File[]> {
-  const files = await invoke<NativeFileInfo[]>("pick_attachment_files");
+  const files = await invoke<NativeFileInfo[]>("pick_attachment_files", { title: translateCurrent("attachment.add") });
   return files.map(fileFromNativeInfo);
 }
 
 export async function pickNativeAttachmentFolder(): Promise<File[]> {
-  const folder = await invoke<NativeFileInfo | null>("pick_attachment_folder");
+  const folder = await invoke<NativeFileInfo | null>("pick_attachment_folder", { title: translateCurrent("composer.toolFolder") });
   return folder ? [fileFromNativeInfo(folder)] : [];
 }
 
@@ -68,7 +70,7 @@ export function useNativeFileDrop(
         const file = await invoke<NativeFileInfo>("inspect_dropped_file", { path });
         return fileFromNativeInfo(file);
       } catch (error) {
-        useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
+        useStore.setState({ lastError: localizeError(error) });
         return null;
       }
     }));

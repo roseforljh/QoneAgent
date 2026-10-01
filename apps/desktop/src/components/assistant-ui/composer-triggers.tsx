@@ -11,10 +11,11 @@ import { hasTauriBridge, useStore } from "../../store";
 import { ComposerMenuItem } from "./elements/composer";
 import { ComposerSlashRow, ComposerToolRow, getComposerTools, type ComposerSlashEntry, type ComposerTool } from "./composer-tools";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
+import { bindTopPopupHeight } from "../../lib/popup-height";
 import { PlugZapIcon, SparklesIcon } from "lucide-react";
 
 // Codex's composer suggestions span their composer anchor and sit 8px above it.
-const popoverClass = "q-composer-suggestions absolute inset-x-0 bottom-full z-50 mb-2 flex flex-col overflow-y-auto rounded-2xl border border-border/60 bg-background p-1 text-sm dark:bg-popover";
+const popoverClass = "q-composer-suggestions absolute inset-x-0 bottom-full z-50 mb-2 flex flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border/60 bg-background p-1 text-sm dark:bg-popover";
 const MentionPopoverState: FC<{ onStateChange: (open: boolean, close: () => void) => void }> = ({ onStateChange }) => {
   const resource = unstable_useTriggerPopoverScopeContext();
   useEffect(() => onStateChange(resource.open, resource.close), [onStateChange, resource.close, resource.open]);
@@ -89,7 +90,7 @@ export const ComposerTriggers: FC<{
   }, [onSlashStateChange, slashEntries.length]);
 
   return <>
-    <ComposerPrimitive.Unstable_TriggerPopover char="@" adapter={mention.adapter} className={`${popoverClass} max-h-[min(15rem,50dvh)]`} aria-label={t("composer.openTools")}>
+    <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="@" adapter={mention.adapter} className={`${popoverClass} max-h-[min(15rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.openTools")}>
       <MentionPopoverState onStateChange={onMentionStateChange} />
       <ComposerPrimitive.Unstable_TriggerPopover.Action
         removeOnExecute
@@ -112,7 +113,7 @@ export const ComposerTriggers: FC<{
       </ComposerPrimitive.Unstable_TriggerPopoverItems>
     </ComposerPrimitive.Unstable_TriggerPopover>
 
-    {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover char="/" adapter={slash.adapter} className={`${popoverClass} max-h-[min(24rem,50dvh)]`} aria-label={t("composer.slashCommands")}>
+    {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="/" adapter={slash.adapter} className={`${popoverClass} max-h-[min(24rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.slashCommands")}>
       <MentionPopoverState onStateChange={onSlashStateChange} />
       <ComposerPrimitive.Unstable_TriggerPopover.Action {...slash.action} />
       <ComposerPrimitive.Unstable_TriggerPopoverItems>

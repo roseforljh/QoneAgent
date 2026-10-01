@@ -1,7 +1,9 @@
 import { useLocale } from "../../localization";
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Check, ChevronRight } from "lucide-react";
+import { Popover } from "radix-ui";
 import { cn } from "../../lib/utils";
+import { useFloatingBoundaries } from "../../hooks/use-floating-boundaries";
 
 export interface SelectOption {
   value: string;
@@ -40,28 +42,9 @@ export function QoneSelect({
 }: QoneSelectProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const boundaries = useFloatingBoundaries(triggerRef, open);
   const selected = options.find((option) => option.value === value);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    window.addEventListener("pointerdown", closeOnOutside);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("pointerdown", closeOnOutside);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
 
   const choose = (option: SelectOption) => {
     if (option.disabled) return;
@@ -84,31 +67,47 @@ export function QoneSelect({
       else moveSelection(event.key === "ArrowDown" ? 1 : -1);
       return;
     }
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      setOpen((current) => !current);
-    }
+    // Radix's trigger handles Enter/Space through the button click. Toggling
+    // here as well would open and immediately close the controlled popover.
   };
 
   return (
-    <div ref={rootRef} className={cn("qone-select", open && "is-open", className)}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={cn("qone-select-trigger", triggerClassName)}
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={handleTriggerKeyDown}
-      >
-        {prefix}
-        <span className={cn("qone-select-value", !selected && "is-placeholder")}>{selected?.label ?? placeholder ?? t("common.select")}</span>
-        <ChevronRight className="qone-select-chevron" size={16} aria-hidden="true" />
-      </button>
-      {open && !disabled && (
-        <div className={cn("qone-select-menu", align === "end" && "is-align-end", menuClassName)} role="listbox" aria-label={ariaLabel}>
+    <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+      <div className={cn("qone-select", open && !disabled && "is-open", className)}>
+        <Popover.Trigger asChild>
+          <button
+            ref={triggerRef}
+            type="button"
+            className={cn("qone-select-trigger", triggerClassName)}
+            aria-label={ariaLabel}
+            aria-haspopup="listbox"
+            aria-expanded={open && !disabled}
+            disabled={disabled}
+            onKeyDown={handleTriggerKeyDown}
+          >
+            {prefix}
+            <span className={cn("qone-select-value", !selected && "is-placeholder")}>{selected?.label ?? placeholder ?? t("common.select")}</span>
+            <ChevronRight className="qone-select-chevron" size={16} aria-hidden="true" />
+          </button>
+        </Popover.Trigger>
+        <Popover.Content
+          className={cn("qone-select-menu", menuClassName)}
+          side="bottom"
+          align={align}
+          sideOffset={5}
+          collisionBoundary={boundaries}
+          sticky="always"
+          hideWhenDetached
+          role="listbox"
+          aria-label={ariaLabel}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+            triggerRef.current?.focus();
+          }}
+        >
           {options.map((option) => (
             <button
               type="button"
@@ -134,8 +133,8 @@ export function QoneSelect({
               ) : option.value === value && <Check size={16} aria-hidden="true" />}
             </button>
           ))}
-        </div>
-      )}
-    </div>
+        </Popover.Content>
+      </div>
+    </Popover.Root>
   );
 }

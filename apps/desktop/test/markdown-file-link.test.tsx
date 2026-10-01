@@ -26,14 +26,20 @@ test("real Markdown link rendering retains Windows href, custom label and file i
     expect(markup).toContain('href="https://example.com"');
     expect(markup).toContain('href="#section"');
     expect(markup).not.toContain('node="');
-  } finally { Object.assign(state, original); }
+  } finally { Object.assign(state, original, { currentSessionId: original.currentSessionId }); }
 });
 
-test("workspace-external references are visible but cannot accidentally navigate to a browser", () => {
-  const markup = renderToStaticMarkup(<MarkdownLink href="D:/Outside/App.tsx">组件</MarkdownLink>);
-  expect(markup).toContain('aria-disabled="true"');
-  expect(markup).not.toContain("href=");
-  expect(markup).toContain("组件</a>");
+test("workspace-external references open in the file preview tab", () => {
+  const state = useStore.getInitialState();
+  const sessionId = state.currentSessionId;
+  state.currentSessionId = "session";
+  try {
+    const markup = renderToStaticMarkup(<MarkdownLink href="D:/Outside/App.tsx">组件</MarkdownLink>);
+    expect(markup).toContain('role="button"');
+    expect(markup).toContain('tabindex="0"');
+    expect(markup).not.toContain("href=");
+    expect(markup).toContain("组件</a>");
+  } finally { state.currentSessionId = sessionId; }
 });
 
 test("numeric citations keep their original URL semantics", () => {

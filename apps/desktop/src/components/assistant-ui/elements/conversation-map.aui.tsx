@@ -6,7 +6,7 @@ import { useAuiState, useThreadViewport } from "@assistant-ui/react";
 import type { ThreadMessage } from "@assistant-ui/react";
 import { cn } from "../../../lib/utils";
 import { useStore } from "../../../store";
-import { hasConversationRailSpaceInViewport } from "../../../lib/conversation-rail-layout";
+import { hasConversationRailSpaceInViewport, measureConversationRail } from "../../../lib/conversation-rail-layout";
 import { ConversationMap, type ConversationMapEntry } from "./conversation-map";
 
 const TOP_TOLERANCE = 1;
@@ -46,11 +46,17 @@ const readingLine = (viewport: HTMLElement) => {
 
 const partsOf = (message: ThreadMessage) => [...message.content];
 
-const textOf = (message: ThreadMessage) =>
-  partsOf(message)
+const messageText = new WeakMap<ThreadMessage, string>();
+const textOf = (message: ThreadMessage) => {
+  const cached = messageText.get(message);
+  if (cached !== undefined) return cached;
+  const text = partsOf(message)
     .map((part) => (part.type === "text" ? part.text : ""))
     .join("\n")
     .trim();
+  messageText.set(message, text);
+  return text;
+};
 
 const labelOf = (message: ThreadMessage) => {
   const parts = partsOf(message);
@@ -152,26 +158,10 @@ export function ConversationMapAui({
       const view = viewport.getBoundingClientRect();
       const line = readingLine(viewport);
 
-      // One pass yields both facts the rail draws: which turn is being read,
-      // and which turns the viewport currently holds.
-      let current: string | undefined;
-      let firstId: string | undefined;
-      const onScreen: string[] = [];
-      for (const block of viewport.querySelectorAll<HTMLElement>("[data-turn-id]")) {
-        const box = block.getBoundingClientRect();
-        if (box.top >= view.bottom) break;
-
-        const head = block.dataset["turnId"];
-        if (head === undefined) continue;
-        firstId ??= head;
-
-        if (box.top <= line) current = head;
-        if (box.bottom > view.top && !onScreen.includes(head)) {
-          onScreen.push(head);
-        }
-      }
-
-      setActiveId(current ?? firstId);
+      const { activeId: current, visibleIds: onScreen } = measureConversationRail(
+        viewport.querySelectorAll<HTMLElement>("[data-turn-id]"), view, line,
+      );
+      setActiveId(current);
       setVisibleIds((previous) =>
         sameIds(previous, onScreen) ? previous : onScreen,
       );

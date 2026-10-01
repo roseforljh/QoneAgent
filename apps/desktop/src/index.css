@@ -2,6 +2,7 @@
 @import "tw-shimmer";
 @import "./generative-ui.css";
 @import "./theme-accents.css";
+@import "./components/ui/select.css";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -558,31 +559,6 @@ a { text-decoration: none; }
 .text-button { display: inline-flex; align-items: center; gap: 7px; padding: 5px 6px; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
 .text-button:hover { color: var(--foreground); }
 
-/* Shared non-native select used across the app. assistant-ui has no generic
-   select primitive, so every choice uses this themed project component. */
-.qone-select { position: relative; z-index: 1; display: inline-flex; min-width: 0; }
-.qone-select.is-open { z-index: 60; }
-.qone-select-trigger { display: inline-flex; width: 100%; min-height: 37px; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--foreground); text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease, color .15s ease; }
-.qone-select-trigger:hover, .qone-select.is-open .qone-select-trigger { border-color: color-mix(in srgb, var(--foreground) 32%, var(--border)); background: var(--q-hover); }
-.qone-select-trigger:disabled { cursor: not-allowed; opacity: .5; }
-.qone-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qone-select-value.is-placeholder { color: var(--muted-foreground); }
-.qone-select-chevron { flex: 0 0 auto; color: var(--muted-foreground); transition: transform .15s ease; }
-.qone-select.is-open .qone-select-chevron { transform: rotate(90deg); }
-.qone-select-menu { position: absolute; z-index: 70; top: calc(100% + 5px); left: 0; display: flex; width: max-content; min-width: 100%; max-width: min(300px, calc(100vw - 24px)); max-height: min(280px, calc(100dvh - 24px)); flex-direction: column; gap: 2px; padding: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border: 1px solid var(--q-border); border-radius: 10px; background: var(--q-surface); box-shadow: 0 8px 18px rgb(0 0 0 / 12%); }
-.qone-select-menu.is-align-end { right: 0; left: auto; }
-.qone-select-option { display: flex; width: 100%; min-height: 35px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
-.qone-select-option:hover, .qone-select-option.is-selected { background: var(--q-hover); }
-.qone-select-option > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
-.qone-select-option strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.qone-select-option small { color: var(--muted-foreground); font-size: var(--q-text-xs); line-height: 1.3; }
-.qone-select-option > svg { flex: 0 0 auto; color: var(--foreground); }
-.qone-select-option.is-disabled { cursor: not-allowed; opacity: .45; }
-.qone-select-trigger-compact { width: auto; min-height: 30px; padding: 0 8px; border-radius: 7px; font-size: var(--q-text-xs); }
-.settings-form-grid .qone-select, .settings-model-toolbar .qone-select { width: 100%; }
-.q-model-picker { display: inline-flex; width: auto; }
-.q-model-picker .qone-select-menu { min-width: 190px; }
-
 /* ---- Settings dialog ---- */
 .settings-dialog-layer { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; }
 .settings-dialog-backdrop { position: absolute; inset: 0; border: 0; background: rgb(0 0 0 / 68%); cursor: default; }
@@ -636,7 +612,7 @@ a { text-decoration: none; }
 .settings-select-wrap { position: relative; z-index: 1; }
 .settings-select-wrap.is-open { z-index: 30; }
 .settings-accent-dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%; }
-.settings-dropdown { position: absolute; z-index: 40; top: calc(100% + 5px); right: 0; isolation: isolate; width: 194px; max-height: min(280px, calc(100dvh - 24px)); padding: 4px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border: 1px solid var(--q-border); border-radius: 12px; background-color: var(--q-surface); opacity: 1; box-shadow: 0 8px 18px rgb(0 0 0 / 12%); }
+.settings-dropdown { isolation: isolate; width: 194px; padding: 4px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border: 1px solid var(--q-border); border-radius: 12px; background-color: var(--q-surface); opacity: 1; box-shadow: 0 8px 18px rgb(0 0 0 / 12%); }
 .settings-dropdown-option { display: flex; width: 100%; min-height: 41px; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border: 0; border-radius: 8px; background-color: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
 .settings-dropdown-option:hover, .settings-dropdown-option.is-selected { background-color: var(--q-hover); }
 .settings-dropdown-option > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }

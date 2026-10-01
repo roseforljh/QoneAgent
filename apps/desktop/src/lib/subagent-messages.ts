@@ -4,6 +4,27 @@ import { assistantMessageContent } from "./assistant-message-parts";
 
 const running = (status: SubagentRunInfo["status"]) => ["created", "running", "waiting_approval", "paused"].includes(status);
 
+type SavedMessage = NonNullable<SubagentRunInfo["messages"]>[number];
+const savedMessages = new WeakMap<SavedMessage, { task?: string; converted: ThreadMessage }>();
+
+function savedMessage(message: SavedMessage, task: string): ThreadMessage | undefined {
+  if (message.internal || (message.role !== "user" && message.role !== "assistant")) return undefined;
+  const initialTask = message.role === "user" && message.sequence === 0 ? task : undefined;
+  const cached = savedMessages.get(message);
+  if (cached && cached.task === initialTask) return cached.converted;
+  const converted: ThreadMessage = message.role === "user" ? {
+    id: message.id, role: "user", createdAt: new Date(message.createdAt),
+    content: [{ type: "text", text: initialTask ?? message.content }], attachments: [], metadata: { custom: {} },
+  } : {
+    id: message.id, role: "assistant", createdAt: new Date(message.createdAt),
+    content: assistantMessageContent({ content: message.content, parts: message.parts }, [], false) as readonly ThreadAssistantMessagePart[],
+    status: { type: "complete", reason: "stop" },
+    metadata: { unstable_state: null, unstable_annotations: [], unstable_data: [], steps: [], custom: {} },
+  };
+  savedMessages.set(message, { task: initialTask, converted });
+  return converted;
+}
+
 export function subagentMessages(item: SubagentRunInfo): ThreadMessage[] {
   const isRunning = running(item.status);
   if (item.messages?.length) {
@@ -13,20 +34,9 @@ export function subagentMessages(item: SubagentRunInfo): ThreadMessage[] {
       : item.status === "failed" ? { type: "incomplete" as const, reason: "error" as const, error: item.error }
         : item.status === "cancelled" || item.status === "interrupted" ? { type: "incomplete" as const, reason: "cancelled" as const }
           : { type: "complete" as const, reason: "stop" as const };
-    const transcript: ThreadMessage[] = item.messages.flatMap((message): ThreadMessage[] => {
-      if (message.internal) return [];
-      if (message.role === "user") return [{
-        id: message.id, role: "user" as const, createdAt: new Date(message.createdAt),
-        content: [{ type: "text" as const, text: message.sequence === 0 ? item.task : message.content }], attachments: [], metadata: { custom: {} },
-      }];
-      if (message.role !== "assistant") return [];
-      const converted = assistantMessageContent({ content: message.content, parts: message.parts }, [], false);
-      return [{
-        id: message.id, role: "assistant" as const, createdAt: new Date(message.createdAt),
-        content: typeof converted === "string" ? [{ type: "text" as const, text: converted }] : converted as readonly ThreadAssistantMessagePart[],
-        status: { type: "complete" as const, reason: "stop" as const },
-        metadata: { unstable_state: null, unstable_annotations: [], unstable_data: [], steps: [], custom: {} },
-      }];
+    const transcript = item.messages.flatMap((message) => {
+      const converted = savedMessage(message, item.task);
+      return converted ? [converted] : [];
     });
     if (isRunning || unsavedParts.length || item.streaming) {
       const converted = assistantMessageContent({ content: item.streaming || "", parts: unsavedParts.length ? unsavedParts : undefined }, [], isRunning);

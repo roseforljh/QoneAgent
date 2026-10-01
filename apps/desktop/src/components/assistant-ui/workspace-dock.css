@@ -2,17 +2,16 @@
   position: relative;
   isolation: isolate;
   min-width: 0;
-  box-shadow: -8px 0 16px -8px rgb(0 0 0 / 0.12);
 }
 
 .q-workspace-dock-frame {
-  border-inline-start: 1px solid var(--border);
+  border-inline-start: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
 .q-workspace-dock-tabbar {
   height: var(--q-thread-header-height, 46px);
   min-height: var(--q-thread-header-height, 46px);
-  padding-inline: 8px 6px;
+  padding-inline: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
@@ -22,6 +21,7 @@
   isolation: isolate;
   min-width: min(90px, 100%);
   max-width: 240px;
+  flex: 0 1 auto;
   transition: background-color 150ms ease, color 150ms ease;
 }
 .q-workspace-dock-tab::before {
@@ -38,12 +38,36 @@
 .q-workspace-dock-tab.is-active::before {
   border-color: color-mix(in srgb, var(--foreground) 9%, transparent);
   background: color-mix(in srgb, var(--foreground) 5%, var(--background));
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
 }
+.q-workspace-dock-tab.is-active .q-workspace-dock-tab-close { opacity: 1; pointer-events: auto; }
 .q-workspace-dock-tab-close { opacity: 0; pointer-events: none; transition: opacity 150ms ease; }
 .q-workspace-dock-tab:hover .q-workspace-dock-tab-close,
 .q-workspace-dock-tab:focus-within .q-workspace-dock-tab-close { opacity: 1; pointer-events: auto; }
-.q-workspace-dock-actions { border-inline-start: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.q-workspace-dock-actions .aui-button-icon { color: var(--muted-foreground); }
+.q-workspace-dock-actions .aui-button-icon:hover,
+.q-workspace-dock-actions .aui-button-icon[data-state="open"] { background: var(--q-hover); color: var(--foreground); }
+
+.q-dock-terminal {
+  padding-block: 8px 12px;
+  padding-inline: 16px 8px;
+  background: var(--background);
+}
+.q-dock-terminal-host {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-sm);
+  letter-spacing: normal;
+}
+.q-dock-terminal-renderer { background: inherit; }
+/* The bundled xterm stylesheet gives its viewport a black default. Keep both
+   layers on the panel surface; explicit ANSI cell backgrounds remain intact. */
+.q-dock-terminal .xterm,
+.q-dock-terminal .xterm-viewport { background-color: transparent !important; }
+.q-dock-terminal .xterm { height: 100%; }
+.q-dock-terminal-tab-icon[data-status="starting"] { color: var(--aui-warning); }
+.q-dock-terminal-tab-icon[data-status="error"] { color: var(--destructive); }
+.q-dock-terminal-tab-icon[data-status="exited"] { opacity: .5; }
 
 .q-workspace-dock-resizer {
   position: absolute;

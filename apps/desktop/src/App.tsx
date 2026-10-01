@@ -9,13 +9,12 @@ import {
   type AppendMessage,
   type ExternalStoreThreadData,
   type ExternalStoreThreadListAdapter,
-  type ThreadMessageLike,
 } from "@assistant-ui/react";
 import { sameUserInput, type MessageAttachmentInfo, type PluginInfo } from "@qone/protocol";
-import { assistantMessageContent } from "./lib/assistant-message-parts";
+import { createMessageConverter, convertedMessage } from "./lib/runtime-message-converter";
 import { insertChatRunErrorMessage } from "./lib/chat-run-error-message";
 import { isImageModel } from "./lib/image-model-config";
-import { appendSubagentImages, selectSubagentImages } from "./lib/subagent-images";
+import { selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { localImagePreview } from "./lib/local-image-preview";
 import { expandComposerCommand } from "./lib/composer-command";
@@ -185,16 +184,17 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const imageWindows = useMemo(() => {
     const windows = new Map<string, { after?: number; through?: number }>();
     const lastAssistantByRun = new Map<string, number>();
-    for (const message of runtimeMessages) {
+    for (const message of messages) {
       if (message.role !== "assistant" || !message.runId) continue;
       windows.set(message.id, {
         after: lastAssistantByRun.get(message.runId),
-        through: message.id === "streaming" ? undefined : message.createdAt,
+        through: message.createdAt,
       });
-      if (message.id !== "streaming" && message.createdAt !== undefined) lastAssistantByRun.set(message.runId, message.createdAt);
+      if (message.createdAt !== undefined) lastAssistantByRun.set(message.runId, message.createdAt);
     }
+    if (running && activeRunId) windows.set("streaming", { after: lastAssistantByRun.get(activeRunId) });
     return windows;
-  }, [runtimeMessages]);
+  }, [messages, running, activeRunId]);
   const toolCallsByRun = useMemo(() => {
     const grouped = new Map<string, ToolCall[]>();
     for (const call of toolCalls) {
@@ -232,43 +232,19 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     },
   }), [threads, currentSessionId, newSession, selectSession, send, sessions, t]);
 
-  const runtime = useExternalStoreRuntime({
-    messages: runtimeMessages,
-    isRunning: running,
-    convertMessage: (message): ThreadMessageLike => {
-      const role = message.role === "assistant" ? "assistant" : "user";
-      const createdAt = new Date(message.createdAt ?? Date.now());
-      if (role === "user") return {
-        id: message.id,
-        role,
-        createdAt,
-        content: [
-          ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
-          ...(message.attachments ?? []).map((attachment) => attachment.type === "image" && (attachment.localPath ? imagePreviews[attachment.localPath] : attachment.data)
-            ? { type: "image" as const, image: attachment.localPath ? imagePreviews[attachment.localPath]! : attachment.data, filename: attachment.name }
-            : { type: "file" as const, filename: attachment.name, mimeType: attachment.mimeType, data: attachment.data }),
-        ],
-      };
+  const convertMessage = useMemo(createMessageConverter, []);
+  const convertedMessages = useMemo(() => {
+    const context = {
+      imagePreviews, toolCallsByRun, imageWindows, childImagesByRun, running,
+      imageModel: isImageModel(selectedModel), imageGenerationError, chatRunErrorDetail: chatRunError?.detail,
+    };
+    return runtimeMessages.map((message) => convertMessage(message, context));
+  }, [runtimeMessages, convertMessage, imagePreviews, toolCallsByRun, imageWindows, childImagesByRun, running, selectedModel, imageGenerationError, chatRunError?.detail]);
 
-      const isStreamingMessage = message.id === "streaming";
-      const calls = !message.parts && message.runId ? (toolCallsByRun.get(message.runId) ?? []) : [];
-      const converted = assistantMessageContent(message, calls, isStreamingMessage);
-      // The child transcript stays in the dock, but its images also belong
-      // to the parent answer. Derive them from persisted child runs so live
-      // updates and reopened sessions use the same content.
-      const imageWindow = imageWindows.get(message.id);
-      const content = appendSubagentImages(converted, message.runId ? childImagesByRun.get(message.runId) : undefined, imageWindow?.after, imageWindow?.through);
-      const imageGenerationPending = isStreamingMessage && running && isImageModel(selectedModel) && content.length === 0;
-      const imageGenerationFailed = message.id.startsWith("image-error:") && imageGenerationError ? { prompt: imageGenerationError.content, error: chatRunError?.detail } : undefined;
-      return {
-        id: message.id,
-        role,
-        createdAt,
-        content,
-        metadata: imageGenerationPending || imageGenerationFailed ? { custom: { qoneImageGeneration: imageGenerationPending ? { prompt: message.content, generating: true } : imageGenerationFailed } } : undefined,
-        status: isStreamingMessage && running ? { type: "running" } : { type: "complete", reason: "stop" },
-      };
-    },
+  const runtime = useExternalStoreRuntime({
+    messages: convertedMessages,
+    isRunning: running,
+    convertMessage: convertedMessage,
     onNew: async (message) => {
       const prompt = extractComposerPrompt(message);
       const text = prompt.text;
@@ -550,7 +526,14 @@ function AppsPanel({ plugins }: { plugins: PluginInfo[] }) {
 
 function ManagementPanel({ kind }: { kind: "skills" | "plugins" | "permissions" }) {
   const { t } = useLocale();
-  const { send, skills, plugins, workspaces, currentWorkspaceId, permissionRules, setPermission, lastError } = useStore();
+  const send = useStore((state) => state.send);
+  const skills = useStore((state) => state.skills);
+  const plugins = useStore((state) => state.plugins);
+  const workspaces = useStore((state) => state.workspaces);
+  const currentWorkspaceId = useStore((state) => state.currentWorkspaceId);
+  const permissionRules = useStore((state) => state.permissionRules);
+  const setPermission = useStore((state) => state.setPermission);
+  const lastError = useStore((state) => state.lastError);
   const { theme, toggleTheme } = useTheme();
   useEffect(() => {
     if (kind === "plugins") send({ type: "plugins.list", requestId: crypto.randomUUID() });

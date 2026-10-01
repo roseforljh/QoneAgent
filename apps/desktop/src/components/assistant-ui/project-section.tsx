@@ -11,14 +11,14 @@ import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import { useEffect, useRef, useState, type FC, type ReactNode } from "react";
 import { SidebarEntityMenu, SidebarMenu } from "./sidebar-menu";
 import { useLocale } from "../../localization";
-import { groupProjectSidebarSessions, useSidebarPreferences } from "../../lib/sidebar-preferences";
+import { groupProjectSidebarSessions, sortSidebarWorkspaces, useSidebarPreferences } from "../../lib/sidebar-preferences";
 import { MorphingSpinner } from "./morphing-spinner";
 import { SidebarSessionTitle } from "./sidebar-session-title";
 import { SidebarSessionActions } from "./sidebar-session-pin-action";
 
 const rowButtonClass = "text-foreground/95 group-hover:text-foreground flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-start outline-none transition-colors";
 
-const SessionRow: FC<{ session: SessionInfo }> = ({ session }) => {
+const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = ({ session, dragGroup }) => {
   const { t } = useLocale();
   const currentSessionId = useStore((s) => s.currentSessionId);
   const selectSession = useStore((s) => s.selectSession);
@@ -48,14 +48,16 @@ const SessionRow: FC<{ session: SessionInfo }> = ({ session }) => {
   };
 
   return (
-    <motion.div layout="position" data-active={active || undefined} className={cn("q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px]", renaming && "bg-muted")}>
+    <motion.div layout="position" data-active={active || undefined}
+      data-sidebar-drag-id={renaming ? undefined : session.id} data-sidebar-drag-kind="session" data-sidebar-drag-group={dragGroup}
+      className={cn("q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px]", renaming && "bg-muted")}>
       {renaming ? (
         <input ref={inputRef} value={title} onChange={(event) => setTitle(event.target.value)} onBlur={submitRename}
           onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setTitle(session.title); setRenaming(false); } }}
           className="border-input bg-background focus:border-ring mx-1 h-6 min-w-0 flex-1 rounded-md border px-2 text-xs outline-none"
           aria-label={t("sidebar.renameSession")} />
       ) : (
-        <button type="button" className={cn(rowButtonClass, "q-sidebar-session-trigger")}
+        <button type="button" data-sidebar-drag-handle="" className={cn(rowButtonClass, "q-sidebar-session-trigger")}
           onClick={() => selectSession(session.id)} aria-current={active ? "page" : undefined}>
           <span className="q-sidebar-project-session-leading" aria-hidden="true" />
           <SidebarSessionTitle title={session.title || t("sidebar.newChat")}>{session.title || t("sidebar.newChat")}</SidebarSessionTitle>
@@ -98,14 +100,16 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
 
   return (
     <motion.div layout="position" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} className="relative">
-      <div className={cn("q-sidebar-project-row group relative flex h-[30px] items-center rounded-[10px] transition-colors", renaming && "bg-muted")}>
+      <div data-sidebar-drag-id={renaming ? undefined : workspace.id} data-sidebar-drag-kind="workspace"
+        data-sidebar-drag-group={pinned ? "workspace:pinned" : "workspace:regular"}
+        className={cn("q-sidebar-project-row group relative flex h-[30px] items-center rounded-[10px] transition-colors", renaming && "bg-muted")}>
         {renaming ? (
           <input ref={inputRef} value={name} onChange={(event) => setName(event.target.value)} onBlur={submitRename}
             onKeyDown={(event) => { if (event.key === "Enter") submitRename(); if (event.key === "Escape") { setName(workspace.name); setRenaming(false); } }}
             className="border-input bg-background focus:border-ring mx-1 h-7 min-w-0 flex-1 rounded-md border px-2 text-xs outline-none"
             aria-label={t("sidebar.renameProject")} />
         ) : (
-          <button type="button" className={cn(rowButtonClass, "q-sidebar-project-trigger")}
+          <button type="button" data-sidebar-drag-handle="" className={cn(rowButtonClass, "q-sidebar-project-trigger")}
             onClick={() => { selectWorkspace(workspace.id); setExpanded((value) => !value); }}
             title={workspace.path} aria-expanded={expanded}>
             <CodexIcon src={expanded ? folderOpenIcon : folderIcon} className="text-muted-foreground size-4 shrink-0" />
@@ -130,7 +134,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
         {expanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
             <div className="flex min-w-0 flex-col gap-0.5 pb-1">
-              {sessions.length ? sessions.map((session) => <SessionRow key={session.id} session={session} />)
+              {sessions.length ? sessions.map((session) => <SessionRow key={session.id} session={session} dragGroup={`session:workspace:${workspace.id}`} />)
                 : <p className="text-muted-foreground px-2 py-1 text-xs">{t("sidebar.noChatsInProject")}</p>}
             </div>
           </motion.div>
@@ -141,6 +145,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
 };
 
 interface ProjectGroupProps {
+  dragGroup: string;
   label: string;
   workspaces: WorkspaceInfo[];
   sessionsByWorkspace: ReadonlyMap<string, SessionInfo[]>;
@@ -149,7 +154,7 @@ interface ProjectGroupProps {
   actions?: ReactNode;
 }
 
-const ProjectGroup: FC<ProjectGroupProps> = ({ label, workspaces, sessionsByWorkspace, emptyText, leadingSessions = [], actions }) => {
+const ProjectGroup: FC<ProjectGroupProps> = ({ dragGroup, label, workspaces, sessionsByWorkspace, emptyText, leadingSessions = [], actions }) => {
   const [open, setOpen] = useState(true);
   return (
     <div>
@@ -166,7 +171,7 @@ const ProjectGroup: FC<ProjectGroupProps> = ({ label, workspaces, sessionsByWork
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
             <div className="flex flex-col gap-0.5 pb-1">
               <AnimatePresence initial={false} mode="popLayout">
-                {leadingSessions.map((session) => <SessionRow key={session.id} session={session} />)}
+                {leadingSessions.map((session) => <SessionRow key={session.id} session={session} dragGroup={dragGroup} />)}
                 {workspaces.map((workspace) => (
                   <ProjectRow key={workspace.id} workspace={workspace} sessions={sessionsByWorkspace.get(workspace.id) ?? []} />
                 ))}
@@ -189,16 +194,17 @@ export const ProjectSection: FC = () => {
   const [sectionMenuOpen, setSectionMenuOpen] = useState(false);
   const sidebarPreferences = useSidebarPreferences();
   const pinnedWorkspaceSet = new Set(pinnedWorkspaceIds);
-  const pinned = workspaces.filter((workspace) => pinnedWorkspaceSet.has(workspace.id));
-  const regular = workspaces.filter((workspace) => !pinnedWorkspaceSet.has(workspace.id));
+  const orderedWorkspaces = sortSidebarWorkspaces(workspaces, sidebarPreferences.workspaceOrder);
+  const pinned = orderedWorkspaces.filter((workspace) => pinnedWorkspaceSet.has(workspace.id));
+  const regular = orderedWorkspaces.filter((workspace) => !pinnedWorkspaceSet.has(workspace.id));
   const sessionGroups = groupProjectSidebarSessions(sessions, workspaces.map((workspace) => workspace.id), sidebarPreferences);
   return (
     <div className="flex flex-col gap-4">
       {(pinned.length > 0 || sessionGroups.pinned.length > 0) && (
-        <ProjectGroup label={t("sidebar.pinnedProjects")} workspaces={pinned}
+        <ProjectGroup dragGroup="session:pinned" label={t("sidebar.pinnedProjects")} workspaces={pinned}
           sessionsByWorkspace={sessionGroups.byWorkspace} leadingSessions={sessionGroups.pinned} emptyText={t("sidebar.noPinnedProjects")} />
       )}
-      <ProjectGroup label={t("sidebar.projects")} workspaces={regular}
+      <ProjectGroup dragGroup="session:projects" label={t("sidebar.projects")} workspaces={regular}
         sessionsByWorkspace={sessionGroups.byWorkspace} emptyText={t("sidebar.noProjects")}
         actions={
           <div className={cn("q-sidebar-section-actions flex shrink-0 items-center gap-1 pr-1", sectionMenuOpen && "is-open")}>
@@ -210,7 +216,7 @@ export const ProjectSection: FC = () => {
           </div>
         } />
       {sessionGroups.unassigned.length > 0 && (
-        <ProjectGroup label={t("sidebar.chats")} workspaces={[]}
+        <ProjectGroup dragGroup="session:unassigned" label={t("sidebar.chats")} workspaces={[]}
           sessionsByWorkspace={sessionGroups.byWorkspace} leadingSessions={sessionGroups.unassigned} emptyText="" />
       )}
     </div>

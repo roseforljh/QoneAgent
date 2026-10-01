@@ -1,3 +1,4 @@
+import { localizeError } from "./lib/error-localization";
 import { initRuntimeBridge } from "./store-bridge";
 import { repeatedUserMessageId } from "@qone/protocol";
 import { sessionStore, switchSessionState, type SessionExecutionState } from "./lib/session-execution-state";
@@ -260,23 +261,23 @@ function finishMcpConnection(serverId: string) {
 }
 
 export function requestModelMetadata(input: Omit<Extract<RuntimeCommand, { type: "model.resolve-metadata" }>, "type" | "requestId">): Promise<Extract<RuntimeEvent, { type: "model.metadata-resolved" }>["models"]> {
-  if (!hasTauriBridge()) return Promise.reject(new Error("Runtime is unavailable"));
-  if (!useStore.getState().connected) return Promise.reject(new Error("Runtime is not connected"));
+  if (!hasTauriBridge()) return Promise.reject(new Error(t("error.runtimeUnavailable")));
+  if (!useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeNotConnected")));
   if (!metadataLookupSupported) return Promise.reject(new Error("MODEL_METADATA_UNSUPPORTED"));
   const requestId = rid();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { metadataRequests.delete(requestId); reject(new Error("Model metadata lookup timed out")); }, 15_000);
+    const timer = setTimeout(() => { metadataRequests.delete(requestId); reject(new Error(t("error.metadataTimeout"))); }, 15_000);
     metadataRequests.set(requestId, {
       resolve: (models) => { clearTimeout(timer); metadataRequests.delete(requestId); resolve(models); },
       reject: (error) => { clearTimeout(timer); metadataRequests.delete(requestId); reject(error); },
     });
-    invoke("runtime_send", { cmd: JSON.stringify({ type: "model.resolve-metadata", requestId, ...input }) })
-      .catch((error) => metadataRequests.get(requestId)?.reject(new Error(String(error))));
+    invoke("runtime_send", { cmd: JSON.stringify({ type: "model.resolve-metadata", requestId, ...input, locale: resolveLocale(getLanguageSetting()) }) })
+      .catch((error) => metadataRequests.get(requestId)?.reject(new Error(localizeError(error))));
   });
 }
 
 export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
-  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error("Runtime is unavailable"));
+  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
   const cacheKey = JSON.stringify(command);
   const existing = cloudInFlight.get(cacheKey);
   if (existing) return existing;
@@ -297,7 +298,7 @@ export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
 }
 
 export function requestSkillMutation(command: SkillMutationInput): Promise<SkillMutationResponse> {
-  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error("Runtime is unavailable"));
+  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
   const requestId = rid();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { skillMutationRequests.delete(requestId); reject(new Error(t("error.skillTimeout"))); }, 20_000);
@@ -415,7 +416,7 @@ export const useStore = create<AgentState>((set, get) => ({
         githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === cmd.serverId ? undefined : st.githubDeviceAuthorization,
       }));
     }
-    return invoke("runtime_send", { cmd: JSON.stringify(cmd) }).then(() => true).catch((error) => {
+    return invoke("runtime_send", { cmd: JSON.stringify({ ...cmd, locale: resolveLocale(getLanguageSetting()) }) }).then(() => true).catch((error) => {
       console.error("runtime_send failed", error);
       if (cmd.type === "mcp.connect") finishMcpConnection(cmd.config.id);
       if (cmd.type === "secret.set" && cmd.key.startsWith("mcp.env:")) restoredMcpSecrets.delete(cmd.key);
@@ -426,7 +427,7 @@ export const useStore = create<AgentState>((set, get) => ({
         {
           clearDelta(cmd.sessionId);
           sessionStore(useStore, cmd.sessionId).setState({
-            chatRunError: { sessionId: cmd.sessionId, userMessageId: cmd.messageId, detail: String(error) },
+            chatRunError: { sessionId: cmd.sessionId, userMessageId: cmd.messageId, detail: localizeError(error) },
             running: false,
             streaming: "",
             streamingParts: [],
@@ -442,14 +443,14 @@ export const useStore = create<AgentState>((set, get) => ({
       } else if (workspaceRequests.delete(cmd.requestId)) {
         const rec = untrackWorkspaceRequest(cmd.requestId);
         if (rec?.ownerId) {
-          useWorkspaceViewStore.getState().setError(rec.ownerId, String(error));
+          useWorkspaceViewStore.getState().setError(rec.ownerId, localizeError(error));
         } else if (!rec || rec.workspaceId === get().currentWorkspaceId) {
-          set({ lastError: String(error), workspaceError: String(error) });
+          set({ lastError: localizeError(error), workspaceError: localizeError(error) });
         } else {
-          set({ lastError: String(error) });
+          set({ lastError: localizeError(error) });
         }
       } else {
-        set({ lastError: String(error) });
+        set({ lastError: localizeError(error) });
       }
       return false;
     });
@@ -526,7 +527,7 @@ export const useStore = create<AgentState>((set, get) => ({
       set({ lastError: t("error.previewRuntime") });
       return;
     }
-    invoke<string | null>("pick_workspace")
+    invoke<string | null>("pick_workspace", { title: t("chat.importProject") })
       .then((path) => {
         if (!path) return;
         get().send({
@@ -538,7 +539,7 @@ export const useStore = create<AgentState>((set, get) => ({
       })
       .catch((error) => {
         console.error("workspace picker failed", error);
-        set({ lastError: t("error.projectPicker", { error: String(error) }) });
+        set({ lastError: t("error.projectPicker", { error: localizeError(error) }) });
       });
   },
 

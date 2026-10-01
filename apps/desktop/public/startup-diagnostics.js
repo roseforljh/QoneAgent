@@ -1,5 +1,6 @@
 // Runs before the module graph: errors in imports cannot reach React's boundary.
 (() => {
+  const text = (key) => window.qoneBootText?.(key) ?? key;
   function fail(message) {
     if (document.documentElement.dataset.qoneBooted === "true") return;
     console.error("[qone:startup]", message);
@@ -8,7 +9,7 @@
     if (!root) return;
     root.replaceChildren();
     const heading = document.createElement("h1");
-    heading.textContent = "Qone 启动失败";
+    heading.textContent = text("startup.failed");
     const detail = document.createElement("pre");
     detail.textContent = message;
     detail.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere";
@@ -17,7 +18,7 @@
   }
   window.addEventListener("error", (event) => {
     if (event.target instanceof HTMLScriptElement) {
-      fail(`脚本加载失败：${event.target.src}`);
+      fail(`${text("startup.scriptFailed")}: ${event.target.src}`);
     } else if (event instanceof ErrorEvent) {
       fail(event.error?.stack || `${event.message}\n${event.filename}:${event.lineno}`);
     }
@@ -26,6 +27,6 @@
     fail(event.reason?.stack || String(event.reason));
   });
   document.addEventListener("securitypolicyviolation", (event) => {
-    fail(`CSP 拦截：${event.effectiveDirective}\n资源：${event.blockedURI}`);
+    fail(`${text("startup.cspBlocked")}: ${event.effectiveDirective}\n${text("startup.resource")}: ${event.blockedURI}`);
   });
 })();

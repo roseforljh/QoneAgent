@@ -49,3 +49,26 @@ test("internal runtime inputs are hidden while task and literal follow-ups remai
   expect(messages[0]!.content[0]).toMatchObject({ text: worker.task });
   expect(messages[2]!.content[0]).toMatchObject({ text: followUp });
 });
+
+test("streamed child text and reasoning reuse saved messages while changed tasks and results refresh", () => {
+  const saved = {
+    id: "saved", role: "assistant" as const, sequence: 1, content: "saved answer", createdAt: 2,
+    parts: [{ type: "tool-call" as const, toolCallId: "read", toolName: "read", args: {}, result: "old", messageSequence: 1 }],
+  };
+  const item = { ...worker, parts: saved.parts, messages: [
+    { id: "user", role: "user" as const, sequence: 0, content: "expanded task", createdAt: 1 }, saved,
+  ] };
+  const before = subagentMessages(item);
+  const after = subagentMessages({ ...item, streaming: "next delta", parts: [
+    ...saved.parts, { type: "reasoning", text: "live thinking", messageSequence: 2 },
+  ] });
+  expect(after[0]).toBe(before[0]);
+  expect(after[1]).toBe(before[1]);
+  expect(after.at(-1)).not.toBe(before.at(-1));
+  const changedTask = subagentMessages({ ...item, task: "new task" });
+  expect(changedTask[0]!.content[0]).toMatchObject({ text: "new task" });
+  expect(changedTask[1]).toBe(before[1]);
+  const changedResult = subagentMessages({ ...item, messages: [item.messages[0]!, { ...saved, parts: [{ ...saved.parts[0]!, result: "new" }] }] });
+  expect(changedResult[1]).not.toBe(before[1]);
+  expect(changedResult[1]!.content[0]).toMatchObject({ result: "new" });
+});

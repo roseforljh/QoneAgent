@@ -1,3 +1,4 @@
+import { translateCurrent } from "../src/localization";
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   _resetWorkspaceViewInternalsForTest,
@@ -314,7 +315,7 @@ describe("workspace-view-state robustness & ownership", () => {
 
     // view 中应该标记发送失败错误且 loading 结束
     expect(useWorkspaceViewStore.getState().views[tabId]?.filesLoading).toBe(false);
-    expect(useWorkspaceViewStore.getState().views[tabId]?.error).toBe("Failed to send request");
+    expect(useWorkspaceViewStore.getState().views[tabId]?.error).toBe(translateCurrent("error.workspaceSendFailed"));
 
     // 如果之后有虚假响应带着这个 reqId 进来，因为已被 untrack，不会更新 view 也不会更新 global
     const res = dispatchWorkspaceFiles(

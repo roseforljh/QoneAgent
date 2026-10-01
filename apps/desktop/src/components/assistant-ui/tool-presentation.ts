@@ -1,4 +1,5 @@
 import { toolFileChanges } from "@qone/protocol";
+import { getLanguageSetting, resolveLocale, translate, translateCurrent, type Locale } from "../../localization";
 import { diffLines, parsePatch, formatPatch } from "diff";
 import { commandForTool } from "./tool-action-summary";
 import { isCommandTool } from "./tool-activity-category";
@@ -234,7 +235,7 @@ export function splitMutationPatch(presentation: Extract<ToolPresentation, { kin
 /** Use the same ordered line diff as Diff Viewer, not a line multiset. */
 export function toolDiffStats(presentation: ToolPresentation): { file: string; added: number; removed: number } | undefined {
   if (presentation.kind !== "diff") return undefined;
-  const file = presentation.name ?? "文件";
+  const file = presentation.name ?? translateCurrent("attachment.file");
   let added = 0;
   let removed = 0;
   if (presentation.patch) {
@@ -253,10 +254,10 @@ export function toolDiffStats(presentation: ToolPresentation): { file: string; a
   return { file, added, removed };
 }
 
-export function toolPresentationSummary(presentation: ToolPresentation): string {
+export function toolPresentationSummary(presentation: ToolPresentation, locale: Locale = resolveLocale(getLanguageSetting())): string {
   switch (presentation.kind) {
     case "diff":
-      return presentation.name ? `${presentation.name} 已更新` : "文件已更新";
+      return translate(locale, "tool.fileUpdated", { name: presentation.name ?? translate(locale, "attachment.file") });
     case "file":
       return presentation.content;
     case "terminal":
@@ -264,10 +265,10 @@ export function toolPresentationSummary(presentation: ToolPresentation): string 
     case "search":
       return presentation.text ?? presentation.items.map((item) => `${item.path ?? ""}${item.line !== undefined ? `:${item.line}` : ""} ${item.text}`.trim()).join("\n");
     case "image":
-      return presentation.name ?? "图片结果";
+      return presentation.name ?? translate(locale, "tool.imageResult");
     case "text":
       return presentation.text;
     case "unknown":
-      return presentation.text ?? "工具结果可在调试回退中查看";
+      return presentation.text ?? translate(locale, "tool.debugResult");
   }
 }

@@ -1,3 +1,4 @@
+import { localizeError } from "../../lib/error-localization";
 import { ComposerAttachments, ComposerAddAttachment } from "./elements/attachment.aui";
 import { File } from "./elements/file";
 import { UserImageThumbnail } from "./elements/user-image-thumbnail";
@@ -390,12 +391,12 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const onToolSelect = useCallback((tool: ComposerTool) => {
     if (tool.id === "attachment") {
       if (hasTauriBridge()) void pickNativeAttachmentFiles().then(onNativeFiles).catch((error) => {
-        useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
+        useStore.setState({ lastError: localizeError(error) });
       });
       else shellRef.current?.querySelector<HTMLButtonElement>(".aui-composer-add-attachment")?.click();
     }
     else if (tool.id === "folder") void pickNativeAttachmentFolder().then(onNativeFiles).catch((error) => {
-      useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
+      useStore.setState({ lastError: localizeError(error) });
     });
     else if (tool.id === "compact") compactSession();
     else insertToolRef.current?.({ id: tool.id, label: tool.label });

@@ -3,11 +3,12 @@ import { FitAddon } from "@xterm/addon-fit";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createDockTerminalSession } from "./dock-terminal-session";
+import { bindDockTerminalAppearance, readDockTerminalAppearance } from "./dock-terminal-appearance";
 
 function createResource(tabId: string, cwd: string) {
   const element = document.createElement("div");
-  element.className = "h-full min-h-0 w-full min-w-0 overflow-hidden";
-  const term = new Terminal({ fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", cursorBlink: true, convertEol: false, scrollOnUserInput: true, theme: { background: "rgba(0,0,0,0)" } });
+  element.className = "q-dock-terminal-renderer h-full min-h-0 w-full min-w-0 overflow-hidden";
+  const term = new Terminal({ cursorBlink: true, cursorStyle: "bar", cursorInactiveStyle: "bar", convertEol: false, scrollOnUserInput: true });
   const fit = new FitAddon();
   term.loadAddon(fit);
   let opened = false;
@@ -29,22 +30,28 @@ function createResource(tabId: string, cwd: string) {
   });
   const input = term.onData(session.write);
   const resize = term.onResize(() => session.resize());
+  const fitTerminal = () => { if (element.isConnected && element.clientWidth > 0 && element.clientHeight > 0) fit.fit(); };
+  let stopAppearance: (() => void) | undefined;
   return {
     session,
     attach(host: HTMLElement) {
       host.append(element);
+      stopAppearance?.();
+      term.options = readDockTerminalAppearance(element);
       if (!opened) {
-        term.options.theme = { background: "rgba(0,0,0,0)", foreground: getComputedStyle(host).color };
         term.open(element);
         opened = true;
       }
+      const stop = bindDockTerminalAppearance(element, term, fitTerminal);
+      stopAppearance = stop;
       void session.start();
-      return () => { if (element.parentElement === host) element.remove(); };
+      return () => { if (element.parentElement === host) { stop(); stopAppearance = undefined; element.remove(); } };
     },
-    fit() { if (element.isConnected && element.clientWidth > 0 && element.clientHeight > 0) fit.fit(); },
+    fit: fitTerminal,
     clear: () => term.clear(),
     focus: () => { if (element.isConnected) term.focus(); },
     dispose() {
+      stopAppearance?.();
       input.dispose();
       resize.dispose();
       element.remove();

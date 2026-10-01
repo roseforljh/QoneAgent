@@ -1,4 +1,5 @@
-import { useLocale } from "../../../localization";
+import { localizeError } from "../../../lib/error-localization";
+import { translateCurrent, useLocale } from "../../../localization";
 "use client";
 
 import {
@@ -112,7 +113,7 @@ const saveImagePart = async (
   const picker = (window as Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
   if (!native && !picker) {
     const blob = isDataUri ? dataUriToBlob(part.image) : null;
-    if (isDataUri && !blob) throw new Error("Image data could not be read");
+    if (isDataUri && !blob) throw new Error(translateCurrent("image.loadFailed"));
     const objectUrl = blob ? URL.createObjectURL(blob) : null;
     const a = document.createElement("a");
     a.href = objectUrl ?? part.image;
@@ -125,22 +126,22 @@ const saveImagePart = async (
     return;
   }
   const blob = isDataUri ? dataUriToBlob(part.image) : await fetch(part.image).then((response) => {
-    if (!response.ok) throw new Error(`Image download failed: ${response.status}`);
+    if (!response.ok) throw new Error(translateCurrent("image.downloadFailed", { status: response.status }));
     return response.blob();
   });
-  if (!blob) throw new Error("Image data could not be read");
+  if (!blob) throw new Error(translateCurrent("image.loadFailed"));
   if (native) {
     const data = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
         const encoded = String(reader.result).split(",", 2)[1];
         if (encoded) resolve(encoded);
-        else reject(new Error("Image data could not be read"));
+        else reject(new Error(translateCurrent("image.loadFailed")));
       };
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(blob);
     });
-    await invoke("save_image_as", { filename, data });
+    await invoke("save_image_as", { filename, data, title: translateCurrent("image.saveAs") });
     return;
   }
   if (picker) {
@@ -157,7 +158,7 @@ const saveImagePart = async (
 };
 
 function reportSaveError(error: unknown): void {
-  useStore.setState({ lastError: error instanceof Error ? error.message : String(error) });
+  useStore.setState({ lastError: localizeError(error) });
 }
 
 const imageVariants = cva(
@@ -217,10 +218,11 @@ function ImagePreview({
   onLoad,
   onError,
   onNaturalSize,
-  alt = "Image content",
+  alt,
   src,
   ...props
 }: ImagePreviewProps) {
+  const { t } = useLocale();
   const imgRef = useRef<HTMLImageElement>(null);
   const [loadedSrc, setLoadedSrc] = useState<string | undefined>(undefined);
   const [errorSrc, setErrorSrc] = useState<string | undefined>(undefined);
@@ -262,7 +264,7 @@ function ImagePreview({
         <img
           ref={imgRef}
           src={src}
-          alt={alt}
+          alt={alt ?? t("image.content")}
           className={cn(
             "block h-auto w-full object-contain",
             !loaded && "invisible",
@@ -407,7 +409,7 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
           : <img
               data-slot="image-zoom-content"
               src={src}
-              alt={alt}
+              alt={alt ?? t("image.content")}
               className="aui-image-zoom-content max-h-full max-w-full object-contain"
               onClick={(event) => event.stopPropagation()}
               onError={() => setFailedSrc(src)}
@@ -487,6 +489,7 @@ function ImageContentFilterError({
 }
 
 const ImageImpl: ImageMessagePartComponent = (props) => {
+  const { t } = useLocale();
   const { image, filename, status } = props;
 
   if (status?.type === "running") {
@@ -501,7 +504,7 @@ const ImageImpl: ImageMessagePartComponent = (props) => {
   if (status?.type === "incomplete" && status.reason === "content-filter") {
     return (
       <ImageRoot>
-        <ImageContentFilterError reason="The provider blocked this image." />
+        <ImageContentFilterError reason={t("image.providerBlocked")} />
       </ImageRoot>
     );
   }
@@ -509,7 +512,7 @@ const ImageImpl: ImageMessagePartComponent = (props) => {
   if (status?.type === "incomplete") {
     return (
       <ImageRoot>
-        <ImageContentFilterError reason={status.reason === "error" ? "Image generation failed." : "Image could not be loaded."} />
+        <ImageContentFilterError reason={t(status.reason === "error" ? "image.generationFailed" : "image.loadFailed")} />
         <ImageFilename>{filename}</ImageFilename>
       </ImageRoot>
     );
@@ -517,8 +520,8 @@ const ImageImpl: ImageMessagePartComponent = (props) => {
 
   return (
     <ImageRoot>
-      <ImageZoom src={image} alt={filename || "Image content"} filename={filename}>
-        <ImagePreview src={image} alt={filename || "Image content"} />
+      <ImageZoom src={image} alt={filename || t("image.content")} filename={filename}>
+        <ImagePreview src={image} alt={filename || t("image.content")} />
       </ImageZoom>
       <ImageFilename>{filename}</ImageFilename>
     </ImageRoot>

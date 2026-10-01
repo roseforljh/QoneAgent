@@ -66,8 +66,8 @@ export function MathSpan({ className, children, ...props }: ComponentProps<"span
   return <span className={className} {...props}>{children}</span>;
 }
 
-const MarkdownTextImpl = () => {
-  return <OfficialMarkdownText components={defaultComponents} />;
+const MarkdownTextImpl = ({ components, ...props }: ComponentProps<typeof OfficialMarkdownText>) => {
+  return <OfficialMarkdownText {...props} components={components ? { ...defaultComponents, ...components } : defaultComponents} />;
 };
 
 export const MarkdownText = memo(MarkdownTextImpl);

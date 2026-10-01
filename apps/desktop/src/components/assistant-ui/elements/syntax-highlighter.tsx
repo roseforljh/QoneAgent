@@ -5,10 +5,8 @@ import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
 import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
 import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
 
-import {
-  coldarkCold,
-  coldarkDark,
-} from "react-syntax-highlighter/dist/cjs/styles/prism";
+import coldarkCold from "react-syntax-highlighter/dist/esm/styles/prism/coldark-cold";
+import coldarkDark from "react-syntax-highlighter/dist/esm/styles/prism/coldark-dark";
 
 PrismAsyncLight.registerLanguage("js", tsx);
 PrismAsyncLight.registerLanguage("jsx", tsx);

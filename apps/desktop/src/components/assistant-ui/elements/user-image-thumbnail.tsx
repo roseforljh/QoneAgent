@@ -2,6 +2,7 @@
 
 import { useCallback, useState, type ComponentProps, type FC } from "react";
 import { Image } from "./image";
+import { useLocale } from "../../../localization";
 
 const MAX_SIDE = 192;
 
@@ -12,6 +13,7 @@ function thumbnailSize(width: number, height: number) {
 }
 
 export const UserImageThumbnail: FC<ComponentProps<typeof Image>> = (part) => {
+  const { t } = useLocale();
   const { image, filename, status } = part;
   const [measured, setMeasured] = useState<{ image: string; width: number } | null>(null);
   const onNaturalSize = useCallback((width: number, height: number) => {
@@ -29,8 +31,8 @@ export const UserImageThumbnail: FC<ComponentProps<typeof Image>> = (part) => {
       title={filename}
       style={{ width: measured?.image === image ? measured.width : 128 }}
     >
-      <Image.Zoom src={image} alt={filename || "Image attachment"} filename={filename}>
-        <Image.Preview src={image} alt={filename || "Image attachment"} onNaturalSize={onNaturalSize} />
+      <Image.Zoom src={image} alt={filename || t("attachment.imageAlt")} filename={filename}>
+        <Image.Preview src={image} alt={filename || t("attachment.imageAlt")} onNaturalSize={onNaturalSize} />
       </Image.Zoom>
       <Image.Filename>{filename}</Image.Filename>
     </Image.Root>

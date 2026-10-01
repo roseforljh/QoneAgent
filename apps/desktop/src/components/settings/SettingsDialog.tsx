@@ -1,3 +1,5 @@
+import { localizeError } from "../../lib/error-localization";
+import { subagentProfileCopy } from "../../lib/subagent-profile-copy";
 import { detectImageModel, isBuiltinSubagentId, modelListUrl, modelNamesEqual, REMOVED_BUILTIN_SUBAGENT_IDS, supportsExtendedImageQuality, type ImageApiFormat, type ProviderApiType } from "@qone/protocol";
 import { NumberField } from "@base-ui/react/number-field";
 import { Switch } from "@base-ui/react/switch";
@@ -197,7 +199,7 @@ function GeneralSection() {
       await update.downloadAndInstall();
       setUpdateStatus({ key: "general.installed" });
     } catch (error) {
-      setUpdateStatus({ key: "general.updateFailed", values: { error: String(error) } });
+      setUpdateStatus({ key: "general.updateFailed", values: { error: localizeError(error) } });
     } finally {
       setChecking(false);
     }
@@ -437,7 +439,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
         result = await resolveModelSettings({ id: initial?.id ?? providerId(name), name, apiType, baseUrl, models: [], updatedAt: 0 }, modelsToResolve);
         if (sequence === fetchSequence.current) setStatus({ key: "provider.metadataSummary", values: { count: configuredCount, total: result.length } });
       } catch (error) {
-        if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "provider.metadataFailed", values: { error: String(error) } });
+        if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "provider.metadataFailed", values: { error: localizeError(error) } });
       }
       if (sequence !== fetchSequence.current) return;
       const resolvedById = new Map(result.map((model) => [model.id, model]));
@@ -452,7 +454,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
       });
       setSyncOpen(true);
     } catch (error) {
-      if (sequence === fetchSequence.current) setStatus({ key: "provider.fetchFailed", values: { error: String(error) } });
+      if (sequence === fetchSequence.current) setStatus({ key: "provider.fetchFailed", values: { error: localizeError(error) } });
     } finally { if (sequence === fetchSequence.current) setFetching(false); }
   };
 
@@ -659,7 +661,7 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
       setSettings((current) => withProviderInputDefaults({ ...mergeFetchedModel({ id: modelId, label: modelId, settings: current }, resolved).settings!, apiType }, apiType));
       const missing = fetchedFields.filter(([field]) => !found(field) && !settings.metadataOverrides?.[field]).map(([, label]) => label);
       setStatus(missing.length ? { key: "model.configurationPartial", values: { fields: missing.join(" / ") } } : { key: "model.configurationFetched" });
-    } catch (error) { if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "model.fetchConfigurationFailed", values: { error: String(error) } }); }
+    } catch (error) { if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "model.fetchConfigurationFailed", values: { error: localizeError(error) } }); }
     finally { if (sequence === fetchSequence.current) setFetching(false); }
   };
   const save = () => {
@@ -842,7 +844,7 @@ function ModelsSection() {
   </>;
 }
 
-type SubagentProfile = { id: string; name: string; instructions: string; modelId: string; logo?: string; enabled: boolean; tools?: string[]; permissionMode?: "ask" | "auto" | "full"; updatedAt: number };
+type SubagentProfile = import("@qone/protocol").SubagentProfileInfo;
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 
 function dedupeSubagents(profiles: SubagentProfile[]): SubagentProfile[] {
@@ -865,23 +867,24 @@ function loadSubagents(): SubagentProfile[] {
 }
 
 function SubagentEditorDialog({ open, initial, modelOptions, onClose, onSaved }: { open: boolean; initial?: SubagentProfile; modelOptions: { id: string; label: string }[]; onClose: () => void; onSaved: (profile: SubagentProfile) => void }) {
-  const { t } = useLocale();
-  const [name, setName] = useState(initial?.name ?? "");
-  const [instructions, setInstructions] = useState(initial?.instructions ?? "");
+  const { t, locale } = useLocale();
+  const copy = initial ? subagentProfileCopy(initial, locale) : undefined;
+  const [name, setName] = useState(copy?.name ?? "");
+  const [instructions, setInstructions] = useState(copy?.instructions ?? "");
   const [modelId, setModelId] = useState(initial?.modelId ?? modelOptions[0]?.id ?? "");
   const [tools, setTools] = useState(initial?.tools?.join(", ") ?? "");
   const [permissionMode, setPermissionMode] = useState<SubagentProfile["permissionMode"]>(initial?.permissionMode ?? "ask");
   useEffect(() => {
     if (!open) return;
-    setName(initial?.name ?? ""); setInstructions(initial?.instructions ?? ""); setModelId(initial?.modelId ?? modelOptions[0]?.id ?? ""); setTools(initial?.tools?.join(", ") ?? ""); setPermissionMode(initial?.permissionMode ?? "ask");
+    setName(copy?.name ?? ""); setInstructions(copy?.instructions ?? ""); setModelId(initial?.modelId ?? modelOptions[0]?.id ?? ""); setTools(initial?.tools?.join(", ") ?? ""); setPermissionMode(initial?.permissionMode ?? "ask");
   }, [open, initial?.id, modelOptions[0]?.id]);
   const save = () => {
     if (!name.trim() || !instructions.trim() || (!modelId && !isBuiltinSubagentId(initial?.id ?? ""))) return;
-    onSaved({ id: initial?.id ?? `subagent-${Date.now()}`, name: name.trim(), instructions: instructions.trim(), modelId, logo: initial?.logo, tools: tools.split(",").map((item) => item.trim()).filter(Boolean), permissionMode, enabled: initial?.enabled ?? true, updatedAt: Date.now() });
+    onSaved({ id: initial?.id ?? `subagent-${Date.now()}`, name: name.trim(), instructions: instructions.trim(), nameKey: name.trim() === copy?.name ? initial?.nameKey : undefined, instructionsKey: instructions.trim() === copy?.instructions ? initial?.instructionsKey : undefined, modelId, logo: initial?.logo, tools: tools.split(",").map((item) => item.trim()).filter(Boolean), permissionMode, enabled: initial?.enabled ?? true, updatedAt: Date.now() });
     onClose();
   };
   if (!open) return null;
-  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("subagent.create")}><div className="settings-subdialog-header"><div><span>Sub-agent</span><h3>{initial ? t("subagent.edit") : t("subagent.create")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("subagent.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("subagent.namePlaceholder")} /></label><label className="is-wide">{t("subagent.driverModel")}<QoneSelect value={modelId} onChange={setModelId} placeholder={t("subagent.selectModel")} options={modelOptions.map((model) => ({ value: model.id, label: model.label }))} ariaLabel={t("subagent.driverModel")} /></label><label>{t("subagent.permissionMode")}<QoneSelect value={permissionMode ?? "ask"} onChange={(value) => setPermissionMode(value as SubagentProfile["permissionMode"])} options={[{ value: "ask", label: t("composer.permissionAsk") }, { value: "auto", label: t("composer.permissionAuto") }, { value: "full", label: t("composer.permissionFull") }]} ariaLabel={t("subagent.permissionMode")} /></label><label className="is-wide">{t("subagent.toolAllowList")}<input value={tools} onChange={(event) => setTools(event.target.value)} placeholder={t("subagent.toolAllowListPlaceholder")} /><small>{t("subagent.toolAllowListDescription")}</small></label><label className="is-wide">{t("subagent.systemPrompt")}<textarea className="settings-subagent-prompt" rows={7} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder={t("subagent.promptPlaceholder")} /></label></div><div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!name.trim() || !instructions.trim() || (!modelId && !isBuiltinSubagentId(initial?.id ?? ""))} onClick={save}><Save size={15} />{t("subagent.save")}</button></div></div></div>;
+  return <div className="settings-subdialog-layer"><div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("subagent.create")}><div className="settings-subdialog-header"><div><span>{t("nav.subagents")}</span><h3>{initial ? t("subagent.edit") : t("subagent.create")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div><div className="settings-form-grid"><label className="is-wide">{t("subagent.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("subagent.namePlaceholder")} /></label><label className="is-wide">{t("subagent.driverModel")}<QoneSelect value={modelId} onChange={setModelId} placeholder={t("subagent.selectModel")} options={modelOptions.map((model) => ({ value: model.id, label: model.label }))} ariaLabel={t("subagent.driverModel")} /></label><label>{t("subagent.permissionMode")}<QoneSelect value={permissionMode ?? "ask"} onChange={(value) => setPermissionMode(value as SubagentProfile["permissionMode"])} options={[{ value: "ask", label: t("composer.permissionAsk") }, { value: "auto", label: t("composer.permissionAuto") }, { value: "full", label: t("composer.permissionFull") }]} ariaLabel={t("subagent.permissionMode")} /></label><label className="is-wide">{t("subagent.toolAllowList")}<input value={tools} onChange={(event) => setTools(event.target.value)} placeholder={t("subagent.toolAllowListPlaceholder")} /><small>{t("subagent.toolAllowListDescription")}</small></label><label className="is-wide">{t("subagent.systemPrompt")}<textarea className="settings-subagent-prompt" rows={7} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder={t("subagent.promptPlaceholder")} /></label></div><div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!name.trim() || !instructions.trim() || (!modelId && !isBuiltinSubagentId(initial?.id ?? ""))} onClick={save}><Save size={15} />{t("subagent.save")}</button></div></div></div>;
 }
 
 function CompactionSection() {
@@ -960,7 +963,7 @@ function CompactionSection() {
 }
 
 function SubagentsSection() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const modelConfigs = useStore((state) => state.modelConfigs);
   const runtimeSubagentConfig = useStore((state) => state.subagentConfig);
   const send = useStore((state) => state.send);
@@ -998,7 +1001,7 @@ function SubagentsSection() {
     const config = { profiles: dedupeSubagents(agents), routing: runtimeSubagentConfig.routing, runtime: next, updatedAt: Date.now() };
     void send({ type: "subagent.sync", requestId: crypto.randomUUID(), config });
   };
-  const deleteAgent = async (agent: SubagentProfile) => { if (await confirmDestructiveAction(t("subagent.deleteConfirm", { name: agent.name }))) saveAgents(agents.filter((item) => item.id !== agent.id)); };
+  const deleteAgent = async (agent: SubagentProfile) => { if (await confirmDestructiveAction(t("subagent.deleteConfirm", { name: subagentProfileCopy(agent, locale).name }))) saveAgents(agents.filter((item) => item.id !== agent.id)); };
   const temporaryModelLabel = runtime.temporaryModelId
     ? modelOptions.find((model) => model.id === runtime.temporaryModelId)?.label ?? runtime.temporaryModelId
     : t("subagent.followMainModel");
@@ -1024,8 +1027,8 @@ function SubagentsSection() {
   </>;
   return <>
     <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.title")} />
-    <div className="settings-section-toolbar"><div><strong>{t("subagent.mine")}</strong><span>{agents.length} {t("subagent.count")}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("subagent.new")}</button></div>
-    <div className="settings-subagent-list">{agents.map((agent) => { const builtin = isBuiltinSubagentId(agent.id); const openEditor = () => { setEditing(agent); setDialogOpen(true); }; return <div className={cn("settings-subagent-card", "is-actionable", !agent.enabled && "is-disabled")} key={agent.id} role="button" tabIndex={0} aria-label={`${agent.name} · ${t("common.edit")}`} onClick={openEditor} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openEditor(); } }}><div className="settings-subagent-card-main"><SubagentLogo logo={agent.logo} name={agent.name} size={36} /><div><strong>{agent.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? (agent.modelId ? agent.modelId : t("subagent.followMainModel"))} · {builtin ? t("subagent.builtIn") : agent.enabled ? t("subagent.enabled") : t("subagent.disabled")}</small></div></div><div className="settings-subagent-actions"><Switch.Root checked={agent.enabled} aria-label={t(agent.enabled ? "subagent.disable" : "subagent.enable")} className={cn("settings-switch", agent.enabled && "is-on")} onClick={(event) => event.stopPropagation()} onCheckedChange={(checked) => { saveAgents(agents.map((item) => item.id === agent.id ? { ...item, enabled: checked, updatedAt: Date.now() } : item)); }}><Switch.Thumb /></Switch.Root>{!builtin && <button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={(event) => { event.stopPropagation(); void deleteAgent(agent); }}><Trash2 size={14} /></button>}</div></div>; })}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
+    <div className="settings-section-toolbar"><div><strong>{t("subagent.mine")}</strong><span>{t("subagent.count", { count: agents.length })}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("subagent.new")}</button></div>
+    <div className="settings-subagent-list">{agents.map((agent) => { const builtin = isBuiltinSubagentId(agent.id); const display = subagentProfileCopy(agent, locale); const openEditor = () => { setEditing(agent); setDialogOpen(true); }; return <div className={cn("settings-subagent-card", "is-actionable", !agent.enabled && "is-disabled")} key={agent.id} role="button" tabIndex={0} aria-label={`${display.name} · ${t("common.edit")}`} onClick={openEditor} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openEditor(); } }}><div className="settings-subagent-card-main"><SubagentLogo logo={agent.logo} name={display.name} size={36} /><div><strong>{display.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? (agent.modelId ? agent.modelId : t("subagent.followMainModel"))} · {builtin ? t("subagent.builtIn") : agent.enabled ? t("subagent.enabled") : t("subagent.disabled")}</small></div></div><div className="settings-subagent-actions"><Switch.Root checked={agent.enabled} aria-label={t(agent.enabled ? "subagent.disable" : "subagent.enable")} className={cn("settings-switch", agent.enabled && "is-on")} onClick={(event) => event.stopPropagation()} onCheckedChange={(checked) => { saveAgents(agents.map((item) => item.id === agent.id ? { ...item, enabled: checked, updatedAt: Date.now() } : item)); }}><Switch.Thumb /></Switch.Root>{!builtin && <button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={(event) => { event.stopPropagation(); void deleteAgent(agent); }}><Trash2 size={14} /></button>}</div></div>; })}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
     <button type="button" className="settings-subagent-settings-card" onClick={() => setView("temporary")}>
       <span className="settings-subagent-settings-icon"><BotMessageSquare size={17} aria-hidden="true" /></span>
       <span className="settings-subagent-settings-copy"><strong>{t("subagent.temporaryTitle")}</strong><small>{temporaryModelLabel}</small></span>
@@ -1053,16 +1056,16 @@ const MCP_PRESETS: { id: string; name: string; descKey: MessageKey; logo: string
 const configuredGithubClientId = import.meta.env.VITE_GITHUB_OAUTH_CLIENT_ID?.trim() ?? "";
 
 // 邮箱预设：收发件必须填凭证，开关点开的是预填好 IMAP/SMTP 的添加对话框，而不是直接连。
-const EMAIL_PRESETS: { id: string; name: string; descKey: MessageKey; logo?: string; mono?: boolean; badgeStyle?: CSSProperties; lucide?: typeof Mail; prefill: { command: string; args: string; env: string } }[] = [
-  { id: "mcp-outlook-mail", name: "微软邮箱", descKey: "mcp.presetOutlook", logo: outlookLogo, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=outlook.office365.com\nIMAP_PORT=993\nSMTP_HOST=smtp.office365.com\nSMTP_PORT=587" } },
+const EMAIL_PRESETS: { id: string; name: string; nameKey?: MessageKey; descKey: MessageKey; logo?: string; mono?: boolean; badgeStyle?: CSSProperties; lucide?: typeof Mail; prefill: { command: string; args: string; env: string } }[] = [
+  { id: "mcp-outlook-mail", name: "Outlook Mail", nameKey: "mcp.outlookName", descKey: "mcp.presetOutlook", logo: outlookLogo, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=outlook.office365.com\nIMAP_PORT=993\nSMTP_HOST=smtp.office365.com\nSMTP_PORT=587" } },
   { id: "mcp-gmail", name: "Gmail", descKey: "mcp.presetGmail", logo: gmailLogo, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=imap.gmail.com\nIMAP_PORT=993\nSMTP_HOST=smtp.gmail.com\nSMTP_PORT=465" } },
-  { id: "mcp-qqmail", name: "QQ 邮箱", descKey: "mcp.presetQqMail", logo: qqmailLogo, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=imap.qq.com\nIMAP_PORT=993\nSMTP_HOST=smtp.qq.com\nSMTP_PORT=465" } },
-  { id: "mcp-netease-mail", name: "网易邮箱", descKey: "mcp.presetNetEase", logo: neteaseMailLogo, mono: true, badgeStyle: { background: "#d43c33", color: "#fff" }, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=imap.163.com\nIMAP_PORT=993\nSMTP_HOST=smtp.163.com\nSMTP_PORT=465" } },
-  { id: "mcp-custom-mail", name: "自定义邮箱", descKey: "mcp.presetCustomMail", lucide: Mail, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=\nIMAP_PORT=993\nSMTP_HOST=\nSMTP_PORT=465" } },
+  { id: "mcp-qqmail", name: "QQ Mail", nameKey: "mcp.qqName", descKey: "mcp.presetQqMail", logo: qqmailLogo, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=imap.qq.com\nIMAP_PORT=993\nSMTP_HOST=smtp.qq.com\nSMTP_PORT=465" } },
+  { id: "mcp-netease-mail", name: "NetEase Mail", nameKey: "mcp.neteaseName", descKey: "mcp.presetNetEase", logo: neteaseMailLogo, mono: true, badgeStyle: { background: "#d43c33", color: "#fff" }, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=imap.163.com\nIMAP_PORT=993\nSMTP_HOST=smtp.163.com\nSMTP_PORT=465" } },
+  { id: "mcp-custom-mail", name: "Custom Mail", nameKey: "mcp.customMailName", descKey: "mcp.presetCustomMail", lucide: Mail, prefill: { command: "npx", args: "-y mcp-email-server", env: "EMAIL_ADDRESS=\nEMAIL_PASSWORD=\nIMAP_HOST=\nIMAP_PORT=993\nSMTP_HOST=\nSMTP_PORT=465" } },
 ];
 
 // 填 key 即用的网络服务预设：Key 存在系统凭据中，MCP 配置只保存凭据引用。
-const KEY_PRESETS: { id: string; name: string; descKey: MessageKey; logo?: string; mono?: boolean; badgeStyle?: CSSProperties; lucide?: typeof Mail; prefill: { command: string; args: string; env: string } }[] = [
+const KEY_PRESETS: { id: string; name: string; nameKey?: MessageKey; descKey: MessageKey; logo?: string; mono?: boolean; badgeStyle?: CSSProperties; lucide?: typeof Mail; prefill: { command: string; args: string; env: string } }[] = [
   { id: "mcp-firecrawl", name: "Firecrawl", descKey: "mcp.presetFirecrawl", logo: firecrawlLogo, prefill: { command: "npx", args: "-y firecrawl-mcp", env: "FIRECRAWL_API_KEY=" } },
   { id: "mcp-exa", name: "Exa", descKey: "mcp.presetExa", logo: exaLogo, prefill: { command: "npx", args: "-y exa-mcp-server", env: "EXA_API_KEY=" } },
   { id: "mcp-tavily", name: "Tavily", descKey: "mcp.presetTavily", logo: tavilyLogo, prefill: { command: "npx", args: "-y tavily-mcp", env: "TAVILY_API_KEY=" } },
@@ -1092,6 +1095,7 @@ function McpSection() {
   const [addOpen, setAddOpen] = useState(false);
   const [pendingOn, setPendingOn] = useState<ReadonlySet<string>>(new Set());
   // 卡片操作对话框：点卡片（开关以外区域）弹出，按钮按服务类型区分。
+  const presetName = (preset: { name: string; nameKey?: MessageKey }) => preset.nameKey ? t(preset.nameKey) : preset.name;
   const [actionCard, setActionCard] = useState<{ name: string; icon: ReactNode; status: string; statusError?: boolean; actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] } | null>(null);
   const [githubLoginOpen, setGithubLoginOpen] = useState(false);
   const [githubClientId, setGithubClientId] = useState(configuredGithubClientId);
@@ -1137,7 +1141,7 @@ function McpSection() {
       }
       await send({ type: "mcp.delete", requestId: crypto.randomUUID(), serverId: server.id });
     } catch (error) {
-      useStore.setState({ lastError: String(error) });
+      useStore.setState({ lastError: localizeError(error) });
     }
   };
 
@@ -1150,7 +1154,7 @@ function McpSection() {
       setPendingOn((current) => new Set(current).add("mcp-github"));
       await connectAsUser({ id: "mcp-github", name: "GitHub", url: "https://api.githubcopilot.com/mcp/", authMode: "github-device", oauthClientId: clientId });
     } catch (error) {
-      useStore.setState({ lastError: String(error) });
+      useStore.setState({ lastError: localizeError(error) });
     } finally {
       setGithubSaving(false);
     }
@@ -1165,7 +1169,7 @@ function McpSection() {
     }
     if (preset.id === "mcp-github") { setGithubLoginOpen(true); return; }
     setPendingOn((current) => new Set(current).add(preset.id));
-    void connectAsUser({ id: preset.id, name: preset.name, ...preset.config });
+    void connectAsUser({ id: preset.id, name: presetName(preset), ...preset.config });
   };
 
   const openAdd = (preset?: { id: string; name: string; prefill: { command: string; args: string; env: string } }) => {
@@ -1226,12 +1230,12 @@ function McpSection() {
         const key = `mcp.env:${preset.id}/${field.key}`;
         await invoke("secret_set", { key, value: field.value.trim() });
         const sent = await send({ type: "secret.set", requestId: crypto.randomUUID(), key, value: field.value.trim() });
-        if (!sent) throw new Error("无法将 MCP API Key 发送到运行时");
+        if (!sent) throw new Error(t("error.mcpKeySendFailed"));
       }
       setPendingOn((current) => new Set(current).add(preset.id));
-      if (await connectAsUser({ id: preset.id, name: preset.name, command: preset.prefill.command, args: preset.prefill.args.trim().split(/\s+/), env })) setKeyDialog(null);
+      if (await connectAsUser({ id: preset.id, name: presetName(preset), command: preset.prefill.command, args: preset.prefill.args.trim().split(/\s+/), env })) setKeyDialog(null);
     } catch (error) {
-      useStore.setState({ lastError: String(error) });
+      useStore.setState({ lastError: localizeError(error) });
     } finally {
       setKeySaving(false);
     }
@@ -1255,7 +1259,7 @@ function McpSection() {
           { label: t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } },
         ]
       : [{ label: t("mcp.fillKey"), primary: true, onClick: () => { setActionCard(null); openKeyDialog(preset); } }];
-    setActionCard({ name: preset.name, icon, status, statusError, actions });
+    setActionCard({ name: presetName(preset), icon, status, statusError, actions });
   };
 
   // 预设卡操作框：OAuth/GitHub 类出登录/退出登录，stdio 类出重连/移除。
@@ -1268,11 +1272,11 @@ function McpSection() {
       setActionCard(null);
       if (isGithub) { setGithubLoginOpen(true); return; }
       setPendingOn((current) => new Set(current).add(preset.id));
-      void connectAsUser({ id: preset.id, name: preset.name, ...preset.config });
+      void connectAsUser({ id: preset.id, name: presetName(preset), ...preset.config });
     };
     const actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] = [{ label: needsUpgrade ? t("mcp.upgradeAccount") : server ? (isAccount ? t("mcp.relogin") : t("mcp.reconnect")) : (isAccount ? t("mcp.signIn") : t("mcp.connect")), primary: true, onClick: startConnect }];
     if (server) actions.push({ label: isAccount ? t("mcp.logout") : t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } });
-    setActionCard({ name: preset.name, icon, status, statusError, actions });
+    setActionCard({ name: presetName(preset), icon, status, statusError, actions });
   };
 
   // 凭证类卡操作框：凭证即配置，所以给"修改账号配置"入口；已添加的再给重连和移除。
@@ -1285,7 +1289,7 @@ function McpSection() {
           { label: t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } },
         ]
       : [{ label: t("mcp.configureAccount"), primary: true, onClick: () => { setActionCard(null); openAdd(preset); } }];
-    setActionCard({ name: preset.name, icon, status, statusError, actions });
+    setActionCard({ name: presetName(preset), icon, status, statusError, actions });
   };
 
   // 自定义服务操作框：重连、OAuth 授权（如有）、删除。
@@ -1328,7 +1332,7 @@ function McpSection() {
         </div>
       </div>}
       <div className="settings-section-toolbar"><div><strong>{t("mcp.addService")}</strong><span>{t("mcp.addDescription")}</span></div><div className="settings-toolbar-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" className="settings-primary-action" onClick={() => openAdd()}><Plus size={15} />{t("mcp.add")}</button></div></div>
-      <div className="settings-mcp-list">{MCP_PRESETS.filter((preset) => { const q = query.trim().toLowerCase(); return !q || preset.name.toLowerCase().includes(q) || t(preset.descKey).toLowerCase().includes(q); }).map((preset) => {
+      <div className="settings-mcp-list">{MCP_PRESETS.filter((preset) => { const q = query.trim().toLowerCase(); return !q || presetName(preset).toLowerCase().includes(q) || t(preset.descKey).toLowerCase().includes(q); }).map((preset) => {
         const server = servers.find((item) => item.id === preset.id);
         const connecting = pendingOn.has(preset.id) || connectingIds.includes(preset.id);
         // 已配置但掉线（登录态丢失/连接失败）：开关回落为关 + 卡片爆红提示，点开=重连。
@@ -1346,13 +1350,13 @@ function McpSection() {
         </span>;
         return <div className={cn("settings-mcp-card", "is-actionable", failed && "is-error")} key={preset.id} role="button" tabIndex={0} onClick={() => openPresetActions(preset, icon, detail, failed)} onKeyDown={(event) => { if (event.key === "Enter") openPresetActions(preset, icon, detail, failed); }}>
           {icon}
-          <div><strong>{preset.name}</strong><small className="settings-mcp-status" role="status">{connecting && <LoaderCircle size={13} className="settings-spin" aria-hidden="true" />}<span>{detail}</span></small>{device && <button type="button" className="settings-mcp-device-code" title={t("mcp.copyDeviceCode")} aria-label={t("mcp.copyDeviceCode")} onClick={(event) => { event.stopPropagation(); copyToClipboard(device.userCode); }}>{isDeviceCodeCopied ? t("mcp.deviceCodeCopied") : device.userCode}</button>}{authorization && <button type="button" className="settings-mcp-auth-link" onClick={(event) => { event.stopPropagation(); void openUrl(authorization.url); }}>{t("mcp.openLogin")}</button>}{device && <button type="button" className="settings-mcp-auth-link" onClick={(event) => { event.stopPropagation(); void openUrl(device.verificationUri); }}>{t("mcp.openLogin")}</button>}</div>
-          <button type="button" role="switch" aria-checked={enabled} aria-busy={connecting} aria-label={preset.name} disabled={connecting && !authorization && !device} className={cn("settings-switch", enabled && "is-on")} onClick={(event) => { event.stopPropagation(); togglePreset(preset, enabled); }}>
+          <div><strong>{presetName(preset)}</strong><small className="settings-mcp-status" role="status">{connecting && <LoaderCircle size={13} className="settings-spin" aria-hidden="true" />}<span>{detail}</span></small>{device && <button type="button" className="settings-mcp-device-code" title={t("mcp.copyDeviceCode")} aria-label={t("mcp.copyDeviceCode")} onClick={(event) => { event.stopPropagation(); copyToClipboard(device.userCode); }}>{isDeviceCodeCopied ? t("mcp.deviceCodeCopied") : device.userCode}</button>}{authorization && <button type="button" className="settings-mcp-auth-link" onClick={(event) => { event.stopPropagation(); void openUrl(authorization.url); }}>{t("mcp.openLogin")}</button>}{device && <button type="button" className="settings-mcp-auth-link" onClick={(event) => { event.stopPropagation(); void openUrl(device.verificationUri); }}>{t("mcp.openLogin")}</button>}</div>
+          <button type="button" role="switch" aria-checked={enabled} aria-busy={connecting} aria-label={presetName(preset)} disabled={connecting && !authorization && !device} className={cn("settings-switch", enabled && "is-on")} onClick={(event) => { event.stopPropagation(); togglePreset(preset, enabled); }}>
             <span />
           </button>
         </div>;
       })}</div>
-      <div className="settings-mcp-list">{[...KEY_PRESETS, ...EMAIL_PRESETS].filter((preset) => { const q = query.trim().toLowerCase(); return !q || preset.name.toLowerCase().includes(q) || t(preset.descKey).toLowerCase().includes(q); }).map((preset) => {
+      <div className="settings-mcp-list">{[...KEY_PRESETS, ...EMAIL_PRESETS].filter((preset) => { const q = query.trim().toLowerCase(); return !q || presetName(preset).toLowerCase().includes(q) || t(preset.descKey).toLowerCase().includes(q); }).map((preset) => {
         const server = servers.find((item) => item.id === preset.id);
         const connecting = connectingIds.includes(preset.id) || pendingOn.has(preset.id);
         const failed = Boolean(server && !server.connected && !connecting);
@@ -1369,8 +1373,8 @@ function McpSection() {
         const isKeyPreset = KEY_PRESETS.some((item) => item.id === preset.id);
         return <div className={cn("settings-mcp-card", "is-actionable", failed && "is-error")} key={preset.id} role="button" tabIndex={0} onClick={() => isKeyPreset ? openKeyActions(preset, icon, detail, failed) : openEmailActions(preset, icon, detail, failed)} onKeyDown={(event) => { if (event.key === "Enter") isKeyPreset ? openKeyActions(preset, icon, detail, failed) : openEmailActions(preset, icon, detail, failed); }}>
           {icon}
-          <div><strong>{preset.name}</strong><small className="settings-mcp-status" role="status">{connecting && <LoaderCircle size={13} className="settings-spin" aria-hidden="true" />}<span>{detail}</span></small></div>
-          <button type="button" role="switch" aria-checked={enabled} aria-busy={connecting} aria-label={preset.name} disabled={connecting} className={cn("settings-switch", enabled && "is-on")} onClick={(event) => { event.stopPropagation(); isKeyPreset ? toggleKeyPreset(preset, enabled) : toggleEmailPreset(preset, enabled); }}>
+          <div><strong>{presetName(preset)}</strong><small className="settings-mcp-status" role="status">{connecting && <LoaderCircle size={13} className="settings-spin" aria-hidden="true" />}<span>{detail}</span></small></div>
+          <button type="button" role="switch" aria-checked={enabled} aria-busy={connecting} aria-label={presetName(preset)} disabled={connecting} className={cn("settings-switch", enabled && "is-on")} onClick={(event) => { event.stopPropagation(); isKeyPreset ? toggleKeyPreset(preset, enabled) : toggleEmailPreset(preset, enabled); }}>
             <span />
           </button>
         </div>;
@@ -1402,8 +1406,8 @@ function McpSection() {
       </div></div>}
       {keyDialog && (
         <div className="settings-subdialog-layer" onClick={(event) => { if (!keySaving && event.target === event.currentTarget) setKeyDialog(null); }}>
-          <div className="settings-subdialog settings-mcp-action-dialog" role="dialog" aria-modal="true" aria-label={keyDialog.preset.name}>
-            <div className="settings-subdialog-header"><div><span>MCP</span><h3>{keyDialog.preset.name}</h3></div><button type="button" className="settings-dialog-close" disabled={keySaving} onClick={() => setKeyDialog(null)} aria-label={t("common.close")}><X size={17} /></button></div>
+          <div className="settings-subdialog settings-mcp-action-dialog" role="dialog" aria-modal="true" aria-label={presetName(keyDialog.preset)}>
+            <div className="settings-subdialog-header"><div><span>MCP</span><h3>{presetName(keyDialog.preset)}</h3></div><button type="button" className="settings-dialog-close" disabled={keySaving} onClick={() => setKeyDialog(null)} aria-label={t("common.close")}><X size={17} /></button></div>
             <div className="settings-form-grid">{keyDialog.fields.map((field, index) => <label key={field.key} className="is-wide">{field.key}<input type="password" autoComplete="off" autoFocus={index === 0} disabled={keySaving} value={field.value} onChange={(event) => setKeyDialog({ ...keyDialog, fields: keyDialog.fields.map((item, i) => i === index ? { ...item, value: event.target.value } : item) })} placeholder={t("mcp.pasteKey")} /></label>)}</div>
             <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" disabled={keySaving} onClick={() => setKeyDialog(null)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={keySaving || keyDialog.fields.some((field) => !field.value.trim())} onClick={() => void submitKeyDialog()}>{t("mcp.connect")}</button></div>
           </div>
@@ -1456,7 +1460,7 @@ function SkillsSection() {
       await requestSkillMutation({ type: "skills.import", content });
       reloadSkills();
     } catch (cause) {
-      setImportError(cause instanceof Error ? cause.message : String(cause));
+      setImportError(localizeError(cause));
     } finally {
       setImporting(false);
     }
@@ -1465,7 +1469,7 @@ function SkillsSection() {
   return (
     <>
       <SectionHeader eyebrow={t("skills.eyebrow")} title={t("skills.title")} />
-      <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("skills.installed")}</strong><span>{visibleSkills.length} {t("skills.count")}</span></div><div className="settings-skill-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="settings-skill-action-buttons"><input ref={fileInputRef} className="settings-file-input" type="file" accept=".md,SKILL.md" onChange={(event) => void importSkill(event)} /><button type="button" className="settings-secondary-action" disabled={importing} onClick={() => { setImportError(""); fileInputRef.current?.click(); }}>{importing ? <LoaderCircle className="settings-spin" size={14} /> : <Upload size={14} />}{importing ? t("skills.importing") : t("skills.import")}</button><button type="button" className="settings-secondary-action" onClick={() => setCreateOpen(true)}><Plus size={14} />{t("skills.create.button")}</button><button type="button" className="settings-secondary-action" onClick={() => setCloudOpen(true)}><CloudDownload size={14} />{t("skills.cloud.button")}</button></div></div></div>
+      <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("skills.installed")}</strong><span>{t("skills.count", { count: visibleSkills.length })}</span></div><div className="settings-skill-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="settings-skill-action-buttons"><input ref={fileInputRef} className="settings-file-input" type="file" accept=".md,SKILL.md" onChange={(event) => void importSkill(event)} /><button type="button" className="settings-secondary-action" disabled={importing} onClick={() => { setImportError(""); fileInputRef.current?.click(); }}>{importing ? <LoaderCircle className="settings-spin" size={14} /> : <Upload size={14} />}{importing ? t("skills.importing") : t("skills.import")}</button><button type="button" className="settings-secondary-action" onClick={() => setCreateOpen(true)}><Plus size={14} />{t("skills.create.button")}</button><button type="button" className="settings-secondary-action" onClick={() => setCloudOpen(true)}><CloudDownload size={14} />{t("skills.cloud.button")}</button></div></div></div>
       {importError && <p className="settings-skill-error" role="alert"><strong>{t("skills.importError")}:</strong> {importError}</p>}
       <div className="settings-skill-list">{visibleSkills.length === 0 ? <p className="settings-empty">{t("skills.none")}</p> : visibleSkills.map((skill) => <button type="button" className="settings-skill-card" key={skill.id} onClick={() => openPath(skill.path).catch((error) => console.error("open skill failed", error))}><span className="settings-provider-icon"><WandSparkles size={16} /></span><div><strong>{skill.name}</strong><small>{skill.path}</small></div><ChevronRight size={15} /></button>)}</div>
       {cloudOpen && <SkillCloudDialog onClose={() => setCloudOpen(false)} />}

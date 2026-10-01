@@ -48,3 +48,34 @@ test("创建中的终端被关闭后，排队的 kill 不会漏掉 PTY", async (
   await Promise.all([starting, closing]);
   expect(calls).toEqual(["terminal_spawn", "terminal_kill"]);
 });
+
+for (const action of ["dispose", "restart"] as const) test(`${action} can release a blocked write without replaying old input`, async () => {
+  const writes: string[] = [];
+  let releaseWrite: (() => void) | undefined;
+  let kills = 0;
+  const session = createDockTerminalSession({
+    terminalId: `blocked-${action}`, cwd: "C:/project", dimensions: () => ({ cols: 80, rows: 24 }),
+    invoke: async (command, args) => {
+      if (command === "terminal_write") {
+        writes.push(String(args.data));
+        if (args.data === "blocked") await new Promise<void>((resolve) => { releaseWrite = resolve; });
+      }
+      if (command === "terminal_kill") { kills++; releaseWrite?.(); }
+    },
+    listen: async () => () => {}, output: () => {},
+  });
+  await session.start();
+  session.write("blocked");
+  while (!releaseWrite) await Promise.resolve();
+  session.write("old input");
+  await session[action]();
+  expect(kills).toBe(1);
+  expect(writes).toEqual(["blocked"]);
+  if (action === "restart") {
+    expect(session.getSnapshot().status).toBe("ready");
+    session.write("new input");
+    await Bun.sleep(20);
+    expect(writes).toEqual(["blocked", "new input"]);
+    await session.dispose();
+  }
+});

@@ -1,6 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import type { AgentEvent, RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
+import { switchSessionState } from "../src/lib/session-execution-state";
 
 const commands: RuntimeCommand[] = [];
 let sendFailure: ((command: RuntimeCommand) => Promise<void>) | undefined;
@@ -41,7 +42,7 @@ afterAll(() => {
   else Reflect.deleteProperty(globalThis, "window");
 });
 
-const { initBridge, useStore } = await import("../src/store");
+const { initBridge, useStore, requestModelMetadata } = await import("../src/store");
 initBridge();
 await Promise.resolve();
 
@@ -54,6 +55,73 @@ const event = (type: string, payload: unknown): AgentEvent => ({
   type,
   timestamp: Date.now(),
   payload,
+});
+
+test("ordinary commands and direct model metadata requests use the current UI language", async () => {
+  const { GENERAL_SETTINGS_KEY } = await import("../src/localization");
+  const previous = useStore.getState();
+  const previousSettings = storage.get(GENERAL_SETTINGS_KEY);
+  const pingId = crypto.randomUUID();
+  try {
+    await useStore.getState().send({ type: "ping", requestId: pingId });
+    emit({ type: "pong", requestId: pingId, capabilities: ["model.resolve-metadata", "model.metadata-sources"] });
+    for (const locale of ["en", "zh-CN"] as const) {
+      storage.set(GENERAL_SETTINGS_KEY, JSON.stringify({ language: locale }));
+      await useStore.getState().send({ type: "session.list", requestId: crypto.randomUUID(), locale: locale === "en" ? "zh-CN" : "en" });
+      expect(commands.at(-1)?.locale).toBe(locale);
+      const pending = requestModelMetadata({ provider: "test", apiType: "openai-compatible", baseUrl: "https://example.com", models: [{ id: "test" }], locale: locale === "en" ? "zh-CN" : "en" });
+      const command = commands.at(-1)!;
+      expect(command.type).toBe("model.resolve-metadata");
+      expect(command.locale).toBe(locale);
+      emit({ type: "model.metadata-resolved", requestId: command.requestId, models: [] });
+      expect(await pending).toEqual([]);
+      useStore.setState({ connected: false });
+      await expect(requestModelMetadata({ provider: "test", apiType: "openai-compatible", baseUrl: "https://example.com", models: [{ id: "test" }] })).rejects.toThrow(locale === "en" ? "Runtime is not connected" : "运行时未连接");
+      useStore.setState({ connected: true });
+    }
+  } finally {
+    if (previousSettings === undefined) storage.delete(GENERAL_SETTINGS_KEY);
+    else storage.set(GENERAL_SETTINGS_KEY, previousSettings);
+    useStore.setState(previous, true);
+  }
+});
+
+test("child deltas preserve transcript references, route to the parent session, and settle with a full snapshot", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ currentSessionId: "session-a", subagents: [], backgroundSessions: {} });
+    const child = {
+      id: "child-a", parentSessionId: "session-a", parentRunId: "parent-a", toolCallId: "call-a",
+      title: "Child", task: "Task", status: "running" as const, startedAt: 1, content: "",
+      parts: [], messages: [{ id: "task", sequence: 0, role: "user" as const, content: "Task", createdAt: 1 }],
+    };
+    emit({ type: "subagent.updated", subagent: child });
+    const saved = useStore.getState().subagents[0]!;
+    emit({ type: "subagent.streaming", sessionId: "session-a", id: "child-a", delta: "你好" });
+    emit({ type: "subagent.streaming", sessionId: "session-a", id: "child-a", delta: "!" });
+    expect(useStore.getState().subagents[0]).toMatchObject({ streaming: "你好!" });
+    expect(useStore.getState().subagents[0]!.parts).toBe(saved.parts);
+    expect(useStore.getState().subagents[0]!.messages).toBe(saved.messages);
+    emit({ type: "subagent.streaming", sessionId: "session-a", id: "child-a", delta: "", reasoning: [
+      { delta: "分析", messageSequence: 2, contentIndex: 0 },
+      { delta: "完成", messageSequence: 2, contentIndex: 0, complete: true },
+    ] });
+    expect(useStore.getState().subagents[0]!.parts).toEqual([
+      { type: "reasoning", text: "分析完成", messageSequence: 2, contentIndex: 0, complete: true },
+    ]);
+    expect(useStore.getState().subagents[0]!.streaming).toBe("你好!");
+    expect(useStore.getState().subagents[0]!.messages).toBe(saved.messages);
+    const beforeUnknown = useStore.getState();
+    emit({ type: "subagent.streaming", sessionId: "session-a", id: "unknown", delta: "ignored" });
+    expect(useStore.getState()).toBe(beforeUnknown);
+    useStore.setState({ ...switchSessionState(useStore.getState(), "session-b"), currentSessionId: "session-b" });
+    emit({ type: "subagent.streaming", sessionId: "session-a", id: "child-a", delta: "background" });
+    expect(useStore.getState().subagents).toEqual([]);
+    expect(useStore.getState().backgroundSessions["session-a"]?.subagents[0]?.streaming).toBe("你好!background");
+    emit({ type: "subagent.updated", subagent: { ...child, status: "completed", content: "你好!background" } });
+    expect(useStore.getState().backgroundSessions["session-a"]?.subagents[0]?.streaming).toBeUndefined();
+    expect(useStore.getState().backgroundSessions["session-a"]?.subagents[0]?.messages).toEqual(child.messages);
+  } finally { useStore.setState(previous, true); }
 });
 
 test("MCP loading survives the saved list and clears on success or failure", async () => {

@@ -1,5 +1,42 @@
 import { expect, test } from "bun:test";
-import { hasConversationRailSpace, hasConversationRailSpaceInViewport } from "../src/lib/conversation-rail-layout";
+import { hasConversationRailSpace, hasConversationRailSpaceInViewport, measureConversationRail } from "../src/lib/conversation-rail-layout";
+
+test("rail measurement preserves active and visible turns through gaps and shared turn ids", () => {
+  const blocks = Array.from({ length: 200 }, (_, index) => ({
+    dataset: { turnId: `turn-${Math.floor(index / 2)}` },
+    getBoundingClientRect: () => ({ top: index * 80, bottom: index * 80 + 60 }),
+  }));
+  for (const top of [-90, 0, 55, 65, 390, 8010, 16000]) {
+    const view = { top, bottom: top + 240 };
+    for (const line of [view.top + 1, view.top + 120, view.bottom + 1]) {
+      let activeId: string | undefined;
+      let firstId: string | undefined;
+      const visibleIds: string[] = [];
+      for (const block of blocks) {
+        const box = block.getBoundingClientRect();
+        if (box.top >= view.bottom) break;
+        firstId ??= block.dataset.turnId;
+        if (box.top <= line) activeId = block.dataset.turnId;
+        if (box.bottom > view.top && !visibleIds.includes(block.dataset.turnId)) visibleIds.push(block.dataset.turnId);
+      }
+      expect(measureConversationRail(blocks, view, line)).toEqual({ activeId: activeId ?? firstId, visibleIds });
+    }
+  }
+  expect(measureConversationRail([], { top: 0, bottom: 100 }, 1)).toEqual({ activeId: undefined, visibleIds: [] });
+});
+
+test("a long conversation only measures search boundaries instead of all earlier turns", () => {
+  const count = 10_000;
+  let measurements = 0;
+  const blocks = Array.from({ length: count }, (_, index) => ({
+    dataset: { turnId: String(index) },
+    getBoundingClientRect: () => { measurements++; return { top: index * 100, bottom: (index + 1) * 100 }; },
+  }));
+  expect(measureConversationRail(blocks, { top: 900_000, bottom: 900_500 }, 900_001)).toEqual({
+    activeId: "9000", visibleIds: ["9000", "9001", "9002", "9003", "9004"],
+  });
+  expect(measurements).toBeLessThanOrEqual(3 * Math.ceil(Math.log2(count)) + 5);
+});
 
 test("navigation visibility uses 48 CSS pixels of measured gutter at every zoom", () => {
   expect(hasConversationRailSpace(undefined, 1000, 1000)).toBe(false);

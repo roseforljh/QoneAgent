@@ -1,3 +1,4 @@
+import { useLocale } from "../../../localization";
 "use client";
 
 import { useState } from "react";
@@ -51,8 +52,9 @@ export function Sources({
   onOpenChange,
   onOpenSource,
   className,
-  label = "Sources",
+  label,
 }: SourcesProps) {
+  const { t } = useLocale();
   return (
     <Collapsible
       data-slot="sources"
@@ -66,7 +68,7 @@ export function Sources({
           "group/trigger text-foreground/60 hover:text-foreground/90 inline-flex w-fit items-center gap-1.5 rounded-full px-3.5 py-2 text-xs outline-none",
         )}
       >
-        <span>{label}</span>
+        <span>{label ?? t("chat.sources")}</span>
         <span className={cn(mono, "text-foreground/35 tabular-nums")}>
           {sources.length}
         </span>

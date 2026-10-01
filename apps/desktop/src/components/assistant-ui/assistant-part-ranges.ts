@@ -9,6 +9,7 @@ export type AssistantPartRange =
   | { type: "image"; index: number }
   | { type: "images"; startIndex: number; endIndex: number }
   | { type: "compaction"; index: number; marker: PositionedCompaction }
+  | { type: "subagents"; index: number }
   | { type: "tools"; startIndex: number; endIndex: number }
   | { type: "presentation"; index: number };
 
@@ -37,7 +38,7 @@ export function assistantRangeSections(ranges: readonly AssistantPartRange[]): A
   }
   for (let index = ranges.length - 1; index >= 0; index--) {
     const type = ranges[index]?.type;
-    if (type === "tools" || type === "reasoning"
+    if (type === "tools" || type === "reasoning" || type === "subagents"
       || (type === "compaction" && (index < lastContentIndex || lastContentIndex < 0))) {
       lastActivityIndex = index;
       break;
@@ -54,7 +55,7 @@ export function assistantRangeSections(ranges: readonly AssistantPartRange[]): A
   const activity: AssistantPartRange[] = [];
   const persistent: AssistantPartRange[] = [];
   for (const range of process) {
-    if (range.type === "text" || range.type === "tools" || range.type === "reasoning" || range.type === "compaction") activity.push(range);
+    if (range.type === "text" || range.type === "tools" || range.type === "reasoning" || range.type === "subagents" || range.type === "compaction") activity.push(range);
     else persistent.push(range);
   }
   return { leading, process, activity, persistent, answer: ranges.slice(answerIndex) };

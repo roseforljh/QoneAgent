@@ -1,4 +1,6 @@
+import { localizeError } from "../../lib/error-localization";
 import { useLocale } from "../../localization";
+import { localizeReachChannel } from "../../lib/reach-channel-localization";
 import { useEffect, useState } from "react";
 import { Link2, Radio, Search } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -25,7 +27,7 @@ function status(channel: ReachChannelInfo, browserConnected: boolean, exaConnect
 
 export function ReachChannels() {
   const { t, locale } = useLocale();
-  const display = (channel: ReachChannelInfo) => locale === "en" && channel.english ? { ...channel, ...channel.english } : channel;
+  const display = (channel: ReachChannelInfo) => localizeReachChannel(channel, locale);
   const channels = useStore((state) => state.reachChannels);
   const browserConnected = useStore((state) => Boolean(state.browserStatus?.targetConnected));
   const exaConnected = useStore((state) => Boolean(state.mcpServers.find((server) => server.id === EXA_CONFIG.id)?.connected));
@@ -56,13 +58,13 @@ export function ReachChannels() {
     if (!connected || !hasTauriBridge()) return;
     void invoke<string | null>("secret_get", { key: XUEQIU_SECRET }).then(async (value) => {
       if (value) await send({ type: "secret.set", requestId: crypto.randomUUID(), key: XUEQIU_SECRET, value });
-    }).catch((reason) => setError(t("reach.xueqiuRestoreFailed", { error: String(reason) })));
+    }).catch((reason) => setError(t("reach.xueqiuRestoreFailed", { error: localizeError(reason) })));
     void invoke<string | null>("secret_get", { key: GROQ_SECRET }).then(async (value) => {
       if (value) {
         setGroqConfigured(true);
         await send({ type: "secret.set", requestId: crypto.randomUUID(), key: GROQ_SECRET, value });
       }
-    }).catch((reason) => setError(t("reach.groqRestoreFailed", { error: String(reason) })));
+    }).catch((reason) => setError(t("reach.groqRestoreFailed", { error: localizeError(reason) })));
   }, [connected, send]);
 
   async function configure(channel: ReachChannelInfo) {
@@ -93,7 +95,7 @@ export function ReachChannels() {
       }
       await send({ type: "reach.channels", requestId: crypto.randomUUID() });
     } catch (reason) {
-      setError(String(reason));
+      setError(localizeError(reason));
     } finally {
       setBusy(false);
     }
@@ -106,7 +108,7 @@ export function ReachChannels() {
       await invoke("secret_delete", { key: XUEQIU_SECRET });
       if (!await send({ type: "secret.delete", requestId: crypto.randomUUID(), key: XUEQIU_SECRET })) throw new Error(t("reach.cookieDeleteFailed"));
       setCookie("");
-    } catch (reason) { setError(String(reason)); }
+    } catch (reason) { setError(localizeError(reason)); }
     finally { setBusy(false); }
   }
 
@@ -120,7 +122,7 @@ export function ReachChannels() {
       if (!await send({ type: "secret.set", requestId: crypto.randomUUID(), key: GROQ_SECRET, value })) throw new Error(t("reach.groqSendFailed"));
       setGroqConfigured(true);
       setGroqKey("");
-    } catch (reason) { setError(String(reason)); }
+    } catch (reason) { setError(localizeError(reason)); }
     finally { setBusy(false); }
   }
 

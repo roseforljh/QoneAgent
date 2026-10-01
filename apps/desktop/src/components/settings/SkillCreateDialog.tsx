@@ -1,3 +1,4 @@
+import { localizeError } from "../../lib/error-localization";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { LoaderCircle, Plus, X } from "lucide-react";
@@ -22,7 +23,7 @@ export function SkillCreateDialog({ onClose }: { onClose: () => void }) {
       await requestSkillMutation({ type: "skills.create", name: name.trim(), description: description.trim(), instructions: instructions.trim() });
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(localizeError(cause));
     } finally {
       setSaving(false);
     }

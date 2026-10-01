@@ -51,7 +51,10 @@
   z-index: 50;
   display: flex;
   gap: 2px;
-  max-width: min(27rem, calc(100vw - 24px));
+  max-width: min(27rem, var(--radix-popover-content-available-width, calc(100vw - 24px)));
+  max-height: var(--radix-popover-content-available-height, calc(100dvh - 24px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 999px;

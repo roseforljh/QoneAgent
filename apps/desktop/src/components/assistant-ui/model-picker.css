@@ -7,8 +7,8 @@
 .q-model-picker-trigger-name { min-width: 0; overflow: hidden; color: var(--foreground); font-weight: 400; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .q-model-picker-effort-label { flex: none; color: var(--muted-foreground); font-weight: 400; }
 .q-model-picker-trigger > svg:last-child { flex: none; color: var(--muted-foreground); }
-.q-model-picker-card { z-index: 60; display: block; width: min(254px, calc(100vw - 24px)); max-height: min(380px, var(--radix-popover-content-available-height, calc(100dvh - 24px))); overflow: hidden; border: 1px solid color-mix(in srgb, var(--border) 85%, transparent); border-radius: 16px; background: var(--q-surface); box-shadow: 0 14px 28px rgb(0 0 0 / 24%); transform-origin: var(--radix-popover-content-transform-origin); animation: q-model-picker-in .16s ease-out; }
-.q-model-picker-viewport { position: relative; min-height: 0; transition: height .32s cubic-bezier(.19, 1, .22, 1); }
+.q-model-picker-card { z-index: 60; display: block; width: min(254px, var(--radix-popover-content-available-width, calc(100vw - 24px))); max-height: min(380px, var(--radix-popover-content-available-height, calc(100dvh - 24px))); overflow-y: auto; overscroll-behavior: contain; border: 1px solid color-mix(in srgb, var(--border) 85%, transparent); border-radius: 16px; background: var(--q-surface); box-shadow: 0 14px 28px rgb(0 0 0 / 24%); transform-origin: var(--radix-popover-content-transform-origin); animation: q-model-picker-in .16s ease-out; }
+.q-model-picker-viewport { position: relative; min-height: 0; overflow: hidden; transition: height .32s cubic-bezier(.19, 1, .22, 1); }
 .q-model-picker-simple, .q-model-picker-advanced { position: absolute; top: 0; left: 0; width: 100%; transition: opacity .18s ease, transform .26s cubic-bezier(.19, 1, .22, 1); }
 .q-model-picker-simple:not([data-active="true"]), .q-model-picker-advanced:not([data-active="true"]) { opacity: 0; pointer-events: none; transform: translateY(6px); }
 .q-model-picker-simple[data-active="true"], .q-model-picker-advanced[data-active="true"] { opacity: 1; transform: translateY(0); }

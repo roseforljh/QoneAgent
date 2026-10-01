@@ -1,14 +1,17 @@
 import { useSyncExternalStore } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { en } from "./i18n/en";
 import { zh, type MessageKey } from "./i18n/zh-CN";
+import { GENERAL_SETTINGS_KEY, normalizeLanguageSetting, resolveLocale, type LanguageSetting, type Locale } from "./locale-core";
 
 export type { MessageKey } from "./i18n/zh-CN";
-export type LanguageSetting = "auto" | "zh-CN" | "en";
-export type Locale = "zh-CN" | "en";
+export { GENERAL_SETTINGS_KEY, resolveLocale } from "./locale-core";
+export type { LanguageSetting, Locale } from "./locale-core";
 export type LocalizedMessage = { key: MessageKey; values?: Record<string, string | number> };
 
-export const GENERAL_SETTINGS_KEY = "qone-general-settings";
 const LANGUAGE_EVENT = "qone-language-change";
+// A denied storage write must not prevent language switching in this window.
+const unsavedLanguages = new WeakMap<Window, LanguageSetting>();
 
 export function readGeneralSettings(): Record<string, unknown> {
   try {
@@ -18,31 +21,29 @@ export function readGeneralSettings(): Record<string, unknown> {
 }
 
 export function getLanguageSetting(): LanguageSetting {
+  const unsaved = typeof window === "undefined" ? undefined : unsavedLanguages.get(window);
+  if (unsaved) return unsaved;
   const { language } = readGeneralSettings();
-  return language === "en" || language === "zh-CN" ? language : "auto";
-}
-
-export function resolveLocale(
-  setting: LanguageSetting,
-  languages: readonly string[] = typeof navigator === "undefined" ? [] : navigator.languages?.length ? navigator.languages : [navigator.language],
-): Locale {
-  if (setting !== "auto") return setting;
-  for (const language of languages) {
-    if (/^zh(?:[-_]|$)/i.test(language)) return "zh-CN";
-    if (/^en(?:[-_]|$)/i.test(language)) return "en";
-  }
-  return "en";
+  return normalizeLanguageSetting(language);
 }
 
 export function applyLocale() {
   document.documentElement.lang = resolveLocale(getLanguageSetting());
+  if ((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
+    void invoke("set_native_copy", { copy: {
+      show: translateCurrent("native.show"), quit: translateCurrent("native.quit"), completed: translateCurrent("native.completed"),
+    } }).catch((error) => console.warn("Failed to synchronize native language", error));
+  }
 }
 
 export function subscribeLanguage(onChange: () => void) {
   window.addEventListener(LANGUAGE_EVENT, onChange);
   window.addEventListener("languagechange", onChange);
   const onStorage = (event: StorageEvent) => {
-    if (event.key === GENERAL_SETTINGS_KEY || event.key === null) onChange();
+    if (event.key === GENERAL_SETTINGS_KEY || event.key === null) {
+      unsavedLanguages.delete(window);
+      onChange();
+    }
   };
   window.addEventListener("storage", onStorage);
   return () => {
@@ -59,7 +60,12 @@ export function initLocale() {
 }
 
 export function saveLanguageSetting(language: LanguageSetting) {
-  window.localStorage.setItem(GENERAL_SETTINGS_KEY, JSON.stringify({ ...readGeneralSettings(), language }));
+  try {
+    window.localStorage.setItem(GENERAL_SETTINGS_KEY, JSON.stringify({ ...readGeneralSettings(), language }));
+    unsavedLanguages.delete(window);
+  } catch {
+    unsavedLanguages.set(window, language);
+  }
   applyLocale();
   window.dispatchEvent(new Event(LANGUAGE_EVENT));
 }
