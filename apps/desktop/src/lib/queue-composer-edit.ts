@@ -2,12 +2,10 @@ import type { BaseComposerRuntimeCore } from "@assistant-ui/core/internal";
 import type { AppendMessage } from "@assistant-ui/react";
 import type { ComposerDraft } from "./composer-drafts";
 import type { QueueBundle } from "./qone-message-queue";
+import { messageQuote } from "./message-quote";
 
 export function queueMessageDraft(message: AppendMessage): ComposerDraft {
-  const source = message.metadata.custom.quote;
-  const quote = source && typeof source === "object" && "text" in source && "messageId" in source
-    && typeof source.text === "string" && typeof source.messageId === "string"
-    ? { text: source.text, messageId: source.messageId } : undefined;
+  const quote = messageQuote(message);
   return { text: message.content.filter((part) => part.type === "text").map((part) => part.text).join(""), attachments: message.attachments ?? [], quote };
 }
 

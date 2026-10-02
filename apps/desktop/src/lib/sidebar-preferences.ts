@@ -5,9 +5,12 @@ import { createJSONStorage, persist } from "zustand/middleware";
 export type SidebarLayout = "project" | "list";
 export type ChatSort = "priority" | "recent" | "manual";
 export interface SidebarPreferences {
+  collapsed: boolean;
   layout: SidebarLayout;
   sort: ChatSort;
   manualOrder: string[];
+  /** Activity captured when the user last arranged chats; newer messages take precedence. */
+  manualActivity: Record<string, number>;
   priorityIds: string[];
   workspaceOrder: string[];
 }
@@ -18,9 +21,12 @@ export function parseSidebarPreferences(value: unknown): SidebarPreferences {
   const saved = value && typeof value === "object" ? value as Partial<SidebarPreferences> : {};
   const ids = (value: unknown) => Array.isArray(value) ? [...new Set(value.filter((id): id is string => typeof id === "string"))] : [];
   return {
+    collapsed: saved.collapsed === true,
     layout: saved.layout === "list" ? "list" : "project",
     sort: saved.sort === "manual" || saved.sort === "priority" ? saved.sort : "recent",
     manualOrder: ids(saved.manualOrder),
+    manualActivity: saved.manualActivity && typeof saved.manualActivity === "object" && !Array.isArray(saved.manualActivity)
+      ? Object.fromEntries(Object.entries(saved.manualActivity).filter(([, at]) => typeof at === "number" && Number.isFinite(at))) : {},
     priorityIds: ids(saved.priorityIds),
     workspaceOrder: ids(saved.workspaceOrder),
   };
@@ -29,14 +35,22 @@ export function parseSidebarPreferences(value: unknown): SidebarPreferences {
 export function sortSidebarSessions(sessions: readonly SessionInfo[], prefs: SidebarPreferences): SessionInfo[] {
   const priority = new Set(prefs.priorityIds);
   const positions = new Map(prefs.manualOrder.map((id, index) => [id, index]));
+  const changed = (session: SessionInfo) => !Object.hasOwn(prefs.manualActivity, session.id)
+    || session.updatedAt > prefs.manualActivity[session.id]!;
   return [...sessions].sort((a, b) => {
     if (prefs.sort === "priority") {
       const rank = Number(priority.has(b.id)) - Number(priority.has(a.id));
       if (rank) return rank;
     }
     if (prefs.sort === "manual") {
-      const rank = (positions.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (positions.get(b.id) ?? Number.MAX_SAFE_INTEGER);
-      if (rank) return rank;
+      const aChanged = changed(a);
+      const bChanged = changed(b);
+      // A drag only fixes unchanged chats. New chats and new messages always rise.
+      if (aChanged !== bChanged) return Number(bChanged) - Number(aChanged);
+      if (!aChanged) {
+        const rank = (positions.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (positions.get(b.id) ?? Number.MAX_SAFE_INTEGER);
+        if (rank) return rank;
+      }
     }
     return b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id);
   });
@@ -81,6 +95,7 @@ export function sortSidebarWorkspaces(workspaces: readonly WorkspaceInfo[], orde
 }
 
 interface SidebarState extends SidebarPreferences {
+  setCollapsed: (collapsed: boolean | ((current: boolean) => boolean)) => void;
   setLayout: (layout: SidebarLayout) => void;
   setSort: (sort: ChatSort, sessions: readonly SessionInfo[]) => void;
   togglePriority: (id: string) => void;
@@ -90,19 +105,22 @@ interface SidebarState extends SidebarPreferences {
 
 export const createSidebarPreferencesStore = (storage = createJSONStorage<SidebarPreferences>(() => localStorage)) => create<SidebarState>()(persist((set, get) => ({
   ...parseSidebarPreferences(null),
+  setCollapsed: (collapsed) => set((state) => ({ collapsed: typeof collapsed === "function" ? collapsed(state.collapsed) : collapsed })),
   setLayout: (layout) => set({ layout }),
   setSort: (sort, sessions) => {
     const current = get();
-    // Freeze the visible order on the first manual sort; retain user order on later switches.
-    set({ sort, ...(sort === "manual" && !current.manualOrder.length
-      ? { manualOrder: sortSidebarSessions(sessions, current).map((session) => session.id) } : {}) });
+    // Capture the visible order on entry, including any chats promoted by activity.
+    set({ sort, ...(sort === "manual" && current.sort !== "manual"
+      ? { manualOrder: sortSidebarSessions(sessions, current).map((session) => session.id),
+          manualActivity: Object.fromEntries(sessions.map((session) => [session.id, session.updatedAt])) } : {}) });
   },
   togglePriority: (id) => set((state) => ({ priorityIds: state.priorityIds.includes(id)
     ? state.priorityIds.filter((value) => value !== id) : [...state.priorityIds, id] })),
   moveSession: (sessions, source, target, after = false) => {
     const current = get();
     if (source === target || !sessions.some((session) => session.id === source) || !sessions.some((session) => session.id === target)) return;
-    set({ sort: "manual", manualOrder: moveSidebarSession(sortSidebarSessions(sessions, current).map((session) => session.id), source, target, after) });
+    set({ sort: "manual", manualOrder: moveSidebarSession(sortSidebarSessions(sessions, current).map((session) => session.id), source, target, after),
+      manualActivity: Object.fromEntries(sessions.map((session) => [session.id, session.updatedAt])) });
   },
   moveWorkspace: (workspaces, source, target, after = false) => {
     const current = get();
@@ -112,7 +130,14 @@ export const createSidebarPreferencesStore = (storage = createJSONStorage<Sideba
 }), {
   name: SIDEBAR_STORAGE_KEY,
   storage,
-  partialize: ({ layout, sort, manualOrder, priorityIds, workspaceOrder }) => ({ layout, sort, manualOrder, priorityIds, workspaceOrder }),
+  version: 1,
+  // Old manual preferences permanently froze chats and appended new ones at the bottom.
+  // Retain the saved order/pins, but restore activity sorting for those legacy records.
+  migrate: (saved) => {
+    const preferences = parseSidebarPreferences(saved);
+    return { ...preferences, sort: preferences.sort === "manual" ? "recent" : preferences.sort };
+  },
+  partialize: ({ collapsed, layout, sort, manualOrder, manualActivity, priorityIds, workspaceOrder }) => ({ collapsed, layout, sort, manualOrder, manualActivity, priorityIds, workspaceOrder }),
   merge: (saved, current) => ({ ...current, ...parseSidebarPreferences(saved) }),
 }));
 

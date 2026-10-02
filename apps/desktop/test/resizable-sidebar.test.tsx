@@ -17,3 +17,14 @@ test("closing clips the same content frame rather than laying out an icon-only s
   expect(closed).not.toContain('role="separator"');
   expect(open).toContain('role="separator"');
 });
+
+test("collapsed controls stay outside the inert content and inside the measured sidebar pane", () => {
+  const html = renderToStaticMarkup(<ResizableSidebar collapsed onCollapsedChange={() => {}}
+    collapsedContent={<nav data-collapsed-controls><button>New chat</button></nav>}>
+    <aside>Expanded sidebar</aside>
+  </ResizableSidebar>);
+  expect(html).toContain('class="q-sidebar-pane relative flex h-full shrink-0"');
+  expect(html).toContain('inert="" aria-hidden="true"');
+  expect(html).toContain('</aside></div></div></div><nav data-collapsed-controls="true">');
+  expect(html).toEndWith('</nav></div>');
+});

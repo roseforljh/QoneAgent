@@ -173,6 +173,12 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           modelRequest: undefined,
           approvals: [],
           ...switchSessionState(st, msg.session.id),
+          // A newly created conversation has no persisted queue. Establish
+          // that baseline before it can send queue.sync; its first echo is
+          // an acknowledgement, not a snapshot to restore over local work.
+          queueItems: [],
+          queueLoadedSessionId: msg.session.id,
+          editingQueueItem: undefined,
         }));
         saveRunOptions(eventStore.getState().runOptionsBySession);
         if (eventStore.getState().creatingSession && eventStore.getState().pendingMessage !== undefined) {
@@ -227,6 +233,12 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         break;
       }
+      case "session.updated":
+        eventStore.setState((st) => msg.session.sideChat
+          ? { sideChats: { ...st.sideChats, [msg.session.id]: msg.session } }
+          : { sessions: st.sessions.map((session) => session.id === msg.session.id
+              ? { ...msg.session, updatedAt: Math.max(session.updatedAt, msg.session.updatedAt) } : session) });
+        break;
       case "session.search":
         if (msg.query === eventStore.getState().activeSearchQuery) eventStore.setState({ searchResults: msg.results, searchLoading: false });
         break;
@@ -235,7 +247,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           if (sessionId === msg.session.id) pendingTitleRequests.delete(requestId);
         }
         eventStore.setState((st) => ({
-          sessions: st.sessions.map((session) => session.id === msg.session.id ? msg.session : session),
+          sessions: st.sessions.map((session) => session.id === msg.session.id
+            ? { ...msg.session, updatedAt: Math.max(session.updatedAt, msg.session.updatedAt) } : session),
           titleGeneratingSessionIds: st.titleGeneratingSessionIds.filter((id) => id !== msg.session.id),
         }));
         break;
@@ -568,7 +581,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           break;
         }
         if (msg.requestId && msg.requestId === eventStore.getState().contextUsageRequestId) {
-          eventStore.setState({ contextUsageRequestId: undefined, contextUsage: undefined });
+          eventStore.setState({ contextUsageRequestId: undefined });
           break;
         }
         const compactingSessionId = msg.requestId && Object.entries(eventStore.getState().compactionStatuses).find(([, status]) => status.requestId === msg.requestId)?.[0];
@@ -714,6 +727,15 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           if (ev.sessionId && stopRequestedSessionIds.has(ev.sessionId)) stopRun(ev.sessionId, ev.runId);
         }
         const p = ev.payload as Record<string, unknown> | undefined;
+
+        if (ev.type === "context.usage" && ev.sessionId && typeof p?.model === "string"
+          && typeof p.tokens === "number" && Number.isFinite(p.tokens) && p.tokens >= 0
+          && typeof p.contextWindow === "number" && Number.isFinite(p.contextWindow) && p.contextWindow > 0) {
+          const usage = { sessionId: ev.sessionId, model: p.model, tokens: p.tokens, contextWindow: p.contextWindow };
+          eventStore.setState((state) => state.currentSessionId === ev.sessionId && state.selectedModelId === usage.model
+            && (!ev.runId || ev.runId === state.activeRunId)
+            ? { contextUsage: usage, contextUsageRequestId: undefined } : state);
+        }
 
         if (ev.type === "artifact.created" && p && typeof p.id === "string" && ev.sessionId === eventStore.getState().currentSessionId) {
           eventStore.setState((st) => ({ artifacts: st.artifacts.some((artifact) => artifact.id === p.id) ? st.artifacts : [p as unknown as ArtifactInfo, ...st.artifacts] }));

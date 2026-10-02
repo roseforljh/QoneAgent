@@ -22,7 +22,6 @@ import { selectActiveToolIndex } from "./tool-timeline-state";
 import { openSubagent, subagentForTool } from "./subagent-navigation";
 import { toolFileActivities } from "./file-change-activity-data";
 import { FileChangeActivityRow } from "./file-change-activity";
-import { collectToolFileChanges } from "./run-file-changes";
 import { integrationIcon, toolIntegration, type ToolIntegration } from "./tool-integration";
 import { isIntegrationTool } from "./tool-activity-category";
 import type { McpServerInfo } from "@qone/protocol";
@@ -201,13 +200,6 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   const lastIndex = steps.length - 1;
   const lastStep = lastIndex >= 0 ? steps[lastIndex] : undefined;
   const summaryStep = steps.find((step) => step.integration) ?? lastStep;
-  const headerStat = useMemo(() => {
-    const changes = collectToolFileChanges(executedToolParts.map((part) => {
-      const call = liveCallsById.get(part.toolCallId);
-      return { toolName: part.toolName, args: call?.args ?? part.args, result: call?.result ?? part.result, status: toolCallStatus(part, call) };
-    }));
-    return changes.nodes.length ? { added: changes.totalAdditions, removed: changes.totalDeletions } : undefined;
-  }, [executedToolParts, liveCallsById]);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -267,9 +259,7 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
       restingLabel={title ?? restingLabel}
       fullSummary={title ?? fullSummary}
       headerIcon={thinking ? undefined : (toolWorking ? activeStep : undefined)?.icon ?? (title ? undefined : summaryStep?.icon)}
-      headerStat={title ? undefined : headerStat}
       canExpand={steps.length > 0 || Boolean(details?.length)}
-      failureLabel={title && steps.some((step) => step.failed) ? t("chat.toolGroupFailedMany", { count: steps.filter((step) => step.failed).length }) : undefined}
       stats={[]}
       renderStep={(_, index) => <ToolCallEntry part={executedToolParts[index]} step={steps[index]} prepared={preparedIds.has(executedToolParts[index]?.toolCallId ?? "")} messageRunning={messageRunning} />}
       children={details}
@@ -283,5 +273,5 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
 export const GenerativeUIPresentation: FC<{ index: number }> = ({ index }) => {
   const part = useAuiState((state) => state.message.parts[index]);
   if (part?.type !== "tool-call" || part.toolName !== "present" || part.isError) return null;
-  return <Suspense fallback={null}><GenerativeUISurface spec={part.args} /></Suspense>;
+  return <Suspense fallback={null}><GenerativeUISurface spec={part.args} running={part.status.type === "running"} /></Suspense>;
 };

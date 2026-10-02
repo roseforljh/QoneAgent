@@ -1,6 +1,6 @@
 import {
   nextThreadFollowMode, THREAD_BOTTOM_SCROLL_DURATION_MS, THREAD_BOTTOM_TOLERANCE_PX,
-  userMessageRevealScrollTop, type ThreadFollowSnapshot, type ThreadPhase,
+  type ThreadFollowSnapshot, type ThreadPhase,
 } from "./thread-scroll-policy";
 
 export interface ThreadScrollTurn { turnId?: string; running: boolean; phase: ThreadPhase }
@@ -50,8 +50,9 @@ export function mountThreadScrollController(options: ControllerOptions) {
   let held = false;
   let disposed = false;
   let previousTop = viewport.scrollTop;
-  let previousHeight = viewport.scrollHeight;
   let touchY: number | undefined;
+  let pointerActive = false;
+  let pointerStartTop = viewport.scrollTop;
 
   const geometry = () => measureThreadBottom(options);
   const isFollowing = () => mode === "prework_follow" || mode === "user_follow";
@@ -64,7 +65,6 @@ export function mountThreadScrollController(options: ControllerOptions) {
     programmatic = true;
     viewport.scrollTo({ top: Math.max(0, Math.min(top, viewport.scrollHeight - viewport.clientHeight)), behavior: "instant" });
     previousTop = viewport.scrollTop;
-    previousHeight = viewport.scrollHeight;
     programmatic = false;
   };
   const bottomTop = () => viewport.scrollTop + geometry().distance;
@@ -107,27 +107,30 @@ export function mountThreadScrollController(options: ControllerOptions) {
   const refresh = () => {
     frame = null;
     if (disposed) return;
-    const { distance, reserveHeight } = geometry();
+    observeReserve();
+    const { distance } = geometry();
     if (!held) {
       mode = nextThreadFollowMode(mode, { type: "content", phase: turn.phase, overflow: distance });
     }
     if (isFollowing() && animation === null) writeTop(bottomTop());
     publish();
     previousTop = viewport.scrollTop;
-    previousHeight = viewport.scrollHeight;
   };
   const schedule = () => { if (!disposed && frame === null) frame = requestAnimationFrame(refresh); };
   const scroll = () => {
     if (programmatic) return;
     const distance = geometry().distance;
     // Only a real change in scroll position releases intent; content growth does not.
-    if (animation === null && viewport.scrollHeight === previousHeight && viewport.scrollTop < previousTop) hold();
+    // Pointer dragging the scrollbar can happen while content height is being
+    // measured, so it must not depend on scrollHeight staying unchanged.
+    if (animation === null && pointerActive && viewport.scrollTop !== pointerStartTop
+      && distance > THREAD_BOTTOM_TOLERANCE_PX) hold();
+    else if (animation === null && viewport.scrollTop < previousTop) hold();
     else if (animation === null && viewport.scrollTop > previousTop && distance <= THREAD_BOTTOM_TOLERANCE_PX) {
       held = false;
       mode = nextThreadFollowMode(mode, { type: "bottom", phase: turn.phase });
     }
     previousTop = viewport.scrollTop;
-    previousHeight = viewport.scrollHeight;
     publish();
   };
   const gesture = (away: boolean, target: EventTarget | null) => {
@@ -148,12 +151,15 @@ export function mountThreadScrollController(options: ControllerOptions) {
     else if (["ArrowDown", "End", "PageDown"].includes(event.key)) gesture(false, target);
     else if (event.key === " " || event.key === "Spacebar") gesture(event.shiftKey, target);
   };
-  const pointer = () => {
+  const pointerDown = () => {
+    pointerActive = true;
+    pointerStartTop = viewport.scrollTop;
     // Cancel smooth navigation on any pointer gesture. A disclosure click is
     // not a scroll gesture: keep bottom following active so its height
     // animation remains visible above the sticky footer.
     cancelAnimation();
   };
+  const pointerUp = () => { pointerActive = false; };
   const touchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY; };
   const touchMove = (event: TouchEvent) => {
     const next = event.touches[0]?.clientY;
@@ -164,15 +170,29 @@ export function mountThreadScrollController(options: ControllerOptions) {
   viewport.addEventListener("scroll", scroll, { passive: true });
   viewport.addEventListener("wheel", wheel, { passive: true });
   viewport.addEventListener("keydown", key);
-  viewport.addEventListener("pointerdown", pointer, { passive: true });
+  viewport.addEventListener("pointerdown", pointerDown, { passive: true });
+  viewport.addEventListener("pointerup", pointerUp, { passive: true });
+  viewport.addEventListener("pointercancel", pointerUp, { passive: true });
   viewport.addEventListener("touchstart", touchStart, { passive: true });
   viewport.addEventListener("touchmove", touchMove, { passive: true });
   viewport.addEventListener("touchend", touchEnd, { passive: true });
   viewport.addEventListener("touchcancel", touchEnd, { passive: true });
   const resize = new ResizeObserver(schedule);
   [viewport, content, footer, endContent].forEach((element) => { if (element) resize.observe(element); });
+  // Reserve shrinkage can exactly cancel message growth in the outer box.
+  // Observe the reserve itself as well; rediscover it when the primitive moves
+  // or replaces it, without observing every historical message.
+  let observedReserve: HTMLElement | null = null;
+  const observeReserve = () => {
+    const reserve = content.querySelector<HTMLElement>("[data-aui-top-anchor-reserve]");
+    if (reserve === observedReserve) return;
+    if (observedReserve) resize.unobserve(observedReserve);
+    observedReserve = reserve;
+    if (reserve) resize.observe(reserve);
+  };
+  observeReserve();
   const mutation = new MutationObserver(schedule);
-  mutation.observe(content, { childList: true, subtree: true });
+  mutation.observe(content, { childList: true, subtree: true, characterData: true });
 
   // The primitive restores native anchor state. Never overwrite it with a second restore.
   if (!options.hasRestoration && !turn.running) followBottom();
@@ -183,18 +203,28 @@ export function mountThreadScrollController(options: ControllerOptions) {
     sync(next: ThreadScrollTurn) {
       if (next.turnId !== turn.turnId) {
         cancelAnimation();
-        held = false;
+        held = true;
         mode = nextThreadFollowMode(mode, { type: "placed" });
         turn = { ...next, phase: "idle" };
+      } else if (!held) {
+        mode = nextThreadFollowMode(mode, { type: "phase", previous: turn.phase, phase: next.phase });
+        turn = next;
+      } else {
+        turn = next;
       }
-      mode = nextThreadFollowMode(mode, { type: "phase", previous: turn.phase, phase: next.phase });
-      turn = next;
       schedule();
     },
     reveal(message: HTMLElement) {
       const rect = message.getBoundingClientRect();
-      const target = userMessageRevealScrollTop(viewport.scrollTop, rect.top, rect.bottom, viewport.getBoundingClientRect().top, footer.getBoundingClientRect().top);
-      if (target !== null) { cancelAnimation(); writeTop(target); schedule(); }
+      const padding = viewport.ownerDocument?.defaultView?.getComputedStyle(viewport).scrollPaddingTop;
+      const topInset = (Number.parseFloat(padding ?? "") || 0) * (padding?.endsWith("%") ? viewport.clientHeight / 100 : 1);
+      const vpTop = viewport.getBoundingClientRect().top;
+      const target = viewport.scrollTop + rect.top - (vpTop + topInset);
+      cancelAnimation();
+      held = true;
+      mode = "static";
+      writeTop(target);
+      publish();
     },
     dispose() {
       options.onSave({ turnId: turn.turnId, mode });
@@ -206,7 +236,9 @@ export function mountThreadScrollController(options: ControllerOptions) {
       viewport.removeEventListener("scroll", scroll);
       viewport.removeEventListener("wheel", wheel);
       viewport.removeEventListener("keydown", key);
-      viewport.removeEventListener("pointerdown", pointer);
+      viewport.removeEventListener("pointerdown", pointerDown);
+      viewport.removeEventListener("pointerup", pointerUp);
+      viewport.removeEventListener("pointercancel", pointerUp);
       viewport.removeEventListener("touchstart", touchStart);
       viewport.removeEventListener("touchmove", touchMove);
       viewport.removeEventListener("touchend", touchEnd);

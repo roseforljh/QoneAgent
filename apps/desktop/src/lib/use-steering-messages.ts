@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { QueueItemInfo } from "@qone/protocol";
 import type { ChatMessage } from "../store";
 import type { QueueBundle } from "./qone-message-queue";
+import { withMessageQuote } from "./message-quote";
 
 const emptyItems: QueueBundle["adapter"]["steerItems"] = [];
 
@@ -11,7 +12,7 @@ export function steeringMessages(queue: QueueBundle | null, items: QueueBundle["
     const id = queue?.getPersistentId(entry.id);
     if (!id) return [];
     const item = queue!.getItem(id);
-    return [{ id, role: "user", content: item?.text ?? entry.prompt, attachments: item?.attachments, createdAt: item?.createdAt, runId }];
+    return [{ id, role: "user", content: withMessageQuote(item?.text ?? entry.prompt, item?.quote), attachments: item?.attachments, createdAt: item?.createdAt, runId }];
   });
 }
 

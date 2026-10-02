@@ -3,14 +3,15 @@ import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
 import { renderGenerativeUI } from "@assistant-ui/react-generative-ui";
 import { styledGenerativeUILibrary } from "./elements/generative-ui";
 import { cn } from "../../lib/utils";
+import { FadeScroll } from "./elements/fade-scroll";
 
-export const GenerativeUISurface: FC<{ spec: unknown; embedded?: boolean }> = ({ spec, embedded = false }) => (
-  <div data-slot="generative-ui-block" data-aui="root" className={cn(
+export const GenerativeUISurface: FC<{ spec: unknown; embedded?: boolean; running?: boolean }> = ({ spec, embedded = false, running = false }) => (
+  <FadeScroll data-slot="generative-ui-block" data-aui="root" autoScrollToBottom={running} className={cn(
     "max-h-[46dvh] overflow-auto border border-border/50 p-3",
     embedded ? "rounded-b-xl border-t-0" : "my-3 rounded-xl",
   )}>
     {renderGenerativeUI(spec, styledGenerativeUILibrary)}
-  </div>
+  </FadeScroll>
 );
 
 export const GenerativeUIBlock: FC<SyntaxHighlighterProps> = ({ code }) => {

@@ -15,6 +15,7 @@ afterAll(() => { if (originalWindow) Object.defineProperty(globalThis, "window",
 const { useStore, initBridge } = await import("../src/store");
 const { openSideConversation, openQueuedSideConversation, closeSideConversation, retrySideConversationTransfers } = await import("../src/lib/side-conversation");
 const { emptySessionState, switchSessionState } = await import("../src/lib/session-execution-state");
+const { composerDrafts } = await import("../src/lib/composer-drafts");
 const { createConversationStore } = await import("../src/lib/conversation-store");
 initBridge(); await Promise.resolve();
 const emit = (event: RuntimeEvent) => listener?.({ payload: JSON.stringify(event) });
@@ -31,6 +32,32 @@ function seed() {
     selectedModelId: "test/model", runOptionsBySession: { [parent.id]: { modelId: "test/model", permissionMode: "full", thinkingByModel: { "test/model": "high" } } },
   });
 }
+
+test("selected text seeds the matching side-chat draft before tab publication without submitting", async () => {
+  const previous = useStore.getState();
+  const quote = { text: "selected reference", messageId: "old" };
+  let publishedQuote: unknown;
+  const unsubscribe = useStore.subscribe((state) => { if (state.sideChats[side.id]) publishedQuote = composerDrafts.get(side.id)?.quote; });
+  try {
+    seed();
+    composerDrafts.set(parent.id, { text: "keep parent draft", quote: undefined, attachments: [] });
+    const creation = openSideConversation(parent.id, { text: "", quote, attachments: [] });
+    const command = commands.find((item) => item.type === "session.side-chat.create")!;
+    retrySideConversationTransfers();
+    expect(commands.filter((item) => item.type === "session.side-chat.create").every((item) => item.requestId === command.requestId)).toBe(true);
+    useStore.setState({ ...switchSessionState(useStore.getState(), other.id), currentSessionId: other.id });
+    emit({ type: "session.side-chat.created", requestId: command.requestId, sessionId: parent.id, session: side });
+    await creation;
+    expect(publishedQuote).toEqual(quote);
+    expect(composerDrafts.get(side.id)).toEqual({ text: "", quote, attachments: [] });
+    expect(composerDrafts.get(parent.id)?.text).toBe("keep parent draft");
+    expect(useStore.getState().currentSessionId).toBe(other.id);
+    expect(commands.some((item) => item.type === "agent.run")).toBe(false);
+  } finally {
+    unsubscribe(); composerDrafts.set(side.id, { text: "", attachments: [], quote: undefined });
+    composerDrafts.set(parent.id, { text: "", attachments: [], quote: undefined }); useStore.setState(previous, true);
+  }
+});
 
 test("a late side-chat response preserves the selected chat, parent run and parent's input", async () => {
   const previous = useStore.getState();

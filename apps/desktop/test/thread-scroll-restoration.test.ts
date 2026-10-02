@@ -18,6 +18,8 @@ class ElementStub {
   clientHeight = 400;
   contentHeight = 1600;
   scrollTop = 0;
+  scrollPaddingTop = "auto";
+  ownerDocument = { defaultView: { getComputedStyle: (element: ElementStub) => ({ scrollPaddingTop: element.scrollPaddingTop }) } };
   calls: { top: number; behavior: string }[] = [];
   get offsetHeight() { return Number.parseFloat(this.style.height ?? "64"); }
   get scrollHeight(): number { return this.contentHeight + this.children.reduce((sum, child) => sum + (child.dataset.auiTopAnchorReserve !== undefined ? child.offsetHeight : 0), 0); }
@@ -114,6 +116,49 @@ test("first entry still positions a newly submitted turn", () => {
   const dispose = mountTopAnchorReserve(f.store, { current: null });
   flushFrames();
   expect(f.viewport.calls).toEqual([{ top: 1400, behavior: "smooth" }]);
+  dispose();
+});
+
+test.each([32, 48])("submitted bubbles settle below the computed %ipx safe top edge with matching reserve", (inset) => {
+  const f = fixture();
+  f.viewport.scrollPaddingTop = `${inset}px`;
+  const dispose = mountTopAnchorReserve(f.store, { current: null });
+  flushFrames();
+  expect(f.anchor.offsetTop - f.viewport.scrollTop).toBe(inset);
+  expect(f.viewport.scrollHeight - f.viewport.clientHeight).toBe(f.viewport.scrollTop);
+  expect(f.viewport.calls).toEqual([{ top: f.anchor.offsetTop - inset, behavior: "smooth" }]);
+  dispose();
+});
+
+test("tall user messages retain the clamp below the safe top edge", () => {
+  const f = fixture();
+  f.viewport.scrollPaddingTop = "32px";
+  f.anchor.style.height = "320";
+  const dispose = mountTopAnchorReserve(f.store, { current: null });
+  flushFrames();
+  expect(f.anchor.offsetTop + f.anchor.offsetHeight - f.viewport.scrollTop).toBe(32 + f.state.targetConfig.visibleHeight);
+  dispose();
+});
+
+test("top padding does not move an existing restored reading position", () => {
+  const f = fixture();
+  f.viewport.scrollPaddingTop = "32px";
+  const dispose = mountTopAnchorReserve(f.store, { current: { scrollTop: 420, topAnchorTurn: f.state.topAnchorTurn } });
+  flushFrames();
+  expect(f.viewport.calls).toEqual([{ top: 420, behavior: "instant" }]);
+  dispose();
+});
+
+test("percentage padding uses viewport height and early anchors clamp at zero", () => {
+  const f = fixture();
+  f.viewport.scrollPaddingTop = "10%";
+  const dispose = mountTopAnchorReserve(f.store, { current: null });
+  flushFrames();
+  expect(f.anchor.offsetTop - f.viewport.scrollTop).toBe(f.viewport.clientHeight / 10);
+  f.anchor.dataset.messageId = "early-anchor";
+  f.anchor.offsetTop = 12;
+  f.notify(); flushFrames();
+  expect(f.viewport.scrollTop).toBe(0);
   dispose();
 });
 

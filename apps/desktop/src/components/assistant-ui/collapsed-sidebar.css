@@ -1,0 +1,83 @@
+.q-collapsed-sidebar {
+  height: 100%;
+  flex: none;
+  overflow: hidden;
+  background: var(--background);
+}
+.q-collapsed-sidebar-content {
+  display: flex;
+  flex-direction: column;
+  width: 3rem;
+  height: 100%;
+  border-right: 1px solid var(--border);
+}
+.q-collapsed-sidebar .q-sidebar-rail-action {
+  display: flex;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.q-sidebar-rail-action:is(:hover, :focus-visible, [data-state="open"]) {
+  background: var(--q-hover);
+}
+.q-project-popover {
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  width: min(260px, var(--radix-popover-content-available-width));
+  max-height: min(480px, var(--radix-popover-content-available-height));
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 5px 16px rgb(0 0 0 / 12%);
+  outline: none;
+  transform-origin: var(--radix-popover-content-transform-origin);
+  animation: q-project-popover-in 140ms ease-out;
+}
+.q-project-sessions-popover { width: min(320px, var(--radix-popover-content-available-width)); }
+.q-project-popover-heading {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: var(--q-weight-medium);
+}
+.q-project-popover-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.q-project-popover-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.q-project-popover-row:is(:hover, :focus-visible, [data-state="open"], [aria-current="page"]) { background: var(--accent); }
+.q-project-popover-row:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.q-project-popover-empty { padding: 12px 8px; color: var(--muted-foreground); font-size: 13px; }
+@keyframes q-project-popover-in {
+  from { opacity: 0; transform: scale(.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-project-popover { animation: none; }
+  .q-project-popover-row, .q-collapsed-sidebar .q-sidebar-rail-action { transition: none; }
+}

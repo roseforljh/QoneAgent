@@ -2,6 +2,7 @@ import { localizeError } from "./lib/error-localization";
 import { initRuntimeBridge } from "./store-bridge";
 import { repeatedUserMessageId } from "@qone/protocol";
 import { sessionStore, switchSessionState, type SessionExecutionState } from "./lib/session-execution-state";
+import { updateSessionActivity } from "./lib/session-recency";
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
@@ -614,9 +615,11 @@ export const useStore = create<AgentState>((set, get) => ({
     const keptMessages = replaceIndex >= 0 ? history.slice(0, replaceIndex) : history;
     const keptRunIds = new Set(keptMessages.flatMap((item) => item.runId ? [item.runId] : []));
     const messageId = rid();
+    const createdAt = Date.now();
     clearDelta(sid);
     set((s) => ({
-      messages: [...keptMessages, { id: messageId, role: "user", content: message, persisted: false, attachments, goalId: goal ? "__pending_goal__" : undefined, createdAt: Date.now() }],
+      sessions: updateSessionActivity(s.sessions, sid, createdAt),
+      messages: [...keptMessages, { id: messageId, role: "user", content: message, persisted: false, attachments, goalId: goal ? "__pending_goal__" : undefined, createdAt }],
       compactions: replaceIndex >= 0 ? s.compactions.filter((marker) => keptMessages.some((item) => item.id === marker.throughMessageId)) : s.compactions,
       streaming: "",
       streamingParts: [],
@@ -624,7 +627,7 @@ export const useStore = create<AgentState>((set, get) => ({
       preparedToolCallIds: [],
       running: true,
       runningSessionIds: s.runningSessionIds.includes(sid) ? s.runningSessionIds : [...s.runningSessionIds, sid],
-      contextUsage: undefined,
+      contextUsage: replaceIndex >= 0 ? undefined : s.contextUsage,
       contextUsageRequestId: undefined,
       creatingSession: false,
       pendingMessage: undefined,
@@ -724,7 +727,7 @@ export const useStore = create<AgentState>((set, get) => ({
     const { connected, currentSessionId, selectedModelId } = get();
     if (!connected || !currentSessionId || !selectedModelId) return;
     const requestId = rid();
-    set({ contextUsageRequestId: requestId, contextUsage: undefined });
+    set({ contextUsageRequestId: requestId });
     void get().send({ type: "session.context.get", requestId, sessionId: currentSessionId, model: selectedModelId }).then((sent) => {
       if (!sent) set((state) => state.contextUsageRequestId === requestId ? { contextUsageRequestId: undefined } : state);
     });

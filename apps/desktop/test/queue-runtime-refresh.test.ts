@@ -49,6 +49,34 @@ const submit = async (view: ReturnType<typeof liveRuntime>, text: string) => {
   await view.runtime.thread.composer.send();
 };
 
+test("an idle composer send leaves both views and durable queue before the run starts", async () => {
+  let running = false;
+  const sent: string[] = [];
+  const queue = createQoneMessageQueue({ sessionId: "idle-refresh", isRunning: () => running,
+    send: (message) => {
+      expect(main.visible()).toEqual([]);
+      expect(side.visible()).toEqual([]);
+      expect(queue.getSnapshot()).toEqual([]);
+      sent.push(message.content[0]?.type === "text" ? message.content[0].text : "");
+      running = true;
+    }, steer: async () => false, sync: () => {},
+  });
+  const main = liveRuntime(queue, false);
+  const side = liveRuntime(queue, false);
+  try {
+    await submit(main, "latest input");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(sent).toEqual(["latest input"]);
+    expect(main.visible()).toEqual([]);
+    expect(side.visible()).toEqual([]);
+    await submit(side, "waiting input");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(sent).toEqual(["latest input"]);
+    expect(main.visible()).toEqual(["waiting input"]);
+    expect(side.visible()).toEqual(["waiting input"]);
+  } finally { main.dispose(); side.dispose(); }
+});
+
 test("the first composer send publishes its waiting row without typing again or receiving IPC", async () => {
   const queue = createQoneMessageQueue({ sessionId: "refresh", isRunning: () => true,
     send: () => { throw new Error("must remain queued"); }, steer: async () => true, sync: () => {},

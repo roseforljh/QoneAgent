@@ -28,7 +28,7 @@ export function RunFileChangesSummary() {
         initial={{ opacity: 0, y: 4, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: "spring", stiffness: 500, damping: 35 }}
-        className="relative z-10 w-fit max-w-full min-w-0 overflow-hidden rounded-3xl"
+        className="relative w-fit max-w-full min-w-0 overflow-hidden rounded-3xl"
       >
         <button
           type="button"

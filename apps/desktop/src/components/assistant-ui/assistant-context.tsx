@@ -56,6 +56,7 @@ export const AssistantContext: FC = () => {
   const contextUsage = useConversationStore((state) => state.contextUsage);
   const refreshContextUsage = useConversationStore((state) => state.refreshContextUsage);
 
+  // Idle snapshots restore history/model changes; context.usage events update active runs.
   useEffect(() => {
     if (connected && sessionId && selectedModelId && !running && !compacting && loadingSessionId !== sessionId) refreshContextUsage();
   }, [connected, sessionId, selectedModelId, selectedModel?.updatedAt, running, loadingSessionId, latestMessageId, compacting, refreshContextUsage]);

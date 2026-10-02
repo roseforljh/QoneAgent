@@ -139,57 +139,59 @@ export const ModelPicker: FC = () => {
         <ChevronDownIcon size={14} aria-hidden="true" />
       </button>
     </Popover.Trigger>
-    <Popover.Content side="top" align="center" sideOffset={8} collisionPadding={12} className="q-model-picker-card"
-      onOpenAutoFocus={(event) => { event.preventDefault(); measurePanels(); }}
-      onKeyDown={(event) => {
-        if (view !== "advanced" || (event.target as HTMLElement).closest('input, [role="slider"]')) return;
-        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-        const options = Array.from(advancedRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
-        if (!options.length) return;
-        event.preventDefault();
-        const index = options.indexOf(document.activeElement as HTMLButtonElement);
-        const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
-          : index < 0 ? (event.key === "ArrowUp" ? options.length - 1 : 0)
-            : (index + (event.key === "ArrowUp" ? -1 : 1) + options.length) % options.length;
-        options[next]?.focus();
-      }}>
-      <div className="q-model-picker-viewport" data-measured={Boolean(panelHeights)} style={panelHeights === undefined ? undefined : { height: panelHeights[view] }}>
-        <div ref={simpleRef} className="q-model-picker-simple" aria-hidden={view !== "simple"} inert={view !== "simple"} data-active={view === "simple"}>
-          <div className="q-model-picker-card-head">
-            <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={17} />
-            <button type="button" className="q-model-picker-model-button" onClick={showModels} aria-label={`${t("chat.selectModel")}：${displayLabel}`}>
-              <span className="q-model-picker-model-content">
-                <span className="q-model-picker-model-label"><span className="q-model-picker-model-name">{displayLabel}</span></span>
-                <span className="q-model-picker-thinking-label">{thinkingLabel || t("model.thinking")}</span>
-                <ChevronRightIcon size={13} aria-hidden="true" />
-              </span>
-            </button>
-            <button type="button" className="q-model-picker-reset" disabled={!activeModel || activeModel.id === models[0]?.id} onClick={() => models[0] && setSelectedModel(models[0].id)} aria-label={t("model.resetToDefault")} title={t("model.resetToDefault")}><RotateCcwIcon size={16} /></button>
+    <Popover.Portal>
+      <Popover.Content side="top" align="center" sideOffset={8} collisionPadding={12} className="q-model-picker-card"
+        onOpenAutoFocus={(event) => { event.preventDefault(); measurePanels(); }}
+        onKeyDown={(event) => {
+          if (view !== "advanced" || (event.target as HTMLElement).closest('input, [role="slider"]')) return;
+          if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+          const options = Array.from(advancedRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+          if (!options.length) return;
+          event.preventDefault();
+          const index = options.indexOf(document.activeElement as HTMLButtonElement);
+          const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
+            : index < 0 ? (event.key === "ArrowUp" ? options.length - 1 : 0)
+              : (index + (event.key === "ArrowUp" ? -1 : 1) + options.length) % options.length;
+          options[next]?.focus();
+        }}>
+        <div className="q-model-picker-viewport" data-measured={Boolean(panelHeights)} style={panelHeights === undefined ? undefined : { height: panelHeights[view] }}>
+          <div ref={simpleRef} className="q-model-picker-simple" aria-hidden={view !== "simple"} inert={view !== "simple"} data-active={view === "simple"}>
+            <div className="q-model-picker-card-head">
+              <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={17} />
+              <button type="button" className="q-model-picker-model-button" onClick={showModels} aria-label={`${t("chat.selectModel")}：${displayLabel}`}>
+                <span className="q-model-picker-model-content">
+                  <span className="q-model-picker-model-label"><span className="q-model-picker-model-name">{displayLabel}</span></span>
+                  <span className="q-model-picker-thinking-label">{thinkingLabel || t("model.thinking")}</span>
+                  <ChevronRightIcon size={13} aria-hidden="true" />
+                </span>
+              </button>
+              <button type="button" className="q-model-picker-reset" disabled={!activeModel || activeModel.id === models[0]?.id} onClick={() => models[0] && setSelectedModel(models[0].id)} aria-label={t("model.resetToDefault")} title={t("model.resetToDefault")}><RotateCcwIcon size={16} /></button>
+            </div>
+            <ThinkingWave options={thinkingOptions} index={thinkingIndex} disabled={!activeModel} showLabel={false} onSelect={(index) => {
+              const level = thinkingOptions[index];
+              if (activeModel && level) setThinking(activeModel.id, level.value as ThinkingLevel);
+            }} />
           </div>
-          <ThinkingWave options={thinkingOptions} index={thinkingIndex} disabled={!activeModel} showLabel={false} onSelect={(index) => {
-            const level = thinkingOptions[index];
-            if (activeModel && level) setThinking(activeModel.id, level.value as ThinkingLevel);
-          }} />
+          <div ref={advancedRef} className="q-model-picker-advanced" aria-hidden={view !== "advanced"} inert={view !== "advanced"} data-active={view === "advanced"}>
+            <div className="q-model-picker-list-head">
+              {searchOpen ? <label className="q-model-picker-search">
+                <CodexIcon src={searchIcon} className="size-3.5" />
+                <input ref={searchRef} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("chat.searchModels")} aria-label={t("chat.searchModels")} />
+                <button type="button" aria-label={t("chat.clearModelSearch")} onClick={() => { setSearch(""); setSearchOpen(false); }}><XIcon size={14} /></button>
+              </label> : <><span>{t("chat.selectModel")}</span><button type="button" aria-label={t("chat.searchModels")} onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchRef.current?.focus()); }}><CodexIcon src={searchIcon} className="size-[15px]" /></button></>}
+            </div>
+            <div className="q-model-picker-list" role="listbox" aria-label={t("chat.modelsInProvider", { provider: providerSnapshot?.name || t("chat.modelProvider") })}>
+              {visibleModels.map((model) => <button type="button" role="option" aria-selected={model.id === activeModel?.id} className={cn("q-model-picker-option", model.id === activeModel?.id && "is-selected")} key={model.id} onClick={() => chooseModel(model.id)}>
+                <span className="q-model-picker-option-name">{model.label}</span>
+                {model.id === activeModel?.id && <CheckIcon size={16} aria-hidden="true" />}
+              </button>)}
+              {models.length === 0 && <p className="q-model-picker-empty">{t("chat.noModelsConfigured")}</p>}
+              {models.length > 0 && visibleModels.length === 0 && <p className="q-model-picker-empty">{t("chat.noModelsFound")}</p>}
+            </div>
+            {models.length === 0 && <button type="button" className="q-model-picker-settings" onClick={() => { setOpen(false); window.dispatchEvent(new Event("qone-open-settings")); }}>{t("chat.openSettings")}</button>}
+          </div>
         </div>
-        <div ref={advancedRef} className="q-model-picker-advanced" aria-hidden={view !== "advanced"} inert={view !== "advanced"} data-active={view === "advanced"}>
-          <div className="q-model-picker-list-head">
-            {searchOpen ? <label className="q-model-picker-search">
-              <CodexIcon src={searchIcon} className="size-3.5" />
-              <input ref={searchRef} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("chat.searchModels")} aria-label={t("chat.searchModels")} />
-              <button type="button" aria-label={t("chat.clearModelSearch")} onClick={() => { setSearch(""); setSearchOpen(false); }}><XIcon size={14} /></button>
-            </label> : <><span>{t("chat.selectModel")}</span><button type="button" aria-label={t("chat.searchModels")} onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchRef.current?.focus()); }}><CodexIcon src={searchIcon} className="size-[15px]" /></button></>}
-          </div>
-          <div className="q-model-picker-list" role="listbox" aria-label={t("chat.modelsInProvider", { provider: providerSnapshot?.name || t("chat.modelProvider") })}>
-            {visibleModels.map((model) => <button type="button" role="option" aria-selected={model.id === activeModel?.id} className={cn("q-model-picker-option", model.id === activeModel?.id && "is-selected")} key={model.id} onClick={() => chooseModel(model.id)}>
-              <span className="q-model-picker-option-name">{model.label}</span>
-              {model.id === activeModel?.id && <CheckIcon size={16} aria-hidden="true" />}
-            </button>)}
-            {models.length === 0 && <p className="q-model-picker-empty">{t("chat.noModelsConfigured")}</p>}
-            {models.length > 0 && visibleModels.length === 0 && <p className="q-model-picker-empty">{t("chat.noModelsFound")}</p>}
-          </div>
-          {models.length === 0 && <button type="button" className="q-model-picker-settings" onClick={() => { setOpen(false); window.dispatchEvent(new Event("qone-open-settings")); }}>{t("chat.openSettings")}</button>}
-        </div>
-      </div>
-    </Popover.Content>
+      </Popover.Content>
+    </Popover.Portal>
   </Popover.Root>;
 };

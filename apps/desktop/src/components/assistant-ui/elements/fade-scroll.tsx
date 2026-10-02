@@ -7,21 +7,19 @@ import { bindScrollRegion } from "../../../lib/scroll-region";
 export interface FadeScrollProps extends ComponentProps<"div"> {
   /** Follow streamed content until the user scrolls away from the bottom. */
   autoScrollToBottom?: boolean;
-  /** The registered parent viewport to receive unconsumed wheel distance. */
-  getScrollViewport?: () => HTMLElement | null;
 }
 
 export function FadeScroll({
-  className, children, autoScrollToBottom = false, getScrollViewport, style, ...props
+  className, children, autoScrollToBottom = false, style, ...props
 }: FadeScrollProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const optionsRef = useRef({ autoScrollToBottom, getScrollViewport });
+  const optionsRef = useRef({ autoScrollToBottom });
   const [edges, setEdges] = useState({ top: false, bottom: false });
 
   useLayoutEffect(() => {
-    optionsRef.current = { autoScrollToBottom, getScrollViewport };
-  }, [autoScrollToBottom, getScrollViewport]);
+    optionsRef.current = { autoScrollToBottom };
+  }, [autoScrollToBottom]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -29,7 +27,6 @@ export function FadeScroll({
     if (!element || !content) return;
     return bindScrollRegion(element, content, {
       autoFollow: () => optionsRef.current.autoScrollToBottom,
-      getViewport: () => optionsRef.current.getScrollViewport?.() ?? null,
       onEdgesChange: (next) => setEdges((current) =>
         current.top === next.top && current.bottom === next.bottom ? current : next),
     });
@@ -44,6 +41,7 @@ export function FadeScroll({
     className={cn("overflow-y-auto", className)}
     style={{ ...(maskImage ? { maskImage, WebkitMaskImage: maskImage } : {}), ...style }}
     {...props}
+    data-scroll-region=""
   >
     <div ref={contentRef}>{children}</div>
   </div>;

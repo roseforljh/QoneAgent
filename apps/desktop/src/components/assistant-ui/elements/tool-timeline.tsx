@@ -1,9 +1,8 @@
 "use client";
 
-import { CodexChevronRightIcon as ChevronRightIcon, CodexXIcon, type ExecutionIcon } from "../execution-icons";
+import { CodexChevronRightIcon as ChevronRightIcon, type ExecutionIcon } from "../execution-icons";
 
-import { useCallback, useId, useRef, type ReactNode } from "react";
-import { useThreadViewportStore } from "@assistant-ui/react";
+import { useId, useRef, type ReactNode } from "react";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -41,7 +40,6 @@ export interface ToolTimelineProps {
   fullSummary?: string;
   fullActiveLabel?: string;
   headerIcon?: ExecutionIcon;
-  headerStat?: { added: number; removed: number };
   canExpand?: boolean;
   failureLabel?: string;
   stats: TimelineStat[];
@@ -72,7 +70,6 @@ export function ToolTimeline({
   fullSummary,
   fullActiveLabel,
   headerIcon: HeaderIcon,
-  headerStat,
   canExpand = true,
   failureLabel,
   stats,
@@ -81,11 +78,6 @@ export function ToolTimeline({
   className,
 }: ToolTimelineProps) {
   const disclosureRef = useRef<HTMLDivElement>(null);
-  const threadViewportStore = useThreadViewportStore({ optional: true });
-  const getScrollViewport = useCallback(
-    () => threadViewportStore?.getState().element.viewport ?? null,
-    [threadViewportStore],
-  );
   const panelId = useId();
   return (
     <Collapsible
@@ -117,17 +109,10 @@ export function ToolTimeline({
             <>{restingLabel}</>
           </SwapLabel>
         </OverflowFade>
-        {headerStat && (headerStat.added > 0 || headerStat.removed > 0) && (
-          <span className="flex shrink-0 items-center gap-1 font-mono text-xs tracking-tight">
-            {headerStat.added > 0 && <span className="text-emerald-600 dark:text-emerald-400 font-medium">+{headerStat.added}</span>}
-            {headerStat.removed > 0 && <span className="text-rose-600 dark:text-rose-400 font-medium">−{headerStat.removed}</span>}
-          </span>
-        )}
-        {failureLabel && <span title={failureLabel} role="img" aria-label={failureLabel}><CodexXIcon className="size-3.5 shrink-0 text-destructive" /></span>}
         {canExpand && <ChevronRightIcon data-slot="tool-disclosure-chevron" className="size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover/trigger:opacity-75 group-focus-visible/trigger:opacity-100 group-data-[state=open]/trigger:opacity-100 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />}
       </CollapsibleTrigger>
       <MeasuredCollapse id={panelId} open={open && canExpand} className="outline-none">
-        <FadeScroll className={cn(regionViewport, "overflow-x-hidden")} getScrollViewport={getScrollViewport}>
+        <FadeScroll className={cn(regionViewport, "overflow-x-hidden")} autoScrollToBottom={streaming}>
           <div className="flex flex-col gap-2 ps-3 pt-2">
               {children ?? take(steps, visibleSteps).map((step, index, shown) => <ToolTimelineRow key={step.id ?? step.chip} step={step} active={streaming && index === shown.length - 1}>
                 {renderStep?.(step, index)}

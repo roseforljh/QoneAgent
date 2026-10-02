@@ -3,6 +3,11 @@
   background: transparent;
 }
 
+/* Initial history and submitted-turn placement share the same safe top edge. */
+.q-message-list {
+  padding-block-start: var(--q-thread-content-top-inset);
+}
+
 /* Keep assistant-ui's turn anchoring while skipping paint and layout for old turns. */
 .q-message-block[data-static-turn] {
   content-visibility: auto;

@@ -1,5 +1,4 @@
 "use client";
-
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from "react";
 import { Popover } from "radix-ui";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -63,6 +62,7 @@ import { closeSideConversation } from "../../lib/side-conversation";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { localizeError } from "../../lib/error-localization";
 import sideChatIcon from "../../assets/codex-icons/plus-chat-bubble-right-light-16.svg";
+import { useSelectedTextSideChat } from "../../hooks/use-selected-text-side-chat";
 import { CodeContextMenu, DockTabContextMenu, WorkspacePathContextMenu } from "./dock-context-menu";
 
 const DOCK_VIEWS: readonly DockView[] = ["session", "terminal", "files", "git", "browser", "mcp", "skills", "subagents"];
@@ -449,7 +449,6 @@ function SessionDetails() {
     </section>
   );
 }
-
 export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChange, onTabsChange }: {
   scopeActive: boolean;
   sessionId?: string;
@@ -479,6 +478,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     for (const tab of openTabsRef.current) if (tab.view === "terminal") closeDockTerminalResource(tab.id);
   }, []);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  useSelectedTextSideChat(sessionId, openTabs, activeTabId, (id) => { setActiveTabId(id); setLauncherOpen(false); setCollapsed(false); });
   useEffect(() => {
     const sessions = Object.values(sideChats).filter((session) => session.sideChat?.parentSessionId === sessionId);
     const known = new Set(openTabsRef.current.filter((tab) => tab.view === "sideChat").map((tab) => tab.id));

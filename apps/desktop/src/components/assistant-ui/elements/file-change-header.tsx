@@ -1,5 +1,5 @@
 import { CollapsibleTrigger } from "../../ui/collapsible";
-import { CodexPenLineIcon, CodexXIcon, CodexClock3Icon } from "../execution-icons";
+import { CodexPenLineIcon, CodexClock3Icon } from "../execution-icons";
 import { ShimmerLabel } from "./surfaces";
 import type { FileChangeKind } from "../file-change-activity-data";
 import { ChangeCounts } from "./change-counts";
@@ -40,7 +40,6 @@ export function FileChangeHeader({ label, name, path, menuPath, fileRemoved, ope
     {stat && <CollapsibleTrigger data-slot="file-change-counts" aria-controls={panelId} aria-expanded={open} aria-label={diffLabel}
       className="shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-ring"><ChangeCounts additions={stat.added} deletions={stat.removed} colorOnHover /></CollapsibleTrigger>}
     {!open && changeKind === "created" && stat && stat.added + stat.removed > 0 && <span data-slot="new-file-indicator" className="size-1.5 shrink-0 self-center rounded-full bg-blue-500/70" />}
-    {failed && <CodexXIcon className="size-3.5 shrink-0 self-center text-destructive/80" />}
     {waiting && <CodexClock3Icon className="size-3.5 shrink-0 self-center text-amber-500/80" />}
   </div>;
 }

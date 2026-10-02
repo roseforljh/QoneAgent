@@ -1,4 +1,8 @@
-:root { --q-thread-header-height: 46px; }
+:root {
+  --q-thread-header-height: 46px;
+  --q-thread-edge-fade: calc(4 * var(--spacing));
+  --q-thread-content-top-inset: calc(8 * var(--spacing));
+}
 
 .q-thread-header {
   display: flex;
@@ -20,7 +24,7 @@
   z-index: 20;
   top: 0;
   inset-inline: 0;
-  height: 1rem;
+  height: var(--q-thread-edge-fade);
   pointer-events: none;
   background-image: linear-gradient(to bottom, var(--background), transparent);
 }

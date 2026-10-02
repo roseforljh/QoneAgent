@@ -26,18 +26,20 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
   const phase = useAuiState((state) => threadPhase(state.thread.isRunning, state.thread.messages));
   const turnId = useAuiState((state) => [...state.thread.messages].reverse().find((message) => message.role === "user")?.id);
   const viewportStore = useThreadViewportStore();
+  // Descendant layout effects run before the viewport's host ref registers.
+  // Subscribe to that registration instead of abandoning the one mount attempt.
+  const viewport = useThreadViewport((state) => state.element.viewport);
   const controller = useRef<ReturnType<typeof mountThreadScrollController> | null>(null);
   const currentTurn = useRef<ThreadScrollTurn>({ turnId, running, phase });
   currentTurn.current = { turnId, running, phase };
   const previousTurn = useRef({ sessionId, turnId });
-  const [controllerShow, setControllerShow] = useState(false);
+  const [controllerShow, setControllerShow] = useState<boolean | null>(null);
   // assistant-ui updates this store when its viewport ref and footer inset are
   // registered. It is the safe fallback during the first layout measurement.
   const isAtBottom = useThreadViewport((state) => state.isAtBottom);
-  const show = controllerShow || !isAtBottom;
+  const show = controllerShow ?? !isAtBottom;
 
   useLayoutEffect(() => {
-    const viewport = viewportStore.getState().element.viewport;
     const content = contentRef.current;
     const footer = viewport?.querySelector<HTMLElement>("[data-thread-scroll-footer]");
     if (!viewport || !content || !footer) return;
@@ -58,7 +60,7 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
       owner.dispose();
       if (controller.current === owner) controller.current = null;
     };
-  }, [contentRef, sessionId, viewportStore]);
+  }, [contentRef, sessionId, viewport, viewportStore]);
 
   useLayoutEffect(() => {
     controller.current?.sync({ turnId, running, phase });

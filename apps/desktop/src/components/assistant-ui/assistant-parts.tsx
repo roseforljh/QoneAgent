@@ -79,7 +79,7 @@ export const AssistantParts: FC = () => {
   const renderRange = (range: AssistantPartRange) => {
     if (range.type === "reasoning") return <MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />;
     if (range.type === "text") return (
-      <div className="q-assistant-text text-foreground" key={`text-${range.index}`}>
+      <div className="q-assistant-text text-foreground" data-aui-quote-selectable="true" key={`text-${range.index}`}>
         <MessagePrimitive.PartByIndex index={range.index} components={{ Text: MarkdownText }} />
       </div>
     );

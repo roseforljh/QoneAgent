@@ -30,7 +30,9 @@ export function nextThreadFollowMode(mode: ThreadFollowMode, event: ThreadFollow
         if (mode === "user_follow") mode = "prework_follow";
       }
       if (event.previous === "prework" && event.phase === "final_answer") mode = mode === "prework_follow" ? "user_follow" : "static";
-      if (event.previous !== "idle" && event.phase === "idle" && mode !== "user_follow") mode = "static";
+      if (event.previous !== "idle" && event.phase === "idle") {
+        mode = mode === "prework_follow" || mode === "user_follow" ? "user_follow" : "static";
+      }
       return mode;
     }
   }

@@ -1,6 +1,6 @@
-import { memo, useCallback, useState } from "react";
+import { memo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { useAuiState, useThreadViewportStore, type ReasoningMessagePartComponent } from "@assistant-ui/react";
+import { useAuiState, type ReasoningMessagePartComponent } from "@assistant-ui/react";
 import ReactMarkdown from "react-markdown";
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { CodexChevronRightIcon } from "./execution-icons";
@@ -17,18 +17,12 @@ const ReasoningText = memo(function ReasoningText({ text }: { text: string }) {
 export const Reasoning: ReasoningMessagePartComponent = () => {
   const { t } = useLocale();
   const reduceMotion = useReducedMotion();
-  const threadViewportStore = useThreadViewportStore({ optional: true });
   const part = useAuiState((s) => s.part.type === "reasoning" ? s.part : null);
   const messageRunning = useAuiState((s) => s.message.status?.type === "running");
   const running = messageRunning && part?.status.type === "running";
   const [choice, setChoice] = useState<{ running: boolean; open: boolean }>();
   // A block transition restores automatic state; no inactivity timeout guesses.
   const open = choice?.running === running ? choice.open : running;
-
-  const getScrollViewport = useCallback(
-    () => threadViewportStore?.getState().element.viewport ?? null,
-    [threadViewportStore],
-  );
 
   if (!part?.text.trim()) return null;
 
@@ -51,7 +45,6 @@ export const Reasoning: ReasoningMessagePartComponent = () => {
           aria-label={t("chat.reasoning")}
           tabIndex={0}
           autoScrollToBottom={running}
-          getScrollViewport={getScrollViewport}
         >
           <ReasoningText text={part.text} />
         </FadeScroll>

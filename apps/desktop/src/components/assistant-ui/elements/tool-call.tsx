@@ -1,9 +1,8 @@
 "use client";
 
-import { CodexClock3Icon as Clock3Icon, CodexXIcon as XIcon, type ExecutionIcon } from "../execution-icons";
+import { CodexClock3Icon as Clock3Icon, type ExecutionIcon } from "../execution-icons";
 
-import { useCallback, useId, useRef, type ReactNode } from "react";
-import { useThreadViewportStore } from "@assistant-ui/react";
+import { useId, useRef, type ReactNode } from "react";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -64,11 +63,6 @@ export function ToolCall({
   className,
 }: ToolCallProps) {
   const disclosureRef = useRef<HTMLDivElement>(null);
-  const threadViewportStore = useThreadViewportStore({ optional: true });
-  const getScrollViewport = useCallback(
-    () => threadViewportStore?.getState().element.viewport ?? null,
-    [threadViewportStore],
-  );
   const panelId = useId();
   const target = fullTarget || query;
   const title = [running ? activeLabel : label, targetAction ? undefined : target].filter(Boolean).join(" ");
@@ -99,10 +93,9 @@ export function ToolCall({
               {stat.removed > 0 && <span className="text-rose-600 dark:text-rose-400 font-medium">−{stat.removed}</span>}
             </span>
           )}
-          {(waiting || failed) && (
+          {waiting && (
             <span className="ms-auto flex w-4 shrink-0 items-center justify-end">
-              {waiting && <Clock3Icon className="size-3.5 text-amber-500/80" />}
-              {failed && <XIcon className="size-3.5 text-destructive/80" />}
+              <Clock3Icon className="size-3.5 text-amber-500/80" />
             </span>
           )}
         </CollapsibleTrigger>
@@ -116,7 +109,7 @@ export function ToolCall({
         {open && <div data-slot="tool-result-panel" className={cn("mt-1.5", !resultHasOwnFrame && "overflow-hidden rounded-lg border border-border/40 bg-muted/20 dark:bg-muted/10 shadow-xs")}>
           <FadeScroll
             className={cn(failed ? detailViewport : regionViewport, resultHasOwnFrame ? "pe-2" : "p-2.5")}
-            getScrollViewport={getScrollViewport}
+            autoScrollToBottom={running}
           >{result}</FadeScroll>
         </div>}
       </MeasuredCollapse>

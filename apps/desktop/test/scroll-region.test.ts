@@ -5,16 +5,14 @@ class ElementStub extends EventTarget {
   scrollTop = 0;
   scrollHeight = 800;
   clientHeight = 300;
-  children = new Set<ElementStub>();
   calls: ScrollToOptions[] = [];
   wheelOptions: AddEventListenerOptions | boolean | undefined;
-  ownerDocument = {
-    defaultView: { getComputedStyle: () => ({ lineHeight: "24px", fontSize: "16px" }) },
-  };
-  contains(element: ElementStub) { return this.children.has(element); }
   scrollTo(options: ScrollToOptions) {
     this.calls.push(options);
-    this.scrollTop = Math.max(0, Math.min(options.top ?? this.scrollTop, this.scrollHeight - this.clientHeight));
+    this.nativeScroll(Math.max(0, Math.min(options.top ?? this.scrollTop, this.scrollHeight - this.clientHeight)));
+  }
+  nativeScroll(top: number) {
+    this.scrollTop = top;
     this.dispatchEvent(new Event("scroll"));
   }
   override addEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean) {
@@ -48,185 +46,225 @@ class ObserverStub {
 }
 
 const originalObserver = globalThis.ResizeObserver;
+const originalRequest = globalThis.requestAnimationFrame;
+const originalCancel = globalThis.cancelAnimationFrame;
+const frames = new Map<number, FrameRequestCallback>();
+let nextFrame = 0;
 let disposers: Array<() => void> = [];
 beforeEach(() => {
   ObserverStub.instances = [];
   globalThis.ResizeObserver = ObserverStub as unknown as typeof ResizeObserver;
+  globalThis.requestAnimationFrame = (callback) => {
+    frames.set(++nextFrame, callback);
+    return nextFrame;
+  };
+  globalThis.cancelAnimationFrame = (id) => { frames.delete(id); };
 });
 afterEach(() => {
   for (const dispose of disposers) dispose();
   disposers = [];
+  frames.clear();
   globalThis.ResizeObserver = originalObserver;
+  globalThis.requestAnimationFrame = originalRequest;
+  globalThis.cancelAnimationFrame = originalCancel;
 });
+
+function flushFrame() {
+  const pending = [...frames.values()];
+  frames.clear();
+  for (const callback of pending) callback(0);
+}
 
 function fixture({ top = 200, follow = false } = {}) {
   const inner = new ElementStub();
   const content = new ElementStub();
-  const outer = new ElementStub();
-  outer.scrollHeight = 2000;
-  outer.clientHeight = 600;
-  outer.scrollTop = 400;
-  outer.children.add(inner);
   inner.scrollTop = top;
-  let viewport: HTMLElement | null = outer.dom();
   let autoFollow = follow;
-  let edges = { top: false, bottom: false };
+  const edges: Array<{ top: boolean; bottom: boolean }> = [];
   const dispose = bindScrollRegion(inner.dom(), content.dom(), {
-    getViewport: () => viewport,
     autoFollow: () => autoFollow,
-    onEdgesChange: (next) => { edges = next; },
+    onEdgesChange: (next) => { edges.push(next); },
   });
   disposers.push(dispose);
   return {
-    inner, outer, content, dispose,
+    inner, dispose, edges,
     observer: ObserverStub.instances.at(-1)!,
     wheel: (delta: number, options?: Partial<WheelStub>, cancelable?: boolean) => {
       const event = new WheelStub(delta, options, cancelable);
       inner.dispatchEvent(event);
       return event;
     },
-    setViewport: (value: HTMLElement | null) => { viewport = value; },
     setAutoFollow: (value: boolean) => { autoFollow = value; },
-    edges: () => edges,
   };
 }
 
-test("real wheel handler consumes inner distance only before the boundary", () => {
-  const f = fixture();
-  expect(f.inner.wheelOptions).toEqual({ passive: false });
-  expect(f.wheel(60).defaultPrevented).toBe(true);
-  expect(f.inner.scrollTop).toBe(260);
-  expect(f.outer.calls).toHaveLength(0);
+test("wheel input stays passive and native inside the region and at both boundaries", () => {
+  for (const top of [0, 20, 200, 480, 499.5, 500]) {
+    const f = fixture({ top });
+    expect(f.inner.wheelOptions).toEqual({ passive: true });
+    for (const delta of [-60, -0.5, 0.5, 60]) {
+      expect(f.wheel(delta).defaultPrevented).toBe(false);
+      expect(f.inner.scrollTop).toBe(top);
+    }
+    expect(f.inner.calls).toHaveLength(0);
+  }
+  expect(frames.size).toBe(0);
 });
 
-test("the gesture crossing the bottom immediately passes only its remainder to the viewport", () => {
-  const f = fixture({ top: 480 });
-  expect(f.wheel(60).defaultPrevented).toBe(true);
-  expect(f.inner.scrollTop).toBe(500);
-  expect(f.outer.scrollTop).toBe(440);
-  expect(f.outer.calls).toEqual([{ top: 440, behavior: "instant" }]);
-  expect(f.edges()).toEqual({ top: true, bottom: false });
-});
-
-test("continued wheel at the bottom scrolls the outer viewport without jumping to its end", () => {
-  const f = fixture({ top: 500 });
-  f.wheel(60);
-  f.wheel(60);
-  expect(f.inner.calls).toHaveLength(0);
-  expect(f.outer.scrollTop).toBe(520);
-  expect(f.outer.calls).toHaveLength(2);
-});
-
-test("an upward gesture crossing the top hands its remainder to the viewport", () => {
-  const f = fixture({ top: 20 });
-  f.wheel(-60);
-  expect(f.inner.scrollTop).toBe(0);
-  expect(f.outer.scrollTop).toBe(360);
-});
-
-test("short non-overflowing reasoning transfers the whole wheel gesture", () => {
+test("short regions leave ancestor chaining to the browser without swallowing input", () => {
   const f = fixture({ top: 0 });
   f.inner.scrollHeight = 200;
-  expect(f.wheel(60).defaultPrevented).toBe(true);
-  expect(f.outer.scrollTop).toBe(460);
-});
-
-test("upward scrolling outside a short region does not re-enable internal stream following", () => {
-  const f = fixture({ top: 0, follow: true });
-  f.inner.scrollHeight = 200;
-  f.wheel(-60);
-  expect(f.outer.scrollTop).toBe(340);
-  f.inner.scrollHeight = 900;
-  f.observer.resize();
+  expect(f.wheel(60).defaultPrevented).toBe(false);
+  expect(f.wheel(-60).defaultPrevented).toBe(false);
   expect(f.inner.calls).toHaveLength(0);
 });
 
-test("fractional remaining distance is consumed rather than applied twice", () => {
-  const f = fixture({ top: 499.5 });
-  f.wheel(2);
-  expect(f.inner.scrollTop).toBe(500);
-  expect(f.outer.scrollTop).toBe(401.5);
-});
-
-test("an exact boundary hit consumes no outer distance; the next wheel scrolls externally", () => {
-  const f = fixture({ top: 480 });
-  f.wheel(20);
-  expect(f.inner.scrollTop).toBe(500);
-  expect(f.outer.calls).toHaveLength(0);
-  f.wheel(20);
-  expect(f.outer.scrollTop).toBe(420);
-});
-
-test("both regions at their boundary neither swallow input nor cause scrolling", () => {
-  const f = fixture({ top: 500 });
-  f.outer.scrollTop = 1400;
-  expect(f.wheel(60).defaultPrevented).toBe(false);
-  expect(f.outer.calls).toHaveLength(0);
+test("wheel bursts do not read layout, write positions or schedule animation", () => {
+  const f = fixture();
+  for (const property of ["scrollTop", "scrollHeight", "clientHeight"]) {
+    Object.defineProperty(f.inner, property, {
+      get() { throw new Error(`wheel must not measure ${property}`); },
+    });
+  }
+  for (let i = 0; i < 100; i++) {
+    expect(f.wheel(i % 2 ? -60 : 60).defaultPrevented).toBe(false);
+  }
   expect(f.inner.calls).toHaveLength(0);
+  expect(frames.size).toBe(0);
+  expect(f.edges).toHaveLength(1);
 });
 
-test("line and page wheel units use measured line height and viewport height", () => {
+test("line, page, zoom, horizontal and non-cancelable gestures are not rewritten", () => {
   const f = fixture({ top: 500 });
-  f.wheel(2, { deltaMode: 1 });
-  expect(f.outer.scrollTop).toBe(448);
-  f.wheel(1, { deltaMode: 2 });
-  expect(f.outer.scrollTop).toBe(748);
-});
-
-test("viewport registration is resolved at event time, never via a CSS selector", () => {
-  const f = fixture({ top: 500 });
-  f.setViewport(null);
-  expect(f.wheel(60).defaultPrevented).toBe(false);
-  expect(f.outer.calls).toHaveLength(0);
-  f.setViewport(f.outer.dom());
-  expect(f.wheel(60).defaultPrevented).toBe(true);
-  expect(f.outer.scrollTop).toBe(460);
-});
-
-test("zoom, horizontal, shift, non-cancelable and already-handled gestures remain native", () => {
-  const f = fixture({ top: 500 });
-  for (const options of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { deltaX: 100 }]) {
+  for (const options of [{ deltaMode: 1 }, { deltaMode: 2 }, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { deltaX: 100 }]) {
     expect(f.wheel(60, options).defaultPrevented).toBe(false);
   }
   expect(f.wheel(60, {}, false).defaultPrevented).toBe(false);
-  const handled = new WheelStub(60);
-  handled.preventDefault();
-  f.inner.dispatchEvent(handled);
-  expect(f.outer.calls).toHaveLength(0);
   expect(f.inner.calls).toHaveLength(0);
 });
 
-test("streamed growth follows internally but never hijacks the conversation position", () => {
+test("scroll and resize notifications coalesce and publish only changed fade edges", () => {
+  const f = fixture({ top: 0 });
+  expect(f.edges).toEqual([{ top: false, bottom: true }]);
+  f.inner.nativeScroll(100);
+  f.inner.nativeScroll(200);
+  f.observer.resize();
+  expect(frames.size).toBe(1);
+  expect(f.edges).toHaveLength(1);
+  flushFrame();
+  expect(f.edges.at(-1)).toEqual({ top: true, bottom: true });
+  f.inner.nativeScroll(300);
+  flushFrame();
+  expect(f.edges).toHaveLength(2);
+  f.inner.nativeScroll(500);
+  flushFrame();
+  expect(f.edges.at(-1)).toEqual({ top: true, bottom: false });
+});
+
+test("streamed growth follows internally and unchanged sizes do not rewrite scrollTop", () => {
   const f = fixture({ top: 500, follow: true });
+  f.observer.resize();
+  expect(f.inner.calls).toHaveLength(0);
   f.inner.scrollHeight = 900;
   f.observer.resize();
   expect(f.inner.scrollTop).toBe(600);
-  expect(f.outer.calls).toHaveLength(0);
-  expect(f.outer.scrollTop).toBe(400);
+  f.observer.resize();
+  expect(f.inner.calls).toEqual([{ top: 600, behavior: "instant" }]);
 });
 
-test("upward reading pauses following even before a scroll event or resize is delivered", () => {
-  const f = fixture({ top: 500, follow: true });
-  f.setViewport(null); // native wheel path: the browser has not delivered scroll yet
+test("upward reading pauses following before native scroll or resize is delivered", () => {
+  for (const cancelable of [true, false]) {
+    const f = fixture({ top: 500, follow: true });
+    f.wheel(-60, {}, cancelable);
+    f.inner.scrollHeight = 900;
+    f.observer.resize();
+    expect(f.inner.calls).toHaveLength(0);
+    expect(f.inner.scrollTop).toBe(500);
+  }
+});
+
+test("upward scrolling over a short region pauses internal following", () => {
+  const f = fixture({ top: 0, follow: true });
+  f.inner.scrollHeight = 200;
   f.wheel(-60);
   f.inner.scrollHeight = 900;
   f.observer.resize();
   expect(f.inner.calls).toHaveLength(0);
-  expect(f.inner.scrollTop).toBe(500);
 });
 
-test("reading away from the bottom is retained, returning to bottom resumes streamed following", () => {
+test("unrelated or already-handled gestures do not pause stream following", () => {
+  for (const options of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { deltaX: 100 }, { deltaY: 0 }]) {
+    const f = fixture({ top: 500, follow: true });
+    f.wheel(-60, options);
+    f.inner.scrollHeight = 900;
+    f.observer.resize();
+    expect(f.inner.scrollTop).toBe(600);
+  }
   const f = fixture({ top: 500, follow: true });
-  f.wheel(-60);
+  const handled = new WheelStub(-60);
+  handled.preventDefault();
+  f.inner.dispatchEvent(handled);
+  f.inner.scrollHeight = 900;
+  f.observer.resize();
+  expect(f.inner.scrollTop).toBe(600);
+});
+
+test("native scrolling away pauses following and returning to bottom resumes it", () => {
+  const f = fixture({ top: 500, follow: true });
+  f.inner.nativeScroll(440);
   f.inner.scrollHeight = 900;
   f.observer.resize();
   expect(f.inner.scrollTop).toBe(440);
-  f.wheel(160);
-  expect(f.inner.scrollTop).toBe(600);
+  f.inner.nativeScroll(600);
   f.inner.scrollHeight = 1000;
   f.observer.resize();
   expect(f.inner.scrollTop).toBe(700);
-  expect(f.outer.calls).toHaveLength(0);
+});
+
+test("keyboard and touch reading gestures pause following until a native return to bottom", () => {
+  for (const gesture of ["key", "touch"] as const) {
+    const f = fixture({ top: 500, follow: true });
+    if (gesture === "key") {
+      const event = new Event("keydown") as KeyboardEvent;
+      Object.defineProperty(event, "key", { value: "PageUp" });
+      f.inner.dispatchEvent(event);
+    } else {
+      const start = new Event("touchstart") as TouchEvent;
+      Object.defineProperty(start, "touches", { value: [{ clientY: 100 }] });
+      f.inner.dispatchEvent(start);
+      const move = new Event("touchmove") as TouchEvent;
+      Object.defineProperty(move, "touches", { value: [{ clientY: 140 }] });
+      f.inner.dispatchEvent(move);
+    }
+    f.inner.scrollHeight = 900;
+    f.observer.resize();
+    expect(f.inner.calls).toHaveLength(0);
+    f.inner.nativeScroll(600);
+    f.inner.scrollHeight = 1000;
+    f.observer.resize();
+    expect(f.inner.scrollTop).toBe(700);
+  }
+});
+
+test("downward keyboard and touch gestures retain following", () => {
+  for (const gesture of ["key", "touch"] as const) {
+    const f = fixture({ top: 500, follow: true });
+    if (gesture === "key") {
+      const event = new Event("keydown") as KeyboardEvent;
+      Object.defineProperty(event, "key", { value: "PageDown" });
+      f.inner.dispatchEvent(event);
+    } else {
+      const start = new Event("touchstart") as TouchEvent;
+      Object.defineProperty(start, "touches", { value: [{ clientY: 140 }] });
+      f.inner.dispatchEvent(start);
+      const move = new Event("touchmove") as TouchEvent;
+      Object.defineProperty(move, "touches", { value: [{ clientY: 100 }] });
+      f.inner.dispatchEvent(move);
+    }
+    f.inner.scrollHeight = 900;
+    f.observer.resize();
+    expect(f.inner.scrollTop).toBe(600);
+  }
 });
 
 test("hidden or finished regions do not follow content growth", () => {
@@ -241,11 +279,18 @@ test("hidden or finished regions do not follow content growth", () => {
   expect(f.inner.calls).toHaveLength(0);
 });
 
-test("disposing the actual binding removes listeners and disconnects observation", () => {
+test("disposing removes listeners, disconnects observation and cancels queued work", () => {
   const f = fixture({ top: 500 });
+  f.inner.nativeScroll(100);
+  expect(frames.size).toBe(1);
   expect(f.observer.observed.size).toBe(2);
   f.dispose();
   expect(f.observer.observed.size).toBe(0);
+  expect(frames.size).toBe(0);
+  f.inner.nativeScroll(0);
+  expect(frames.size).toBe(0);
+  flushFrame();
+  expect(f.edges).toHaveLength(1);
   expect(f.wheel(60).defaultPrevented).toBe(false);
-  expect(f.outer.calls).toHaveLength(0);
+  expect(f.inner.calls).toHaveLength(0);
 });

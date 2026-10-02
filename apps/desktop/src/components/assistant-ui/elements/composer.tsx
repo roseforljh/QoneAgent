@@ -510,7 +510,8 @@ export function ComposerContext({
   ...props
 }: Omit<ComponentProps<"div">, "children"> & { usage?: ComposerUsage; label?: string; triggerLabel?: string }) {
   const { t } = useLocale();
-  const fraction = usage && usage.total > 0 ? usage.used / usage.total : 0;
+  if (!usage || !Number.isFinite(usage.used) || usage.used <= 0 || !Number.isFinite(usage.total) || usage.total <= 0) return null;
+  const fraction = usage.used / usage.total;
   const warn = fraction > 0.85;
   const circumference = 2 * Math.PI * 5;
 
@@ -561,11 +562,11 @@ export function ComposerContext({
                 <p>
                   <span className="text-foreground/60">{label ?? t("chat.context")} </span>
                   <span className={warn ? "text-red-500 dark:text-red-400" : undefined}>
-                    {usage ? `${Math.round(fraction * 100)}%` : "—"}
+                    {`${Math.round(fraction * 100)}%`}
                   </span>
                 </p>
                 <p className="text-foreground/60">
-                  {usage ? `≈ ${formatTokenCount(usage.used)} / ${formatTokenCount(usage.total)} tokens` : "—"}
+                  {`≈ ${formatTokenCount(usage.used)} / ${formatTokenCount(usage.total)} tokens`}
                 </p>
               </div>
             </Tooltip.Content>

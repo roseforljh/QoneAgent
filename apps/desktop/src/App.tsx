@@ -50,6 +50,7 @@ import { ReachChannels } from "./components/reach/ReachChannels";
 import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
 import { AppChrome } from "./components/app-chrome/AppChrome";
 import { ResizableSidebar } from "./components/assistant-ui/resizable-sidebar";
+import { CollapsedSidebar } from "./components/assistant-ui/collapsed-sidebar";
 import { useTheme } from "./lib/appearance";
 
 type Theme = "light" | "dark";
@@ -95,8 +96,10 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const selectSession = useStore((s) => s.selectSession);
   const send = useStore((s) => s.send);
   const sidebarPreferences = useSidebarPreferences();
+  const queueReady = Boolean(currentSessionId && connected &&
+    (getQoneMessageQueue(currentSessionId) || queueLoadedSessionId === currentSessionId));
 
-  const queue = useMemo(() => currentSessionId && connected ? getQoneMessageQueue(currentSessionId) ?? createQoneMessageQueue({
+  const queue = useMemo(() => currentSessionId && queueReady ? getQoneMessageQueue(currentSessionId) ?? createQoneMessageQueue({
     sessionId: currentSessionId,
     isRunning: () => sessionStore(useStore, currentSessionId).getState().running || Boolean(useStore.getState().compactionStatuses[currentSessionId]),
     getActiveRunId: () => sessionStore(useStore, currentSessionId).getState().activeRunId,
@@ -132,7 +135,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
     onError: (message) => useStore.setState({ lastError: message }),
-  }) : null, [currentSessionId, connected, runAgent, steerAgent]);
+  }) : null, [currentSessionId, queueReady, runAgent, steerAgent]);
 
   const queueAdapter = useMessageQueueAdapter(queue);
   const submittedSteers = useSteeringMessages(queue, queueAdapter, queueItems, activeRunId);
@@ -182,6 +185,9 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
   const runtime = useExternalStoreRuntime({
     messages: convertedMessages,
     isRunning: running,
+    // Do not bypass the queue through onNew while its initial snapshot is
+    // still loading after selection or reconnect.
+    isSendDisabled: Boolean(currentSessionId && !queueReady),
     convertMessage: convertedMessage,
     onNew: async (message) => {
       const prompt = extractComposerPrompt(message);
@@ -281,7 +287,8 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
   const { t } = useLocale();
   const pendingRun = useRef<{ text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null>(null);
   const runtime = useQoneRuntime(pendingRun);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarCollapsed = useSidebarPreferences((state) => state.collapsed);
+  const setSidebarCollapsed = useSidebarPreferences((state) => state.setCollapsed);
   const [dockView, setDockView] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -300,7 +307,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
       window.removeEventListener("qone-toggle-sidebar", toggleSidebar);
       window.removeEventListener("qone-open-search", openSearch);
     };
-  }, []);
+  }, [setSidebarCollapsed]);
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -330,7 +337,9 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="q-chat-layout relative flex h-full w-full overflow-hidden">
-        <ResizableSidebar collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed}>
+        <ResizableSidebar collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed}
+          collapsedContent={<CollapsedSidebar collapsed={sidebarCollapsed} onOpenSidebar={() => setSidebarCollapsed(false)}
+            onOpenSettings={() => setSettingsOpen(true)} />}>
         <aside
           className={cn(
             "q-sidebar bg-background flex h-full w-full flex-col overflow-hidden border-r border-border/50",
@@ -395,7 +404,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
         </ResizableSidebar>
 
         <div className="q-chat-shell relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-          <ThreadHeader dockView={dockView} sidebarCollapsed={sidebarCollapsed} onOpenSidebar={() => setSidebarCollapsed(false)} />
+          <ThreadHeader dockView={dockView} />
           {lastError && (
             <div className="error-banner q-chat-error-banner absolute inset-x-4 z-50" role="alert">
               <span>{lastError}</span>

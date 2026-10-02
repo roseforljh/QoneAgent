@@ -209,12 +209,15 @@ export const UserMessageAttachments: FC = () => {
   );
 };
 
-export const ComposerAttachments: FC = () => {
+export const ComposerAttachments: FC<PropsWithChildren> = ({ children }) => {
+  // Codex keeps this slot's top/bottom padding even when it has no attachments.
+  // The editor has no block padding, so hiding the empty slot removes its top inset.
   return (
     <div className="aui-composer-attachments flex w-full min-w-0 flex-wrap items-center gap-2 px-2 pb-1.5 pt-2">
       <ComposerPrimitive.Attachments>
         {() => <AttachmentUI />}
       </ComposerPrimitive.Attachments>
+      {children}
     </div>
   );
 };

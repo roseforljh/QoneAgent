@@ -9,8 +9,44 @@ const session = (id: string, updatedAt: number, workspaceId?: string): SessionIn
 
 test("sidebar preferences use safe defaults and discard malformed ids", () => {
   expect(parseSidebarPreferences({ layout: "bad", sort: "bad", priorityIds: ["a", 1, "a"] })).toEqual({
-    layout: "project", sort: "recent", manualOrder: [], priorityIds: ["a"], workspaceOrder: [],
+    collapsed: false, layout: "project", sort: "recent", manualOrder: [], manualActivity: {}, priorityIds: ["a"], workspaceOrder: [],
   });
+});
+
+test("sidebar visibility survives subscriber remounts and storage restoration in both directions", () => {
+  const saved = new Map<string, string>();
+  const storage = createJSONStorage<SidebarPreferences>(() => ({
+    getItem: (key) => saved.get(key) ?? null,
+    setItem: (key, value) => { saved.set(key, value); },
+    removeItem: (key) => { saved.delete(key); },
+  }));
+  const preferences = createSidebarPreferencesStore(storage);
+  const unsubscribe = preferences.subscribe(() => {});
+  preferences.getState().setCollapsed(true);
+  unsubscribe();
+  const resubscribe = preferences.subscribe(() => {});
+  expect(preferences.getState().collapsed).toBe(true);
+  resubscribe();
+
+  const restored = createSidebarPreferencesStore(storage);
+  expect(restored.getState().collapsed).toBe(true);
+  restored.getState().setLayout("list");
+  expect(createSidebarPreferencesStore(storage).getState().collapsed).toBe(true);
+  restored.getState().setCollapsed((current) => !current);
+  const expanded = createSidebarPreferencesStore(storage);
+  expect(expanded.getState().collapsed).toBe(false);
+  expect(expanded.getState().layout).toBe("list");
+  expanded.getState().setCollapsed((current) => !current);
+  expanded.getState().setCollapsed((current) => !current);
+  expect(createSidebarPreferencesStore(storage).getState().collapsed).toBe(false);
+});
+
+test("legacy or malformed sidebar visibility falls back to expanded", () => {
+  expect(parseSidebarPreferences({ layout: "list", sort: "manual" })).toMatchObject({ collapsed: false, layout: "list", sort: "manual" });
+  for (const collapsed of [undefined, null, "true", "false", 1, {}, []]) {
+    expect(parseSidebarPreferences({ collapsed }).collapsed).toBe(false);
+  }
+  expect(parseSidebarPreferences({ collapsed: true }).collapsed).toBe(true);
 });
 
 test("recent and priority sorting are deterministic", () => {

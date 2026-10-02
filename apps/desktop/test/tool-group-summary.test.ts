@@ -190,3 +190,14 @@ test("web searches and page reads retain their own semantic actions", () => {
     { verb: "Read", category: "exploration" },
   ], "en")).toBe("Read files and searched the web");
 });
+
+test("internal auxiliary tools do not pollute group titles with generic tool invocation", () => {
+  const steps = [
+    { verb: "编辑", target: "index.ts", fullTarget: "apps/agent-runtime/src/index.ts", category: "file-change" as const },
+    { verb: "调用", target: "subagent", category: "tool" as const },
+  ];
+  expect(toolGroupSummary(steps, "zh-CN")).toBe("编辑了一个文件");
+  expect(toolGroupSummary(steps, "en")).toBe("Edited a file");
+  expect(toolActivityCategory("codemode")).toBe("command");
+});
+

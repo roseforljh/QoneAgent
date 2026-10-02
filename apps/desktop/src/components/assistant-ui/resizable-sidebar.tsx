@@ -10,10 +10,11 @@ import { usePaneMotion } from "../../lib/use-pane-motion";
 import { SIDEBAR_VISIBILITY_TRANSITION } from "../../lib/pane-motion";
 import "./pane-layout.css";
 
-export function ResizableSidebar({ collapsed, onCollapsedChange, children }: {
+export function ResizableSidebar({ collapsed, onCollapsedChange, children, collapsedContent }: {
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   children: ReactNode;
+  collapsedContent?: ReactNode;
 }) {
   const { t } = useLocale();
   const [element, setElement] = useState<HTMLDivElement | null>(null);
@@ -49,27 +50,29 @@ export function ResizableSidebar({ collapsed, onCollapsedChange, children }: {
     open: !collapsed, size: width, transition: SIDEBAR_VISIBILITY_TRANSITION, immediate: Boolean(reduceMotion),
   });
   return (
-    <motion.div ref={setElement} className="q-sidebar-pane relative h-full shrink-0"
-      data-resizing={dragging || undefined}
-      style={{ width: animatedWidth }}>
-      <div className="q-sidebar-clip" inert={collapsed} aria-hidden={collapsed}>
-        <div className="q-sidebar-frame" style={{ width, minWidth: width }}>{children}</div>
-      </div>
-      {(!collapsed || dragging) && <div role="separator" aria-label={t("sidebar.resize")}
-        aria-orientation="vertical" aria-valuemin={minimum} aria-valuemax={maximum} aria-valuenow={width}
-        tabIndex={collapsed ? -1 : 0} className="q-sidebar-resizer" onPointerDown={startResize}
-        onKeyDown={(event) => {
-          const next = event.key === "ArrowLeft" ? width - 10 : event.key === "ArrowRight" ? width + 10
-            : event.key === "Home" ? minimum : event.key === "End" ? maximum : undefined;
-          if (next === undefined) return;
-          event.preventDefault();
-          const size = clampSidebarWidth(next, shellWidth);
-          applySize(size); saveSize(size);
-        }} onDoubleClick={() => {
-          cancelResize();
-          const size = defaultSidebarWidth(shellWidth);
-          applySize(size); saveSize(size);
-        }}><span /></div>}
-    </motion.div>
+    <div ref={setElement} className="q-sidebar-pane relative flex h-full shrink-0"
+      data-resizing={dragging || undefined}>
+      <motion.div className="relative h-full shrink-0" style={{ width: animatedWidth }}>
+        <div className="q-sidebar-clip" inert={collapsed} aria-hidden={collapsed}>
+          <div className="q-sidebar-frame" style={{ width, minWidth: width }}>{children}</div>
+        </div>
+        {(!collapsed || dragging) && <div role="separator" aria-label={t("sidebar.resize")}
+          aria-orientation="vertical" aria-valuemin={minimum} aria-valuemax={maximum} aria-valuenow={width}
+          tabIndex={collapsed ? -1 : 0} className="q-sidebar-resizer" onPointerDown={startResize}
+          onKeyDown={(event) => {
+            const next = event.key === "ArrowLeft" ? width - 10 : event.key === "ArrowRight" ? width + 10
+              : event.key === "Home" ? minimum : event.key === "End" ? maximum : undefined;
+            if (next === undefined) return;
+            event.preventDefault();
+            const size = clampSidebarWidth(next, shellWidth);
+            applySize(size); saveSize(size);
+          }} onDoubleClick={() => {
+            cancelResize();
+            const size = defaultSidebarWidth(shellWidth);
+            applySize(size); saveSize(size);
+          }}><span /></div>}
+      </motion.div>
+      {collapsedContent}
+    </div>
   );
 }

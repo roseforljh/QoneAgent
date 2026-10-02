@@ -172,5 +172,9 @@ test("composer keeps the Codex top inset even without attachments", () => {
   const queue = setup([]);
   const markup = renderToStaticMarkup(<View queue={queue} attachmentsOnly />);
   expect(markup).toContain("aui-composer-attachments");
+  // These match the desktop Codex empty slot: 8px top + 6px bottom.
+  const slotClass = markup.match(/class="(aui-composer-attachments[^"]*)"/)?.[1].split(" ") ?? [];
+  expect(slotClass).toEqual(expect.arrayContaining(["pt-2", "pb-1.5", "px-2"]));
+  expect(slotClass).not.toContain("hidden");
   expect(markup).not.toContain("empty:hidden");
 });

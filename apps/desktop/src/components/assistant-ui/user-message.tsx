@@ -10,7 +10,7 @@ function UserMessageText({ paired = false }: { paired?: boolean }) {
   ));
   if (!hasText) return null;
   return (
-    <div className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-full" : "max-w-[70%]")}>
+    <div data-aui-quote-selectable="true" className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-full" : "max-w-[70%]")}>
       <MessagePrimitive.Parts>
         {({ part }) => part.type === "text" ? <span className="whitespace-pre-wrap">{part.text}</span> : null}
       </MessagePrimitive.Parts>

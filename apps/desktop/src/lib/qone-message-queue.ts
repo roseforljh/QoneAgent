@@ -9,6 +9,7 @@ import type { MessageAttachmentInfo, QueueItemInfo } from "@qone/protocol";
 import { sameUserInput } from "@qone/protocol";
 import { serializeMessageAttachments } from "./message-attachments";
 import { createNativeAttachmentFile } from "./native-attachment-file";
+import { messageQuote, withMessageQuote } from "./message-quote";
 
 type QueueCallbacks = {
   sessionId: string;
@@ -77,7 +78,7 @@ const toMessage = (item: QueueItemInfo): AppendMessage => ({
   sourceId: null,
   runConfig: undefined,
   createdAt: new Date(item.createdAt),
-  metadata: { custom: {} },
+  metadata: { custom: item.quote ? { quote: item.quote } : {} },
   content: item.text ? [{ type: "text", text: item.text }] : [],
   attachments: (item.attachments ?? []).map((attachment) => {
     const file = attachment.localPath
@@ -128,7 +129,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     return result;
   };
   const sameMessage = (left: AppendMessage, a: MessageAttachmentInfo[], right: AppendMessage, b: MessageAttachmentInfo[]) =>
-    sameUserInput({ content: textOf(left), attachments: a }, { content: textOf(right), attachments: b });
+    sameUserInput({ content: withMessageQuote(textOf(left), messageQuote(left)), attachments: a }, { content: withMessageQuote(textOf(right), messageQuote(right)), attachments: b });
 
   const hold = (reason: string) => {
     if (holdReasons.size === 0) controller.hold();
@@ -156,6 +157,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
         id,
         sessionId: callbacks.sessionId,
         text: textOf(message),
+        quote: messageQuote(message),
         attachments: attachments.get(item.id),
         lane,
         status: lane === "steer" ? "steering" : "queued",

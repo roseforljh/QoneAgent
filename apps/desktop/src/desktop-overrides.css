@@ -70,12 +70,7 @@ body {
   margin-inline: -1rem;
   padding-inline: 1rem;
   /* Keep navigated turns clear of the content fade and give them reading room. */
-  scroll-padding-top: 2rem;
-  scrollbar-gutter: stable;
-}
-/* Keep the bubble cleanly spaced below the viewport edge. */
-.aui-thread-root [data-aui-top-anchor-user] {
-  padding-block-start: 0.5rem;
+  scroll-padding-top: var(--q-thread-content-top-inset);
 }
 .aui-thread-root .q-message-root { overflow: visible; }
 .aui-thread-root .q-user-message-bubble {

@@ -133,6 +133,8 @@ test("failed commands use the compact tool row instead of a separate card", () =
   expect(html).toContain('data-slot="tool-call"');
   expect(html).toContain('data-status="failed"');
   expect(html).not.toContain('data-slot="tool-error"');
+  expect(html).not.toContain("xmark");
+  expect(html).not.toContain("text-destructive");
 });
 
 test("expanded failed command has one result frame and a bounded output area", () => {
@@ -261,4 +263,28 @@ test("registered web search and fetch rows describe their actual actions", () =>
     { type: "tool-call", toolName: "web_fetch", toolCallId: "web-fetch", args: { url: "https://example.com" }, result: "page" },
   ]} />);
   expect(fetch).toMatch(/title="(?:已读取网页|Read a web page) https:\/\/example.com"/);
+});
+
+function HeaderFixture() {
+  const messages: ThreadMessageLike[] = [{
+    id: "group-with-diff-and-aux", role: "assistant", status: { type: "complete", reason: "stop" },
+    content: [
+      { type: "tool-call", toolName: "edit", toolCallId: "edit-1", args: { path: "src/App.tsx" }, result: "done" },
+      { type: "tool-call", toolName: "read", toolCallId: "read-1", args: { path: "src/index.ts" }, result: "done" },
+    ],
+  }];
+  const runtime = useExternalStoreRuntime({ messages, convertMessage: (message: ThreadMessageLike) => message, onNew: async () => {} });
+  return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{
+    AssistantMessage: () => <MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={2} /></MessagePrimitive.Root>,
+  }} /></AssistantRuntimeProvider>;
+}
+
+test("tool group header does not render line change indicators or red failure icon", () => {
+  const html = renderToStaticMarkup(<HeaderFixture />);
+  expect(html).toContain('data-slot="tool-timeline"');
+  // Group header trigger should not have diff counter (+8 -7)
+  const triggerHtml = html.split('data-slot="tool-timeline"')[1]?.split('</button>')[0] ?? "";
+  expect(triggerHtml).not.toContain("text-emerald-600");
+  expect(triggerHtml).not.toContain("text-rose-600");
+  expect(triggerHtml).not.toContain("xmark");
 });

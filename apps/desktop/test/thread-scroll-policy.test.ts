@@ -19,3 +19,9 @@ test("phase classification only reads the active assistant turn", () => {
   expect(threadPhase(true, [user, assistant([{ type: "text", text: "Answer", parentId: "pi:phase:final_answer:1" }])])).toBe("final_answer");
   expect(threadPhase(false, [user, assistant([{ type: "text", text: "Answer" }])])).toBe("idle");
 });
+
+test("completion without final text retains following but does not resume paused reading", () => {
+  expect(nextThreadFollowMode("prework_follow", { type: "phase", previous: "prework", phase: "idle" })).toBe("user_follow");
+  expect(nextThreadFollowMode("prework_watch", { type: "phase", previous: "prework", phase: "idle" })).toBe("static");
+  expect(nextThreadFollowMode("static", { type: "phase", previous: "prework", phase: "idle" })).toBe("static");
+});

@@ -28,6 +28,8 @@ import { MessageSourcesView } from "./message-sources-view";
 import { AssistantContext, AssistantMemoryChips } from "./assistant-context";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { AssistantMessageActions, UserMessageActions } from "./message-actions";
+import { SelectedTextActions } from "./selected-text-actions";
+import { ComposerQuote } from "./composer-quote";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
@@ -136,8 +138,10 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     currentSessionId && messagesLoadingSessionId === currentSessionId,
   );
   const messageListRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
   return (
     <ThreadPrimitive.Root
+      ref={threadRef}
       data-conversation-id={currentSessionId}
       className="aui-root aui-thread-root relative bg-background text-foreground flex h-full flex-col items-stretch px-4 [--q-chat-bg:var(--background)]"
       style={{
@@ -145,6 +149,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
         ["--composer-radius" as string]: "var(--radius-thread)",
       }}
     >
+      {canChat && <SelectedTextActions key={currentSessionId} scopeRef={threadRef} />}
       {conversationLoading ? (
         <>
           <ConversationLoadingSkeleton />
@@ -169,7 +174,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
         >
           <ThreadScrollFollower contentRef={messageListRef}>
           <ConversationMapAui />
-          <div ref={messageListRef} className="q-message-list relative flex w-full min-w-0 flex-col gap-5 pt-4">
+          <div ref={messageListRef} className="q-message-list relative flex w-full min-w-0 flex-col gap-5">
             <div data-conversation-rail-content aria-hidden="true" className="pointer-events-none invisible absolute inset-x-0 top-0 mx-auto h-0 w-full q-thread-content" />
             <ThreadPrimitive.Messages>
               {({ message }) => {
@@ -206,7 +211,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           <ThreadPrimitive.ViewportFooter data-thread-scroll-footer className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-transparent pb-2">
             <ThreadScrollToBottom />
             {canChat && <RunFileChangesSummary />}
-            <div className="relative z-1 mx-auto w-full q-composer-content">
+            <div className="relative mx-auto w-full q-composer-content">
               {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
             </div>
           </ThreadPrimitive.ViewportFooter>
@@ -330,7 +335,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
               <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { void aui.composer().reset(); owner.setState({ editingQueueItem: undefined }); if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); }}>{t("common.cancel")}</button>
             </div>
           )}
-          <ComposerAttachments />
+          <ComposerAttachments><ComposerQuote /></ComposerAttachments>
           <ComposerAddAttachment hidden />
           <LexicalComposerInput nodes={composerNodes} formatter={composerLinkFormatter} autoFocus submitMode="none" placeholder={placeholder} className={composerInputClass} directiveChip={ComposerDirectiveChip}>
             <ComposerEditorBridge onReady={onEditorReady} onCommandReady={onCommandReady} onMentionToggleReady={onMentionToggleReady} />

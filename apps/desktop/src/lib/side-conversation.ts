@@ -4,13 +4,14 @@ import { saveRunOptions, type SessionRunOptions } from "./run-options";
 import { emptySessionState } from "./session-execution-state";
 import { getQoneMessageQueue } from "./qone-message-queue";
 import { bindSessionQueue } from "./session-queue-lifecycle";
-import { composerDrafts } from "./composer-drafts";
+import { composerDrafts, type ComposerDraft } from "./composer-drafts";
 import { translateCurrent as t } from "../localization";
 import { extractComposerPrompt } from "./composer-prompt";
 
 type Pending = {
   command: Extract<RuntimeCommand, { type: "session.side-chat.create" }>;
   options: SessionRunOptions;
+  draft?: ComposerDraft;
   resolve: (committed: boolean) => void;
   reject: (error: Error) => void;
 };
@@ -18,10 +19,10 @@ const requests = new Map<string, Pending>();
 const closes = new Map<string, { session: SessionInfo; resolve: (closed: boolean) => void; reject: (error: Error) => void }>();
 
 /** Create a reference fork without touching the parent's composer or queue. */
-export function openSideConversation(sessionId: string): Promise<boolean> {
+export function openSideConversation(sessionId: string, draft?: ComposerDraft): Promise<boolean> {
   const state = useStore.getState();
   if (!state.connected) return Promise.reject(new Error(t("error.runtimeDisconnected")));
-  return createSideConversation({ type: "session.side-chat.create", requestId: crypto.randomUUID(), sessionId, title: t("chat.sideChat") });
+  return createSideConversation({ type: "session.side-chat.create", requestId: crypto.randomUUID(), sessionId, title: t("chat.sideChat") }, undefined, draft);
 }
 
 export function openQueuedSideConversation(item: QueueItemInfo): Promise<boolean> {
@@ -43,12 +44,12 @@ export function openQueuedSideConversation(item: QueueItemInfo): Promise<boolean
   return createSideConversation(command, item);
 }
 
-function createSideConversation(command: Pending["command"], item?: QueueItemInfo): Promise<boolean> {
+function createSideConversation(command: Pending["command"], item?: QueueItemInfo, draft?: ComposerDraft): Promise<boolean> {
   const state = useStore.getState();
   const { requestId, sessionId } = command;
   return new Promise((resolve, reject) => {
     requests.set(requestId, {
-      command, resolve, reject,
+      command, resolve, reject, draft,
       options: { ...state.runOptionsBySession[sessionId], modelId: state.runOptionsBySession[sessionId]?.modelId ?? state.selectedModelId,
         permissionMode: state.runOptionsBySession[sessionId]?.permissionMode ?? state.defaultPermissionMode },
     });
@@ -89,6 +90,8 @@ export function handleSideConversationEvent(event: RuntimeEvent): boolean {
   const pending = requestId && requests.get(requestId);
   if (!pending) return false;
   requests.delete(requestId!);
+  // Seed before publishing the tab so its first composer binding sees the quote.
+  if (event.type === "session.side-chat.created" && pending.draft) composerDrafts.set(event.session.id, pending.draft);
   useStore.setState((state) => {
     const sideChatTransfers = { ...state.sideChatTransfers };
     delete sideChatTransfers[requestId!];

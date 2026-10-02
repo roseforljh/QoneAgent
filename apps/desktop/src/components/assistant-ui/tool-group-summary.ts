@@ -80,6 +80,14 @@ export function toolGroupSummary(
           : names.join("、");
         label = translate(locale, integrationsOnly ? names.length === 1 ? "chat.toolGroupIntegrationOne" : "chat.toolGroupIntegrationMany" : "chat.toolGroupSource", { sources });
       } else {
+        if (category === "tool") {
+          const hasConcreteAction = (counts.get("file-change") ?? 0) > 0 ||
+                                    (counts.get("command") ?? 0) > 0 ||
+                                    (counts.get("exploration") ?? 0) > 0 ||
+                                    (counts.get("web-search") ?? 0) > 0 ||
+                                    integrationNames.size > 0;
+          if (hasConcreteAction) continue;
+        }
         const count = counts.get(category) ?? 0;
         if (!count) continue;
         label = translate(locale, CATEGORY_LABELS[category][count === 1 ? 0 : 1]);
