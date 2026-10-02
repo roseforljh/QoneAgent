@@ -10,9 +10,9 @@
   },
   "dependencies": {
     "@assistant-ui/react-generative-ui": "^0.0.19",
-    "@earendil-works/pi-agent-core": "0.86.0",
-    "@earendil-works/pi-ai": "0.86.0",
-    "@earendil-works/pi-coding-agent": "0.86.0",
+    "@earendil-works/pi-agent-core": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "@qone/database": "*",
     "@qone/mcp": "*",
     "@qone/plugin-sdk": "*",

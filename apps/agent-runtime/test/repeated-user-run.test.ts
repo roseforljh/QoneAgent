@@ -49,6 +49,19 @@ test("runtime resend merges persisted identical user turns and preserves distinc
     process.stdin.write(JSON.stringify({ type: "agent.run", requestId: messageId, sessionId, messageId, message: "same", attachments, model: "__qone_test_missing__/none" }) + "\n");
     await process.stdin.flush();
     await waitFor(event => events.indexOf(event) >= start && event.type === "agent.event" && event.event.sessionId === sessionId && event.event.type === "agent.failed");
+    const recent = events.slice(start);
+    const updates = recent.filter((event) => event.type === "session.updated" && event.session.id === sessionId);
+    expect(updates).toHaveLength(2);
+    const startedIndex = recent.findIndex((event) => event.type === "agent.event" && event.event.type === "agent.started");
+    expect(recent.indexOf(updates[0]!)).toBeLessThan(startedIndex);
+    const latest = updates.at(-1)!;
+    if (latest.type !== "session.updated") throw new Error("missing session update");
+    const persisted = openDb(dbPath);
+    try {
+      const sessions = new SessionRepo(persisted);
+      expect(sessions.get(sessionId)?.updatedAt).toBe(latest.session.updatedAt);
+      expect(sessions.list()[0]?.id).toBe(sessionId);
+    } finally { closeDb(persisted); }
   };
   const history = async (sessionId: string) => {
     const start = events.length;

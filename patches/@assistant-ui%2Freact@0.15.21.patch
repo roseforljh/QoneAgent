@@ -408,6 +408,27 @@ index 6322e8650e32521211df69144caea267152443ab..f6d28db5fb6905b7f405539a039ebbb1
 -
 -//# sourceMappingURL=ThreadViewport.js.map
 \ No newline at end of file
+diff --git a/dist/primitives/thread/topAnchor/computeTopAnchorSlack.js b/dist/primitives/thread/topAnchor/computeTopAnchorSlack.js
+index 82c56740c8913f566c008c7d6f5e452765111666..f5f8ac8216174a497de1b73b9a0feeebd6a8b6f9 100644
+--- a/dist/primitives/thread/topAnchor/computeTopAnchorSlack.js
++++ b/dist/primitives/thread/topAnchor/computeTopAnchorSlack.js
+@@ -32,7 +32,9 @@ const getLayoutOffsetTop = (element, ancestor) => {
+-const computeTopAnchorTargetScrollTop = ({ viewport, anchor, tallerThan, visibleHeight }) => {
++const computeTopAnchorTargetScrollTop = ({ viewport, anchor, tallerThan, visibleHeight }) => {
+-	const anchorTop = getLayoutOffsetTop(anchor, viewport);
++	const anchorTop = getLayoutOffsetTop(anchor, viewport);
+-	const anchorHeight = anchor.offsetHeight;
++	const anchorHeight = anchor.offsetHeight;
+-	return anchorTop + Math.max(0, anchorHeight - (anchorHeight <= tallerThan ? anchorHeight : visibleHeight));
++	const padding = viewport.ownerDocument?.defaultView?.getComputedStyle(viewport).scrollPaddingTop;
++	const topInset = (Number.parseFloat(padding ?? "") || 0) * (padding?.endsWith("%") ? viewport.clientHeight / 100 : 1);
++	return Math.max(0, anchorTop + Math.max(0, anchorHeight - (anchorHeight <= tallerThan ? anchorHeight : visibleHeight)) - topInset);
+-};
++};
+-const computeTopAnchorSlack = ({ scrollHeight, ...targetOptions }) => {
++const computeTopAnchorSlack = ({ scrollHeight, ...targetOptions }) => {
+-	const { viewport } = targetOptions;
++	const { viewport } = targetOptions;
 diff --git a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.d.ts b/dist/primitives/thread/topAnchor/mountTopAnchorReserve.d.ts
 index 23887afbbf352688712563b94d0de5ab54a893ca..e6aa715c01e136e73387fa3f76d658c0bb6a715d 100644
 --- a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.d.ts
@@ -791,6 +812,30 @@ index 514f9242bedf9f7ae84cdfffae5c72e2fa85801f..038233b329b1c2c035b1ae7844e1023e
      const ref = useComposedRefs(
        forwardedRef,
        autoScrollRef,
+diff --git a/src/primitives/thread/topAnchor/computeTopAnchorSlack.ts b/src/primitives/thread/topAnchor/computeTopAnchorSlack.ts
+index 44688281c5ad22bf73b03bb53b84c3d506940aef..b139232f2ffd11b90c86f1afc9dc7b7aa29b9c1f 100644
+--- a/src/primitives/thread/topAnchor/computeTopAnchorSlack.ts
++++ b/src/primitives/thread/topAnchor/computeTopAnchorSlack.ts
+@@ -67,7 +67,12 @@ export const computeTopAnchorTargetScrollTop = ({
+-  const visibleAnchorHeight =
++  const visibleAnchorHeight =
+-    anchorHeight <= tallerThan ? anchorHeight : visibleHeight;
++    anchorHeight <= tallerThan ? anchorHeight : visibleHeight;
+-
++
+-  return anchorTop + Math.max(0, anchorHeight - visibleAnchorHeight);
++  // scrollTo does not apply CSS scroll-padding. Use the same inset for both
++  // the placement target and its reserve, including clamped tall messages.
++  const padding = viewport.ownerDocument?.defaultView?.getComputedStyle(viewport).scrollPaddingTop;
++  const topInset = (Number.parseFloat(padding ?? "") || 0) *
++    (padding?.endsWith("%") ? viewport.clientHeight / 100 : 1);
++  return Math.max(0, anchorTop + Math.max(0, anchorHeight - visibleAnchorHeight) - topInset);
+-};
++};
+-
++
+-const computeTopAnchorSlack = ({
++const computeTopAnchorSlack = ({
 diff --git a/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts b/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
 index 36ffefe494ad6d59e403f1d102290e349c93125f..4b1355e6dac9312d01ce50722cea5bf0ff6ec5d0 100644
 --- a/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
@@ -895,3 +940,22 @@ index d891ab80d890e26b56e46d5275d46a17ad554b90..4355a2f5f5d1521b1783454a81705b24
 +    return mountTopAnchorReserve(threadViewportStore, restoration);
 +  }, [enabled, threadViewportStore, restoration]);
  };
+diff --git a/dist/primitives/message/MessageRoot.js b/dist/primitives/message/MessageRoot.js
+index 7a07c30..b903f5e 100644
+--- a/dist/primitives/message/MessageRoot.js
++++ b/dist/primitives/message/MessageRoot.js
+@@ -48,3 +48,3 @@ const useIsTopAnchorUser = () => {
+ 	if ($[0] !== activeAnchorId) {
+-		t0 = (s_0) => s_0.message.role === "user" && s_0.message.index > 0 && s_0.message.index === s_0.thread.messages.length - 2 && s_0.thread.messages.at(-1)?.role === "assistant" && (s_0.message.id === activeAnchorId || s_0.thread.isRunning);
++		t0 = (s_0) => s_0.message.role === "user" && s_0.message.index >= 0 && s_0.message.index === s_0.thread.messages.length - 2 && s_0.thread.messages.at(-1)?.role === "assistant" && (s_0.message.id === activeAnchorId || s_0.thread.isRunning);
+ 		$[0] = activeAnchorId;
+diff --git a/src/primitives/message/MessageRoot.tsx b/src/primitives/message/MessageRoot.tsx
+index 455db45..713aa67 100644
+--- a/src/primitives/message/MessageRoot.tsx
++++ b/src/primitives/message/MessageRoot.tsx
+@@ -62,3 +62,3 @@ const useIsTopAnchorUser = () => {
+       s.message.role === "user" &&
+-      s.message.index > 0 &&
++      s.message.index >= 0 &&
+       s.message.index === s.thread.messages.length - 2 &&
+

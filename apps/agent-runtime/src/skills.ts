@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   DefaultResourceLoader,
+  createCodemodeExtension,
   type Skill,
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
@@ -76,7 +77,7 @@ async function writeSkillContent(content: string, expectedName?: string): Promis
  * product-facing catalog for the GUI and persistence; it does not create a
  * second skill format.
  */
-export async function createResourceLoader(cwd: string, additionalInstructions?: string): Promise<{
+export async function createResourceLoader(cwd: string, additionalInstructions?: string, enableCodemode = false): Promise<{
   loader: ResourceLoader;
   skills: SkillInfo[];
 }> {
@@ -90,6 +91,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
     noSkills: true,
     additionalSkillPaths: existsSync(ownSkills) ? [ownSkills] : [],
     noExtensions: true,
+    ...(enableCodemode ? { extensionFactories: [createCodemodeExtension({ models: false })] } : {}),
     // Qone.md is user-level global guidance. It stays separate from Qone's
     // built-in rules so updating the file never replaces product behavior.
     appendSystemPromptOverride: (base) => {

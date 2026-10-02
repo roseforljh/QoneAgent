@@ -8,7 +8,6 @@ import {
   createLsTool,
   SessionManager,
   SettingsManager,
-  estimateTokens,
   type AgentSession,
   type ToolDefinition,
   type ResourceLoader,
@@ -24,6 +23,7 @@ import path from "node:path";
 import { detectImageModel, modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ModelMetadata, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { ModelResponseTiming } from "./model-response-timing.js";
+import { contextTokens, subscribeContextUsage } from "./context-usage.js";
 import { SessionInputQueue } from "./session-input-queue.js";
 import { SIDE_CHAT_INSTRUCTIONS } from "./side-conversation.js";
 import { createFileChangeTools } from "./file-change-tools.js";
@@ -76,7 +76,8 @@ export type { PersistedPiMessage } from "./pi-attachments.js";
 interface PiAdapterHooks {
   onMessage?: (sessionId: string, runId: string, role: "assistant" | "tool", content: string) => void;
   onAssistantFinal?: (sessionId: string, runId: string, content: string) => void;
-  onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string) => void;
+  onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string) => void;
+  onCustomEntry?: (sessionId: string, entry: unknown) => void;
   onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
 }
 
@@ -429,9 +430,8 @@ export class PiAdapter {
     const session = existing && !(this.staleSessions.has(sessionId) && existing.isIdle)
       ? existing
       : await this.getSession(sessionId, cwd, modelName);
-    const reported = session.getContextUsage()?.tokens;
     return {
-      tokens: reported ?? session.messages.reduce((total, message) => total + estimateTokens(message), 0),
+      tokens: contextTokens(session),
       contextWindow: model.contextWindow,
     };
   }
@@ -509,7 +509,7 @@ export class PiAdapter {
     const sideConversation = this.isSideConversation(sessionId);
     const resourceKey = sideConversation ? `side-chat:${sessionId}` : workspacePath;
     if (!this.resourceLoaders.has(resourceKey)) {
-      const { loader } = await createResourceLoader(workspacePath, sideConversation ? SIDE_CHAT_INSTRUCTIONS : undefined);
+      const { loader } = await createResourceLoader(workspacePath, sideConversation ? SIDE_CHAT_INSTRUCTIONS : undefined, true);
       this.resourceLoaders.set(resourceKey, loader);
     }
     const builtinTools = [
@@ -619,12 +619,13 @@ export class PiAdapter {
     );
     const sessionSettings = SettingsManager.inMemory();
     sessionSettings.applyOverrides(this.compactionOverrides());
+    sessionSettings.applyOverrides({ defaultTools: ["+codemode"] });
     const { session } = await createAgentSession({
       cwd: workspacePath,
       sessionManager,
       // Built-ins are supplied as wrapped definitions so every tool goes through
       // the same permission boundary. Bash is intentionally omitted on Windows.
-      tools: allowed.map((tool) => tool.name),
+      tools: [...allowed.map((tool) => tool.name), "codemode"],
       customTools: allowed,
       resourceLoader,
       modelRuntime,
@@ -632,6 +633,7 @@ export class PiAdapter {
       model,
       thinkingLevel: thinking,
     });
+    await session.bindExtensions({});
     try {
       assertModelToolNames(session.getActiveToolNames());
     } catch (error) {
@@ -641,6 +643,11 @@ export class PiAdapter {
 
     let lastToolDeltaAt = 0;
     const responseTiming = new ModelResponseTiming();
+    if (eventSessionId === sessionId) subscribeContextUsage(session, (usage) => {
+      const activeModel = session.model;
+      const model = this.configuredModelConfigs.find((config) => config.provider === activeModel?.provider && config.model === activeModel?.id)?.id;
+      if (model) this.push("context.usage", { model, ...usage }, sessionId, this.activeRunIds.get(sessionId));
+    });
     session.subscribe((e) => {
       const candidateRunId = this.activeRunIds.get(sessionId);
       const runId = candidateRunId && this.runs.get(candidateRunId) === session ? candidateRunId : undefined;
@@ -706,17 +713,22 @@ export class PiAdapter {
       else if (e.type === "turn_start") protocolType = "model.request.started";
       else if (e.type === "tool_execution_start") {
         protocolType = "tool.started";
-        protocolPayload = { toolCallId: raw.toolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, args: raw.args ?? raw.input };
+        protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, args: raw.args ?? raw.input };
       } else if (e.type === "tool_execution_update") {
         protocolType = "tool.updated";
-        protocolPayload = { toolCallId: raw.toolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, update: raw.partialResult ?? raw.update };
+        protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, update: raw.partialResult ?? raw.update };
       } else if (e.type === "tool_execution_end") {
         const result = raw.result as { isError?: boolean } | undefined;
         const isError = e.isError || result?.isError === true;
         protocolType = isError ? "tool.failed" : "tool.completed";
-        protocolPayload = { toolCallId: raw.toolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: isError ? { ...result, isError: true } : raw.result, isError };
+        protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: isError ? { ...result, isError: true } : raw.result, isError };
       } else if (e.type === "agent_start") protocolType = "turn.started";
       else if (e.type === "agent_end") protocolType = "turn.completed";
+      else if (e.type === "entry_appended") {
+        protocolType = "session.entry.appended";
+        protocolPayload = { entry: raw.entry };
+        this.hooks.onCustomEntry?.(eventSessionId, raw.entry);
+      }
       this.push(protocolType, protocolPayload, eventSessionId, runId);
       const timing = responseTiming.record(protocolType, protocolPayload);
       if (timing) {
@@ -734,11 +746,11 @@ export class PiAdapter {
       }
       if (e.type === "tool_execution_start") {
         const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
-        this.hooks.onTool?.(eventSessionId, runId, "start", name, toolPayload.args, undefined, toolPayload.toolCallId);
+        this.hooks.onTool?.(eventSessionId, runId, "start", name, toolPayload.args, undefined, toolPayload.toolCallId, String((toolPayload as { parentToolCallId?: unknown }).parentToolCallId ?? "") || undefined);
       }
       if (e.type === "tool_execution_end") {
         const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
-        this.hooks.onTool?.(eventSessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId);
+        this.hooks.onTool?.(eventSessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId, String((toolPayload as { parentToolCallId?: unknown }).parentToolCallId ?? "") || undefined);
       }
     });
 

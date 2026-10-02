@@ -139,6 +139,20 @@ export function createPiSessionEntries(
   let parentId: string | null = null;
   const entries: FileEntry[] = [header];
   for (const message of messages) {
+    const rawEntry = message.rawMessage && typeof message.rawMessage === "object"
+      ? message.rawMessage as Record<string, unknown> : undefined;
+    if (rawEntry?.type === "custom" && typeof rawEntry.customType === "string") {
+      const id = crypto.randomUUID();
+      entries.push({
+        ...rawEntry,
+        type: "custom",
+        id,
+        parentId,
+        timestamp: typeof rawEntry.timestamp === "string" ? rawEntry.timestamp : new Date(message.createdAt).toISOString(),
+      } as FileEntry);
+      parentId = id;
+      continue;
+    }
     if (isPiTranscriptMessage(message.rawMessage)) {
       const id = crypto.randomUUID();
       entries.push({ type: "message", id, parentId, timestamp: new Date(message.createdAt).toISOString(), message: message.rawMessage } as FileEntry);

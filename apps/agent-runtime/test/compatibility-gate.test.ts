@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
 import { defineTool, ModelRuntime, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { safeToolName } from "@qone/mcp";
@@ -35,12 +35,77 @@ describe("Pi model tool compatibility", () => {
         cwd: process.cwd(), model: "qone-compat/test-model", permissionMode: "full",
       }, () => {});
       const expected = ["read", "powershell", "edit", "write", "grep", "find", "ls", "mcp_demo_search",
-        "qone_video_download", "qone_media_extract_audio", "qone_media_extract_frames", "qone_video_staging_dir", "qone_video_use_file"];
+        "qone_video_download", "qone_media_extract_audio", "qone_media_extract_frames", "qone_video_staging_dir", "qone_video_use_file", "qone_set_activity_title", "codemode"];
       expect(adapter.getSessions()[0]?.getActiveToolNames()).toEqual(expected);
       expect(sentNames).toEqual(expected);
       expect(sentNames.every((name) => /^[a-zA-Z0-9_-]+$/.test(name))).toBe(true);
     } finally {
       await adapter.disposeSession("compatibility");
+    }
+  });
+
+  test("codemode runs nested Qone tools through the same execution and permission pipeline", async () => {
+    const faux = fauxProvider({ provider: "qone-codemode", models: [{ id: "test-model" }] });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("codemode", { code: "return await tools.ls({ path: \".\" });" })),
+      fauxAssistantMessage(fauxText("done")),
+    ]);
+    const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
+    runtime.registerNativeProvider(faux.provider);
+    const nested: { name: string; parent?: string }[] = [];
+    const adapter = new PiAdapter(() => {}, {
+      onTool: (_sessionId, _runId, phase, name, _args, _result, _toolCallId, parentToolCallId) => {
+        if (phase === "start") nested.push({ name, parent: parentToolCallId });
+      },
+    });
+    Object.assign(adapter, { modelRuntime: runtime });
+    try {
+      await adapter.run("codemode", "list files", { cwd: process.cwd(), model: "qone-codemode/test-model", permissionMode: "full" }, () => {});
+      const ls = nested.find((call) => call.name === "ls");
+      expect(ls?.parent).toBeTruthy();
+      expect(nested.some((call) => call.name === "codemode")).toBe(true);
+    } finally {
+      await adapter.disposeSession("codemode");
+    }
+  });
+
+  test("codemode store state survives rebuilding a Qone session", async () => {
+    const first = fauxProvider({ provider: "qone-codemode-store", models: [{ id: "test-model" }] });
+    first.setResponses([
+      fauxAssistantMessage(fauxToolCall("codemode", { code: "store(\"cursor\", \"abc\"); return \"saved\";" })),
+      fauxAssistantMessage(fauxText("saved")),
+    ]);
+    const second = fauxProvider({ provider: "qone-codemode-store-reload", models: [{ id: "test-model" }] });
+    let restoredRequest = "";
+    second.setResponses([
+      fauxAssistantMessage(fauxToolCall("codemode", { code: "return load(\"cursor\");" })),
+      (context) => {
+        restoredRequest = JSON.stringify(context.messages);
+        return fauxAssistantMessage(fauxText("loaded"));
+      },
+    ]);
+    const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
+    runtime.registerNativeProvider(first.provider);
+    runtime.registerNativeProvider(second.provider);
+    let storedEntry: unknown;
+    const firstAdapter = new PiAdapter(() => {}, { onCustomEntry: (_sessionId, entry) => { storedEntry = entry; } });
+    Object.assign(firstAdapter, { modelRuntime: runtime });
+    try {
+      await firstAdapter.run("codemode-store", "save state", { cwd: process.cwd(), model: "qone-codemode-store/test-model", permissionMode: "full" }, () => {});
+    } finally {
+      await firstAdapter.disposeSession("codemode-store");
+    }
+    expect(storedEntry).toMatchObject({ type: "custom", customType: "codemode-store" });
+
+    const secondAdapter = new PiAdapter(() => {}, {}, undefined, () => [{
+      id: "stored-entry", role: "custom", content: "", createdAt: 1, rawMessage: storedEntry,
+    }]);
+    Object.assign(secondAdapter, { modelRuntime: runtime });
+    try {
+      await secondAdapter.run("codemode-store-reload", "load state", { cwd: process.cwd(), model: "qone-codemode-store-reload/test-model", permissionMode: "full" }, () => {});
+      expect(restoredRequest).toContain("abc");
+    } finally {
+      await secondAdapter.disposeSession("codemode-store-reload");
     }
   });
 

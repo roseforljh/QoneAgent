@@ -1,5 +1,6 @@
 import { runtimeText, withRuntimeLocale, runtimeErrorInfo } from "./runtime-localization";
 import { CompactionPositions } from "./compaction-position.js";
+import { isAssistantMessageActivity } from "./session-activity.js";
 import { SideConversationService } from "./side-conversation.js";
 import { repeatedUserMessageId } from "@qone/protocol";
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
@@ -201,6 +202,9 @@ eventBus.subscribe((busEvent) => {
       } else if (agentEvent.type !== "message.delta") publishSubagent(agentEvent.runId);
     }
   }
+  if (agentEvent.sessionId && agentEvent.runId && !subagentRunRepo.get(agentEvent.runId) && isAssistantMessageActivity(agentEvent)) {
+    touchSession(agentEvent.sessionId);
+  }
   queueEventPersistence(agentEvent);
   send({ type: "agent.event", event: agentEvent });
   if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string } }).message?.role === "user" && agentEvent.sessionId && agentEvent.runId && !subagentRunRepo.get(agentEvent.runId)) {
@@ -265,6 +269,7 @@ function deliverSteer(sessionId: string, runId: string) {
   assistantPartsByRun.set(runId, []);
   assistantMessageSequenceByRun.delete(runId);
   messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments);
+  touchSession(sessionId);
   queueRepo.remove(sessionId, steer.queueItemId);
   sendQueue(sessionId);
   // Send canonical history before the UI clears transient streaming parts.
@@ -327,6 +332,10 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       }
     }
   },
+  onCustomEntry: (sessionId, entry) => {
+    const entries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
+    if (entry && typeof entry === "object") settingsRepo.set(`codemode.entries:${sessionId}`, [...entries, entry]);
+  },
   onGeneratedMedia: async (executionSessionId, runId, data, mimeType, extension, signal) => {
     const sessionId = subagentRunRepo.getByExecutionSession(executionSessionId)?.parentSessionId ?? executionSessionId;
     const saved = await generatedArtifacts.save({ sessionId, runId, data, mimeType, extension, signal });
@@ -348,6 +357,8 @@ const adapter = new PiAdapter((event) => eventBus.emit({
     attachments: message.attachments ? JSON.parse(message.attachments) : undefined,
     createdAt: message.createdAt,
   }));
+  const customEntries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
+  history.push(...customEntries.map((rawMessage) => ({ id: crypto.randomUUID(), role: "custom", content: "", attachments: undefined, createdAt: Date.now(), rawMessage })));
   return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
 }, compactionPreferences);
 adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
@@ -537,6 +548,12 @@ const toInfo = (s: {
   updatedAt: s.updatedAt,
   sideChat: sideConversations.metadata(s.id),
 });
+
+function touchSession(sessionId: string) {
+  sessionRepo.touch(sessionId);
+  const session = sessionRepo.get(sessionId);
+  if (session) send({ type: "session.updated", session: toInfo(session) });
+}
 
 const emit = (type: string, payload: unknown, sessionId?: string, runId?: string) =>
   eventBus.emit({ type, payload, sessionId, runId });
@@ -1237,7 +1254,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           await adapter.disposeSession(cmd.sessionId);
           throw error;
         }
-        sessionRepo.touch(cmd.sessionId);
+        touchSession(cmd.sessionId);
         const marker = { id: cmd.requestId, throughMessageId: history.at(-1)!.id, createdAt: Date.now(), status: "completed" as const, source: "manual" as const };
         emit("context.compacted", marker, cmd.sessionId);
         flushEvents();
@@ -1450,7 +1467,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       });
       assistantPartsByRun.set(run.id, []);
       const turn = turnRepo.create(run.id);
-      if (!cmd.goalContinuation) messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id);
+      if (!cmd.goalContinuation) {
+        messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id);
+        touchSession(cmd.sessionId);
+      }
       emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
       const workspaceCwd = s.workspaceId ? workspaceRepo.get(s.workspaceId)?.path : undefined;
       if (s.workspaceId && !workspaceCwd) {
@@ -1485,7 +1505,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           const status = cancelled ? "cancelled" : "completed";
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status);
-          sessionRepo.touch(cmd.sessionId);
+          touchSession(cmd.sessionId);
           if (goal) await adapter.disposeSession(cmd.sessionId);
           await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.completed", assistantMessage ? {
@@ -1521,6 +1541,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           const status = cancelled ? "cancelled" : "failed";
           turnRepo.finish(turn.id, status);
           runRepo.finish(run.id, status, cancelled ? undefined : String(err));
+          touchSession(cmd.sessionId);
           if (goal) await adapter.disposeSession(cmd.sessionId);
           await releaseBrowserSession();
           emit(cancelled ? "agent.cancelled" : "agent.failed", cancelled

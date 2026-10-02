@@ -191,6 +191,7 @@ export type RuntimeEvent =
   | { type: "session.created"; session: SessionInfo }
   | { type: "session.side-chat.created"; requestId: string; sessionId: string; queueItemId?: string; session: SessionInfo }
   | { type: "session.list"; sessions: SessionInfo[]; sideChats?: SessionInfo[] }
+  | { type: "session.updated"; session: SessionInfo }
   | { type: "session.search"; requestId: string; query: string; results: SessionSearchResult[] }
   | { type: "session.renamed"; session: SessionInfo }
   | { type: "session.messages"; sessionId: string; messages: MessageInfo[]; compactions?: CompactionMarkerInfo[] }
@@ -297,6 +298,7 @@ export interface QueueItemInfo {
   id: string;
   sessionId: string;
   text: string;
+  quote?: { text: string; messageId: string };
   attachments?: MessageAttachmentInfo[];
   lane: QueueItemLane;
   status: QueueItemStatus;
