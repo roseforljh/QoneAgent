@@ -184,6 +184,14 @@ export interface CompactionMarkerInfo {
   source: "manual" | "automatic";
 }
 
+export interface LiveAssistantMessage {
+  runId: string;
+  content: string;
+  parts: AssistantMessagePart[];
+  messageSequence?: number;
+  sequence: number;
+}
+
 export type RuntimeEvent =
   | { type: "pong"; requestId: string; capabilities?: string[]; compaction?: CompactionSettingsInfo }
   | { type: "session.compacted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo }
@@ -195,7 +203,7 @@ export type RuntimeEvent =
   | { type: "session.updated"; session: SessionInfo }
   | { type: "session.search"; requestId: string; query: string; results: SessionSearchResult[] }
   | { type: "session.renamed"; session: SessionInfo }
-  | { type: "session.messages"; requestId?: string; sessionId: string; messages: MessageInfo[]; compactions?: CompactionMarkerInfo[] }
+  | { type: "session.messages"; requestId?: string; sessionId: string; messages: MessageInfo[]; compactions?: CompactionMarkerInfo[]; streaming?: LiveAssistantMessage }
   | { type: "session.queue"; sessionId: string; items: QueueItemInfo[] }
   | { type: "session.runs"; sessionId: string; runs: RunInfo[] }
   | { type: "session.toolCalls"; sessionId: string; toolCalls: ToolCallInfo[] }

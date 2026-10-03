@@ -33,6 +33,7 @@ import { createSubagentPublisher } from "./subagent-publisher.js";
 import { SubagentNotificationCoordinator } from "./subagent-notifications.js";
 import { generatedSessionTitle, provisionalSessionTitle } from "./session-title.js";
 import { ensureGlobalInstructions, globalInstructionsDirectory, globalInstructionsPath, readGlobalInstructions, writeGlobalInstructions } from "./global-instructions.js";
+import { updateLiveAssistant, type LiveAssistantState } from "./live-assistant.js";
 
 const log = createLogger("runtime");
 
@@ -130,6 +131,7 @@ const queueEventPersistence = (event: AgentEvent) => {
 };
 
 const compactionPositions = new CompactionPositions();
+const liveAssistantByRun = new Map<string, LiveAssistantState>();
 eventBus.subscribe((busEvent) => {
   if (busEvent.type === "approval.requested" && busEvent.runId) {
     runRepo.setStatus(busEvent.runId, "waiting_approval");
@@ -152,6 +154,8 @@ eventBus.subscribe((busEvent) => {
     timestamp: Date.now(), payload: busEvent.payload,
   } satisfies AgentEvent));
   if (agentEvent.runId) {
+    const live = liveAssistantByRun.get(agentEvent.runId);
+    if (live) liveAssistantByRun.set(agentEvent.runId, updateLiveAssistant(live, agentEvent));
     const completedMessageSequence = assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence;
     const parts = assistantPartsByRun.get(agentEvent.runId);
     if (parts) {
@@ -301,6 +305,8 @@ function deliverSteer(sessionId: string, runId: string) {
   assistantStreamBuffers.delete(runId);
   assistantPartsByRun.set(runId, []);
   assistantMessageSequenceByRun.delete(runId);
+  const live = liveAssistantByRun.get(runId);
+  if (live) liveAssistantByRun.set(runId, { content: "", parts: [], sequence: live.sequence });
   const userMessage = messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments);
   touchSession(sessionId, userMessage.createdAt);
   queueRepo.remove(sessionId, steer.queueItemId);
@@ -627,6 +633,8 @@ function sendMessages(sessionId: string, requestId?: string) {
   const history = messageRepo.listBySession(sessionId);
   const messageIds = new Set(history.map((message) => message.id));
   const compactions = eventRepo.listCompactions(sessionId).filter((marker) => messageIds.has(marker.throughMessageId));
+  const activeRun = runRepo.listBySession(sessionId).find((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));
+  const live = activeRun ? liveAssistantByRun.get(activeRun.id) : undefined;
   send({
     type: "session.messages", requestId, sessionId,
     messages: history.map((m) => ({
@@ -637,6 +645,7 @@ function sendMessages(sessionId: string, requestId?: string) {
       model: m.model ?? undefined, goalId: m.goalId ?? undefined, createdAt: m.createdAt,
     })),
     compactions,
+    ...(activeRun && live ? { streaming: { runId: activeRun.id, content: live.content, parts: live.parts, messageSequence: live.messageSequence, sequence: live.sequence } } : {}),
   });
 }
 
@@ -1532,6 +1541,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         goalEpoch: goal?.epoch,
       });
       assistantPartsByRun.set(run.id, []);
+      liveAssistantByRun.set(run.id, { content: "", parts: [], sequence: 0 });
       const turn = turnRepo.create(run.id);
       if (!cmd.goalContinuation) {
         const userMessage = messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id);
@@ -1543,6 +1553,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         runRepo.finish(run.id, "failed", "session workspace no longer exists");
         assistantPartsByRun.delete(run.id);
         assistantMessageSequenceByRun.delete(run.id);
+        liveAssistantByRun.delete(run.id);
         turnRepo.finish(turn.id, "failed");
         emit("agent.failed", { message: "session workspace no longer exists" }, cmd.sessionId, run.id);
         send({ type: "error", requestId: cmd.requestId, message: "session workspace no longer exists" });
@@ -1573,6 +1584,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           assistantStreamBuffers.delete(run.id);
           assistantPartsByRun.delete(run.id);
           assistantMessageSequenceByRun.delete(run.id);
+          liveAssistantByRun.delete(run.id);
           for (const key of toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) toolCallIds.delete(key);
           const status = cancelled ? "cancelled" : "completed";
           turnRepo.finish(turn.id, status);
@@ -1613,6 +1625,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           assistantStreamBuffers.delete(run.id);
           assistantPartsByRun.delete(run.id);
           assistantMessageSequenceByRun.delete(run.id);
+          liveAssistantByRun.delete(run.id);
           for (const key of toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) toolCallIds.delete(key);
           const status = cancelled ? "cancelled" : "failed";
           turnRepo.finish(turn.id, status);
