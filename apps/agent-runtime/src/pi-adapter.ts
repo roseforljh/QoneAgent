@@ -394,6 +394,10 @@ export class PiAdapter {
     return this.compactingSessions.has(sessionId) || this.activeRunIds.has(sessionId);
   }
 
+  activeRunId(sessionId: string): string | undefined {
+    return this.activeRunIds.get(sessionId);
+  }
+
   isDirectGenerationModel(modelName: string): boolean {
     return this.imageModelConfigs.has(modelName) || this.videoModelConfigs.has(modelName) || this.speechModelConfigs.has(modelName);
   }
@@ -960,6 +964,29 @@ export class PiAdapter {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     return ![...this.activeRunIds.values()].includes(runId);
+  }
+
+  /**
+   * Queue an internal follow-up synchronously. Pi's AgentSession.followUp()
+   * performs async input-handler work before touching Agent's queue. That is
+   * too late for compaction_end, where Pi checks hasQueuedMessages() as soon
+   * as the event listener returns.
+   *
+   * Notification prompts are already expanded plain text, so they can use
+   * Agent's synchronous queue API directly while retaining the same run and
+   * streaming ownership checks as sendToSession().
+   */
+  queueFollowUpNow(sessionId: string, message: string, expectedRunId = this.activeRunIds.get(sessionId)): boolean {
+    const session = this.activeRunIds.has(sessionId) ? this.sessions.get(sessionId) : undefined;
+    if (!session || !expectedRunId || this.activeRunIds.get(sessionId) !== expectedRunId
+      || this.runs.get(expectedRunId) !== session || this.stoppedRuns.has(expectedRunId) || !session.isStreaming) return false;
+    try {
+      session.agent.followUp({ role: "user", content: [{ type: "text", text: message }], timestamp: Date.now() });
+      return true;
+    } catch (error) {
+      log.warn("failed to queue internal follow-up", { sessionId, runId: expectedRunId, error: String(error) });
+      return false;
+    }
   }
 
   async sendToSession(sessionId: string, message: string, mode: "steer" | "follow_up", attachments?: MessageAttachmentInfo[], expectedRunId = this.activeRunIds.get(sessionId)): Promise<boolean> {

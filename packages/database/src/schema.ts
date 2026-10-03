@@ -8,6 +8,7 @@ export const sessions = sqliteTable(
     workspaceId: text("workspace_id"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
+    lastUserMessageAt: integer("last_user_message_at").notNull(),
   },
   (t) => [index("idx_sessions_workspace").on(t.workspaceId), index("idx_sessions_updated").on(t.updatedAt)]
 );
@@ -59,6 +60,9 @@ export const subagentRuns = sqliteTable("subagent_runs", {
   depth: integer("depth").notNull().default(0),
   toolCallId: text("tool_call_id").notNull(),
   executionSessionId: text("execution_session_id"),
+  // Legacy rows were created before foreground/background was persisted;
+  // treat them as background so a completed child is still observable.
+  background: integer("background", { mode: "boolean" }).notNull().default(true),
   profileId: text("profile_id"),
   mediaAttachment: text("media_attachment"),
   title: text("title").notNull(),
@@ -77,6 +81,23 @@ export const subagentRuns = sqliteTable("subagent_runs", {
   contextMessageCount: integer("context_message_count").notNull().default(0),
   tokenUsage: text("token_usage"),
 }, (t) => [index("idx_subagent_runs_parent").on(t.parentSessionId, t.parentRunId)]);
+
+export const subagentNotifications = sqliteTable("subagent_notifications", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  subagentRunId: text("subagent_run_id").notNull().references(() => subagentRuns.runId, { onDelete: "cascade" }),
+  version: integer("version").notNull().default(1),
+  kind: text("kind").notNull(), // completed | failed | cancelled | interrupted
+  status: text("status").notNull().default("pending"), // pending | delivered | acknowledged
+  title: text("title").notNull(),
+  summaryPreview: text("summary_preview"),
+  createdAt: integer("created_at").notNull(),
+  deliveredAt: integer("delivered_at"),
+  acknowledgedAt: integer("acknowledged_at"),
+}, (t) => [
+  index("idx_subagent_notifications_session_status").on(t.sessionId, t.status),
+  index("idx_subagent_notifications_run").on(t.subagentRunId),
+]);
 
 export const subagentMessages = sqliteTable("subagent_messages", {
   id: text("id").primaryKey(),

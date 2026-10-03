@@ -4,7 +4,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { RunPermissionMode } from "@qone/protocol";
 import type { PiAdapter } from "./pi-adapter.js";
 import type { SubagentController } from "./subagent-runner.js";
-import { subagentResultForModel, subagentWorkflowResultForModel } from "./subagent-result.js";
+import { subagentResultForModel } from "./subagent-result.js";
 import { subagentProfileSchema, subagentTargetSchema, type SubagentSelection, type SubagentWorkflowStep } from "./subagent-selection.js";
 
 interface SubagentToolOptions {
@@ -45,6 +45,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       checkChild(runId);
       const result = options.controller!.query(runId);
       if (!result) throw new Error(`Unknown subagent ${runId}`);
+      options.controller!.acknowledge(runId);
       return subagentResultForModel(result);
     },
   }, {
@@ -67,10 +68,10 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       const input = params as { steps: SubagentWorkflowStep[] };
       const parentRunId = options.parentRunId();
       if (!parentRunId) throw new Error("No active parent run");
-      const result = await options.controller!.workflow(eventSessionId, parentRunId, input.steps, {
-        model: modelName, permissionMode: options.permissionMode(), signal,
-      });
-      return subagentWorkflowResultForModel(result);
+      void options.controller!.workflow(eventSessionId, parentRunId, input.steps, {
+        model: modelName, permissionMode: options.permissionMode(), signal, background: true,
+      }).catch(() => undefined);
+      return { content: [{ type: "text" as const, text: "Subagent workflow started in background. Use list_subagents or inspect_subagent when you want to process a result." }], details: { background: true } };
     },
   }, {
     name: "wait_subagent",
@@ -116,8 +117,8 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
   }, {
     name: "dispatch_subagent",
     label: "Delegate to subagent",
-    description: `Create a NEW agent session. For ordinary code review, file analysis, research, or read-only work, explicitly choose capability="temporary" to use the configured temporary general agent. Choose a media capability only for a task that explicitly needs that named media ability. To select a saved profile, supply subagentId and omit capability or set it to null. Do not combine targets. Omitted/null capability with no profile also uses the temporary agent for legacy calls. For follow-up questions, reuse the existing runId. The user's original attachments are forwarded by reference; do not download them before delegation. The configured maximum of ${options.maxConcurrent ?? "the current"} is a simultaneous running limit.`,
-    promptSnippet: 'Use dispatch_subagent with capability="temporary" for ordinary code or research work. Leave subagentId omitted/null/empty. Select media targets only for matching media tasks. Before creating an agent for a follow-up, recover existing runIds and use control_subagent follow_up.',
+    description: `Create a NEW agent session. For ordinary code review, file analysis, research, or read-only work, explicitly choose capability="temporary" to use the configured temporary general agent. Choose a media capability only for a task that explicitly needs that named media ability. To select a saved profile, supply subagentId and omit capability or set it to null. Do not combine targets. Omitted/null capability with no profile also uses the temporary agent for legacy calls. Ordinary tasks run in the background by default; set background=false only when the parent must wait for the result. Media tasks with a temporary attachment remain foreground. For follow-up questions, reuse the existing runId. The user's original attachments are forwarded by reference; do not download them before delegation. Background children remain attached to this parent conversation: their completion or failure is queued and delivered as a lightweight follow-up while the parent is running, and the persistent ledger is restored after compaction or on the next run. Do not assume a background child was forgotten; use list_subagents or inspect_subagent when you choose to process it. The configured maximum of ${options.maxConcurrent ?? "the current"} is a simultaneous running limit.`,
+    promptSnippet: 'Use dispatch_subagent with capability="temporary" for ordinary code or research work. Leave subagentId omitted/null/empty. Ordinary tasks run in the background by default; set background=false only when the parent must wait. Select media targets only for matching media tasks. Background children remain tracked by the parent runtime and completion signals will arrive later; do not forget them. Before creating an agent for a follow-up, recover existing runIds and use control_subagent follow_up.',
     parameters: Type.Object({
       title: Type.String({ minLength: 1, maxLength: 120 }),
       task: Type.String({ minLength: 1, maxLength: 32_000 }),
@@ -131,14 +132,15 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       const input = params as SubagentSelection & { title: string; task: string; mediaPath?: string; background?: boolean };
       const parentRunId = options.parentRunId();
       if (!parentRunId || !options.delegate) throw new Error("No active parent run");
-      if (input.mediaPath && input.background) throw runtimeError("subagent-tools.a_subagent_receiving_a_temporary_video_file_must_wait", {});
+      const background = input.background ?? !input.mediaPath;
+      if (input.mediaPath && background) throw runtimeError("subagent-tools.a_subagent_receiving_a_temporary_video_file_must_wait", {});
       const mediaMimeType = input.mediaPath ? options.mediaMimeType(parentRunId, input.mediaPath) : undefined;
       if (input.mediaPath && !mediaMimeType) throw runtimeError("subagent-tools.mediapath_must_be_a_media_path_just_retrieved_by", {});
       const result = await options.delegate({
         parentSessionId: eventSessionId, parentRunId, parentSubagentId: subagentRunId, depth: subagentDepth + 1, toolCallId,
         title: input.title.trim(), task: input.task.trim(), subagentId: input.subagentId, capability: input.capability,
         mediaAttachment: input.mediaPath ? { type: "file", name: input.mediaPath.split(/[\\/]/).at(-1) ?? "video", mimeType: mediaMimeType!, data: "", localPath: input.mediaPath, temporary: true } : undefined,
-        fallbackModel: modelName, permissionMode: options.permissionMode(), background: input.background, signal,
+        fallbackModel: modelName, permissionMode: options.permissionMode(), background, signal,
       });
       const completed = (() => {
         try { return JSON.parse(result) as { runId?: string }; } catch { return undefined; }

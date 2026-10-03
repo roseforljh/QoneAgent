@@ -6,7 +6,7 @@ import { repeatedUserMessageId } from "@qone/protocol";
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, SessionSearchResult } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, thinkingLevelsForApi, parseMcpCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
-import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
+import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
@@ -28,7 +28,9 @@ import { readFilePreview } from "./file-preview.js";
 import { normalizeSubagentConfig } from "./subagents.js";
 import { restoreCompactedContext, type SessionCompactionCheckpoint } from "./session-compaction.js";
 import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
+import { finalSubagentSummary } from "./subagent-result.js";
 import { createSubagentPublisher } from "./subagent-publisher.js";
+import { SubagentNotificationCoordinator } from "./subagent-notifications.js";
 import { generatedSessionTitle, provisionalSessionTitle } from "./session-title.js";
 import { ensureGlobalInstructions, globalInstructionsDirectory, globalInstructionsPath, readGlobalInstructions, writeGlobalInstructions } from "./global-instructions.js";
 
@@ -62,6 +64,7 @@ const messageRepo = new MessageRepo(db);
 const runRepo = new RunRepo(db);
 const goalRepo = new GoalRepo(db);
 const subagentRunRepo = new SubagentRunRepo(db);
+const subagentNotificationRepo = new SubagentNotificationRepo(db);
 const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
 const toolCallRepo = new ToolCallRepo(db);
@@ -96,6 +99,7 @@ const subagentPublisher = createSubagentPublisher({
   intervalMs: 32,
 });
 let subagentController: ReturnType<typeof registerSubagentDispatcher>;
+let subagentNotificationCoordinator: SubagentNotificationCoordinator | undefined;
 function readTokenUsage(value: unknown) {
   const usage = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const cost = usage.cost && typeof usage.cost === "object" ? usage.cost as Record<string, unknown> : {};
@@ -207,6 +211,35 @@ eventBus.subscribe((busEvent) => {
   }
   queueEventPersistence(agentEvent);
   send({ type: "agent.event", event: agentEvent });
+  if (agentEvent.type === "subagent.finished" && agentEvent.runId) {
+    const child = subagentRunRepo.get(agentEvent.runId);
+    const childRun = runRepo.get(agentEvent.runId);
+    if (child && childRun) {
+      const status = childRun.status === "completed" ? "completed" : childRun.status === "cancelled" ? "cancelled" : "failed";
+      const directParent = subagentRunRepo.get(child.parentRunId);
+      if (child.background) subagentNotificationCoordinator?.enqueue({
+        // A nested child must notify the execution session of the direct
+        // parent agent, not only the root conversation session.
+        sessionId: directParent?.executionSessionId ?? child.parentSessionId,
+        subagentRunId: child.runId,
+        // A child run can be resumed/retried and emit another terminal event.
+        // The terminal timestamp makes each completion a durable idempotency key.
+        version: childRun.completedAt ?? Date.now(),
+        kind: status,
+        title: child.title,
+        content: finalSubagentSummary({
+          content: child.content,
+          parts: JSON.parse(child.parts) as AssistantMessagePart[],
+          messages: subagentRunRepo.listMessages(child.runId),
+          status,
+        }),
+      });
+    }
+  }
+  if (agentEvent.type === "compaction_end" && agentEvent.sessionId && agentEvent.runId
+    && (!subagentRunRepo.get(agentEvent.runId) || subagentRunRepo.getByExecutionSession(agentEvent.sessionId))) {
+    subagentNotificationCoordinator?.scheduleLedger(agentEvent.sessionId);
+  }
   if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string } }).message?.role === "user" && agentEvent.sessionId && agentEvent.runId && !subagentRunRepo.get(agentEvent.runId)) {
     if (initialUserMessageSeen.has(agentEvent.runId)) deliverSteer(agentEvent.sessionId, agentEvent.runId);
     else initialUserMessageSeen.add(agentEvent.runId);
@@ -268,8 +301,8 @@ function deliverSteer(sessionId: string, runId: string) {
   assistantStreamBuffers.delete(runId);
   assistantPartsByRun.set(runId, []);
   assistantMessageSequenceByRun.delete(runId);
-  messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments);
-  touchSession(sessionId);
+  const userMessage = messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments);
+  touchSession(sessionId, userMessage.createdAt);
   queueRepo.remove(sessionId, steer.queueItemId);
   sendQueue(sessionId);
   // Send canonical history before the UI clears transient streaming parts.
@@ -297,6 +330,8 @@ function releaseUndeliveredSteers(sessionId: string, runId: string) {
   }
   if (undelivered.length) sendQueue(sessionId);
 }
+const activeSubagentStatuses = new Set(["created", "running", "waiting_approval", "paused"]);
+const interruptedSubagents = subagentRunRepo.list().filter((row) => activeSubagentStatuses.has(runRepo.get(row.runId)?.status ?? ""));
 const approvalRuns = new Map<string, string>();
 const approvalToolCalls = new Map<string, string>();
 const commandApprovals = new ApprovalQueue();
@@ -362,6 +397,24 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
 }, compactionPreferences);
 adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
+subagentNotificationCoordinator = new SubagentNotificationCoordinator(
+  subagentNotificationRepo,
+  subagentRunRepo,
+  runRepo,
+  adapter,
+  sendSubagentNotifications,
+);
+for (const child of interruptedSubagents) {
+  const directParent = subagentRunRepo.get(child.parentRunId);
+  subagentNotificationCoordinator.enqueue({
+    sessionId: directParent?.executionSessionId ?? child.parentSessionId,
+    subagentRunId: child.runId,
+    version: runRepo.get(child.runId)?.completedAt ?? Date.now(),
+    kind: "interrupted",
+    title: child.title,
+    content: "该子代理因运行时重启而中断。",
+  });
+}
 subagentController = registerSubagentDispatcher({
   adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo,
   config: () => subagentConfig,
@@ -372,6 +425,7 @@ subagentController = registerSubagentDispatcher({
   attachmentsProvider: (sessionId, runId) => messageRepo.listBySession(sessionId).flatMap((message) =>
     message.runId === runId && message.role === "user" && message.attachments ? JSON.parse(message.attachments) as MessageAttachmentInfo[] : []),
   runtime: () => subagentConfig.runtime,
+  acknowledge: (runId) => subagentNotificationCoordinator?.acknowledge(runId),
   publish: publishSubagent, emit: (type, payload, sessionId, runId) => eventBus.emit({ type, payload, sessionId, runId }),
 });
 adapter.setSubagentController(subagentController);
@@ -540,17 +594,20 @@ const toInfo = (s: {
   workspaceId: string | null | undefined;
   createdAt: number;
   updatedAt: number;
+  lastUserMessageAt: number;
 }): SessionInfo => ({
   id: s.id,
   title: s.title,
   workspaceId: s.workspaceId ?? undefined,
   createdAt: s.createdAt,
   updatedAt: s.updatedAt,
+  lastUserMessageAt: s.lastUserMessageAt,
   sideChat: sideConversations.metadata(s.id),
 });
 
-function touchSession(sessionId: string) {
-  sessionRepo.touch(sessionId);
+function touchSession(sessionId: string, userMessageAt?: number) {
+  if (userMessageAt === undefined) sessionRepo.touch(sessionId);
+  else sessionRepo.touchUserMessage(sessionId, userMessageAt);
   const session = sessionRepo.get(sessionId);
   if (session) send({ type: "session.updated", session: toInfo(session) });
 }
@@ -562,12 +619,16 @@ function sendQueue(sessionId: string) {
   send({ type: "session.queue", sessionId, items: queueRepo.list(sessionId) });
 }
 
-function sendMessages(sessionId: string) {
+function sendSubagentNotifications(sessionId: string) {
+  send({ type: "session.subagentNotifications", sessionId, notifications: subagentNotificationRepo.listUnacknowledged(sessionId) });
+}
+
+function sendMessages(sessionId: string, requestId?: string) {
   const history = messageRepo.listBySession(sessionId);
   const messageIds = new Set(history.map((message) => message.id));
   const compactions = eventRepo.listCompactions(sessionId).filter((marker) => messageIds.has(marker.throughMessageId));
   send({
-    type: "session.messages", sessionId,
+    type: "session.messages", requestId, sessionId,
     messages: history.map((m) => ({
       id: m.id, sessionId: m.sessionId, runId: m.runId ?? undefined,
       role: m.role, content: m.content,
@@ -658,6 +719,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           "reach.channels",
           "reach.podcast.configure",
           "subagents.v1",
+          "subagent.notifications",
         ],
       });
       return;
@@ -763,7 +825,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       return;
 
     case "session.messages":
-      sendMessages(cmd.sessionId);
+      sendMessages(cmd.sessionId, cmd.requestId);
       return;
 
     case "goal.get": {
@@ -927,6 +989,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         const info = subagentInfo(row.runId, subagentRunRepo, runRepo, subagentStreams);
         return info ? [info] : [];
       }) });
+      return;
+
+    case "session.subagentNotifications":
+      sendSubagentNotifications(cmd.sessionId);
       return;
 
     case "artifact.list":
@@ -1468,8 +1534,8 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       assistantPartsByRun.set(run.id, []);
       const turn = turnRepo.create(run.id);
       if (!cmd.goalContinuation) {
-        messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id);
-        touchSession(cmd.sessionId);
+        const userMessage = messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id);
+        touchSession(cmd.sessionId, userMessage.createdAt);
       }
       emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
       const workspaceCwd = s.workspaceId ? workspaceRepo.get(s.workspaceId)?.path : undefined;
@@ -1485,10 +1551,16 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
 
       const mcpCommand = cmd.mcpServerId ? parseMcpCommand(cmd.message) : undefined;
       const routedMessage = mcpCommand && mcpCommand.serverId === cmd.mcpServerId ? mcpCommand.text : cmd.message;
+      const notificationDelivery = subagentNotificationCoordinator?.pendingPrompt(cmd.sessionId) ?? { ids: [] as string[], prompt: undefined };
+      const modelMessage = [notificationDelivery.prompt, routedMessage].filter(Boolean).join("\n\n");
       Promise.resolve()
-        .then(() => adapter.run(cmd.sessionId, routedMessage, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments, mcpServerId: cmd.mcpServerId, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
+        .then(() => {
+          subagentNotificationCoordinator?.markDelivered(notificationDelivery.ids);
+          if (notificationDelivery.ids.length) sendSubagentNotifications(cmd.sessionId);
+          return adapter.run(cmd.sessionId, modelMessage, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments, mcpServerId: cmd.mcpServerId, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
           emit(type, payload, cmd.sessionId, run.id)
-        ))
+        );
+        })
         .then(async () => {
           const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
@@ -1527,6 +1599,10 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
           }
         })
         .catch(async (err) => {
+          if (notificationDelivery.ids.length) {
+            subagentNotificationCoordinator?.markPending(notificationDelivery.ids);
+            sendSubagentNotifications(cmd.sessionId);
+          }
           const cancelled = cancelledRuns.delete(run.id);
           const parts = assistantPartsByRun.get(run.id) ?? [];
           const assistantMessage = persistPartialAssistant(cmd.sessionId, run.id, cmd.model);

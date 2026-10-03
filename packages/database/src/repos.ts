@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { sessions, messages, runs, subagentRuns, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
+import { sessions, messages, runs, subagentRuns, subagentNotifications, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
 import type { Db } from "./index.js";
-import { persistedToolResult, type CompactionMarkerInfo, type AssistantMessagePart, type GoalInfo, type GoalStatus, type MessageAttachmentInfo, type QueueItemInfo, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { persistedToolResult, type CompactionMarkerInfo, type AssistantMessagePart, type GoalInfo, type GoalStatus, type MessageAttachmentInfo, type QueueItemInfo, type RunPermissionMode, type RunThinkingLevel, type SubagentNotificationInfo } from "@qone/protocol";
 
 export class SessionRepo {
   constructor(private db: Db) {}
@@ -14,6 +14,7 @@ export class SessionRepo {
       workspaceId,
       createdAt: now,
       updatedAt: now,
+      lastUserMessageAt: now,
     };
     this.db.insert(sessions).values(row).run();
     return row;
@@ -82,6 +83,14 @@ export class SessionRepo {
     this.db
       .update(sessions)
       .set({ updatedAt: Date.now() })
+      .where(eq(sessions.id, id))
+      .run();
+  }
+
+  touchUserMessage(id: string, at = Date.now()) {
+    this.db
+      .update(sessions)
+      .set({ updatedAt: at, lastUserMessageAt: at })
       .where(eq(sessions.id, id))
       .run();
   }
@@ -178,12 +187,12 @@ export class MessageRepo {
 export class SubagentRunRepo {
   constructor(private db: Db) {}
 
-  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; profileId?: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number }) {
+  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; background?: boolean; profileId?: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number }) {
     this.db.insert(subagentRuns).values({
       runId: input.runId, parentSessionId: input.parentSessionId, parentRunId: input.parentRunId,
       mediaAttachment: input.mediaAttachment ? JSON.stringify(input.mediaAttachment) : null,
       parentSubagentId: input.parentSubagentId ?? null, depth: input.depth ?? 0, toolCallId: input.toolCallId,
-      executionSessionId: input.executionSessionId ?? null, profileId: input.profileId ?? null, title: input.title, task: input.task,
+      executionSessionId: input.executionSessionId ?? null, background: input.background ?? false, profileId: input.profileId ?? null, title: input.title, task: input.task,
       model: input.model ?? null, permissionMode: input.permissionMode ?? null, tools: input.tools ? JSON.stringify(input.tools) : null,
       workflowId: input.workflowId ?? null, workflowStepId: input.workflowStepId ?? null,
       dependsOn: input.dependsOn?.length ? JSON.stringify(input.dependsOn) : null,
@@ -247,6 +256,101 @@ export class SubagentRunRepo {
 
   listBySession(sessionId: string) {
     return this.db.select().from(subagentRuns).where(eq(subagentRuns.parentSessionId, sessionId)).all();
+  }
+
+  list() {
+    return this.db.select().from(subagentRuns).all();
+  }
+
+  listByParentRunId(parentRunId: string) {
+    return this.db.select().from(subagentRuns).where(eq(subagentRuns.parentRunId, parentRunId)).all();
+  }
+}
+
+export class SubagentNotificationRepo {
+  constructor(private db: Db) {}
+
+  private toInfo(row: typeof subagentNotifications.$inferSelect): SubagentNotificationInfo {
+    return {
+      id: row.id,
+      sessionId: row.sessionId,
+      subagentRunId: row.subagentRunId,
+      version: row.version,
+      kind: row.kind as SubagentNotificationInfo["kind"],
+      status: row.status as SubagentNotificationInfo["status"],
+      title: row.title,
+      summaryPreview: row.summaryPreview ?? undefined,
+      createdAt: row.createdAt,
+      deliveredAt: row.deliveredAt ?? undefined,
+      acknowledgedAt: row.acknowledgedAt ?? undefined,
+    };
+  }
+
+  enqueue(input: {
+    sessionId: string;
+    subagentRunId: string;
+    version: number;
+    kind: SubagentNotificationInfo["kind"];
+    title: string;
+    summaryPreview?: string;
+  }): SubagentNotificationInfo {
+    const id = `${input.subagentRunId}:${input.version}`;
+    this.db.insert(subagentNotifications).values({
+      id,
+      sessionId: input.sessionId,
+      subagentRunId: input.subagentRunId,
+      version: input.version,
+      kind: input.kind,
+      status: "pending",
+      title: input.title,
+      summaryPreview: input.summaryPreview ?? null,
+      createdAt: Date.now(),
+      deliveredAt: null,
+      acknowledgedAt: null,
+    }).onConflictDoNothing().run();
+    return this.toInfo(this.db.select().from(subagentNotifications).where(eq(subagentNotifications.id, id)).get()!);
+  }
+
+  listBySession(sessionId: string, statuses: SubagentNotificationInfo["status"][] = ["pending", "delivered"]) {
+    return this.db.select().from(subagentNotifications)
+      .where(and(eq(subagentNotifications.sessionId, sessionId), inArray(subagentNotifications.status, statuses)))
+      .orderBy(subagentNotifications.createdAt)
+      .all()
+      .map((row) => this.toInfo(row));
+  }
+
+  listPending(sessionId: string) {
+    return this.listBySession(sessionId, ["pending"]);
+  }
+
+  markDelivered(ids: string[]) {
+    if (!ids.length) return;
+    this.db.update(subagentNotifications)
+      .set({ status: "delivered", deliveredAt: Date.now() })
+      .where(inArray(subagentNotifications.id, ids)).run();
+  }
+
+  markPending(ids: string[]) {
+    if (!ids.length) return;
+    this.db.update(subagentNotifications)
+      .set({ status: "pending", deliveredAt: null })
+      .where(inArray(subagentNotifications.id, ids)).run();
+  }
+
+  acknowledgeByRunId(subagentRunId: string) {
+    const sessionIds = this.db.select({ sessionId: subagentNotifications.sessionId })
+      .from(subagentNotifications)
+      .where(and(eq(subagentNotifications.subagentRunId, subagentRunId), inArray(subagentNotifications.status, ["pending", "delivered"])))
+      .all()
+      .map((row) => row.sessionId);
+    this.db.update(subagentNotifications)
+      .set({ status: "acknowledged", acknowledgedAt: Date.now() })
+      .where(and(eq(subagentNotifications.subagentRunId, subagentRunId), inArray(subagentNotifications.status, ["pending", "delivered"]))).run();
+    return [...new Set(sessionIds)];
+  }
+
+  listUnacknowledged(sessionId: string) {
+    return this.listBySession(sessionId, ["pending", "delivered"]);
   }
 }
 

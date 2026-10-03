@@ -5,17 +5,19 @@ import type { PiAdapter } from "./pi-adapter.js";
 import { buildSubagentPrompt, subagentCatalog } from "./subagents.js";
 import { resolveSubagentSelection, type SubagentWorkflowStep } from "./subagent-selection.js";
 import { SubagentScheduler } from "./subagent-scheduler.js";
+import { finalSubagentSummary } from "./subagent-result.js";
 
 export interface SubagentController {
   list(sessionId: string, ownerId?: string): { runId: string; title: string; task: string; status: string; profileId: string | null; model: string | null }[];
   query(runId: string): SubagentRunInfo | undefined;
+  acknowledge(runId: string): void;
   catalog(): ReturnType<typeof subagentCatalog>;
   control(runId: string, action: "stop" | "resume" | "retry" | "steer" | "follow_up", message?: string): Promise<SubagentRunInfo>;
   wait(runId: string, timeoutMs?: number, signal?: AbortSignal, callerId?: string): Promise<SubagentRunInfo>;
   recordEvent(id: string, type: string, payload: unknown, sequence: number): void;
   fail(id: string, message: string): void;
   dispose(sessionId: string, parentRunIds?: string[]): Promise<void>;
-  workflow(parentSessionId: string, parentRunId: string, steps: SubagentWorkflowStep[], context?: { model?: string; permissionMode?: "ask" | "auto" | "full"; signal?: AbortSignal }): Promise<SubagentRunInfo[]>;
+  workflow(parentSessionId: string, parentRunId: string, steps: SubagentWorkflowStep[], context?: { model?: string; permissionMode?: "ask" | "auto" | "full"; signal?: AbortSignal; background?: boolean }): Promise<SubagentRunInfo[]>;
 }
 
 type TextChunkBuffers = Map<string, string[]>;
@@ -30,6 +32,7 @@ export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo
     parentSubagentId: row.parentSubagentId ?? undefined, depth: row.depth ?? 0,
     toolCallId: row.toolCallId, executionSessionId: row.executionSessionId ?? undefined,
     profileId: row.profileId ?? undefined,
+    background: Boolean(row.background),
     title: row.title, task: row.task,
     model: row.model ?? undefined,
     permissionMode: row.permissionMode as SubagentRunInfo["permissionMode"],
@@ -74,6 +77,7 @@ export function registerSubagentDispatcher(options: {
   /** Original attachments from the root user run, shared by reference with delegated agents. */
   attachmentsProvider?: (sessionId: string, runId: string) => MessageAttachmentInfo[];
   runtime?: () => SubagentConfigInfo["runtime"];
+  acknowledge?: (runId: string) => void;
   publish: (runId: string) => void;
   emit: (type: string, payload: unknown, sessionId?: string, runId?: string) => void;
 }): SubagentController {
@@ -195,7 +199,13 @@ export function registerSubagentDispatcher(options: {
         if (timer) clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
         const parts = partsByRun.get(id) ?? [];
-        const content = assistantBuffers.get(id) ?? [...parts].reverse().find(p => p.type === "text")?.text ?? row.content;
+        const content = finalSubagentSummary({
+          content: assistantBuffers.get(id) ?? row.content,
+          parts,
+          messages: repo.listMessages(id),
+          streaming: subagentStreams.get(id)?.join(""),
+          status: runRepo.get(id)?.status,
+        });
         repo.save(id, content, parts);
         activeSubagents.delete(id);
         jobs.delete(id);
@@ -215,6 +225,16 @@ export function registerSubagentDispatcher(options: {
 
   type Dispatch = Parameters<NonNullable<Parameters<PiAdapter["setSubagentDispatcher"]>[0]>>[0] &
     { workflowId?: string; workflowStepId?: string; dependsOn?: string[] };
+  const waitForCompletion = async (id: string, timeoutMs = policy().timeoutMs, signal?: AbortSignal): Promise<SubagentRunInfo> => {
+    requireInfo(id);
+    const deadline = Date.now() + timeoutMs;
+    while (jobs.has(id) && Date.now() < deadline) {
+      if (signal?.aborted) throw signal.reason;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return requireInfo(id);
+  };
+
   const dispatch = async (input: Dispatch) => {
     const inherited = repo.get(input.parentRunId) ?? repo.getByExecutionSession(input.parentSessionId);
     const parentSessionId = inherited?.parentSessionId ?? input.parentSessionId;
@@ -246,6 +266,7 @@ export function registerSubagentDispatcher(options: {
     repo.create({
       ...input, runId: child.id, parentSessionId, parentSubagentId: inherited?.runId, depth,
       executionSessionId: `${parentSessionId}::subagent::${child.id}`,
+      background: input.background ?? false,
       profileId: agent?.id, model,
       permissionMode, tools, contextMode: policy().contextMode, contextMessageCount: count,
     });
@@ -254,8 +275,12 @@ export function registerSubagentDispatcher(options: {
       const job = start(child.id, directGeneration ? input.task : prompt, true, true, input.signal, attachments);
       if (input.background) return `Subagent started in background. runId=${child.id}`;
       await job.done;
+      // A foreground delegation already returned its terminal result directly
+      // to the parent model. Do not leave a duplicate "unread" notification
+      // behind for a result the parent has already consumed.
+      if (!input.background) options.acknowledge?.(child.id);
       const info = requireInfo(child.id);
-      return JSON.stringify({ runId: child.id, status: info.status, result: info.content, error: info.error });
+      return JSON.stringify({ runId: child.id, status: info.status, result: finalSubagentSummary(info), error: info.error });
     };
     return input.background ? work() : withoutPermit(inherited?.runId, work);
   };
@@ -268,6 +293,7 @@ export function registerSubagentDispatcher(options: {
 
   const controller: SubagentController = {
     query,
+    acknowledge: (id) => options.acknowledge?.(id),
     list: (sessionId, ownerId) => {
       const owner = ownerId ? repo.get(ownerId) : undefined;
       if (ownerId && owner?.executionSessionId !== sessionId) return [];
@@ -338,15 +364,7 @@ export function registerSubagentDispatcher(options: {
       }
       return requireInfo(id);
     },
-    wait: async (id, timeoutMs = policy().timeoutMs, signal, callerId) => withoutPermit(callerId, async () => {
-      requireInfo(id);
-      const deadline = Date.now() + timeoutMs;
-      while (jobs.has(id) && Date.now() < deadline) {
-        if (signal?.aborted) throw signal.reason;
-        await new Promise(resolve => setTimeout(resolve, 25));
-      }
-      return requireInfo(id);
-    }),
+    wait: async (id, timeoutMs = policy().timeoutMs, signal, callerId) => withoutPermit(callerId, () => waitForCompletion(id, timeoutMs, signal)),
     workflow: async (sessionId, parentRunId, steps, context) => {
       validateWorkflow(steps, policy().workflowMaxSteps);
       // Fail invalid selections before any independent step creates a child run.
@@ -366,13 +384,16 @@ export function registerSubagentDispatcher(options: {
             if (dependencies.some(id => results.get(id)?.status !== "completed")) throw new Error(`Workflow dependency failed for ${step.id}`);
             await dispatch({
               parentSessionId: sessionId, parentRunId, title: step.title,
-              task: step.task + dependencies.map(id => `\nDependency ${id}:\n${results.get(id)!.content}`).join("\n"),
+              task: step.task + dependencies.map(id => `\nDependency ${id}:\n${finalSubagentSummary(results.get(id)!)}`).join("\n"),
               capability: step.capability, subagentId: step.subagentId, toolCallId: `workflow:${workflowId}:${step.id}`,
               workflowId, workflowStepId: step.id, dependsOn: dependencies,
               fallbackModel: context?.model, permissionMode: context?.permissionMode ?? "ask", signal: context?.signal,
+              background: context?.background,
             });
             const created = repo.listBySession(root).find(row => row.workflowId === workflowId && row.workflowStepId === step.id)!;
-            results.set(step.id, requireInfo(created.runId));
+            results.set(step.id, context?.background
+              ? await waitForCompletion(created.runId, policy().timeoutMs, context.signal)
+              : requireInfo(created.runId));
             pending.delete(step.id);
           }));
         }

@@ -1,0 +1,1 @@
+ALTER TABLE subagent_runs ADD COLUMN background INTEGER NOT NULL DEFAULT 1;

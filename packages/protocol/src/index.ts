@@ -78,6 +78,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "session.runs"; requestId: string; sessionId: string }
   | { type: "session.toolCalls"; requestId: string; sessionId: string }
   | { type: "session.subagents"; requestId: string; sessionId: string }
+  | { type: "session.subagentNotifications"; requestId: string; sessionId: string }
   | { type: "goal.get"; requestId: string; sessionId: string }
   | { type: "goal.start"; requestId: string; sessionId: string; objective: string; attachments?: MessageAttachmentInfo[]; messageId?: string; replaceFromMessageId?: string; model?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel }
   | { type: "goal.pause"; requestId: string; sessionId: string; reason?: string }
@@ -194,11 +195,12 @@ export type RuntimeEvent =
   | { type: "session.updated"; session: SessionInfo }
   | { type: "session.search"; requestId: string; query: string; results: SessionSearchResult[] }
   | { type: "session.renamed"; session: SessionInfo }
-  | { type: "session.messages"; sessionId: string; messages: MessageInfo[]; compactions?: CompactionMarkerInfo[] }
+  | { type: "session.messages"; requestId?: string; sessionId: string; messages: MessageInfo[]; compactions?: CompactionMarkerInfo[] }
   | { type: "session.queue"; sessionId: string; items: QueueItemInfo[] }
   | { type: "session.runs"; sessionId: string; runs: RunInfo[] }
   | { type: "session.toolCalls"; sessionId: string; toolCalls: ToolCallInfo[] }
   | { type: "session.subagents"; sessionId: string; subagents: SubagentRunInfo[] }
+  | { type: "session.subagentNotifications"; sessionId: string; notifications: SubagentNotificationInfo[] }
   | { type: "goal.current"; sessionId: string; goal?: GoalInfo }
   | { type: "goal.updated"; goal: GoalInfo }
   | { type: "goal.cleared"; sessionId: string; goalId: string }
@@ -254,6 +256,8 @@ export interface SessionInfo {
   workspaceId?: string;
   createdAt: number;
   updatedAt: number;
+  /** Timestamp of the latest message sent by the user; assistant output does not change it. */
+  lastUserMessageAt?: number;
   sideChat?: { parentSessionId: string; boundaryMessageId: string };
 }
 
@@ -368,6 +372,7 @@ export interface SubagentRunInfo {
   depth: number;
   toolCallId: string;
   executionSessionId?: string;
+  background?: boolean;
   profileId?: string;
   title: string;
   task: string;
@@ -391,6 +396,23 @@ export interface SubagentRunInfo {
   tokenUsage?: SubagentTokenUsage;
   children?: string[];
   messages?: SubagentMessageInfo[];
+}
+
+export type SubagentNotificationKind = "completed" | "failed" | "cancelled" | "interrupted";
+export type SubagentNotificationStatus = "pending" | "delivered" | "acknowledged";
+
+export interface SubagentNotificationInfo {
+  id: string;
+  sessionId: string;
+  subagentRunId: string;
+  version: number;
+  kind: SubagentNotificationKind;
+  status: SubagentNotificationStatus;
+  title: string;
+  summaryPreview?: string;
+  createdAt: number;
+  deliveredAt?: number;
+  acknowledgedAt?: number;
 }
 
 export interface SubagentMessageInfo {
@@ -748,6 +770,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.runs": z.object({ type: z.literal("session.runs"), ...request, sessionId: id }),
   "session.toolCalls": z.object({ type: z.literal("session.toolCalls"), ...request, sessionId: id }),
   "session.subagents": z.object({ type: z.literal("session.subagents"), ...request, sessionId: id }),
+  "session.subagentNotifications": z.object({ type: z.literal("session.subagentNotifications"), ...request, sessionId: id }),
   "goal.get": z.object({ type: z.literal("goal.get"), ...request, sessionId: id }),
   "goal.start": z.object({ type: z.literal("goal.start"), ...request, sessionId: id, objective: z.string().trim().min(1), attachments: z.array(messageAttachment).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((goal) => nonMediaAttachmentBytes(goal.attachments) <= 140_000_000, "Goal attachments exceed the maximum size"),
   "goal.pause": z.object({ type: z.literal("goal.pause"), ...request, sessionId: id, reason: z.string().optional() }),

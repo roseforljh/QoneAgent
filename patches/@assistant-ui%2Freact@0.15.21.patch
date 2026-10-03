@@ -569,7 +569,10 @@ index 9b54662ae96cfb3f7d27ecc9acabfad86b583a44..d80906dfdf6c2e796a5b3a20b68105ef
 +  let reserve = null;
 +  const saved = restoration?.current;
 +  let pendingRestore = saved ?? null;
-+  let lastScrolledAnchorId = saved ? store.getState().topAnchorTurn?.anchorId : undefined;
++  // The viewport store may not have restored the saved turn yet. Seed this
++  // from the snapshot so late message refs cannot replay the default smooth
++  // placement and overwrite the restored reading position.
++  let lastScrolledAnchorId = saved?.topAnchorTurn?.anchorId;
 +  const viewportAtMount = store.getState().element.viewport;
 +  const restore = () => {
 +    const viewport = store.getState().element.viewport;
@@ -590,11 +593,18 @@ index 9b54662ae96cfb3f7d27ecc9acabfad86b583a44..d80906dfdf6c2e796a5b3a20b68105ef
 +      }
 +      return;
 +    }
-+    if (!anchor && !target && !clamp && state.topAnchorTurn) {
++    if (!anchor && !target && !clamp && state.topAnchorTurn && !pendingRestore) {
 +      observers.disconnect();
 +      if (reserve?.parentElement && reserve.parentElement.lastElementChild !== reserve) {
 +        reserve.parentElement.append(reserve);
 +      }
++      return;
++    }
++    if (pendingRestore?.topAnchorTurn && target && clamp && !anchor) {
++      // The assistant target can register before the user anchor. The thread
++      // content is already laid out enough to restore the saved viewport;
++      // waiting for the anchor would leave the snapshot stranded indefinitely.
++      restore();
 +      return;
 +    }
 +    if (!anchor || !target || !clamp) {
@@ -603,7 +613,7 @@ index 9b54662ae96cfb3f7d27ecc9acabfad86b583a44..d80906dfdf6c2e796a5b3a20b68105ef
 +        setReserveHeight(reserve, 0);
 +        reserve.remove();
 +      }
-+      if (!state.topAnchorTurn)
++      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn)
 +        restore();
 +      return;
 +    }
@@ -859,7 +869,10 @@ index 36ffefe494ad6d59e403f1d102290e349c93125f..4b1355e6dac9312d01ce50722cea5bf0
 +  const saved = restoration?.current;
 +  let pendingRestore = saved ?? null;
 +  // The currently running turn is already present on entry, not a new submit.
-+  let lastScrolledAnchorId = saved ? store.getState().topAnchorTurn?.anchorId : undefined;
++  // The viewport store may not have restored the saved turn yet. Seed this
++  // from the snapshot so late message refs cannot replay the default smooth
++  // placement and overwrite the restored reading position.
++  let lastScrolledAnchorId = saved?.topAnchorTurn?.anchorId;
 +  const viewportAtMount = store.getState().element.viewport;
 +  const restore = () => {
 +    const viewport = store.getState().element.viewport;
@@ -870,11 +883,29 @@ index 36ffefe494ad6d59e403f1d102290e349c93125f..4b1355e6dac9312d01ce50722cea5bf0
  
    function apply() {
      const state = store.getState();
-@@ -95,6 +107,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -87,7 +87,14 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+     if (!anchor && !target && !clamp && state.topAnchorTurn && !pendingRestore) {
+       observers.disconnect();
+       if (reserve?.parentElement && reserve.parentElement.lastElementChild !== reserve) {
+         reserve.parentElement.append(reserve);
+       }
+       return;
+     }
++    if (pendingRestore?.topAnchorTurn && target && clamp && !anchor) {
++      // The assistant target can register before the user anchor. The thread
++      // content is already laid out enough to restore the saved viewport;
++      // waiting for the anchor would leave the snapshot stranded indefinitely.
++      restore();
++      return;
++    }
+@@ -95,6 +102,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
          setReserveHeight(reserve, 0);
          reserve.remove();
        }
-+      if (!state.topAnchorTurn) restore();
++      // A saved top-anchor turn may not have registered in the viewport store
++      // yet. Restoring before its content exists lets the browser clamp the
++      // position to zero and consumes the snapshot too early.
++      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
        return;
      }
  

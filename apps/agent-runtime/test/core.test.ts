@@ -332,6 +332,11 @@ describe("runtime persistence and permissions", () => {
     expect(decodeCommand(JSON.stringify({ ...command, thinking: "extreme" }))).toBeNull();
   });
 
+  test("accepts the subagent notification snapshot command", () => {
+    expect(decodeCommand(JSON.stringify({ type: "session.subagentNotifications", requestId: "r", sessionId: "s" })))
+      .toMatchObject({ type: "session.subagentNotifications", sessionId: "s" });
+  });
+
   test("rejects MCP configs without exactly one secure transport", () => {
     const base = { type: "mcp.connect", requestId: "r", config: { id: "m", name: "MCP" } };
     expect(decodeCommand(JSON.stringify(base))).toBeNull();

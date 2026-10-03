@@ -226,6 +226,7 @@ test("persists the initial child turn exactly once", async () => {
     });
     const child = await dispatch({ parentSessionId: session.id, parentRunId: parent.id, task: "首轮任务", title: "任务", toolCallId: "call", fallbackModel: "provider/main", permissionMode: "ask" });
     const row = repo.listBySession(session.id)[0]!;
+    expect(row.background).toBe(false);
     expect(repo.listMessages(row.runId).map((message) => message.role)).toEqual(["user", "assistant"]);
     await controller.control(row.runId, "retry");
     expect(repo.listMessages(row.runId).map((message) => message.role)).toEqual(["user", "assistant", "assistant"]);

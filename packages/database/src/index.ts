@@ -8,6 +8,7 @@ export {
   messages,
   runs,
   subagentRuns,
+  subagentNotifications,
   subagentMessages,
   turns,
   toolCalls,
@@ -65,7 +66,8 @@ function migrate(sqlite: Database) {
       title TEXT NOT NULL DEFAULT 'New session',
       workspace_id TEXT,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      last_user_message_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
@@ -238,6 +240,11 @@ function migrate(sqlite: Database) {
     CREATE INDEX IF NOT EXISTS idx_goal_events_goal ON goal_events(goal_id, created_at);
   `);
   const messageColumns = new Set(sqlite.query("PRAGMA table_info(messages)").all().map((column) => (column as { name: string }).name));
+  const sessionColumns = new Set(sqlite.query("PRAGMA table_info(sessions)").all().map((column) => (column as { name: string }).name));
+  if (!sessionColumns.has("last_user_message_at")) {
+    sqlite.exec("ALTER TABLE sessions ADD COLUMN last_user_message_at INTEGER NOT NULL DEFAULT 0");
+    sqlite.exec("UPDATE sessions SET last_user_message_at = COALESCE((SELECT MAX(created_at) FROM messages WHERE messages.session_id = sessions.id AND messages.role = 'user'), created_at)");
+  }
   if (!sqlite.query("PRAGMA table_info(artifacts)").all().some((column) => (column as { name: string }).name === "run_id")) {
     sqlite.exec("ALTER TABLE artifacts ADD COLUMN run_id TEXT");
   }
@@ -263,6 +270,7 @@ function migrate(sqlite: Database) {
       depth INTEGER NOT NULL DEFAULT 0,
       tool_call_id TEXT NOT NULL,
       execution_session_id TEXT,
+      background INTEGER NOT NULL DEFAULT 1,
       profile_id TEXT,
       title TEXT NOT NULL,
       task TEXT NOT NULL,
@@ -281,6 +289,21 @@ function migrate(sqlite: Database) {
       token_usage TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent ON subagent_runs(parent_session_id, parent_run_id);
+    CREATE TABLE IF NOT EXISTS subagent_notifications (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      subagent_run_id TEXT NOT NULL REFERENCES subagent_runs(run_id) ON DELETE CASCADE,
+      version INTEGER NOT NULL DEFAULT 1,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      title TEXT NOT NULL,
+      summary_preview TEXT,
+      created_at INTEGER NOT NULL,
+      delivered_at INTEGER,
+      acknowledged_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_subagent_notifications_session_status ON subagent_notifications(session_id, status);
+    CREATE INDEX IF NOT EXISTS idx_subagent_notifications_run ON subagent_notifications(subagent_run_id);
     CREATE TABLE IF NOT EXISTS subagent_messages (
       id TEXT PRIMARY KEY,
       subagent_run_id TEXT NOT NULL REFERENCES subagent_runs(run_id) ON DELETE CASCADE,
@@ -296,7 +319,7 @@ function migrate(sqlite: Database) {
   const additions: [string, string][] = [
     ["media_attachment", "TEXT"],
     ["parent_subagent_id", "TEXT"], ["depth", "INTEGER NOT NULL DEFAULT 0"],
-    ["execution_session_id", "TEXT"], ["profile_id", "TEXT"], ["turn_count", "INTEGER NOT NULL DEFAULT 1"],
+    ["execution_session_id", "TEXT"], ["background", "INTEGER NOT NULL DEFAULT 1"], ["profile_id", "TEXT"], ["turn_count", "INTEGER NOT NULL DEFAULT 1"],
     ["retry_count", "INTEGER NOT NULL DEFAULT 0"], ["workflow_id", "TEXT"],
     ["workflow_step_id", "TEXT"], ["depends_on", "TEXT"],
     ["permission_mode", "TEXT"], ["tools", "TEXT"],
