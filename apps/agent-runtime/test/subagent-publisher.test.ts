@@ -102,3 +102,35 @@ test("a full snapshot supersedes pending reasoning and text without duplicating 
     expect(events.at(-1)).toMatchObject({ type: "subagent.updated", subagent: { streaming: "回答", parts: [{ text: "推理" }] } });
   } finally { publisher.dispose(); }
 });
+
+test("state changes after creation use a compact patch instead of reloading transcript history", () => {
+  const { publisher, events, loads } = fixture();
+  try {
+    publisher.publish("a");
+    publisher.patch("a", { content: "new answer", status: "running" });
+    expect(events.at(-1)).toEqual({
+      type: "subagent.patch",
+      sessionId: "session-a",
+      id: "a",
+      patch: { id: "a", content: "new answer", status: "running" },
+    });
+    expect(loads()).toBe(1);
+  } finally { publisher.dispose(); }
+});
+
+test("part updates transmit only the changed suffix", () => {
+  const { publisher, events, items } = fixture();
+  try {
+    const first = { type: "text" as const, text: "old", messageSequence: 1 };
+    items.set("a", { ...items.get("a")!, parts: [first] });
+    publisher.publish("a");
+    publisher.patch("a", { parts: [
+      first,
+      { type: "text", text: "new", messageSequence: 1 },
+    ] });
+    expect(events.at(-1)).toMatchObject({
+      type: "subagent.patch",
+      patch: { partsPatch: { start: 1, parts: [{ type: "text", text: "new", messageSequence: 1 }] } },
+    });
+  } finally { publisher.dispose(); }
+});

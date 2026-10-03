@@ -1,4 +1,4 @@
-import type { RuntimeEvent, SubagentRunInfo } from "@qone/protocol";
+import type { AssistantMessagePart, RuntimeEvent, SubagentRunInfo, SubagentRunPatch } from "@qone/protocol";
 
 type ReasoningDelta = NonNullable<Extract<RuntimeEvent, { type: "subagent.streaming" }>["reasoning"]>[number];
 
@@ -9,6 +9,7 @@ export function createSubagentPublisher(options: {
   intervalMs: number;
 }) {
   const sessions = new Map<string, string>();
+  const knownParts = new Map<string, readonly AssistantMessagePart[]>();
   const pending = new Map<string, {
     chunks: string[];
     reasoning: Map<string, { value: ReasoningDelta; chunks: string[] }>;
@@ -43,6 +44,7 @@ export function createSubagentPublisher(options: {
       const subagent = options.load(id);
       if (subagent && ["created", "running", "waiting_approval", "paused"].includes(subagent.status)) sessions.set(id, subagent.parentSessionId);
       else sessions.delete(id);
+      if (subagent) knownParts.set(id, subagent.parts);
       if (subagent) options.send({ type: "subagent.updated", subagent });
     },
     append(id: string, delta: string) {
@@ -59,9 +61,26 @@ export function createSubagentPublisher(options: {
         if (value.complete) current.value = { ...current.value, complete: true };
       } else buffer.reasoning.set(key, { value, chunks: [value.delta] });
     },
+    patch(id: string, patch: Omit<SubagentRunPatch, "id"> & { parts?: AssistantMessagePart[] }) {
+      const sessionId = sessions.get(id);
+      if (sessionId) {
+        // A patch contains the authoritative boundary for the buffered text.
+        // Do not let an older timer fire after a completion/tool update.
+        clear(id);
+        const { parts, ...fields } = patch;
+        const previous = knownParts.get(id) ?? [];
+        const start = parts?.findIndex((part, index) => previous[index] !== part) ?? -1;
+        if (parts) knownParts.set(id, parts);
+        options.send({ type: "subagent.patch", sessionId, id, patch: {
+          id, ...fields,
+          ...(start >= 0 ? { partsPatch: { start, parts: parts!.slice(start) } } : {}),
+        } });
+      }
+    },
     dispose() {
       for (const id of pending.keys()) clear(id);
       sessions.clear();
+      knownParts.clear();
     },
   };
 }

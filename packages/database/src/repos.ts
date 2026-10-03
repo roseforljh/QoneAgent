@@ -119,7 +119,7 @@ export class MessageRepo {
       .where(and(eq(messages.id, messageId), eq(messages.sessionId, sessionId), eq(messages.role, "user"))).get());
   }
 
-  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[], parts?: AssistantMessagePart[], goalId?: string) {
+  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[], parts?: AssistantMessagePart[], goalId?: string, quote?: { text: string; messageId: string }) {
     const now = Date.now();
     const row = {
       id: messageId ?? crypto.randomUUID(),
@@ -127,6 +127,7 @@ export class MessageRepo {
       runId,
       role,
       content,
+      quote: quote ? JSON.stringify(quote) : null,
       parts: parts ? JSON.stringify(parts) : null,
       attachments: attachments?.length ? JSON.stringify(attachments) : null,
       model,
@@ -244,6 +245,10 @@ export class SubagentRunRepo {
 
   listMessages(runId: string) {
     return this.db.select().from(subagentMessages).where(eq(subagentMessages.subagentRunId, runId)).orderBy(subagentMessages.sequence).all();
+  }
+
+  latestMessage(runId: string) {
+    return this.db.select().from(subagentMessages).where(eq(subagentMessages.subagentRunId, runId)).orderBy(desc(subagentMessages.sequence)).limit(1).get();
   }
 
   get(runId: string) {

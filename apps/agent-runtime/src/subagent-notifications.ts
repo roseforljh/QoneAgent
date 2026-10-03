@@ -42,7 +42,7 @@ export function buildSubagentNotificationPrompt(notifications: readonly Subagent
     "后台子代理状态更新：",
     ...lines,
     ledger,
-    "这些通知只用于保持状态感知；不需要现在读取完整结果。需要时调用 inspect_subagent(runId)，也可以先继续当前工作。",
+    "请先在当前对话中输出一条简短、可见的确认消息，明确说已收到这些子代理状态更新；成功、失败、取消或中断要按实际状态说明。确认消息发送后，再按需要调用 inspect_subagent(runId) 读取最后总结，或继续当前工作。不要原样复述这段内部通知，也不要输出子代理的过程内容。",
   ].filter(Boolean).join("\n");
 }
 

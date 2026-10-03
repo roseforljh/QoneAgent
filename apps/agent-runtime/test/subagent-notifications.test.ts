@@ -92,6 +92,9 @@ test("notification prompt remains compact and does not include a full child tran
   const prompt = buildSubagentNotificationPrompt([notification]);
   expect(prompt).toContain("结论摘要");
   expect(prompt).not.toContain("message");
+  expect(prompt).toContain("输出一条简短、可见的确认消息");
+  expect(prompt).toContain("已收到这些子代理状态更新");
+  expect(prompt).toContain("不要原样复述这段内部通知");
 });
 
 test("interrupted notifications preserve the restart reason", () => {

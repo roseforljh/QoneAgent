@@ -4,7 +4,7 @@ import { isAssistantMessageActivity } from "./session-activity.js";
 import { SideConversationService } from "./side-conversation.js";
 import { repeatedUserMessageId } from "@qone/protocol";
 import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, SessionSearchResult } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent, AgentEvent, AssistantMessagePart, SessionInfo, WorkspaceInfo, PermissionDecision, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, SessionSearchResult } from "@qone/protocol";
 import { encode, decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, thinkingLevelsForApi, parseMcpCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
 import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
@@ -42,13 +42,34 @@ interface RuntimeBusEvent {
   payload: unknown;
   sessionId?: string;
   runId?: string;
+  scope?: "conversation" | "subagent";
 }
 
 const eventBus = new EventBus<RuntimeBusEvent>();
 
 // NDJSON over stdio: one JSON object per line on stdout.
 // stderr is reserved for logs.
-const send = (msg: RuntimeEvent) => process.stdout.write(encode(msg));
+let pendingStreamOutput: RuntimeEvent[] = [];
+let streamOutputTimer: ReturnType<typeof setTimeout> | undefined;
+const flushStreamOutput = () => {
+  if (streamOutputTimer) clearTimeout(streamOutputTimer);
+  streamOutputTimer = undefined;
+  if (!pendingStreamOutput.length) return;
+  const batch = pendingStreamOutput;
+  pendingStreamOutput = [];
+  process.stdout.write(encode(batch));
+};
+const send = (msg: RuntimeEvent) => {
+  const event = msg.type === "agent.event" ? msg.event : undefined;
+  const streamEvent = event?.type === "message.delta" || event?.type === "message.reasoning.delta";
+  if (!streamEvent) {
+    flushStreamOutput();
+    return process.stdout.write(encode(msg));
+  }
+  pendingStreamOutput.push(msg);
+  if (pendingStreamOutput.length >= 32) flushStreamOutput();
+  else if (!streamOutputTimer) streamOutputTimer = setTimeout(flushStreamOutput, 8);
+};
 
 // Keep the user file and its directory available before the settings UI opens.
 ensureGlobalInstructions();
@@ -65,6 +86,7 @@ const messageRepo = new MessageRepo(db);
 const runRepo = new RunRepo(db);
 const goalRepo = new GoalRepo(db);
 const subagentRunRepo = new SubagentRunRepo(db);
+const subagentRunIds = new Set(subagentRunRepo.list().map((row) => row.runId));
 const subagentNotificationRepo = new SubagentNotificationRepo(db);
 const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
@@ -112,6 +134,7 @@ function readTokenUsage(value: unknown) {
   return { input, output, cacheRead, cacheWrite, total: input + output + cacheRead + cacheWrite || reportedTotal, cost: Number(usage.totalCost ?? cost.total ?? usage.cost ?? 0) || 0 };
 }
 function publishSubagent(runId: string) {
+  subagentRunIds.add(runId);
   subagentPublisher.publish(runId);
 }
 let eventFlushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -133,6 +156,7 @@ const queueEventPersistence = (event: AgentEvent) => {
 const compactionPositions = new CompactionPositions();
 const liveAssistantByRun = new Map<string, LiveAssistantState>();
 eventBus.subscribe((busEvent) => {
+  const childExecution = busEvent.scope === "subagent" || Boolean(busEvent.runId && subagentRunIds.has(busEvent.runId));
   if (busEvent.type === "approval.requested" && busEvent.runId) {
     runRepo.setStatus(busEvent.runId, "waiting_approval");
     const payload = busEvent.payload as { approvalId?: string; toolCallId?: string };
@@ -151,7 +175,7 @@ eventBus.subscribe((busEvent) => {
   const agentEvent = eventJournal.record((sequence) => ({
     eventId: crypto.randomUUID(), sequence, type: busEvent.type,
     sessionId: approvalParent ?? busEvent.sessionId, runId: busEvent.runId,
-    timestamp: Date.now(), payload: busEvent.payload,
+    timestamp: Date.now(), payload: busEvent.payload, scope: approvalParent ? "conversation" : childExecution ? "subagent" : "conversation",
   } satisfies AgentEvent));
   if (agentEvent.runId) {
     const live = liveAssistantByRun.get(agentEvent.runId);
@@ -207,14 +231,47 @@ eventBus.subscribe((busEvent) => {
           delta: typeof payload.delta === "string" ? payload.delta : "", contentIndex: payload.contentIndex,
           messageSequence: completedMessageSequence, ...(agentEvent.type === "message.block.completed" ? { complete: true } : {}),
         });
-      } else if (agentEvent.type !== "message.delta") publishSubagent(agentEvent.runId);
+      } else if (agentEvent.type === "agent.started") {
+        publishSubagent(agentEvent.runId);
+      } else if (agentEvent.type === "approval.requested") {
+        subagentPublisher.patch(agentEvent.runId, { status: "waiting_approval" });
+      } else if (["agent.completed", "agent.cancelled", "agent.failed"].includes(agentEvent.type)) {
+        const status = (agentEvent.payload as { status?: unknown }).status;
+        subagentPublisher.patch(agentEvent.runId, {
+          status: status === "cancelled" || status === "failed" || status === "completed" ? status : "completed",
+        });
+      } else if (agentEvent.type === "message.completed" || agentEvent.type === "tool.started" || agentEvent.type === "tool.completed" || agentEvent.type === "tool.failed") {
+        const messagesAppend = agentEvent.type === "message.completed"
+          ? [subagentRunRepo.latestMessage(agentEvent.runId)].filter((message): message is NonNullable<typeof message> => Boolean(message)).map((message) => ({
+            id: message.id, sequence: message.sequence,
+            role: message.role as "user" | "assistant" | "tool" | "system", content: message.content,
+            internal: message.role === "user" && Boolean(message.rawMessage),
+            parts: message.parts ? JSON.parse(message.parts) as AssistantMessagePart[] : undefined,
+            createdAt: message.createdAt,
+          }))
+          : undefined;
+        subagentPublisher.patch(agentEvent.runId, {
+          content: assistantBuffers.get(agentEvent.runId) ?? "",
+          parts,
+          streaming: subagentStreams.get(agentEvent.runId)?.join("") ?? null,
+          ...(messagesAppend?.length ? { messagesAppend } : {}),
+        });
+      }
     }
   }
-  if (agentEvent.sessionId && agentEvent.runId && !subagentRunRepo.get(agentEvent.runId) && isAssistantMessageActivity(agentEvent)) {
+  const isSubagentExecution = agentEvent.scope === "subagent";
+  if (agentEvent.sessionId && agentEvent.runId && !isSubagentExecution && isAssistantMessageActivity(agentEvent)) {
     touchSession(agentEvent.sessionId);
   }
-  queueEventPersistence(agentEvent);
-  send({ type: "agent.event", event: agentEvent });
+  // Reconnects restore canonical messages and live snapshots. Persisting every
+  // token in the replay journal only grows SQLite work without adding recovery
+  // information.
+  if (agentEvent.type !== "message.delta" && agentEvent.type !== "message.reasoning.delta") {
+    queueEventPersistence(agentEvent);
+  }
+  // Child tokens and tool events have their own compact delta protocol. Sending
+  // them again as agent.event only duplicates IPC work and is ignored by the UI.
+  if (!isSubagentExecution) send({ type: "agent.event", event: agentEvent });
   if (agentEvent.type === "subagent.finished" && agentEvent.runId) {
     const child = subagentRunRepo.get(agentEvent.runId);
     const childRun = runRepo.get(agentEvent.runId);
@@ -271,7 +328,7 @@ const assistantBuffers = new Map<string, string>();
 const assistantStreamBuffers = new Map<string, string[]>();
 const assistantPartsByRun = new Map<string, AssistantMessagePart[]>();
 const assistantMessageSequenceByRun = new Map<string, number>();
-const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[] }>>();
+const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }>>();
 const persistedAssistantRuns = new Set<string>();
 const initialUserMessageSeen = new Set<string>();
 const toolCallIds = new Map<string, string>();
@@ -307,7 +364,7 @@ function deliverSteer(sessionId: string, runId: string) {
   assistantMessageSequenceByRun.delete(runId);
   const live = liveAssistantByRun.get(runId);
   if (live) liveAssistantByRun.set(runId, { content: "", parts: [], sequence: live.sequence });
-  const userMessage = messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments);
+  const userMessage = messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments, undefined, undefined, steer.quote);
   touchSession(sessionId, userMessage.createdAt);
   queueRepo.remove(sessionId, steer.queueItemId);
   sendQueue(sessionId);
@@ -432,7 +489,7 @@ subagentController = registerSubagentDispatcher({
     message.runId === runId && message.role === "user" && message.attachments ? JSON.parse(message.attachments) as MessageAttachmentInfo[] : []),
   runtime: () => subagentConfig.runtime,
   acknowledge: (runId) => subagentNotificationCoordinator?.acknowledge(runId),
-  publish: publishSubagent, emit: (type, payload, sessionId, runId) => eventBus.emit({ type, payload, sessionId, runId }),
+  publish: publishSubagent, emit: (type, payload, sessionId, runId) => eventBus.emit({ type, payload, sessionId, runId, scope: "subagent" }),
 });
 adapter.setSubagentController(subagentController);
 const publishGoal = (goal: GoalInfo) => send({ type: "goal.updated", goal });
@@ -640,6 +697,7 @@ function sendMessages(sessionId: string, requestId?: string) {
     messages: history.map((m) => ({
       id: m.id, sessionId: m.sessionId, runId: m.runId ?? undefined,
       role: m.role, content: m.content,
+      quote: m.quote ? JSON.parse(m.quote) as MessageQuoteInfo : undefined,
       parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
       attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
       model: m.model ?? undefined, goalId: m.goalId ?? undefined, createdAt: m.createdAt,
@@ -886,7 +944,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       await adapter.disposeSession(cmd.sessionId);
       const goal = goalRepo.create(cmd.sessionId, cmd.objective, { model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking });
       publishGoal(goal);
-      await handle({ type: "agent.run", requestId: cmd.requestId, sessionId: cmd.sessionId, message: cmd.objective, goal: true, attachments: cmd.attachments, messageId: cmd.messageId, replaceFromMessageId: cmd.replaceFromMessageId, model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking });
+      await handle({ type: "agent.run", requestId: cmd.requestId, sessionId: cmd.sessionId, message: cmd.objective, goal: true, attachments: cmd.attachments, quote: cmd.quote, messageId: cmd.messageId, replaceFromMessageId: cmd.replaceFromMessageId, model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking });
       return;
     }
 
@@ -1544,7 +1602,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
       liveAssistantByRun.set(run.id, { content: "", parts: [], sequence: 0 });
       const turn = turnRepo.create(run.id);
       if (!cmd.goalContinuation) {
-        const userMessage = messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id);
+        const userMessage = messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id, cmd.quote);
         touchSession(cmd.sessionId, userMessage.createdAt);
       }
       emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
@@ -1668,7 +1726,7 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
         send({ type: "error", requestId: cmd.requestId, message: runtimeText("index.the_target_agent_run_has_ended") });
         return;
       }
-      const pending = { runId: cmd.runId, queueItemId: cmd.queueItemId, message: cmd.message, attachments: cmd.attachments };
+      const pending = { runId: cmd.runId, queueItemId: cmd.queueItemId, message: cmd.message, attachments: cmd.attachments, quote: cmd.quote };
       const steers = pendingSteers.get(cmd.sessionId) ?? [];
       steers.push(pending);
       pendingSteers.set(cmd.sessionId, steers);

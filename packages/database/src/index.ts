@@ -78,6 +78,7 @@ function migrate(sqlite: Database) {
       run_id TEXT,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      quote TEXT,
       parts TEXT,
       attachments TEXT,
       model TEXT,
@@ -249,6 +250,7 @@ function migrate(sqlite: Database) {
     sqlite.exec("ALTER TABLE artifacts ADD COLUMN run_id TEXT");
   }
   if (!messageColumns.has("goal_id")) sqlite.exec("ALTER TABLE messages ADD COLUMN goal_id TEXT");
+  if (!messageColumns.has("quote")) sqlite.exec("ALTER TABLE messages ADD COLUMN quote TEXT");
   const runColumns = new Set(sqlite.query("PRAGMA table_info(runs)").all().map((column) => (column as { name: string }).name));
   if (!runColumns.has("origin")) sqlite.exec("ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'");
   if (!runColumns.has("goal_id")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_id TEXT");
