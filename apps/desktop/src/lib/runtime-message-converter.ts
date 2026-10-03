@@ -3,6 +3,7 @@ import type { ChatMessage, ToolCall } from "../store";
 import { assistantMessageContent } from "./assistant-message-parts";
 import { appendSubagentImages, type subagentImagesByRun } from "./subagent-images";
 import { QONE_FILE_PROVIDER } from "./message-file-preview";
+import { withoutMessageQuote } from "./message-quote";
 
 export interface MessageConversionContext {
   imagePreviews: Readonly<Record<string, string>>;
@@ -32,8 +33,9 @@ export function createMessageConverter() {
     const failure = role === "assistant" && message.id.startsWith("image-error:")
       ? context.imageGenerationError : undefined;
     const dependencies: unknown[] = role === "user"
-      ? (message.attachments ?? []).flatMap((attachment) => attachment.type === "image" && attachment.localPath
-        ? [context.imagePreviews[attachment.localPath]] : [])
+      ? [message.content, message.quote?.text, message.quote?.messageId,
+        ...(message.attachments ?? []).flatMap((attachment) => attachment.type === "image" && attachment.localPath
+          ? [context.imagePreviews[attachment.localPath]] : [])]
       : [streaming && context.running, streaming && context.imageModel,
         failure?.content, failure ? context.chatRunErrorDetail : undefined,
         calls.length, ...calls,
@@ -45,25 +47,28 @@ export function createMessageConverter() {
     const createdAt = cached?.message.createdAt ?? new Date(message.createdAt ?? Date.now());
     let converted: ThreadMessageLike;
     if (role === "user") {
+      const text = withoutMessageQuote(message.content, message.quote);
       converted = {
         id: message.id, role, createdAt,
         content: [
-          ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
+          ...(text ? [{ type: "text" as const, text }] : []),
           ...(message.attachments ?? []).map((attachment) => {
             const image = attachment.localPath ? context.imagePreviews[attachment.localPath] : attachment.data;
             return attachment.type === "image" && image
-              ? { type: "image" as const, image, filename: attachment.name }
+              ? { type: "image" as const, image, filename: attachment.name, providerMetadata: attachment.localPath
+                ? { [QONE_FILE_PROVIDER]: { localPath: attachment.localPath, isDirectory: false } } : undefined }
               : {
                 type: "file" as const,
                 filename: attachment.name,
                 mimeType: attachment.mimeType,
                 data: attachment.data,
                 providerMetadata: attachment.localPath
-                  ? { [QONE_FILE_PROVIDER]: { localPath: attachment.localPath } }
+                  ? { [QONE_FILE_PROVIDER]: { localPath: attachment.localPath, isDirectory: attachment.type === "folder" } }
                   : undefined,
               };
           }),
         ],
+        metadata: message.quote ? { custom: { quote: message.quote } } : undefined,
       };
     } else {
       const content = appendSubagentImages(assistantMessageContent(message, calls, streaming), images);

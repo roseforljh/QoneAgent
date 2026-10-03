@@ -6,10 +6,11 @@ import { AssistantMessageActions, UserMessageActions } from "../src/components/a
 import { AssistantMessageLayout } from "../src/components/assistant-ui/assistant-message-layout";
 import { MessagePair } from "../src/components/assistant-ui/elements/message-pair";
 
-function Fixture({ paired, running = false, text = "User prompt", withAttachment = false }: { paired: boolean; running?: boolean; text?: string; withAttachment?: boolean }) {
+function Fixture({ paired, running = false, text = "User prompt", withAttachment = false, withQuote = false, editEnabled = false }: { paired: boolean; running?: boolean; text?: string; withAttachment?: boolean; withQuote?: boolean; editEnabled?: boolean }) {
   const messages: ThreadMessageLike[] = [{
     id: "user",
     role: "user",
+    metadata: withQuote ? { custom: { quote: { text: "selected line", messageId: "source" } } } : undefined,
     content: [
       ...(withAttachment ? [{ type: "file", data: "", mimeType: "text/plain", filename: "notes.txt" } as never] : []),
       { type: "text", text },
@@ -22,6 +23,7 @@ function Fixture({ paired, running = false, text = "User prompt", withAttachment
   const runtime = useExternalStoreRuntime({
     messages, isRunning: running, convertMessage: (message: ThreadMessageLike) => message,
     onNew: async () => {}, onReload: async () => {},
+    ...(editEnabled ? { onEdit: async () => {} } : {}),
   });
   return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{
     UserMessage: paired ? () => null : UserMessage,
@@ -79,6 +81,16 @@ test("copying user text remains available while an answer is running", () => {
   expect(html).not.toMatch(/aria-label="(?:重新回答|Regenerate reply)"/);
 });
 
+test("the last user message exposes edit only when the runtime is settled", () => {
+  const settled = renderThread({ paired: false, editEnabled: true });
+  expect(settled.match(/<button\b/g)).toHaveLength(2);
+  expect(settled).toMatch(/aria-label="(?:编辑消息|Edit message)"/);
+
+  const running = renderThread({ paired: true, running: true, editEnabled: true });
+  expect(running.match(/aria-label="(?:编辑消息|Edit message)"/g)).toBeNull();
+  expect(running).toMatch(/aria-label="(?:复制|Copy)"/);
+});
+
 test("paired user attachments stay inside the same top-anchor root as the bubble", () => {
   const html = renderThread({ paired: true, running: true, withAttachment: true });
   const rootStart = html.indexOf('class="q-message-root q-message-user');
@@ -86,6 +98,13 @@ test("paired user attachments stay inside the same top-anchor root as the bubble
   expect(html).toContain("q-message-user-attachments");
   expect(html).toContain("q-user-message-bubble-paired");
   expect(html.match(/q-message-root q-message-user/g)).toHaveLength(1);
+});
+
+test("quoted user messages render a separate annotation pill above the bubble", () => {
+  const html = renderThread({ paired: true, withQuote: true });
+  expect(html).toContain("q-message-annotation");
+  expect(html).toMatch(/(?:1 条注释|1 annotation)/);
+  expect(html).toContain("q-user-message-bubble-paired");
 });
 
 test("a completed assistant answer retains its own regeneration action", () => {

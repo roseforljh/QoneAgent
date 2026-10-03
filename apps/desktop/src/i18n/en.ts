@@ -621,6 +621,7 @@ export const en: Messages = {
   "chat.selectionSideChat": "Ask in side chat",
   "chat.selectedText": "Selected text",
   "chat.selectedTextAttachment": "1 selection",
+  "chat.annotationLabel": "1 annotation",
   "chat.removeSelectedText": "Remove selected text",
   "chat.newSideChat": "New side chat",
   "chat.sideChatBoundary": "Reference history from the main conversation above",

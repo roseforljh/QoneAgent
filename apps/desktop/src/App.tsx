@@ -2,7 +2,7 @@ import { useConversationMessages } from "./lib/use-conversation-messages";
 import { PendingApprovals } from "./components/assistant-ui/pending-approvals";
 import { bindSessionQueue, hydrateSessionQueue } from "./lib/session-queue-lifecycle";
 import { sessionStore } from "./lib/session-execution-state";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore, initBridge, type ToolCall } from "./store";
 import { reportStartup } from "./lib/startup-diagnostic";
 import { localizeError } from "./lib/error-localization";
@@ -13,7 +13,7 @@ import {
   type ExternalStoreThreadData,
   type ExternalStoreThreadListAdapter,
 } from "@assistant-ui/react";
-import { sameUserInput, type MessageAttachmentInfo, type PluginInfo } from "@qone/protocol";
+import { sameUserInput, type MessageAttachmentInfo, type MessageQuoteInfo, type PluginInfo } from "@qone/protocol";
 import { convertedMessage } from "./lib/runtime-message-converter";
 import { selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
@@ -55,6 +55,7 @@ import { CollapsedSidebar } from "./components/assistant-ui/collapsed-sidebar";
 import { useTheme } from "./lib/appearance";
 
 type Theme = "light" | "dark";
+type PendingRun = { text: string; attachments: MessageAttachmentInfo[]; goal?: boolean; quote?: MessageQuoteInfo };
 
 const Thread = lazy(async () => ({ default: (await import("./components/assistant-ui/Thread")).Thread }));
 const SettingsDialog = lazy(async () => ({ default: (await import("./components/settings/SettingsDialog")).SettingsDialog }));
@@ -73,7 +74,7 @@ function ThemeButton({ theme, onToggle }: { theme: Theme; onToggle: () => void }
 
 const attachmentAdapter = new QoneAttachmentAdapter();
 
-function useQoneRuntime(pendingRun: { current: { text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null }) {
+function useQoneRuntime(pendingRun: { current: PendingRun | null }) {
   const { t } = useLocale();
   const messages = useStore((s) => s.messages);
   const streaming = useStore((s) => s.streaming);
@@ -126,13 +127,13 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       });
       return true;
     },
-    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); if (prompt.text.trim()) addComposerHistory(currentSessionId, prompt.text); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId); },
+    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); if (prompt.text.trim()) addComposerHistory(currentSessionId, prompt.text); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId, prompt.quote); },
     steer: (message, queueItemId, attachments, targetRunId) => {
       const state = sessionStore(useStore, currentSessionId).getState();
       if (!targetRunId || state.activeRunId !== targetRunId || !state.running) return Promise.resolve(false);
       const prompt = extractComposerPrompt(message);
       if (prompt.text.trim()) addComposerHistory(currentSessionId, prompt.text);
-      return steerAgent({ sessionId: currentSessionId, runId: targetRunId, queueItemId, message: prompt.text, attachments });
+      return steerAgent({ sessionId: currentSessionId, runId: targetRunId, queueItemId, message: prompt.text, attachments, quote: prompt.quote });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
     onError: (message) => useStore.setState({ lastError: message }),
@@ -208,7 +209,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
         }
       }
       if (!state.currentSessionId && state.draftWorkspaceId) {
-        runAgent(text, undefined, attachments, undefined, prompt.goal);
+        runAgent(text, undefined, attachments, undefined, prompt.goal, undefined, prompt.quote);
         return;
       }
       if (!state.currentSessionId) {
@@ -216,16 +217,30 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
           useStore.setState({ lastError: t("error.projectBeforeMessage") });
           return;
         }
-        pendingRun.current = { text, attachments, goal: prompt.goal };
+        pendingRun.current = { text, attachments, goal: prompt.goal, quote: prompt.quote };
         newSession();
         return;
       }
-      runAgent(text, undefined, attachments, undefined, prompt.goal);
+      runAgent(text, undefined, attachments, undefined, prompt.goal, undefined, prompt.quote);
     },
     onReload: async (parentId) => {
       if (!parentId) return;
       const source = useStore.getState().messages.find((message) => message.id === parentId && message.role === "user");
-      if (source) runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId));
+      if (source) runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), undefined, source.quote);
+    },
+    onEdit: async (message) => {
+      const sourceId = message.sourceId;
+      const state = useStore.getState();
+      if (!sourceId || !state.currentSessionId || state.running) return;
+      const source = state.messages.find((item) => item.id === sourceId && item.role === "user");
+      const prompt = extractComposerPrompt(message);
+      let attachments: MessageAttachmentInfo[];
+      try { attachments = await serializeMessageAttachments(message); }
+      catch (error) { useStore.setState({ lastError: String(error) }); throw error; }
+      if (!prompt.text.trim() && attachments.length === 0) return;
+      if (prompt.goal && !prompt.text.trim()) return;
+      if (prompt.text.trim()) addComposerHistory(state.currentSessionId, prompt.text);
+      runAgent(prompt.text, sourceId, attachments, undefined, prompt.goal || Boolean(source?.goalId), state.currentSessionId, prompt.quote ?? source?.quote);
     },
     onCancel: async () => stopAgent(),
     queue: queueAdapter,
@@ -284,10 +299,8 @@ function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOp
   );
 }
 
-function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme: Theme; onToggleTheme: () => void; initialSettingsOpen?: boolean }) {
+function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pendingRun }: { theme: Theme; onToggleTheme: () => void; initialSettingsOpen?: boolean; pendingRun: React.MutableRefObject<PendingRun | null> }) {
   const { t } = useLocale();
-  const pendingRun = useRef<{ text: string; attachments: MessageAttachmentInfo[]; goal?: boolean } | null>(null);
-  const runtime = useQoneRuntime(pendingRun);
   const sidebarCollapsed = useSidebarPreferences((state) => state.collapsed);
   const setSidebarCollapsed = useSidebarPreferences((state) => state.setCollapsed);
   const [dockView, setDockView] = useState<string>();
@@ -331,14 +344,13 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
 
   useEffect(() => {
     if (currentSessionId && pendingRun.current) {
-      const { text, attachments, goal } = pendingRun.current;
+      const { text, attachments, goal, quote } = pendingRun.current;
       pendingRun.current = null;
-      runAgent(text, undefined, attachments, undefined, goal);
+      runAgent(text, undefined, attachments, undefined, goal, undefined, quote);
     }
   }, [currentSessionId, runAgent]);
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
       <div className="q-chat-layout relative flex h-full w-full overflow-hidden">
         <ResizableSidebar collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed}
           collapsedContent={<CollapsedSidebar collapsed={sidebarCollapsed} onOpenSidebar={() => setSidebarCollapsed(false)}
@@ -407,20 +419,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
         </aside>
         </ResizableSidebar>
 
-        <div className="q-chat-shell relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-          <ThreadHeader dockView={dockView} />
-          {lastError && (
-            <div className="error-banner q-chat-error-banner absolute inset-x-4 z-50" role="alert">
-              <span>{lastError}</span>
-              <button className="icon-button" onClick={() => useStore.setState({ lastError: undefined })} aria-label={t("common.dismissError")}><X size={15} /></button>
-            </div>
-          )}
-          <div className="q-chat-content relative min-h-0 flex-1 overflow-hidden">
-            <Suspense fallback={<ThreadLoadingFallback />}>
-              <Thread><PendingApprovals /></Thread>
-            </Suspense>
-          </div>
-        </div>
+        <ChatRuntimeHost dockView={dockView} lastError={lastError} dismissError={() => useStore.setState({ lastError: undefined })} />
         <ScopedWorkspaceDocks onViewChange={setDockView} />
         {settingsOpen && <Suspense fallback={null}>
           <SettingsDialog open={settingsOpen} onClose={closeSettings} />
@@ -428,8 +427,35 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
         <ChatSearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
         <ConfirmationDialogHost />
       </div>
-    </AssistantRuntimeProvider>
   );
+}
+
+const ChatRuntimeHost = memo(function ChatRuntimeHost({ dockView, lastError, dismissError }: { dockView?: string; lastError?: string; dismissError: () => void }) {
+  const { t } = useLocale();
+  return <>
+    <div className="q-chat-shell relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <ThreadHeader dockView={dockView} />
+      {lastError && <div className="error-banner q-chat-error-banner absolute inset-x-4 z-50" role="alert">
+        <span>{lastError}</span>
+        <button className="icon-button" onClick={dismissError} aria-label={t("common.dismissError")}><X size={15} /></button>
+      </div>}
+      <div className="q-chat-content relative min-h-0 flex-1 overflow-hidden">
+        <Suspense fallback={<ThreadLoadingFallback />}><Thread><PendingApprovals /></Thread></Suspense>
+      </div>
+    </div>
+  </>;
+});
+
+function ChatPageRuntime({ pendingRun, ...props }: Omit<React.ComponentProps<typeof ChatPageContent>, "pendingRun"> & { pendingRun: React.MutableRefObject<PendingRun | null> }) {
+  const runtime = useQoneRuntime(pendingRun);
+  return <AssistantRuntimeProvider runtime={runtime}><StableChatPageContent pendingRun={pendingRun} {...props} /></AssistantRuntimeProvider>;
+}
+
+const StableChatPageContent = memo(ChatPageContent);
+
+function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme: Theme; onToggleTheme: () => void; initialSettingsOpen?: boolean }) {
+  const pendingRun = useRef<PendingRun | null>(null);
+  return <ChatPageRuntime pendingRun={pendingRun} theme={theme} onToggleTheme={onToggleTheme} initialSettingsOpen={initialSettingsOpen} />;
 }
 
 function PageLayout({ title, theme, onToggleTheme, children }: { title: string; theme: Theme; onToggleTheme: () => void; children: ReactNode }) {

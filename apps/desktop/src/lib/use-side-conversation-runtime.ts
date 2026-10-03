@@ -48,7 +48,7 @@ export function useSideConversationRuntime(sessionId: string) {
   const submit = (message: AppendMessage, queueItemId: string | undefined, attachments: Awaited<ReturnType<typeof serializeMessageAttachments>>) => {
     const prompt = extractComposerPrompt(message);
     if (prompt.text.trim()) addComposerHistory(sessionId, prompt.text);
-    useStore.getState().runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, sessionId);
+    useStore.getState().runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, sessionId, prompt.quote);
   };
   const queue = useMemo(() => ready ? getQoneMessageQueue(sessionId) ?? createQoneMessageQueue({
     sessionId,
@@ -77,7 +77,7 @@ export function useSideConversationRuntime(sessionId: string) {
       if (!runId || !owner.getState().running || owner.getState().activeRunId !== runId) return Promise.resolve(false);
       const prompt = extractComposerPrompt(message);
       if (prompt.text.trim()) addComposerHistory(sessionId, prompt.text);
-      return useStore.getState().steerAgent({ sessionId, runId, queueItemId, message: prompt.text, attachments });
+      return useStore.getState().steerAgent({ sessionId, runId, queueItemId, message: prompt.text, attachments, quote: prompt.quote });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId, items }); },
     onError: (message) => useStore.setState({ lastError: message }),
@@ -115,7 +115,21 @@ export function useSideConversationRuntime(sessionId: string) {
       if (!parentId) return;
       const state = owner.getState();
       const source = state.messages.find((message) => message.id === parentId && message.role === "user");
-      if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), sessionId);
+      if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), sessionId, source.quote);
+    },
+    onEdit: async (message) => {
+      const sourceId = message.sourceId;
+      const current = owner.getState();
+      if (!sourceId || current.running) return;
+      const source = current.messages.find((item) => item.id === sourceId && item.role === "user");
+      const prompt = extractComposerPrompt(message);
+      let attachments: Awaited<ReturnType<typeof serializeMessageAttachments>>;
+      try { attachments = await serializeMessageAttachments(message); }
+      catch (error) { useStore.setState({ lastError: String(error) }); throw error; }
+      if (!prompt.text.trim() && attachments.length === 0) return;
+      if (prompt.goal && !prompt.text.trim()) return;
+      if (prompt.text.trim()) addComposerHistory(sessionId, prompt.text);
+      current.runAgent(prompt.text, sourceId, attachments, undefined, prompt.goal || Boolean(source?.goalId), sessionId, prompt.quote ?? source?.quote);
     },
     onCancel: async () => useStore.getState().stopAgent(sessionId),
     adapters: { attachments: attachmentAdapter },

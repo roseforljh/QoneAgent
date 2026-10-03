@@ -15,12 +15,13 @@ import { Reasoning } from "./reasoning";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { compactionDisplayIndex, positionedAssistantRanges, type PositionedCompaction } from "./compaction-ranges";
 import { executionActivityItems } from "./execution-activity-items";
+import { messageById, runById } from "../../lib/store-indexes";
 
 function regenerateCurrentTurn(messageId: string, owner: ReturnType<typeof useConversationStoreApi>): void {
   const state = owner.getState();
   const messageIndex = messageId === "streaming" ? state.messages.length : state.messages.findIndex((message) => message.id === messageId);
   const source = state.messages.slice(0, messageIndex < 0 ? state.messages.length : messageIndex).reverse().find((message) => message.role === "user");
-  if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId));
+  if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), undefined, source.quote);
 }
 
 type VisibleImagePart = Extract<PartState, { type: "image" }>;
@@ -53,8 +54,8 @@ export const AssistantParts: FC = () => {
   const ranges = useMemo(() => assistantPartRanges(parts), [parts]);
   const messageId = useAuiState((state) => state.message.id);
   const messageRunning = useAuiState((state) => state.message.status?.type === "running");
-  const runId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
-  const runStatus = useConversationStore((state) => state.runs.find((run) => run.id === runId)?.status);
+  const runId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : messageById(state.messages, messageId)?.runId);
+  const runStatus = useConversationStore((state) => runById(state.runs, runId)?.status);
   const compactions = useConversationStore((state) => state.compactions);
   const pending = useConversationStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
   const positionedRanges = useMemo(() => {

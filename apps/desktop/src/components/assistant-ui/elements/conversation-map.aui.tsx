@@ -8,6 +8,7 @@ import { cn } from "../../../lib/utils";
 import { useStore } from "../../../store";
 import { hasConversationRailSpaceInViewport, measureConversationRail } from "../../../lib/conversation-rail-layout";
 import { ConversationMap, type ConversationMapEntry } from "./conversation-map";
+import { createMessageStructureSelector } from "../../../lib/thread-message-structure";
 
 const TOP_TOLERANCE = 1;
 
@@ -133,7 +134,8 @@ export function ConversationMapAui({
   side?: "left" | "right";
   className?: string;
 }) {
-  const messages = useAuiState((s) => s.thread.messages);
+  const messageStructure = useMemo(createMessageStructureSelector, []);
+  const messages = useAuiState((s) => messageStructure(s.thread.messages));
   const sessionId = useStore((state) => state.currentSessionId);
   const viewport = useThreadViewport((s) => s.element.viewport);
   const viewportHeight = useThreadViewport((s) => s.height.viewport);
@@ -182,10 +184,14 @@ export function ConversationMapAui({
     observer.observe(viewport);
     const content = viewport.querySelector<HTMLElement>("[data-conversation-rail-content]");
     const messageList = content?.parentElement;
-    if (content) observer.observe(content);
-    if (messageList) observer.observe(messageList);
+    // Content height changes on every streamed token. Measuring all turns in
+    // response would force layout once per frame, while scroll and structural
+    // changes already schedule the cases where geometry matters.
+    // Text nodes change on every streamed token. The rail only needs a new
+    // measurement when turns are inserted/removed; turnKey handles the
+    // message-id change separately, while scroll/resize handles geometry.
     const contentObserver = new MutationObserver(schedule);
-    if (messageList) contentObserver.observe(messageList, { childList: true, subtree: true, characterData: true });
+    if (messageList) contentObserver.observe(messageList, { childList: true });
     const layoutObserver = new MutationObserver(schedule);
     for (const element of [viewport, content, messageList]) {
       if (element) layoutObserver.observe(element, { attributes: true, attributeFilter: ["style", "class"] });

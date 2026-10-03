@@ -12,7 +12,7 @@ export function steeringMessages(queue: QueueBundle | null, items: QueueBundle["
     const id = queue?.getPersistentId(entry.id);
     if (!id) return [];
     const item = queue!.getItem(id);
-    return [{ id, role: "user", content: withMessageQuote(item?.text ?? entry.prompt, item?.quote), attachments: item?.attachments, createdAt: item?.createdAt, runId }];
+    return [{ id, role: "user", content: withMessageQuote(item?.text ?? entry.prompt, item?.quote), quote: item?.quote, attachments: item?.attachments, createdAt: item?.createdAt, runId }];
   });
 }
 

@@ -619,6 +619,7 @@ export const zh = {
   "chat.selectionSideChat": "在侧边聊天中提问",
   "chat.selectedText": "所选文本",
   "chat.selectedTextAttachment": "1 处选区",
+  "chat.annotationLabel": "1条注释",
   "chat.removeSelectedText": "移除所选文本",
   "chat.newSideChat": "新建侧边聊天",
   "chat.sideChatBoundary": "以上为主会话的参考历史",

@@ -25,6 +25,7 @@ import { SidebarSessionTitle } from "./sidebar-session-title";
 import { SidebarSessionActions } from "./sidebar-session-pin-action";
 import { SidebarContextMenu } from "./sidebar-menu";
 import { useSidebarDrag } from "../../hooks/use-sidebar-drag";
+import { sessionById } from "../../lib/store-indexes";
 import "./sidebar-drag.css";
 
 export const ThreadListRoot: FC<ComponentPropsWithoutRef<typeof ThreadListPrimitive.Root>> = ({ className, ...props }) => {
@@ -132,11 +133,10 @@ export const ThreadListItem: FC = () => {
   const id = useAuiState((s) => s.threadListItem.id);
   const isRunning = useStore((s) => s.runningSessionIds.includes(id));
   const isCompleted = useStore((s) => s.completedSessionIds.includes(id));
-  const sessions = useStore((s) => s.sessions);
   const renameSession = useStore((s) => s.renameSession);
   const deleteSession = useStore((s) => s.deleteSession);
   const { t } = useLocale();
-  const session = sessions.find((item) => item.id === id);
+  const session = useStore((s) => sessionById(s.sessions, id));
   const pinned = useSidebarPreferences((s) => s.priorityIds.includes(id));
   const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   const [renaming, setRenaming] = useState(false);
@@ -181,6 +181,8 @@ export const ThreadListItem: FC = () => {
     </SidebarContextMenu>
   );
 };
+
+ThreadListItem.displayName = "ThreadListItem";
 
 const ThreadListItemMore: FC<{ isRunning: boolean; isCompleted: boolean; onRename: () => void; onDelete: () => void | Promise<void> }> = ({ isRunning, isCompleted, onRename, onDelete }) => {
   const { t } = useLocale();

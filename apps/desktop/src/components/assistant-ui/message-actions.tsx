@@ -5,6 +5,7 @@ import { TooltipIconButton } from "./tooltip-icon-button";
 import copyIcon from "../../assets/codex-icons/square-on-square-light-16.svg";
 import copiedIcon from "../../assets/codex-icons/checkmark-md-light-16.svg";
 import retryIcon from "../../assets/codex-icons/arrow-rotate-counterclockwise-light-16.svg";
+import editIcon from "../../assets/codex-icons/pencil-light-16.svg";
 import "./message-actions.css";
 
 function MessageCopyAction() {
@@ -24,13 +25,25 @@ function MessageCopyAction() {
 }
 
 export function UserMessageActions() {
+  const { t } = useLocale();
+  const messageId = useAuiState((state) => state.message.id);
+  const editing = useAuiState((state) => state.message.composer.isEditing);
+  const isLastUserMessage = useAuiState((state) => [...state.thread.messages].reverse().find((message) => message.role === "user")?.id === messageId);
+  const running = useAuiState((state) => state.thread.isRunning);
+  const editCapability = useAuiState((state) => state.thread.capabilities.edit);
   const hasText = useAuiState((state) => state.message.parts.some(
     (part) => part.type === "text" && part.text.trim().length > 0,
   ));
-  if (!hasText) return null;
+  if (!hasText || editing) return null;
+  const canEdit = !running && isLastUserMessage && editCapability;
   return (
     <ActionBarPrimitive.Root autohide="never" className="q-message-actions q-user-message-actions">
       <MessageCopyAction />
+      {canEdit && <ActionBarPrimitive.Edit asChild>
+          <TooltipIconButton tooltip={t("chat.editMessage")} side="top" className="q-message-action-button">
+            <CodexIcon src={editIcon} className="q-message-action-icon" />
+          </TooltipIconButton>
+        </ActionBarPrimitive.Edit>}
     </ActionBarPrimitive.Root>
   );
 }

@@ -29,6 +29,7 @@ import type { AssistantPartRange } from "./assistant-part-ranges";
 import { Reasoning } from "./reasoning";
 import { latestReasoningText } from "./reasoning-preview";
 import { ContextCompactionMarker } from "./context-compaction-marker";
+import { messageById, subagentByParentTool, subagentsForParent, toolCallById } from "../../lib/store-indexes";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
@@ -72,12 +73,13 @@ function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undef
 const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean }> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
   const { locale, t } = useLocale();
   const [open, setOpen] = useState(false);
-  const call = useConversationStore((state) => state.toolCalls.find((item) => item.toolCallId === part.toolCallId));
+  const call = useConversationStore((state) => toolCallById(state.toolCalls, part.toolCallId));
   const messageId = useAuiState((state) => state.message.id);
   const sessionId = useConversationStore((state) => state.currentSessionId);
-  const parentRunId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
-  const subagents = useConversationStore((state) => state.subagents);
-  const subagent = subagentForTool(part, call?.args, subagents, sessionId, parentRunId);
+  const parentRunId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : messageById(state.messages, messageId)?.runId);
+  const subagent = useConversationStore((state) => part.toolName === "dispatch_subagent"
+    ? subagentByParentTool(state.subagents, parentRunId, part.toolCallId)
+    : subagentForTool(part, call?.args, subagentsForParent(state.subagents, parentRunId), sessionId, parentRunId));
   const backgroundSubagent = Boolean(subagent?.background || part.toolName === "run_subagent_workflow" && subagent);
   const status = toolActivity(part, call, prepared, messageRunning);
   const failed = String(status) === "failed";

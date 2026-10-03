@@ -2,6 +2,7 @@ import { translateCurrent as t } from "../localization";
 import type { AppendMessage } from "@assistant-ui/react";
 import type { MessageAttachmentInfo } from "@qone/protocol";
 import { INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo, type NativeAttachmentFile } from "./native-attachment-file";
+import { localAttachmentTypeFromMetadata, localPathFromFileMetadata } from "./message-file-preview";
 
 const MAX_DATA_LENGTH = 70_000_000;
 const MAX_TOTAL_DATA_LENGTH = 140_000_000;
@@ -25,9 +26,13 @@ export async function serializeMessageAttachments(message: AppendMessage): Promi
   const input = message.attachments ?? [];
   const attachments = await Promise.all(input.map(async (attachment) => {
     const nativeFile = attachment.file as NativeAttachmentFile | undefined;
-    const type: MessageAttachmentInfo["type"] = nativeFile?.qoneIsDirectory ? "folder" : attachment.type === "image" ? "image" : "file";
+    const metadataPart = attachment.content.find((part) => part.type === "file" || part.type === "image");
+    const localPath = nativeFile?.qoneLocalPath ?? localPathFromFileMetadata(metadataPart?.providerMetadata);
+    const type: MessageAttachmentInfo["type"] = nativeFile?.qoneIsDirectory
+      ? "folder"
+      : localAttachmentTypeFromMetadata(metadataPart?.providerMetadata) ?? (attachment.type === "image" ? "image" : "file");
     const mimeType = attachment.contentType || attachment.file?.type || (type === "image" ? "image/png" : "text/plain");
-    if (nativeFile?.qoneLocalPath) return { type, name: attachment.name, mimeType, data: "", localPath: nativeFile.qoneLocalPath } satisfies MessageAttachmentInfo;
+    if (localPath) return { type, name: attachment.name, mimeType, data: "", localPath } satisfies MessageAttachmentInfo;
     if (nativeFile && !isAudioVideo(mimeType) && nativeFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) throw new Error(t("attachment.useLocalFile"));
     const data = type === "image"
       ? attachment.content.find((part) => part.type === "image")?.image

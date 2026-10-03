@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::io::{BufRead, BufReader, Write};
+use std::time::Duration;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
@@ -10,7 +11,7 @@ use std::sync::{
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 mod native_error;
@@ -18,6 +19,8 @@ use native_error::NativeError;
 mod native_copy;
 mod webview_policy;
 mod window_state;
+mod runtime_transport;
+use runtime_transport::{RuntimeTransport, runtime_subscribe};
 use native_copy::{NativeCopy, NativeCopyState, set_native_copy};
 
 fn ensure_global_instructions_file() -> Result<(), String> {
@@ -203,15 +206,27 @@ fn spawn_sidecar(
 
     let stdout = child.stdout.take().ok_or("no stdout on sidecar")?;
     let app_handle = app.clone();
+    let transport = app.state::<RuntimeTransport>().inner().clone();
     std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
+        let (lines_tx, lines_rx) = std::sync::mpsc::sync_channel::<String>(256);
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break; };
+                if lines_tx.send(line).is_err() { break; }
+            }
+        });
+        let mut batch = Vec::with_capacity(16);
+        let flush = |batch: &mut Vec<Box<serde_json::value::RawValue>>| {
+            if batch.is_empty() { return; }
+            let payload = std::mem::take(batch);
+            transport.send(&app_handle, payload);
+        };
+        loop {
             if generation.load(Ordering::SeqCst) != generation_id { break; }
-            match line {
-                Ok(l) if !l.trim().is_empty() => {
-                    let emitted = persist_runtime_secret(&l).unwrap_or(l);
-                    let _ = app_handle.emit("runtime-event", &emitted);
-                    if emitted.contains("\"type\":\"agent.completed\"") {
+            match lines_rx.recv_timeout(Duration::from_millis(8)) {
+                Ok(line) if !line.trim().is_empty() => {
+                    let event_type = runtime_event_type(&line);
+                    if is_completed_agent_event(&line) {
                         let _ = app_handle
                             .notification()
                             .builder()
@@ -221,13 +236,22 @@ fn spawn_sidecar(
                                 .unwrap_or_else(|_| "Agent run completed".into()))
                             .show();
                     }
+                    let emitted = match event_type {
+                        Some("mcp.oauth.token") | Some("mcp.oauth.credential") | Some("mcp.oauth.invalidated") => persist_runtime_secret(&line).unwrap_or(line),
+                        _ => line,
+                    };
+                    if let Ok(raw) = serde_json::value::RawValue::from_string(emitted) { batch.push(raw); }
+                    if batch.len() >= 16 { flush(&mut batch); }
                 }
                 Ok(_) => {}
-                Err(_) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => flush(&mut batch),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => { flush(&mut batch); break; }
             }
         }
         if generation.load(Ordering::SeqCst) == generation_id {
-            let _ = app_handle.emit("runtime-event", "{\"type\":\"runtime.exited\"}");
+            if let Ok(raw) = serde_json::value::RawValue::from_string("{\"type\":\"runtime.exited\"}".to_string()) {
+                transport.send(&app_handle, vec![raw]);
+            }
         }
     });
 
@@ -374,20 +398,63 @@ async fn save_image_as(filename: String, data: String, title: String) -> Result<
 #[cfg(windows)]
 mod creds;
 
+#[derive(serde::Deserialize)]
+struct RuntimeEventType<'a> {
+    #[serde(borrow)]
+    r#type: Option<&'a str>,
+}
+
+#[derive(serde::Deserialize)]
+struct RuntimeAgentEventType<'a> {
+    #[serde(borrow)]
+    r#type: Option<&'a str>,
+}
+
+#[derive(serde::Deserialize)]
+struct RuntimeAgentEnvelope<'a> {
+    #[serde(borrow)]
+    r#type: Option<&'a str>,
+    event: Option<RuntimeAgentEventType<'a>>,
+}
+
+fn runtime_event_type(line: &str) -> Option<&str> {
+    serde_json::from_str::<RuntimeEventType<'_>>(line).ok()?.r#type
+}
+
+fn is_completed_agent_event(line: &str) -> bool {
+    let Ok(envelope) = serde_json::from_str::<RuntimeAgentEnvelope<'_>>(line) else { return false; };
+    envelope.r#type == Some("agent.event") && envelope.event.and_then(|event| event.r#type) == Some("agent.completed")
+}
+
 fn persist_runtime_secret(line: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    let event_type = value.get("type")?.as_str()?;
+    #[derive(serde::Deserialize)]
+    struct SecretEvent<'a> {
+        #[serde(borrow)]
+        r#type: Option<&'a str>,
+        #[serde(borrow)]
+        key: Option<&'a str>,
+        #[serde(borrow)]
+        #[serde(rename = "serverId")]
+        server_id: Option<&'a str>,
+        #[serde(borrow)]
+        value: Option<&'a str>,
+        #[serde(borrow)]
+        #[serde(rename = "accessToken")]
+        access_token: Option<&'a str>,
+    }
+    let value = serde_json::from_str::<SecretEvent<'_>>(line).ok()?;
+    let event_type = value.r#type?;
     if event_type != "mcp.oauth.token" && event_type != "mcp.oauth.credential" && event_type != "mcp.oauth.invalidated" {
         return None;
     }
-    let key = value.get("key")?.as_str()?;
-    let server_id = value.get("serverId")?.as_str()?;
+    let key = value.key?;
+    let server_id = value.server_id?;
     let token = if event_type == "mcp.oauth.invalidated" {
         ""
     } else if event_type == "mcp.oauth.credential" {
-        value.get("value")?.as_str()?
+        value.value?
     } else {
-        value.get("accessToken")?.as_str()?
+        value.access_token?
     };
     let result = validate_secret_key(key).and_then(|_| {
         #[cfg(windows)]
@@ -403,8 +470,7 @@ fn persist_runtime_secret(line: &str) -> Option<String> {
     Some(match result {
         Ok(()) if event_type == "mcp.oauth.invalidated" => line.to_string(),
         Ok(()) => {
-            serde_json::json!({ "type": "mcp.oauth.saved", "serverId": server_id, "key": key })
-                .to_string()
+            serde_json::json!({ "type": "mcp.oauth.saved", "serverId": server_id, "key": key }).to_string()
         }
         Err(error) => serde_json::json!({ "type": "error", "message": error }).to_string(),
     })
@@ -617,6 +683,7 @@ fn main() {
                 quit,
             });
             let generation = Arc::new(AtomicU64::new(0));
+            app.manage(RuntimeTransport::default());
             let state = spawn_sidecar(app.handle(), generation.clone(), 0)?;
             window_state::restore(app.handle());
             app.manage(Sidecar {
@@ -679,6 +746,7 @@ fn main() {
             frontend_diagnostic,
             runtime_send,
             runtime_restart,
+            runtime_subscribe,
             pick_workspace,
             inspect_dropped_file,
             pick_attachment_files,

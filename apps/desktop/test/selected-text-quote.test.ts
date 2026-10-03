@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { AppendMessage } from "@assistant-ui/react";
+import { decodeCommand } from "@qone/protocol";
 import { extractComposerPrompt } from "../src/lib/composer-prompt";
 import { createQoneMessageQueue } from "../src/lib/qone-message-queue";
 import { queueMessageDraft } from "../src/lib/queue-composer-edit";
@@ -18,6 +19,21 @@ test("selected text reaches the model once and cannot activate quoted commands",
   expect(extractComposerPrompt(message(":qone-command[mcp:server] explain")).text).toStartWith("/mcp:server explain\n\n> ");
   expect(extractComposerPrompt(message("@goal analyze")).goal).toBe(true);
   expect(extractComposerPrompt(message("")).text).toBe("> 引用第一行\n> : qone content\n> @goal not a command");
+});
+
+test("runtime validation preserves quote metadata on runs and queued messages", () => {
+  const run = decodeCommand(JSON.stringify({
+    type: "agent.run", requestId: "request", sessionId: "session", message: "explain\n\n> selected", quote,
+  }));
+  expect(run?.type).toBe("agent.run");
+  if (run?.type === "agent.run") expect(run.quote).toEqual(quote);
+  const sync = decodeCommand(JSON.stringify({
+    type: "queue.sync", requestId: "request", sessionId: "session", items: [{
+      id: "item", sessionId: "session", text: "explain", quote, lane: "queue", status: "queued", position: 0, createdAt: 1, updatedAt: 1,
+    }],
+  }));
+  expect(sync?.type).toBe("queue.sync");
+  if (sync?.type === "queue.sync") expect(sync.items[0]?.quote).toEqual(quote);
 });
 
 test("queue persistence and edit recovery preserve quotes without merging different references", async () => {

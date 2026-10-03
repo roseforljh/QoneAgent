@@ -53,3 +53,9 @@ export function localPathFromFileMetadata(metadata?: FileMessagePart["providerMe
   const path = value.localPath;
   return typeof path === "string" && path.length > 0 ? path : undefined;
 }
+
+export function localAttachmentTypeFromMetadata(metadata?: FileMessagePart["providerMetadata"]): "file" | "folder" | undefined {
+  const value = metadata?.[QONE_FILE_PROVIDER];
+  if (!value || typeof value !== "object") return undefined;
+  return value.isDirectory === true ? "folder" : value.isDirectory === false ? "file" : undefined;
+}

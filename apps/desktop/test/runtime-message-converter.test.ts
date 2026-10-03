@@ -65,6 +65,18 @@ test("local file attachments retain their path for the right dock preview", () =
   }]);
 });
 
+test("quoted user messages keep the annotation metadata while hiding the model-only markdown suffix", () => {
+  const convert = createMessageConverter();
+  const quote = { text: "selected line", messageId: "source" };
+  const message: ChatMessage = {
+    id: "quoted", role: "user", content: "Explain this\n\n> selected line", quote,
+  };
+  expect(convert(message, context())).toMatchObject({
+    content: [{ type: "text", text: "Explain this" }],
+    metadata: { custom: { quote } },
+  });
+});
+
 test("legacy tool results invalidate their run and unchanged regrouped calls remain cached", () => {
   const convert = createMessageConverter();
   const legacy = { ...answer(), parts: undefined };

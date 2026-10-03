@@ -28,3 +28,23 @@ export function subagentsForAssistantMessage(
     return (assistantMessages[0]?.id ?? "streaming") === messageId;
   });
 }
+
+export function createOwnedSubagentSelector() {
+  let previous: { subagents: SubagentRunInfo[]; childRunIds: string[] } | undefined;
+  return (subagents: readonly SubagentRunInfo[], messages: readonly Message[], runId: string | undefined, messageId: string, currentParts: readonly { type: string; toolCallId?: string }[]) => {
+    const owned = subagentsForAssistantMessage(subagents, messages, runId, messageId, currentParts);
+    const descendants = new Set(owned.map((item) => item.id));
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const item of subagents) if (descendants.has(item.parentRunId) && !descendants.has(item.id)) {
+        descendants.add(item.id);
+        changed = true;
+      }
+    }
+    const childRunIds = [...descendants];
+    if (previous && previous.subagents.length === owned.length && owned.every((item, index) => item === previous!.subagents[index])
+      && childRunIds.length === previous.childRunIds.length && childRunIds.every((id, index) => id === previous!.childRunIds[index])) return previous;
+    previous = { subagents: owned, childRunIds };
+    return previous;
+  };
+}

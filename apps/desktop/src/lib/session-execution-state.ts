@@ -58,7 +58,19 @@ export function selectSessionState(state: AgentState, sessionId?: string): Agent
 /** Route updates without ever changing the real selection or exposing another chat to React. */
 export function sessionStore(store: Store, sessionId?: string): Store {
   if (!sessionId) return store;
-  const getState = (): AgentState => selectSessionState(store.getState(), sessionId);
+  // A single runtime event reads the routed store several times. Keep the
+  // derived view stable for the lifetime of the source snapshot so those
+  // reads do not repeatedly copy the complete AgentState.
+  let sourceSnapshot: AgentState | undefined;
+  let derivedSnapshot: AgentState | undefined;
+  const getState = (): AgentState => {
+    const source = store.getState();
+    if (source !== sourceSnapshot || !derivedSnapshot) {
+      sourceSnapshot = source;
+      derivedSnapshot = selectSessionState(source, sessionId);
+    }
+    return derivedSnapshot;
+  };
   const setState: Store["setState"] = (update) => {
     store.setState((state) => {
       const previous = getState();

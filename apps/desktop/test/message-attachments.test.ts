@@ -100,3 +100,22 @@ test("restored inline file attachments can be serialized again without a File ob
     type: "file", name: "restored.txt", mimeType: "text/plain", data: "data:text/plain;base64,SGk=",
   }]);
 });
+
+test("edited message parts retain local file and folder paths", async () => {
+  const input = {
+    attachments: [
+      { type: "document", name: "notes.md", contentType: "text/markdown", content: [{
+        type: "file", filename: "notes.md", mimeType: "text/markdown", data: "",
+        providerMetadata: { qone: { localPath: "C:\\Media\\notes.md", isDirectory: false } },
+      }] },
+      { type: "document", name: "source", contentType: DIRECTORY_MIME_TYPE, content: [{
+        type: "file", filename: "source", mimeType: DIRECTORY_MIME_TYPE, data: "",
+        providerMetadata: { qone: { localPath: "C:\\Media\\source", isDirectory: true } },
+      }] },
+    ],
+  } as unknown as AppendMessage;
+  expect(await serializeMessageAttachments(input)).toEqual([
+    { type: "file", name: "notes.md", mimeType: "text/markdown", data: "", localPath: "C:\\Media\\notes.md" },
+    { type: "folder", name: "source", mimeType: DIRECTORY_MIME_TYPE, data: "", localPath: "C:\\Media\\source" },
+  ]);
+});

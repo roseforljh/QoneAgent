@@ -1,6 +1,6 @@
 import { translateCurrent as t } from "./localization";
 import { localizeError } from "./lib/error-localization";
-import { invoke } from "@tauri-apps/api/core";
+import * as TauriCore from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
@@ -20,6 +20,8 @@ import type { ToolCall } from "./store";
 import { handleSideConversationEvent, retrySideConversationTransfers } from "./lib/side-conversation";
 
 const rid = () => crypto.randomUUID();
+const invoke = TauriCore.invoke;
+const Channel = (TauriCore as typeof TauriCore & { Channel?: typeof TauriCore.Channel }).Channel;
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 const CAPABILITY_ROUTING_STORAGE_KEY = "qone-capability-routing";
 const SUBAGENT_RUNTIME_STORAGE_KEY = "qone-subagent-runtime";
@@ -41,8 +43,19 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
   if (!hasTauriBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
 
-  const ready = listen<string>("runtime-event", (e) => {
-    if (e.payload.includes('"type":"runtime.exited"')) {
+  const receive = (payload: RuntimeEvent | RuntimeEvent[] | string) => {
+    const payloads = (Array.isArray(payload) ? payload : [payload]).flatMap((payload) => {
+      if (typeof payload !== "string") return [payload];
+      try {
+        const parsed: unknown = JSON.parse(payload);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return [payload];
+      }
+    });
+    for (const payload of payloads) {
+      const raw = typeof payload === "string" ? payload : payload;
+      if (typeof raw !== "string" && (raw as { type?: string }).type === "runtime.exited") {
       lastRunSequences.clear();
       for (const sessionId of deltas.keys()) clearDelta(sessionId);
       setMetadataLookupSupported(false);
@@ -92,25 +105,29 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       invoke("runtime_restart")
         .then(() => useStore.getState().send({ type: "ping", requestId: rid() }))
         .catch((error) => console.error("runtime restart failed", error));
-      return;
+      continue;
     }
     let msg: RuntimeEvent;
     try {
-      msg = JSON.parse(e.payload);
+      msg = typeof raw === "string" ? JSON.parse(raw) : raw;
     } catch {
-      return;
+      continue;
     }
     if (msg.type === "error" && msg.localization) msg.message = localizeError(msg);
-    if (handleSideConversationEvent(msg)) return;
+    if (handleSideConversationEvent(msg)) continue;
+    if (msg.type === "agent.event" && msg.event.scope === "subagent") {
+      lastSequence = Math.max(lastSequence, msg.event.sequence);
+      continue;
+    }
     if (msg.type === "model.metadata-resolved") {
       const pending = metadataRequests.get(msg.requestId);
       if (msg.models.every((model) => model.sources && ["contextWindow", "maxTokens", "reasoning", "input", "output"].every((field) => typeof model.sources[field as keyof typeof model.sources] === "string"))) pending?.resolve(msg.models);
       else pending?.reject(new Error("MODEL_METADATA_UNSUPPORTED"));
-      return;
+      continue;
     }
     if (msg.type === "error" && msg.requestId && metadataRequests.has(msg.requestId)) {
       metadataRequests.get(msg.requestId)?.reject(new Error(msg.message));
-      return;
+      continue;
     }
     const targetSessionId = msg.type === "agent.event" ? msg.event.sessionId
       : "sessionId" in msg ? msg.sessionId
@@ -202,7 +219,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (eventStore.getState().creatingSession && eventStore.getState().pendingMessage !== undefined) {
           queueMicrotask(() => {
             const state = eventStore.getState();
-            if (state.currentSessionId === msg.session.id && state.pendingMessage !== undefined) state.runAgent(state.pendingMessage, undefined, state.pendingAttachments, undefined, state.pendingGoal);
+          if (state.currentSessionId === msg.session.id && state.pendingMessage !== undefined) state.runAgent(state.pendingMessage, undefined, state.pendingAttachments, undefined, state.pendingGoal, msg.session.id, state.pendingQuote);
           });
         }
         break;
@@ -309,6 +326,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             id: m.id,
             role: m.role,
             content: m.content,
+            quote: m.quote,
             persisted: true,
             parts: m.parts,
             attachments: m.attachments,
@@ -427,6 +445,24 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       case "subagent.updated":
         if (msg.subagent.parentSessionId === eventStore.getState().currentSessionId) {
           eventStore.setState((st) => ({ subagents: [...st.subagents.filter((item) => item.id !== msg.subagent.id), msg.subagent].sort((a, b) => a.startedAt - b.startedAt) }));
+        }
+        break;
+      case "subagent.patch":
+        if (msg.sessionId === eventStore.getState().currentSessionId) {
+          eventStore.setState((st) => {
+            const current = st.subagents.find((item) => item.id === msg.id);
+            if (!current) return st;
+            const patch = msg.patch;
+            const { messagesAppend, partsPatch, ...fields } = patch;
+            const messages = messagesAppend?.length
+              ? [...(current.messages ?? []), ...messagesAppend.filter((message) => !(current.messages ?? []).some((saved) => saved.id === message.id))]
+              : current.messages;
+            const parts = partsPatch
+              ? [...current.parts.slice(0, partsPatch.start), ...partsPatch.parts]
+              : current.parts;
+            const next = { ...current, ...fields, ...(messages ? { messages } : {}), ...(parts ? { parts } : {}), streaming: fields.streaming === null ? undefined : fields.streaming ?? current.streaming };
+            return { subagents: st.subagents.map((item) => item.id === msg.id ? next : item) };
+          });
         }
         break;
       case "subagent.streaming":
@@ -1116,9 +1152,24 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         break;
     }
-  });
+    }
+  };
+  const ready = listen<RuntimeEvent | RuntimeEvent[] | string>("runtime-event", (event) => receive(event.payload));
   void ready
-    .then(() => useStore.getState().send({ type: "ping", requestId: rid() }))
+    .then(async () => {
+      const tauriInternals = typeof window === "undefined" ? undefined : (window as Window & { __TAURI_INTERNALS__?: { transformCallback?: unknown } }).__TAURI_INTERNALS__;
+      if (typeof Channel === "function" && typeof tauriInternals?.transformCallback === "function") {
+        const channel = new Channel<RuntimeEvent[]>();
+        channel.onmessage = (batch) => {
+          for (const item of batch) {
+            if (Array.isArray(item)) receive(item);
+            else receive(item);
+          }
+        };
+        await invoke("runtime_subscribe", { channel });
+      }
+      return useStore.getState().send({ type: "ping", requestId: rid() });
+    })
     .catch((error) => {
       wired = false;
       console.error("runtime listener setup failed", error);

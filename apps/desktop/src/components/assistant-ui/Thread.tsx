@@ -45,6 +45,8 @@ import "./composer-queue.css";
 import "./composer-actions.css";
 import { ComposerQueue } from "./composer-queue";
 import { useStore } from "../../store";
+import { messageById } from "../../lib/store-indexes";
+import { createMessageStructureSelector } from "../../lib/thread-message-structure";
 import { getThreadScrollState, pruneThreadScrollStates } from "../../lib/thread-scroll-state";
 import { useLocale } from "../../localization";
 import { pickNativeAttachmentFiles, pickNativeAttachmentFolder, useNativeFileDrop } from "../../lib/native-file-drop";
@@ -60,6 +62,7 @@ import {
   useAui,
   useAuiState,
 } from "@assistant-ui/react";
+import type { ThreadMessage } from "@assistant-ui/react";
 import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 import {
   CornerDownRightIcon,
@@ -70,7 +73,7 @@ import {
   Loader2Icon,
   TargetIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FC, type RefObject } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FC, type RefObject } from "react";
 
 export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const { locale, t } = useLocale();
@@ -87,7 +90,8 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   useEffect(() => {
     if (sessionsLoaded) pruneThreadScrollStates([...sessions.map((session) => session.id), ...Object.keys(sideChats)]);
   }, [sessions, sideChats, sessionsLoaded]);
-  const threadMessages = useAuiState((state) => state.thread.messages);
+  const messageStructure = useMemo(createMessageStructureSelector, []);
+  const threadMessages = useAuiState((state) => messageStructure(state.thread.messages));
   const chatRunError = useConversationStore((state) => state.chatRunError);
   const compactions = useConversationStore((state) => state.compactions);
   const compactionStatus = useConversationStore((state) => state.currentSessionId ? state.compactionStatuses[state.currentSessionId] : undefined);
@@ -98,7 +102,8 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     const timer = setTimeout(() => setToday(new Date()), nextMidnight.getTime() - Date.now());
     return () => clearTimeout(timer);
   }, [today]);
-  const pairedUserIdByAssistant = useMemo(() => pairMessageIds(threadMessages), [threadMessages]);
+  const pairableMessages = threadMessages as unknown as Parameters<typeof pairMessageIds>[0];
+  const pairedUserIdByAssistant = useMemo(() => pairMessageIds(pairableMessages), [pairableMessages]);
   const pairedUserIds = useMemo(() => new Set(pairedUserIdByAssistant.values()), [pairedUserIdByAssistant]);
   const compactionMarkersByMessage = useMemo(() => {
     const visibleAnchorByUser = new Map([...pairedUserIdByAssistant].map(([assistantId, userId]) => [userId, assistantId]));
@@ -124,8 +129,48 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     () => [...threadMessages].reverse().find((message) => message.role === "assistant" && message.id !== errorMessageId)?.id,
     [threadMessages, errorMessageId],
   );
-  const daySeparators = useMemo(() => messageDaySeparators(threadMessages, pairedUserIdByAssistant, today), [threadMessages, pairedUserIdByAssistant, today]);
+  const dayMessages = threadMessages as unknown as Parameters<typeof messageDaySeparators>[0];
+  const daySeparators = useMemo(() => messageDaySeparators(dayMessages, pairedUserIdByAssistant, today), [dayMessages, pairedUserIdByAssistant, today]);
   const dayFormatter = useMemo(() => new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }), [locale]);
+  const messageRenderState = useMemo(() => ({
+    sessionBoundary: session?.sideChat?.boundaryMessageId,
+    pairedUserIds,
+    daySeparators,
+    pairedUserIdByAssistant,
+    latestAssistantId,
+    lastMessageId: threadMessages.at(-1)?.id,
+    compactionMarkersByMessage,
+    dayFormatter,
+  }), [session?.sideChat?.boundaryMessageId, pairedUserIds, daySeparators, pairedUserIdByAssistant,
+    latestAssistantId, threadMessages, compactionMarkersByMessage, dayFormatter]);
+  const renderMessage = useCallback(({ message }: { message: ThreadMessage }) => {
+    const state = messageRenderState;
+    if (message.id === state.sessionBoundary) return <div className="mx-auto w-full q-thread-content border-y border-border/60 py-3 text-center text-xs text-muted-foreground">{t("chat.sideChatBoundary")}</div>;
+    if (message.role === "user" && state.pairedUserIds.has(message.id)) return null;
+    const date = state.daySeparators.get(message.id);
+    return (
+      <div
+        className="q-message-block flex w-full flex-col gap-4"
+        data-message-block
+        data-turn-id={message.role === "user" ? message.id : state.pairedUserIdByAssistant.get(message.id)}
+        data-static-turn={message.id !== state.latestAssistantId && message.id !== state.lastMessageId ? "" : undefined}
+      >
+        {message.role === "user"
+          ? <UserMessage />
+          : <AssistantMessage
+            userMessageId={state.pairedUserIdByAssistant.get(message.id)}
+            showLatestExtras={message.id === state.latestAssistantId}
+            betweenContent={state.compactionMarkersByMessage.between.get(message.id)?.map((marker) => (
+              <ContextCompactionMarker key={marker.id} status={marker.status} source={marker.source} startedAt={marker.startedAt} />
+            ))}
+          />}
+        {date && <DaySeparatorMarker day={state.dayFormatter.format(date)} className="mx-auto q-thread-content" />}
+        {state.compactionMarkersByMessage.after.get(message.id)?.map((marker) => (
+          <ContextCompactionMarker key={marker.id} status={marker.status} source={marker.source} startedAt={marker.startedAt} />
+        ))}
+      </div>
+    );
+  }, [t, messageRenderState]);
   const canChat = (() => {
     return Boolean(
       (session?.workspaceId && workspaces.some((workspace) => workspace.id === session.workspaceId)) ||
@@ -176,33 +221,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           <div ref={messageListRef} className="q-message-list relative flex w-full min-w-0 shrink-0 flex-col gap-5 pb-7">
             <div data-conversation-rail-content aria-hidden="true" className="pointer-events-none invisible absolute inset-x-0 top-0 mx-auto h-0 w-full q-thread-content" />
             <ThreadPrimitive.Messages>
-              {({ message }) => {
-                if (message.id === session?.sideChat?.boundaryMessageId) return <div className="mx-auto w-full q-thread-content border-y border-border/60 py-3 text-center text-xs text-muted-foreground">{t("chat.sideChatBoundary")}</div>;
-                if (message.role === "user" && pairedUserIds.has(message.id)) return null;
-                const date = daySeparators.get(message.id);
-                return (
-                  <div
-                    className="q-message-block flex w-full flex-col gap-4"
-                    data-message-block
-                    data-turn-id={message.role === "user" ? message.id : pairedUserIdByAssistant.get(message.id)}
-                    data-static-turn={message.id !== latestAssistantId && message.id !== threadMessages.at(-1)?.id ? "" : undefined}
-                  >
-                    {message.role === "user"
-                      ? <UserMessage />
-                      : <AssistantMessage
-                        userMessageId={pairedUserIdByAssistant.get(message.id)}
-                        showLatestExtras={message.id === latestAssistantId}
-                        betweenContent={compactionMarkersByMessage.between.get(message.id)?.map((marker) => (
-                          <ContextCompactionMarker key={marker.id} status={marker.status} source={marker.source} startedAt={marker.startedAt} />
-                        ))}
-                      />}
-                    {date && <DaySeparatorMarker day={dayFormatter.format(date)} className="mx-auto q-thread-content" />}
-                    {compactionMarkersByMessage.after.get(message.id)?.map((marker) => (
-                      <ContextCompactionMarker key={marker.id} status={marker.status} source={marker.source} startedAt={marker.startedAt} />
-                    ))}
-                  </div>
-                );
-              }}
+              {renderMessage}
             </ThreadPrimitive.Messages>
           </div>
           <div data-thread-end-content className="mx-auto w-full shrink-0 q-thread-content pb-7 empty:hidden">{children}</div>
@@ -438,10 +457,10 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
 const retryUserMessage = (messageId: string, owner: ReturnType<typeof useConversationStoreApi>) => {
   const state = owner.getState();
   const source = state.messages.find((message) => message.id === messageId && message.role === "user");
-  if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId));
+  if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), undefined, source.quote);
 };
 
-const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; betweenContent?: ReactNode }> = ({ userMessageId, showLatestExtras, betweenContent }) => {
+const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; betweenContent?: ReactNode }> = memo(({ userMessageId, showLatestExtras, betweenContent }) => {
   const owner = useConversationStoreApi();
   const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
@@ -451,7 +470,7 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
     if (!error || error.sessionId !== state.currentSessionId) return undefined;
     return messageId === chatRunErrorMessageId(error.userMessageId) ? error : undefined;
   });
-  const runId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
+  const runId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : messageById(state.messages, messageId)?.runId);
   const runIds = useMemo(() => runId ? [runId] : [], [runId]);
   return (
       <MessagePair
@@ -493,4 +512,5 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
         }
       />
   );
-};
+});
+AssistantMessage.displayName = "AssistantMessage";

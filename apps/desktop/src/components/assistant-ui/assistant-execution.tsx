@@ -10,6 +10,7 @@ import { ACTIVITY_TITLE_TOOL, type RunInfo } from "@qone/protocol";
 import type { AssistantPartRange } from "./assistant-part-ranges";
 import { executionCollapsed, useExecutionDisclosureState } from "./execution-disclosure-state";
 import "./assistant-execution.css";
+import { messageById, runById } from "../../lib/store-indexes";
 
 interface AssistantExecutionProps {
   ranges: readonly AssistantPartRange[];
@@ -69,8 +70,7 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
   const parts = useAuiState((state) => state.message.parts);
   const sessionId = useConversationStore((state) => state.currentSessionId);
   const activeRunId = useConversationStore((state) => state.activeRunId);
-  const messageRunId = useConversationStore((state) => state.messages.find((message) => message.id === messageId)?.runId);
-  const runs = useConversationStore((state) => state.runs);
+  const messageRunId = useConversationStore((state) => messageById(state.messages, messageId)?.runId);
   const toolCalls = useConversationStore((state) => state.toolCalls);
 
   const toolParts = useMemo(() => {
@@ -89,7 +89,7 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
     [toolCalls],
   );
   const runId = messageId === "streaming" ? activeRunId : messageRunId;
-  const run = runId ? runs.find((item) => item.id === runId) : undefined;
+  const run = useConversationStore((state) => runById(state.runs, runId));
   const allToolsFinished = toolParts.every((part) => {
     const call = toolCallsById.get(part.toolCallId);
     return call?.status === "success"
