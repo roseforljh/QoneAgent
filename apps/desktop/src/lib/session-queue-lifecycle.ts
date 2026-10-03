@@ -1,6 +1,8 @@
 import type { QueueItemInfo } from "@qone/protocol";
 import { useStore } from "../store";
 import { getQoneMessageQueue, setQoneMessageQueue } from "./qone-message-queue";
+import { subscribeAllSessions } from "./store-subscriptions";
+import { sessionById } from "./store-indexes";
 
 const hydrated = new WeakSet<object>();
 export function hydrateSessionQueue(queue: NonNullable<ReturnType<typeof getQoneMessageQueue>>, items: QueueItemInfo[], editingItemId?: string) {
@@ -20,9 +22,9 @@ export function bindSessionQueue(sessionId: string, queue: NonNullable<ReturnTyp
     Boolean(state.currentSessionId === sessionId ? state.running : state.backgroundSessions[sessionId]?.running) ||
     Boolean(state.compactionStatuses[sessionId]);
   let wasBusy = busy(useStore.getState());
-  const exists = (state: ReturnType<typeof useStore.getState>) => state.sessions.some((session) => session.id === sessionId) || Boolean(state.sideChats[sessionId]);
+  const exists = (state: ReturnType<typeof useStore.getState>) => Boolean(sessionById(state.sessions, sessionId) || state.sideChats[sessionId]);
   let sessionExists = exists(useStore.getState());
-  const unsubscribe = useStore.subscribe((state, previous) => {
+  const unsubscribe = subscribeAllSessions(useStore, (state, previous) => {
     if (state.sessions !== previous.sessions || state.sideChats !== previous.sideChats) sessionExists = exists(state);
     if (!state.connected || !sessionExists) {
       queue.suspend();

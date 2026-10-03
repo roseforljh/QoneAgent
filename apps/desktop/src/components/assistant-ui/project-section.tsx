@@ -8,7 +8,8 @@ import { CodexIcon } from "../ui/CodexIcon";
 import folderIcon from "../../assets/codex-icons/folder-light-16.svg";
 import folderOpenIcon from "../../assets/codex-icons/folder-open-light-16.svg";
 import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
-import { useEffect, useRef, useState, type FC, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from "react";
+import { createSidebarSessionsSelector } from "../../lib/sidebar-sessions";
 import { SidebarContextMenu, SidebarEntityMenu, SidebarMenu } from "./sidebar-menu";
 import { useLocale } from "../../localization";
 import { groupProjectSidebarSessions, sortSidebarWorkspaces, useSidebarPreferences } from "../../lib/sidebar-preferences";
@@ -18,7 +19,7 @@ import { SidebarSessionActions } from "./sidebar-session-pin-action";
 
 const rowButtonClass = "text-foreground/95 group-hover:text-foreground flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-start outline-none transition-colors";
 
-const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = ({ session, dragGroup }) => {
+const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = memo(({ session, dragGroup }) => {
   const { t } = useLocale();
   const currentSessionId = useStore((s) => s.currentSessionId);
   const selectSession = useStore((s) => s.selectSession);
@@ -81,7 +82,7 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = ({ session, 
     </motion.div>
     </SidebarContextMenu>
   );
-};
+});
 
 const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({ workspace, sessions }) => {
   const { t } = useLocale();
@@ -215,7 +216,8 @@ const ProjectGroup: FC<ProjectGroupProps & { sectionId: string }> = ({ sectionId
 export const ProjectSection: FC = () => {
   const { t } = useLocale();
   const workspaces = useStore((s) => s.workspaces);
-  const sessions = useStore((s) => s.sessions);
+  const selectSidebarSessions = useMemo(createSidebarSessionsSelector, []);
+  const sessions = useStore((s) => selectSidebarSessions(s.sessions));
   const pinnedWorkspaceIds = useStore((s) => s.pinnedWorkspaceIds);
   const chooseWorkspace = useStore((s) => s.chooseWorkspace);
   const [sectionMenuOpen, setSectionMenuOpen] = useState(false);

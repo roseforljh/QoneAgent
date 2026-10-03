@@ -567,7 +567,8 @@ export const useStore = create<AgentState>((set, get, api) => {
     // that was already pending when the conversation was left.
     const messagesLoadingSessionId = cached?.messagesLoadingSessionId === id ? id : cached ? undefined : id;
     set({ currentSessionId: id, completedSessionIds: state.completedSessionIds.filter((sessionId) => sessionId !== id), queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: state.runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? state.currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], chatRunError: undefined, ...switchSessionState(state, id), messagesLoadingSessionId });
-    requestSessionMessages(id);
+    requestSessionMessages(id, true);
+    if (!get().runtimeCapabilities.includes("session.snapshot")) {
     get().send({ type: "goal.get", requestId: rid(), sessionId: id });
     get().send({ type: "session.queue.list", requestId: rid(), sessionId: id });
     get().send({ type: "session.toolCalls", requestId: rid(), sessionId: id });
@@ -577,6 +578,7 @@ export const useStore = create<AgentState>((set, get, api) => {
       get().send({ type: "session.subagentNotifications", requestId: rid(), sessionId: id });
     }
     get().send({ type: "artifact.list", requestId: rid(), sessionId: id });
+    }
     if (workspaceId) get().refreshWorkspace(workspaceId);
   },
 
@@ -864,11 +866,12 @@ const pendingSessionMessageRequests = new Map<string, { sessionId: string }>();
 const latestSessionMessageRequest = new Map<string, string>();
 const pendingTitleRequests = new Map<string, string>();
 
-function requestSessionMessages(sessionId: string) {
+function requestSessionMessages(sessionId: string, includeSessionState = false) {
   const requestId = rid();
   pendingSessionMessageRequests.set(requestId, { sessionId });
   latestSessionMessageRequest.set(sessionId, requestId);
-  void useStore.getState().send({ type: "session.messages", requestId, sessionId }).then((sent) => {
+  const type = includeSessionState && useStore.getState().runtimeCapabilities.includes("session.snapshot") ? "session.snapshot" : "session.messages";
+  void useStore.getState().send({ type, requestId, sessionId }).then((sent) => {
     if (sent) return;
     const pending = pendingSessionMessageRequests.get(requestId);
     if (!pending) return;

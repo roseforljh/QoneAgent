@@ -41,7 +41,6 @@ import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-
 import { ThreadScrollFollower } from "./thread-scroll-follower";
 import { ThreadScrollToBottom } from "./thread-scroll-to-bottom";
 import "./thread-viewport.css";
-import "./composer-queue.css";
 import "./composer-actions.css";
 import { ComposerQueue } from "./composer-queue";
 import { useStore } from "../../store";
@@ -197,7 +196,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
       {conversationLoading ? (
         <>
           <ConversationLoadingSkeleton />
-          <div className="mx-auto w-full q-composer-content px-4 pb-2">
+          <div className="mx-auto w-full shrink-0 q-composer-content pb-2">
             {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ComposerLoadingSkeleton />}
           </div>
         </>

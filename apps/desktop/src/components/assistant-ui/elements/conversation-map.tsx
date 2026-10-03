@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { PreviewCard } from "@base-ui/react/preview-card";
 import { BookmarkIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -39,6 +39,7 @@ type ConversationMapProps = Omit<ComponentProps<"nav">, "children" | "onSelect">
   onSelect?: (id: string, behavior?: ScrollBehavior) => void;
   side?: "left" | "right";
   sessionId?: string;
+  renderPreview?: (entry: ConversationMapEntry) => ReactNode;
 };
 
 export function ConversationMap(props: ConversationMapProps) {
@@ -46,7 +47,7 @@ export function ConversationMap(props: ConversationMapProps) {
   return <ConversationMapContent key={props.sessionId} {...props} />;
 }
 
-function ConversationMapContent({ entries, activeId, visibleIds, onSelect, side = "right", sessionId, className, onKeyDown, ...props }: ConversationMapProps) {
+function ConversationMapContent({ entries, activeId, visibleIds, onSelect, side = "right", sessionId, renderPreview, className, onKeyDown, ...props }: ConversationMapProps) {
   const { t } = useLocale();
   const railRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -247,7 +248,7 @@ function ConversationMapContent({ entries, activeId, visibleIds, onSelect, side 
               <BookmarkIcon size={16} strokeWidth={1.7} fill={bookmarkedIds.has(payload.id) ? "currentColor" : "none"} />
             </button>}
           </div>
-          {payload?.preview && <div className="q-conversation-preview-body"><ReactMarkdown skipHtml components={{ img: ({ alt }) => <span>{alt}</span>, a: ({ children }) => <span>{children}</span> }}>{payload.preview}</ReactMarkdown></div>}
+          {payload && (renderPreview ? renderPreview(payload) : payload.preview && <div className="q-conversation-preview-body"><ReactMarkdown skipHtml components={{ img: ({ alt }) => <span>{alt}</span>, a: ({ children }) => <span>{children}</span> }}>{payload.preview}</ReactMarkdown></div>)}
         </PreviewCard.Popup>
       </PreviewCard.Positioner>
     </PreviewCard.Portal>}</PreviewCard.Root>

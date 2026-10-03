@@ -1,7 +1,7 @@
 import type { StoreApi } from "zustand";
 import type { AgentState } from "../store";
 import { selectSessionState, sessionStore } from "./session-execution-state";
-import { sameVisibleState, subscribeAllSessions } from "./store-subscriptions";
+import { conversationStateChanged, sameVisibleState, subscribeAllSessions } from "./store-subscriptions";
 
 /** A view of one conversation. It never changes the sidebar selection. */
 export function createConversationStore(source: StoreApi<AgentState>, sessionId: string): StoreApi<AgentState> {
@@ -23,12 +23,15 @@ export function createConversationStore(source: StoreApi<AgentState>, sessionId:
   // Zustand's external-store snapshot must be referentially stable between updates.
   const views = new WeakMap<AgentState, AgentState>();
   let previousView: AgentState | undefined;
+  let previousSource: AgentState | undefined;
   const view = (state: AgentState) => {
     let result = views.get(state);
     if (!result) {
-      result = { ...selectSessionState(state, sessionId), ...actions };
+      result = previousSource && previousView && !conversationStateChanged(state, previousSource, sessionId)
+        ? previousView : { ...selectSessionState(state, sessionId), ...actions };
       if (previousView && sameVisibleState(result, previousView)) result = previousView;
       previousView = result;
+      previousSource = state;
       views.set(state, result);
     }
     return result;
@@ -38,6 +41,7 @@ export function createConversationStore(source: StoreApi<AgentState>, sessionId:
     getInitialState: () => view(source.getInitialState()),
     setState: owner.setState,
     subscribe: (listener) => subscribeAllSessions(source, (state, previous) => {
+      if (!conversationStateChanged(state, previous, sessionId)) return;
       const before = view(previous);
       const after = view(state);
       if (before !== after) listener(after, before);

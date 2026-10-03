@@ -4,6 +4,7 @@ import { AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useExterna
 import { AssistantParts } from "../src/components/assistant-ui/assistant-parts";
 import { ACTIVITY_TITLE_TOOL } from "@qone/protocol";
 import { useStore } from "../src/store";
+import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 
 function Fixture({ content, running = false }: { content: ThreadMessageLike["content"]; running?: boolean }) {
   const messages: ThreadMessageLike[] = [{ id: "activity-phases", role: "assistant", status: running ? { type: "running" } : { type: "complete", reason: "stop" }, content }];
@@ -164,4 +165,25 @@ test("mixed tools have one semantic summary and final content remains outside ex
   const final = renderToStaticMarkup(<Fixture content={[read("a"), read("b"), { type: "text", text: "Final answer" }]} />);
   expect(final).toContain("Final answer");
   expect(final.indexOf('data-slot="assistant-execution"')).toBeLessThan(final.indexOf("Final answer"));
+});
+
+test("a model-authored child acknowledgement stays between the returned child call and subsequent work", () => {
+  const receipt = "已读取配置检查的最后总结，接下来核对改动。";
+  const content = assistantMessageContent({ content: "", parts: [
+    { type: "tool-call", toolName: "inspect_subagent", toolCallId: "inspect-child", args: { runId: "child" }, result: { status: "completed", result: "配置已核验" }, messageSequence: 1 },
+    { type: "text", text: receipt, phase: "commentary", messageSequence: 2 },
+    { type: "tool-call", toolName: "read", toolCallId: "after-receipt", args: { path: "src/after-receipt.ts" }, messageSequence: 2 },
+  ] }, [], false);
+  const html = renderToStaticMarkup(<Fixture running content={content} />);
+  const childCall = html.indexOf('data-slot="tool-call"');
+  const confirmation = html.indexOf(receipt);
+  const nextTool = html.indexOf("after-receipt.ts");
+  expect(confirmation).toBeGreaterThan(childCall);
+  expect(nextTool).toBeGreaterThan(confirmation);
+  expect(html).not.toContain('data-slot="tool-result-panel"');
+  const withoutReceipt = renderToStaticMarkup(<Fixture running content={assistantMessageContent({ content: "", parts: [
+    { type: "tool-call", toolName: "inspect_subagent", toolCallId: "inspect-child", args: { runId: "child" }, result: { status: "completed" }, messageSequence: 1 },
+  ] }, [], false)} />);
+  expect(withoutReceipt).not.toContain(receipt);
+  expect(withoutReceipt).not.toContain("已收到");
 });

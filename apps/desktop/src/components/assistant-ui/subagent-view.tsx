@@ -1,20 +1,21 @@
 import { useConversationStore } from "../../lib/conversation-context";
 import { CodexArrowLeftIcon as ArrowLeftIcon, CodexCheckIcon as CheckIcon, CodexChevronRightIcon as ChevronRightIcon, CodexXIcon as XIcon, CodexLoader2Icon, CodexClock3Icon } from "./execution-icons";
-import { useEffect, useMemo, useState, type FC } from "react";
+import { memo, useEffect, useMemo, useState, type FC } from "react";
 import { MessagePrimitive, ThreadPrimitive, useAuiState } from "@assistant-ui/react";
 import type { SubagentConfigInfo, SubagentRunInfo } from "@qone/protocol";
+import type { ThreadMessage } from "@assistant-ui/react";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { formatDuration } from "../../lib/utils";
 import { subagentMessages } from "../../lib/subagent-messages";
-import { subagentImageGenerations } from "../../lib/subagent-image-generations";
+import { createSubagentMediaSelector, subagentImageGenerations } from "../../lib/subagent-image-generations";
 import { SubagentLogo } from "../settings/subagent-logo";
 import { AssistantParts } from "./assistant-parts";
 import { SubagentThread } from "./subagent-thread";
 import { ImageGeneration } from "./elements/image-generation";
 import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
 import { createOwnedSubagentSelector } from "./subagent-message-ownership";
-import { messageById, subagentById, subagentIds, subagentsForTree } from "../../lib/store-indexes";
+import { createSubagentIdsSelector, createSubagentSummarySelector, messageById, subagentById, subagentsForTree } from "../../lib/store-indexes";
 import "./subagent-view.css";
 
 const active = (status: SubagentRunInfo["status"]) => ["created", "running", "waiting_approval", "paused"].includes(status);
@@ -36,14 +37,15 @@ export const SubagentMedia: FC = () => {
   const activeRunId = useConversationStore((state) => state.activeRunId);
   const messageRunId = useConversationStore((state) => messageById(state.messages, messageId)?.runId);
   const runId = messageId === "streaming" ? activeRunId : messageRunId;
-  const messages = useConversationStore((state) => state.messages);
   const selectOwnedSubagents = useMemo(createOwnedSubagentSelector, []);
-  const models = useConversationStore((state) => state.modelConfigs);
+  const selectMedia = useMemo(createSubagentMediaSelector, []);
   // Media belongs to the message that dispatched the child, even after later turns reuse it.
-  const owned = useConversationStore((state) => selectOwnedSubagents(subagentsForTree(state.subagents, runId), messages, runId, messageId, messageParts));
-  const subagents = owned.subagents;
-  const childRunIds = owned.childRunIds;
-  const imageGenerations = useMemo(() => subagentImageGenerations(subagents, runId, models), [subagents, runId, models]);
+  const media = useConversationStore((state) => {
+    const owned = selectOwnedSubagents(subagentsForTree(state.subagents, runId), state.messages, runId, messageId, messageParts);
+    return selectMedia(subagentImageGenerations(owned.subagents, runId, state.modelConfigs), owned.childRunIds);
+  });
+  const childRunIds = media.childRunIds;
+  const imageGenerations = media.generations;
   if (imageGenerations.length === 0 && childRunIds.length === 0) return null;
   return <div className="flex w-full flex-col gap-2 py-1">
     {imageGenerations.map((generation) => <ImageGeneration
@@ -67,21 +69,20 @@ function statusLabel(item: SubagentRunInfo, locale: string) {
   return zh ? "运行中" : "Running";
 }
 
-const SubagentTranscript: FC = () => {
-  return <ThreadPrimitive.Messages>
-      {({ message }) => message.role === "user"
+const renderSubagentMessage = ({ message }: { message: ThreadMessage }) => message.role === "user"
         ? <MessagePrimitive.Root className="q-subagent-task rounded-lg border border-border/50 bg-foreground/[0.03] px-3 py-2 text-xs text-foreground/65">
             <MessagePrimitive.Parts />
           </MessagePrimitive.Root>
         : <MessagePrimitive.Root className="q-subagent-transcript space-y-3 text-sm">
             <AssistantParts />
-          </MessagePrimitive.Root>}
-    </ThreadPrimitive.Messages>;
-};
+          </MessagePrimitive.Root>;
+
+const SubagentTranscript: FC = memo(() => <ThreadPrimitive.Messages>{renderSubagentMessage}</ThreadPrimitive.Messages>);
 
 export const SubagentPanel: FC<{ selectedId?: string; onSelect: (id?: string) => void; onClose: () => void }> = ({ selectedId, onSelect, onClose }) => {
   const { locale } = useLocale();
-  const subagentIdList = useConversationStore((state) => subagentIds(state.subagents));
+  const selectIds = useMemo(createSubagentIdsSelector, []);
+  const subagentIdList = useConversationStore((state) => selectIds(state.subagents));
   const selected = useConversationStore((state) => subagentById(state.subagents, selectedId));
   const subagentConfig = useConversationStore((state) => state.subagentConfig);
   const modelConfigs = useConversationStore((state) => state.modelConfigs);
@@ -110,8 +111,9 @@ export const SubagentPanel: FC<{ selectedId?: string; onSelect: (id?: string) =>
   </div>;
 };
 
-const SubagentRow: FC<{ id: string; onSelect: (id?: string) => void; now: number; locale: Parameters<typeof formatDuration>[1]; profiles: SubagentConfigInfo["profiles"] }> = ({ id, onSelect, now, locale, profiles }) => {
-  const item = useConversationStore((state) => subagentById(state.subagents, id));
+const SubagentRow: FC<{ id: string; onSelect: (id?: string) => void; now: number; locale: Parameters<typeof formatDuration>[1]; profiles: SubagentConfigInfo["profiles"] }> = memo(({ id, onSelect, now, locale, profiles }) => {
+  const selectSummary = useMemo(createSubagentSummarySelector, []);
+  const item = useConversationStore((state) => selectSummary(state.subagents, id));
   if (!item) return null;
   return <button type="button" className="q-subagent-row" onClick={() => onSelect(item.id)}>
     <SubagentLogo logo={profiles.find((profile) => profile.id === item.profileId)?.logo} name={item.title} size={24} />
@@ -122,4 +124,4 @@ const SubagentRow: FC<{ id: string; onSelect: (id?: string) => void; now: number
     <span className="q-subagent-elapsed">{formatDuration(((item.completedAt ?? now) - item.startedAt) / 1000, locale)}</span>
     <ChevronRightIcon size={14} aria-hidden="true" />
   </button>;
-};
+});

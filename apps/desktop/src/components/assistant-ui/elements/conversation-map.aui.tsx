@@ -6,9 +6,11 @@ import { useAuiState, useThreadViewport } from "@assistant-ui/react";
 import type { ThreadMessage } from "@assistant-ui/react";
 import { cn } from "../../../lib/utils";
 import { useStore } from "../../../store";
-import { hasConversationRailSpaceInViewport, measureConversationRail } from "../../../lib/conversation-rail-layout";
+import { hasConversationRailSpaceInViewport } from "../../../lib/conversation-rail-layout";
+import { observeConversationRail } from "../../../lib/conversation-rail-observer";
 import { ConversationMap, type ConversationMapEntry } from "./conversation-map";
 import { createMessageStructureSelector } from "../../../lib/thread-message-structure";
+import ReactMarkdown from "react-markdown";
 
 const TOP_TOLERANCE = 1;
 
@@ -34,16 +36,6 @@ const sameIds = (a: readonly string[], b: readonly string[]): boolean => {
  * of the end can never reach the top, so a fixed line leaves the last screen's
  * worth of ticks permanently unreachable.
  */
-const readingLine = (viewport: HTMLElement) => {
-  const rect = viewport.getBoundingClientRect();
-  const top = visibleTop(viewport);
-  const height = rect.bottom - top;
-  if (height <= 0) return top + TOP_TOLERANCE;
-
-  const remaining = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
-  const descent = Math.min(1, Math.max(0, (height - remaining) / height));
-  return top + height * descent + TOP_TOLERANCE;
-};
 
 const partsOf = (message: ThreadMessage) => [...message.content];
 
@@ -134,7 +126,7 @@ export function ConversationMapAui({
   side?: "left" | "right";
   className?: string;
 }) {
-  const messageStructure = useMemo(createMessageStructureSelector, []);
+  const messageStructure = useMemo(() => createMessageStructureSelector(true), []);
   const messages = useAuiState((s) => messageStructure(s.thread.messages));
   const sessionId = useStore((state) => state.currentSessionId);
   const viewport = useThreadViewport((s) => s.element.viewport);
@@ -157,16 +149,6 @@ export function ConversationMapAui({
     let frame = 0;
     const measure = () => {
       frame = 0;
-      const view = viewport.getBoundingClientRect();
-      const line = readingLine(viewport);
-
-      const { activeId: current, visibleIds: onScreen } = measureConversationRail(
-        viewport.querySelectorAll<HTMLElement>("[data-turn-id]"), view, line,
-      );
-      setActiveId(current);
-      setVisibleIds((previous) =>
-        sameIds(previous, onScreen) ? previous : onScreen,
-      );
       const hasSpace = hasConversationRailSpaceInViewport(viewport, side);
       setLayout((previous) => previous?.viewport === viewport && previous.sessionId === sessionId && previous.side === side && previous.hasSpace === hasSpace
         ? previous : { viewport, sessionId, side, hasSpace });
@@ -176,21 +158,18 @@ export function ConversationMapAui({
       frame = requestAnimationFrame(measure);
     };
 
-    scheduleRef.current = schedule;
+    const rail = observeConversationRail(viewport, ({ activeId, visibleIds }) => {
+      setActiveId(activeId);
+      setVisibleIds((previous) => sameIds(previous, visibleIds) ? previous : visibleIds);
+    });
+    scheduleRef.current = () => { rail.refresh(); schedule(); };
     schedule();
-    viewport.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
     const observer = new ResizeObserver(schedule);
     observer.observe(viewport);
     const content = viewport.querySelector<HTMLElement>("[data-conversation-rail-content]");
     const messageList = content?.parentElement;
-    // Content height changes on every streamed token. Measuring all turns in
-    // response would force layout once per frame, while scroll and structural
-    // changes already schedule the cases where geometry matters.
-    // Text nodes change on every streamed token. The rail only needs a new
-    // measurement when turns are inserted/removed; turnKey handles the
-    // message-id change separately, while scroll/resize handles geometry.
-    const contentObserver = new MutationObserver(schedule);
+    const contentObserver = new MutationObserver(() => { rail.refresh(); schedule(); });
     if (messageList) contentObserver.observe(messageList, { childList: true });
     const layoutObserver = new MutationObserver(schedule);
     for (const element of [viewport, content, messageList]) {
@@ -200,7 +179,7 @@ export function ConversationMapAui({
     return () => {
       scheduleRef.current = undefined;
       if (frame) cancelAnimationFrame(frame);
-      viewport.removeEventListener("scroll", schedule);
+      rail.dispose();
       window.removeEventListener("resize", schedule);
       observer.disconnect();
       contentObserver.disconnect();
@@ -298,8 +277,19 @@ export function ConversationMapAui({
           onSelect={select}
           sessionId={sessionId}
           side={side === "right" ? "left" : "right"}
+          renderPreview={renderTurnPreview}
         />
       </div>
     </div>, viewport.parentElement,
   );
 }
+
+function TurnPreview({ id }: { id: string }) {
+  const preview = useAuiState((state) => {
+    const turn = groupIntoTurns(state.thread.messages).find((turn) => turn.head.id === id);
+    return turn ? describe(turn).preview : undefined;
+  });
+  return preview ? <div className="q-conversation-preview-body"><ReactMarkdown skipHtml components={{ img: ({ alt }) => <span>{alt}</span>, a: ({ children }) => <span>{children}</span> }}>{preview}</ReactMarkdown></div> : null;
+}
+
+const renderTurnPreview = (entry: ConversationMapEntry) => <TurnPreview id={entry.id} />;

@@ -30,6 +30,11 @@ function compactText(value: string): string {
 }
 
 const OPERATION_LABELS = new Map<string, readonly [MessageKey, MessageKey]>([
+  ["dispatch_subagent", ["chat.toolCreatingSubagent", "chat.toolCreatedSubagent"]],
+  ["run_subagent_workflow", ["chat.toolRunningSubagentWorkflow", "chat.toolRanSubagentWorkflow"]],
+  ["inspect_subagent", ["chat.toolReadingSubagent", "chat.toolReadSubagent"]],
+  ["control_subagent", ["chat.toolControllingSubagent", "chat.toolControlledSubagent"]],
+  ["wait_subagent", ["chat.toolWaitingSubagent", "chat.toolWaitedSubagent"]],
   [ACTIVITY_TITLE_TOOL, ["chat.toolUpdatingStageTitle", "chat.toolUpdatedStageTitle"]],
   ["read", ["chat.toolReading", "chat.toolRead"]],
   ["grep", ["chat.toolSearching", "chat.toolSearched"]],

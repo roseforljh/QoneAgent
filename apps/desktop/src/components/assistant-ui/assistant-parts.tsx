@@ -15,7 +15,9 @@ import { Reasoning } from "./reasoning";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { compactionDisplayIndex, positionedAssistantRanges, type PositionedCompaction } from "./compaction-ranges";
 import { executionActivityItems } from "./execution-activity-items";
-import { messageById, runById } from "../../lib/store-indexes";
+import { createPartToolsSelector, messageById, runById } from "../../lib/store-indexes";
+import { assistantWaitingPhase } from "./assistant-waiting-phase";
+import { AssistantWaiting } from "./assistant-waiting";
 
 function regenerateCurrentTurn(messageId: string, owner: ReturnType<typeof useConversationStoreApi>): void {
   const state = owner.getState();
@@ -71,11 +73,27 @@ export const AssistantParts: FC = () => {
   const firstActivityRange = sections.activity[0];
   const disclosureStartIndex = firstActivityRange && ("index" in firstActivityRange ? firstActivityRange.index : firstActivityRange.startIndex);
   const statusAtStart = executionStatusAtStart(finalAnswerStarted, runStatus, messageRunning);
-  const toolCalls = useConversationStore((state) => state.toolCalls);
+  const selectTools = useMemo(createPartToolsSelector, []);
+  const toolCalls = useConversationStore((state) => selectTools(state.toolCalls, parts));
+  const toolCallsById = useMemo(() => new Map(toolCalls.map((call) => [call.toolCallId, call])), [toolCalls]);
   const activityItems = useMemo(() => {
-    const calls = new Map(toolCalls.map((call) => [call.toolCallId, call]));
-    return displayBlocks.map((block) => executionActivityItems(block.ranges, parts, calls));
-  }, [displayBlocks, parts, toolCalls]);
+    return displayBlocks.map((block) => executionActivityItems(block.ranges, parts, toolCallsById));
+  }, [displayBlocks, parts, toolCallsById]);
+  const requestStartedAt = useConversationStore((state) => state.modelRequest?.runId === runId ? state.modelRequest?.startedAt : undefined);
+  const imageGeneration = useAuiState((state) => Boolean(state.message.metadata?.custom?.qoneImageGeneration));
+  // Earlier commentary/reasoning must not hide the gap after a completed tool.
+  let latestVisiblePart: PartState | undefined;
+  for (const part of parts) {
+    if ((part.type !== "text" && part.type !== "reasoning") || part.text.trim()) latestVisiblePart = part;
+  }
+  const waitingPhase = imageGeneration ? undefined : assistantWaitingPhase({
+    messageRunning,
+    compacting: Boolean(pending && pending.runId === runId),
+    hasCurrentText: finalAnswerStarted || latestVisiblePart?.type === "text" || latestVisiblePart?.type === "image"
+      || latestVisiblePart?.type === "tool-call" && latestVisiblePart.toolName === "present" && !latestVisiblePart.isError,
+    hasReasoning: latestVisiblePart?.type === "reasoning" && latestVisiblePart.status.type === "running",
+    parts, toolCallsById, requestStartedAt,
+  });
 
   const renderRange = (range: AssistantPartRange) => {
     if (range.type === "reasoning") return <MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />;
@@ -91,7 +109,6 @@ export const AssistantParts: FC = () => {
       return <AssistantImageGallery key={`images-${range.startIndex}`} parts={imageParts} />;
     }
     if (range.type === "presentation") return <GenerativeUIPresentation key={`present-${range.index}`} index={range.index} />;
-    if (range.type === "subagents") return null;
     if (range.type !== "tools") return null;
     return <SessionTimeline key={`tools-${range.startIndex}`} startIndex={range.startIndex} endIndex={range.endIndex} />;
   };
@@ -106,6 +123,7 @@ export const AssistantParts: FC = () => {
             : <SessionTimeline key={`activity-${item.startIndex}`} startIndex={item.startIndex} endIndex={item.endIndex} activityRanges={item.ranges} title={item.title} />)}
         </AssistantExecution>)}
     {sections.answer.map(renderRange)}
+    {waitingPhase && <AssistantWaiting phase={waitingPhase} />}
     <SubagentMedia />
     <RunFileChangesAttachment messageId={messageId} runId={runId} />
   </>;

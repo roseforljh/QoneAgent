@@ -19,7 +19,8 @@ import type { ToolCall as StoreToolCall } from "../../store";
 import { toolActivityCategory } from "./tool-activity-category";
 import { ACTIVITY_TITLE_TOOL, toolFileChanges } from "@qone/protocol";
 import { selectActiveToolIndex } from "./tool-timeline-state";
-import { openSubagent, subagentForTool } from "./subagent-navigation";
+import { isSubagentTool } from "./subagent-navigation";
+import { SubagentToolCall } from "./subagent-tool-call";
 import { toolFileActivities } from "./file-change-activity-data";
 import { FileChangeActivityRow } from "./file-change-activity";
 import { integrationIcon, toolIntegration, type ToolIntegration } from "./tool-integration";
@@ -29,7 +30,7 @@ import type { AssistantPartRange } from "./assistant-part-ranges";
 import { Reasoning } from "./reasoning";
 import { latestReasoningText } from "./reasoning-preview";
 import { ContextCompactionMarker } from "./context-compaction-marker";
-import { messageById, subagentByParentTool, subagentsForParent, toolCallById } from "../../lib/store-indexes";
+import { toolCallById } from "../../lib/store-indexes";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
@@ -37,6 +38,11 @@ type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string;
 const GenerativeUISurface = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUISurface }));
 
 const TOOL_META: Record<string, ToolMeta> = {
+  dispatch_subagent: { verb: { zh: "创建子代理", en: "Create subagent" }, icon: WrenchIcon },
+  run_subagent_workflow: { verb: { zh: "运行子代理工作流", en: "Run subagent workflow" }, icon: WrenchIcon },
+  inspect_subagent: { verb: { zh: "读取子代理结果", en: "Read subagent result" }, icon: FileSearchIcon },
+  control_subagent: { verb: { zh: "操作子代理", en: "Control subagent" }, icon: WrenchIcon },
+  wait_subagent: { verb: { zh: "等待子代理", en: "Wait for subagent" }, icon: WrenchIcon },
   [ACTIVITY_TITLE_TOOL]: { verb: { zh: "更新执行阶段", en: "Update execution stage" }, icon: WrenchIcon },
   read: { verb: { zh: "读取", en: "Read" }, icon: FileSearchIcon },
   write: { verb: { zh: "写入", en: "Write" }, icon: PenLineIcon },
@@ -70,17 +76,14 @@ function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undef
   return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: integration ? integrationIcon(integration) : category === "file-change" ? PenLineIcon : meta?.icon ?? WrenchIcon, done, category, integration, filePaths, failed: toolCallStatus(part, call) === "failed" };
 }
 
-const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean }> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
+type ToolCallEntryProps = { part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean };
+const ToolCallEntry: FC<ToolCallEntryProps> = (props) => isSubagentTool(props.part.toolName)
+  ? <SubagentToolCall {...props} /> : <GenericToolCallEntry {...props} />;
+
+const GenericToolCallEntry: FC<ToolCallEntryProps> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
   const { locale, t } = useLocale();
   const [open, setOpen] = useState(false);
   const call = useConversationStore((state) => toolCallById(state.toolCalls, part.toolCallId));
-  const messageId = useAuiState((state) => state.message.id);
-  const sessionId = useConversationStore((state) => state.currentSessionId);
-  const parentRunId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : messageById(state.messages, messageId)?.runId);
-  const subagent = useConversationStore((state) => part.toolName === "dispatch_subagent"
-    ? subagentByParentTool(state.subagents, parentRunId, part.toolCallId)
-    : subagentForTool(part, call?.args, subagentsForParent(state.subagents, parentRunId), sessionId, parentRunId));
-  const backgroundSubagent = Boolean(subagent?.background || part.toolName === "run_subagent_workflow" && subagent);
   const status = toolActivity(part, call, prepared, messageRunning);
   const failed = String(status) === "failed";
   const result = call?.result !== undefined ? call.result : part.result !== undefined ? part.result : call?.summary;
@@ -127,11 +130,6 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
       activeLabel={activeLabel}
       query={step.chip}
       fullTarget={step.fullTarget}
-      targetAction={subagent && sessionId ? {
-        label: subagent.title,
-        ariaLabel: locale === "zh-CN" ? `打开子代理：${subagent.title}` : `Open subagent: ${subagent.title}`,
-        onClick: () => openSubagent(subagent.id, sessionId),
-      } : undefined}
       stat={stat && (stat.added > 0 || stat.removed > 0) ? stat : undefined}
       request={formatToolPayload(call?.argsText || part.argsText || part.args)}
       resultHasOwnFrame={visiblePresentation !== undefined && visiblePresentation.kind !== "text"}
@@ -143,7 +141,6 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
       pending={status === "queued" || status === "generating"}
       waiting={status === "waiting"}
       failed={failed}
-      canExpand={!backgroundSubagent}
       requestLabel={t("chat.toolRequest")}
       resultLabel={t("chat.toolResult")}
       open={open}

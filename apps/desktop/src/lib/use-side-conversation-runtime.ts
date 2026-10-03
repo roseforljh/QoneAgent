@@ -1,7 +1,7 @@
 import { useConversationStore } from "./conversation-context";
 import { useShallow } from "zustand/react/shallow";
 import { useConversationMessages } from "./use-conversation-messages";
-import { subagentImagesByRun } from "./subagent-images";
+import { createSubagentImagesSelector } from "./subagent-images";
 import { addComposerHistory } from "./composer-history";
 import { useEffect, useMemo } from "react";
 import { useExternalStoreRuntime, type AppendMessage } from "@assistant-ui/react";
@@ -28,7 +28,6 @@ export function useSideConversationRuntime(sessionId: string) {
     queueItems: state.queueItems,
     editingQueueItem: state.editingQueueItem,
     activeRunId: state.activeRunId,
-    subagents: state.subagents,
     messages: state.messages,
     streaming: state.streaming,
     streamingParts: state.streamingParts,
@@ -88,7 +87,8 @@ export function useSideConversationRuntime(sessionId: string) {
   useEffect(() => { if (queue) bindSessionQueue(sessionId, queue); }, [queue, sessionId]);
   const queueAdapter = useMessageQueueAdapter(queue);
   const steers = useSteeringMessages(queue, queueAdapter, state.queueItems, state.activeRunId);
-  const childImagesByRun = useMemo(() => subagentImagesByRun(state.subagents), [state.subagents]);
+  const selectChildImages = useMemo(createSubagentImagesSelector, []);
+  const childImagesByRun = useConversationStore(selectChildImages);
   const messages = useConversationMessages({
     messages: state.messages,
     streaming: state.streaming,

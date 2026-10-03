@@ -1,6 +1,7 @@
 import type { FC } from "react";
 import { cn } from "../../lib/utils";
 import { Skeleton } from "../ui/skeleton";
+import "./composer-queue.css";
 
 const threadWidths = ["w-[88%]", "w-[74%]", "w-[93%]", "w-[61%]"];
 
@@ -37,9 +38,9 @@ export const ConversationLoadingSkeleton: FC = () => {
     <div
       data-slot="conversation-loading-skeleton"
       aria-busy="true"
-      className="animate-in fade-in-0 min-h-0 grow overflow-hidden px-4 pt-8 duration-150"
+      className="animate-in fade-in-0 min-h-0 grow overflow-hidden pt-8 duration-150"
     >
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">
+      <div className="q-thread-content mx-auto flex w-full flex-col gap-8">
         <Skeleton className="ml-auto h-10 w-36 rounded-[18px]" />
         <div className="flex flex-col items-start gap-3">
           <Skeleton className="h-4 w-24" />
@@ -60,15 +61,19 @@ export const ComposerLoadingSkeleton: FC = () => {
     <div
       data-slot="composer-loading-skeleton"
       aria-busy="true"
-      className="animate-in fade-in-0 flex w-full flex-col gap-3 rounded-(--composer-radius) border border-foreground/10 bg-(--composer-bg) p-(--composer-padding) duration-150"
+      className="q-composer-shell animate-in fade-in-0 flex w-full shrink-0 flex-col gap-0 rounded-(--composer-radius) bg-(--composer-bg) p-0 duration-150"
     >
-      <Skeleton className="h-5 w-[68%] rounded-md" />
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Skeleton className="size-7 rounded-full" />
-          <Skeleton className="h-4 w-28" />
+      {/* Match the empty attachment slot, editor and action row of Composer. */}
+      <div aria-hidden="true" className="pb-1.5 pt-2" />
+      <div className="min-h-11 w-full px-3">
+        <Skeleton className="h-5 w-[68%] rounded-md" />
+      </div>
+      <div className="mt-1 flex min-h-7 items-center justify-between gap-2 px-2 pb-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Skeleton className="size-7 shrink-0 rounded-full" />
+          <Skeleton className="h-4 w-28 min-w-0" />
         </div>
-        <Skeleton className="size-7 rounded-full" />
+        <Skeleton className="size-7 shrink-0 rounded-full" />
       </div>
     </div>
   );

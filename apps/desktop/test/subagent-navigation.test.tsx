@@ -3,6 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { SubagentRunInfo } from "@qone/protocol";
 import { ToolCall } from "../src/components/assistant-ui/elements/tool-call";
 import { subagentForTool } from "../src/components/assistant-ui/subagent-navigation";
+import { AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useExternalStoreRuntime, type ThreadMessageLike } from "@assistant-ui/react";
+import { SessionTimeline } from "../src/components/assistant-ui/session-timeline";
+import { useStore } from "../src/store";
 
 const child = {
   id: "child", parentSessionId: "session", parentRunId: "parent", toolCallId: "dispatch",
@@ -35,5 +38,55 @@ test("agent title is a separate accessible button beside the tool disclosure", (
   />);
   expect(html).toContain('aria-label="打开子代理：修复连接中卡死问题"');
   expect(html).toMatch(/data-slot="collapsible-trigger"[^>]*>.*?<\/button><button type="button"/);
+});
+
+function TimelineFixture({ content, running = false }: { content: ThreadMessageLike["content"]; running?: boolean }) {
+  const messages: ThreadMessageLike[] = [{ id: "streaming", role: "assistant", content,
+    status: running ? { type: "running" } : { type: "complete", reason: "stop" } }];
+  const runtime = useExternalStoreRuntime({ messages, isRunning: running, convertMessage: (message) => message, onNew: async () => {} });
+  return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{
+    AssistantMessage: () => <MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={1} /></MessagePrimitive.Root>,
+  }} /></AssistantRuntimeProvider>;
+}
+
+test("actual timeline reuses the child link for creation and cross-turn calls in foreground or background", () => {
+  const serverState = useStore.getInitialState();
+  const previous = { ...serverState };
+  try {
+    for (const background of [false, true]) {
+      for (const status of ["running", "completed", "failed"] as const) {
+        Object.assign(serverState, { currentSessionId: "session", activeRunId: "parent", subagents: [{ ...child, background, status }], toolCalls: [] });
+        for (const toolName of ["dispatch_subagent", "inspect_subagent", "control_subagent", "wait_subagent"]) {
+          serverState.activeRunId = toolName === "dispatch_subagent" ? "parent" : "later-parent";
+          const html = renderToStaticMarkup(<TimelineFixture content={[{
+            type: "tool-call", toolName, toolCallId: toolName === "dispatch_subagent" ? "dispatch" : "later-call",
+            args: { runId: child.id }, result: "private child output",
+          }]} />);
+          expect(html).toContain('data-slot="tool-target-link"');
+          expect(html).toContain(child.title);
+          expect(html).toMatch(/aria-label="(?:打开子代理：|Open subagent: )修复连接中卡死问题"/);
+          expect(html).not.toContain('data-slot="tool-result-panel"');
+          expect(html).not.toContain(toolName);
+          expect(html).not.toContain("private child output");
+          expect(html).toMatch(/<button(?=[^>]*data-slot="collapsible-trigger")(?=[^>]*\sdisabled="")[^>]*>/);
+        }
+      }
+    }
+  } finally { Object.assign(serverState, previous); }
+});
+
+test("subagent calls never fall back to expandable result cards while arguments or snapshots are pending", () => {
+  const serverState = useStore.getInitialState();
+  const previous = { ...serverState };
+  try {
+    Object.assign(serverState, { currentSessionId: "session", activeRunId: "parent", subagents: [], toolCalls: [] });
+    for (const toolName of ["dispatch_subagent", "run_subagent_workflow", "inspect_subagent", "control_subagent", "wait_subagent"]) {
+      const html = renderToStaticMarkup(<TimelineFixture running content={[{ type: "tool-call", toolName, toolCallId: "pending", args: {} }]} />);
+      expect(html).not.toContain('data-slot="tool-target-link"');
+      expect(html).not.toContain('data-slot="tool-result-panel"');
+      expect(html).not.toContain(toolName);
+      expect(html).toMatch(/<button(?=[^>]*data-slot="collapsible-trigger")(?=[^>]*\sdisabled="")[^>]*>/);
+    }
+  } finally { Object.assign(serverState, previous); }
 });
 

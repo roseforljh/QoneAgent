@@ -1,5 +1,6 @@
 import type { ThreadMessageLike } from "@assistant-ui/react";
-import type { SubagentRunInfo } from "@qone/protocol";
+import type { AssistantMessagePart, SubagentRunInfo } from "@qone/protocol";
+const imagesInParts = new WeakMap<readonly AssistantMessagePart[], Extract<AssistantMessagePart, { type: "image" }>[]>();
 
 type ImagePart = { type: "image"; image: string; filename?: string; status: { type: "complete" }; startedAt: number };
 
@@ -8,7 +9,12 @@ export function subagentImagesByRun(subagents: readonly SubagentRunInfo[]): Map<
   const imagesByRun = new Map<string, ImagePart[]>();
   const seenByRun = new Map<string, Set<string>>();
   for (const child of [...subagents].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))) {
-    for (const part of child.parts) {
+    let imageParts = imagesInParts.get(child.parts);
+    if (!imageParts) {
+      imageParts = child.parts.filter((part): part is Extract<AssistantMessagePart, { type: "image" }> => part.type === "image" && Boolean(part.image));
+      imagesInParts.set(child.parts, imageParts);
+    }
+    for (const part of imageParts) {
       if (part.type !== "image" || !part.image) continue;
       const seen = seenByRun.get(child.parentRunId) ?? new Set<string>();
       if (seen.has(part.image)) continue;
@@ -33,17 +39,19 @@ function sameImages(a: Map<string, ImagePart[]>, b: Map<string, ImagePart[]>): b
   return true;
 }
 
-let lastSubagents: readonly SubagentRunInfo[] | undefined;
-let lastImages = new Map<string, ImagePart[]>();
-
 /** Keep the main thread idle while child text streams without new images. */
-export function selectSubagentImages(state: { subagents: SubagentRunInfo[] }): Map<string, ImagePart[]> {
-  if (state.subagents === lastSubagents) return lastImages;
-  const next = subagentImagesByRun(state.subagents);
-  lastSubagents = state.subagents;
-  if (!sameImages(lastImages, next)) lastImages = next;
-  return lastImages;
+export function createSubagentImagesSelector() {
+  let lastSubagents: readonly SubagentRunInfo[] | undefined;
+  let lastImages = new Map<string, ImagePart[]>();
+  return (state: { subagents: SubagentRunInfo[] }): Map<string, ImagePart[]> => {
+    if (state.subagents === lastSubagents) return lastImages;
+    const next = subagentImagesByRun(state.subagents);
+    lastSubagents = state.subagents;
+    if (!sameImages(lastImages, next)) lastImages = next;
+    return lastImages;
+  };
 }
+export const selectSubagentImages = createSubagentImagesSelector();
 
 export function appendSubagentImages(content: ThreadMessageLike["content"], images?: readonly ImagePart[], after?: number, through?: number): ThreadMessageLike["content"] {
   if (!images?.length) return content;

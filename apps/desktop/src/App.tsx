@@ -15,7 +15,8 @@ import {
 } from "@assistant-ui/react";
 import { sameUserInput, type MessageAttachmentInfo, type MessageQuoteInfo, type PluginInfo } from "@qone/protocol";
 import { convertedMessage } from "./lib/runtime-message-converter";
-import { selectSubagentImages } from "./lib/subagent-images";
+import { createSubagentImagesSelector } from "./lib/subagent-images";
+import { createSidebarSessionsSelector } from "./lib/sidebar-sessions";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { extractComposerPrompt } from "./lib/composer-prompt";
 import { addComposerHistory } from "./lib/composer-history";
@@ -85,11 +86,13 @@ function useQoneRuntime(pendingRun: { current: PendingRun | null }) {
   const queueItems = useStore((s) => s.queueItems);
   const queueLoadedSessionId = useStore((s) => s.queueLoadedSessionId);
   const toolCalls = useStore((s) => s.toolCalls);
-  const childImagesByRun = useStore(selectSubagentImages);
+  const selectChildImages = useMemo(createSubagentImagesSelector, []);
+  const childImagesByRun = useStore(selectChildImages);
   const selectedModelId = useStore((s) => s.selectedModelId);
   const modelConfigs = useStore((s) => s.modelConfigs);
   const chatRunError = useStore((s) => s.chatRunError);
-  const sessions = useStore((s) => s.sessions);
+  const selectSidebarSessions = useMemo(createSidebarSessionsSelector, []);
+  const sessions = useStore((s) => selectSidebarSessions(s.sessions));
   const currentSessionId = useStore((s) => s.currentSessionId);
   const runAgent = useStore((s) => s.runAgent);
   const stopAgent = useStore((s) => s.stopAgent);
@@ -271,9 +274,9 @@ function Logo({ collapsed }: { collapsed: boolean }) {
 function ThreadLoadingFallback() {
   const { t } = useLocale();
   return (
-    <div className="flex h-full flex-col bg-background" aria-busy="true" aria-label={t("app.loadingChat")}>
+    <div className="aui-root aui-thread-root relative flex h-full min-h-0 flex-col items-stretch bg-background px-4" aria-busy="true" aria-label={t("app.loadingChat")}>
       <ConversationLoadingSkeleton />
-      <div className="mx-auto w-full max-w-2xl px-4 pb-2">
+      <div className="mx-auto w-full shrink-0 q-composer-content pb-2">
         <ComposerLoadingSkeleton />
       </div>
     </div>

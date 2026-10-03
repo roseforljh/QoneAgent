@@ -9,6 +9,18 @@ export interface SubagentImageGeneration {
   missingImage?: boolean;
 }
 
+export function createSubagentMediaSelector() {
+  let previous: { generations: SubagentImageGeneration[]; childRunIds: string[] } | undefined;
+  return (generations: SubagentImageGeneration[], childRunIds: string[]) => {
+    if (previous && previous.childRunIds.length === childRunIds.length && childRunIds.every((id, index) => id === previous!.childRunIds[index])
+      && previous.generations.length === generations.length && generations.every((item, index) => {
+        const old = previous!.generations[index]!;
+        return item.id === old.id && item.prompt === old.prompt && item.generating === old.generating && item.error === old.error && item.missingImage === old.missingImage;
+      })) return previous;
+    return previous = { generations, childRunIds };
+  };
+}
+
 /** Only image-capable children of this main run get a generation card. */
 export function subagentImageGenerations(
   subagents: readonly SubagentRunInfo[],

@@ -1,6 +1,6 @@
 import type { ThreadMessage } from "@assistant-ui/react";
 
-export function createMessageStructureSelector() {
+export function createMessageStructureSelector(includeSettledContent = false) {
   let previous: readonly ThreadMessage[] = [];
   const details = (message: ThreadMessage) => message as ThreadMessage & {
     parentId?: string | null;
@@ -13,7 +13,8 @@ export function createMessageStructureSelector() {
       const nextDetails = details(message);
       return saved.id === message.id && saved.role === message.role && savedDetails.parentId === nextDetails.parentId
         && saved.createdAt.getTime() === message.createdAt.getTime()
-        && savedDetails.status?.type === nextDetails.status?.type;
+        && savedDetails.status?.type === nextDetails.status?.type
+        && (!includeSettledContent || nextDetails.status?.type === "running" || saved.content === message.content && saved.attachments === message.attachments);
     })) return previous;
     previous = messages;
     return previous;

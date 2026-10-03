@@ -10,7 +10,7 @@ import { ACTIVITY_TITLE_TOOL, type RunInfo } from "@qone/protocol";
 import type { AssistantPartRange } from "./assistant-part-ranges";
 import { executionCollapsed, useExecutionDisclosureState } from "./execution-disclosure-state";
 import "./assistant-execution.css";
-import { messageById, runById } from "../../lib/store-indexes";
+import { createPartToolsSelector, messageById, runById } from "../../lib/store-indexes";
 
 interface AssistantExecutionProps {
   ranges: readonly AssistantPartRange[];
@@ -71,7 +71,6 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
   const sessionId = useConversationStore((state) => state.currentSessionId);
   const activeRunId = useConversationStore((state) => state.activeRunId);
   const messageRunId = useConversationStore((state) => messageById(state.messages, messageId)?.runId);
-  const toolCalls = useConversationStore((state) => state.toolCalls);
 
   const toolParts = useMemo(() => {
     const visibleParts: Extract<typeof parts[number], { type: "tool-call" }>[] = [];
@@ -83,6 +82,9 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
     }
     return visibleParts;
   }, [parts, statusRanges]);
+
+  const selectTools = useMemo(createPartToolsSelector, []);
+  const toolCalls = useConversationStore((state) => selectTools(state.toolCalls, toolParts));
 
   const toolCallsById = useMemo(
     () => new Map(toolCalls.map((call) => [call.toolCallId, call] as const)),

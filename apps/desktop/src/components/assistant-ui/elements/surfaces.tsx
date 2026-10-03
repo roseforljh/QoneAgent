@@ -69,7 +69,7 @@ export function ShimmerLabel({
       {children}
       {active && (
         <span aria-hidden className="q-shine-text motion-reduce:hidden">
-          {children}
+          <span className="q-shine-highlight">{children}</span>
         </span>
       )}
     </span>

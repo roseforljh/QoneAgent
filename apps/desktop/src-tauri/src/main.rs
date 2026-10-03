@@ -20,7 +20,9 @@ mod native_copy;
 mod webview_policy;
 mod window_state;
 mod runtime_transport;
-use runtime_transport::{RuntimeTransport, runtime_subscribe};
+mod credential_bridge;
+use credential_bridge::persist_runtime_secret;
+use runtime_transport::{RuntimeBatch, RuntimeTransport, runtime_subscribe};
 use native_copy::{NativeCopy, NativeCopyState, set_native_copy};
 
 fn ensure_global_instructions_file() -> Result<(), String> {
@@ -215,18 +217,19 @@ fn spawn_sidecar(
                 if lines_tx.send(line).is_err() { break; }
             }
         });
-        let mut batch = Vec::with_capacity(16);
-        let flush = |batch: &mut Vec<Box<serde_json::value::RawValue>>| {
-            if batch.is_empty() { return; }
-            let payload = std::mem::take(batch);
+        let mut batch = RuntimeBatch::new(16, Duration::from_millis(8));
+        let flush = |batch: &mut RuntimeBatch| {
+            let payload = batch.drain();
+            if payload.is_empty() { return; }
             transport.send(&app_handle, payload);
         };
         loop {
             if generation.load(Ordering::SeqCst) != generation_id { break; }
-            match lines_rx.recv_timeout(Duration::from_millis(8)) {
+            let timeout = batch.timeout(std::time::Instant::now());
+            match lines_rx.recv_timeout(timeout) {
                 Ok(line) if !line.trim().is_empty() => {
                     let event_type = runtime_event_type(&line);
-                    if is_completed_agent_event(&line) {
+                    if event_type.as_deref() == Some("agent.event") && is_completed_agent_event(&line) {
                         let _ = app_handle
                             .notification()
                             .builder()
@@ -236,12 +239,13 @@ fn spawn_sidecar(
                                 .unwrap_or_else(|_| "Agent run completed".into()))
                             .show();
                     }
-                    let emitted = match event_type {
-                        Some("mcp.oauth.token") | Some("mcp.oauth.credential") | Some("mcp.oauth.invalidated") => persist_runtime_secret(&line).unwrap_or(line),
+                    let emitted = match event_type.as_deref() {
+                        Some("mcp.oauth.token") | Some("mcp.oauth.credential") | Some("mcp.oauth.invalidated") => persist_runtime_secret(&line),
                         _ => line,
                     };
-                    if let Ok(raw) = serde_json::value::RawValue::from_string(emitted) { batch.push(raw); }
-                    if batch.len() >= 16 { flush(&mut batch); }
+                    if let Ok(raw) = serde_json::value::RawValue::from_string(emitted) {
+                        if batch.push(raw, std::time::Instant::now()) { flush(&mut batch); }
+                    }
                 }
                 Ok(_) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => flush(&mut batch),
@@ -401,7 +405,7 @@ mod creds;
 #[derive(serde::Deserialize)]
 struct RuntimeEventType<'a> {
     #[serde(borrow)]
-    r#type: Option<&'a str>,
+    r#type: std::borrow::Cow<'a, str>,
 }
 
 #[derive(serde::Deserialize)]
@@ -417,63 +421,13 @@ struct RuntimeAgentEnvelope<'a> {
     event: Option<RuntimeAgentEventType<'a>>,
 }
 
-fn runtime_event_type(line: &str) -> Option<&str> {
-    serde_json::from_str::<RuntimeEventType<'_>>(line).ok()?.r#type
+fn runtime_event_type(line: &str) -> Option<std::borrow::Cow<'_, str>> {
+    Some(serde_json::from_str::<RuntimeEventType<'_>>(line).ok()?.r#type)
 }
 
 fn is_completed_agent_event(line: &str) -> bool {
     let Ok(envelope) = serde_json::from_str::<RuntimeAgentEnvelope<'_>>(line) else { return false; };
     envelope.r#type == Some("agent.event") && envelope.event.and_then(|event| event.r#type) == Some("agent.completed")
-}
-
-fn persist_runtime_secret(line: &str) -> Option<String> {
-    #[derive(serde::Deserialize)]
-    struct SecretEvent<'a> {
-        #[serde(borrow)]
-        r#type: Option<&'a str>,
-        #[serde(borrow)]
-        key: Option<&'a str>,
-        #[serde(borrow)]
-        #[serde(rename = "serverId")]
-        server_id: Option<&'a str>,
-        #[serde(borrow)]
-        value: Option<&'a str>,
-        #[serde(borrow)]
-        #[serde(rename = "accessToken")]
-        access_token: Option<&'a str>,
-    }
-    let value = serde_json::from_str::<SecretEvent<'_>>(line).ok()?;
-    let event_type = value.r#type?;
-    if event_type != "mcp.oauth.token" && event_type != "mcp.oauth.credential" && event_type != "mcp.oauth.invalidated" {
-        return None;
-    }
-    let key = value.key?;
-    let server_id = value.server_id?;
-    let token = if event_type == "mcp.oauth.invalidated" {
-        ""
-    } else if event_type == "mcp.oauth.credential" {
-        value.value?
-    } else {
-        value.access_token?
-    };
-    let result = validate_secret_key(key).and_then(|_| {
-        #[cfg(windows)]
-        {
-            if event_type == "mcp.oauth.invalidated" {
-                return if creds::get(key)?.is_some() { creds::delete(key) } else { Ok(()) };
-            }
-            return creds::set(key, token);
-        }
-        #[allow(unreachable_code)]
-        Err("secrets only supported on Windows".into())
-    });
-    Some(match result {
-        Ok(()) if event_type == "mcp.oauth.invalidated" => line.to_string(),
-        Ok(()) => {
-            serde_json::json!({ "type": "mcp.oauth.saved", "serverId": server_id, "key": key }).to_string()
-        }
-        Err(error) => serde_json::json!({ "type": "error", "message": error }).to_string(),
-    })
 }
 
 fn validate_secret_key(key: &str) -> Result<(), String> {

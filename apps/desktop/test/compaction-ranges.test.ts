@@ -80,12 +80,12 @@ test("compaction stays at its event boundary inside the collapsible execution", 
   const ranges = positionedAssistantRanges([
     { type: "text", index: 0, phase: "commentary" },
     { type: "tools", startIndex: 1, endIndex: 2 },
-    { type: "subagents", index: 2 },
+    { type: "tools", startIndex: 2, endIndex: 3 },
     { type: "text", index: 3, phase: "final_answer" },
   ], [marker("compact", 3)]);
-  expect(ranges.map((range) => range.type)).toEqual(["text", "tools", "subagents", "compaction", "text"]);
+  expect(ranges.map((range) => range.type)).toEqual(["text", "tools", "tools", "compaction", "text"]);
   const sections = assistantRangeSections(ranges);
-  expect(sections.activity.map((range) => range.type)).toEqual(["text", "tools", "subagents", "compaction"]);
+  expect(sections.activity.map((range) => range.type)).toEqual(["text", "tools", "tools", "compaction"]);
   expect(sections.answer.map((range) => range.type)).toEqual(["text"]);
 });
 
@@ -99,17 +99,17 @@ test("compaction after a completed answer remains at the end of the reply", () =
   expect(sections.answer.map((range) => range.type)).toEqual(["text", "compaction"]);
 });
 
-test("interleaved media does not shift a subagent or compaction marker", () => {
+test("interleaved media does not shift a tool call or compaction marker", () => {
   const ranges = positionedAssistantRanges([
     { type: "tools", startIndex: 0, endIndex: 1 },
     { type: "image", index: 1 },
-    { type: "subagents", index: 2 },
+    { type: "tools", startIndex: 2, endIndex: 3 },
     { type: "text", index: 3, phase: "final_answer" },
   ], [marker("compact", 3)]);
   const blocks = executionDisplayBlocks(assistantRangeSections(ranges).process);
   expect(blocks.map((block) => [block.kind, block.ranges.map((range) => range.type)])).toEqual([
     ["activity", ["tools"]],
     ["persistent", ["image"]],
-    ["activity", ["subagents", "compaction"]],
+    ["activity", ["tools", "compaction"]],
   ]);
 });

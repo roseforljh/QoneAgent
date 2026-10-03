@@ -15,6 +15,8 @@ export function emptySessionState() {
 
 export type SessionExecutionState = Pick<AgentState, keyof ReturnType<typeof emptySessionState>>;
 const sessionKeys = Object.keys(emptySessionState()) as (keyof SessionExecutionState)[];
+export const sessionStateKeys: ReadonlySet<string> = new Set(sessionKeys);
+const idleSessionState = emptySessionState();
 
 /** Runtime state can reset; unsent edits remain owned by their conversations. */
 export function queueEditsOnDisconnect(state: Pick<AgentState, "editingQueueItem" | "backgroundSessions">) {
@@ -47,7 +49,7 @@ export function conversationSession(state: AgentState, sessionId = state.current
 export function selectSessionState(state: AgentState, sessionId?: string): AgentState {
   if (!sessionId || state.currentSessionId === sessionId) return state;
   return {
-    ...state, ...emptySessionState(), ...state.backgroundSessions[sessionId],
+    ...state, ...idleSessionState, ...state.backgroundSessions[sessionId],
     currentSessionId: sessionId,
     currentWorkspaceId: conversationSession(state, sessionId)?.workspaceId,
     selectedModelId: state.runOptionsBySession[sessionId]?.modelId,
@@ -77,8 +79,8 @@ export function sessionStore(store: Store, sessionId?: string): Store {
       const patch = typeof update === "function" ? update(previous) : update;
       if (patch === previous) return state;
       if (state.currentSessionId === sessionId) return patch;
-      const local = Object.fromEntries(Object.entries(patch).filter(([key]) => sessionKeys.includes(key as keyof SessionExecutionState)));
-      const global = Object.fromEntries(Object.entries(patch).filter(([key]) => !sessionKeys.includes(key as keyof SessionExecutionState) && key !== "currentSessionId"));
+      const local = Object.fromEntries(Object.entries(patch).filter(([key]) => sessionStateKeys.has(key)));
+      const global = Object.fromEntries(Object.entries(patch).filter(([key]) => !sessionStateKeys.has(key) && key !== "currentSessionId"));
       return { ...global, backgroundSessions: {
         ...state.backgroundSessions,
         [sessionId]: { ...emptySessionState(), ...state.backgroundSessions[sessionId], ...local },

@@ -5,11 +5,13 @@ import { openWorkspaceFile, resolveFileReferencePath, workspaceRelativeFilePath 
 import { RunFileChangesCard } from "./elements/run-file-tree";
 import { openRunChanges } from "../../lib/run-changes-navigation";
 import { collectRunFileChanges, isRunSummaryOwner } from "./run-file-changes";
-import { runById } from "../../lib/store-indexes";
+import { createRunMessagesSelector, createRunToolsSelector, runById } from "../../lib/store-indexes";
 
 export function RunFileChangesAttachment({ messageId, runId }: { messageId: string; runId?: string }) {
-  const messages = useConversationStore((state) => state.messages);
-  const calls = useConversationStore((state) => state.toolCalls);
+  const selectMessages = useMemo(createRunMessagesSelector, []);
+  const selectTools = useMemo(createRunToolsSelector, []);
+  const messages = useConversationStore((state) => selectMessages(state.messages, runId));
+  const calls = useConversationStore((state) => selectTools(state.toolCalls, runId));
   const status = useConversationStore((state) => runById(state.runs, runId)?.status);
   const activeRunId = useConversationStore((state) => state.activeRunId);
   const sessionId = useConversationStore((state) => state.currentSessionId);

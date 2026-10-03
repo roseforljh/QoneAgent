@@ -2,6 +2,9 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { act } from "react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
+import type { SubagentRunInfo } from "@qone/protocol";
+import { useStore } from "../src/store";
+import { OPEN_SUBAGENT_EVENT } from "../src/components/assistant-ui/subagent-navigation";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
 const view = dom.window;
@@ -96,4 +99,74 @@ test("tool details require a click, retain user choices during growth, and close
   await toggle();
   expect(trigger().getAttribute("aria-expanded")).toBe("true");
   expect(panel().textContent).toContain(command);
+});
+
+test("subagent creation becomes a one-click child link and follow-up calls keep that link across turns", async () => {
+  const previous = useStore.getState();
+  const child: SubagentRunInfo = {
+    id: "child", parentSessionId: "session", parentRunId: "parent", toolCallId: "dispatch",
+    title: "修复连接问题", task: "修复", status: "running", background: true, startedAt: 1, content: "", parts: [],
+  };
+  let toolName = "dispatch_subagent";
+  let failed = false;
+  const received: unknown[] = [];
+  const onOpen = (event: Event) => received.push((event as CustomEvent).detail);
+  window.addEventListener(OPEN_SUBAGENT_EVENT, onOpen);
+  function Message() {
+    return <aui.MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={1} /></aui.MessagePrimitive.Root>;
+  }
+  function Fixture() {
+    const messages: ThreadMessageLike[] = [{ id: "streaming", role: "assistant", status: { type: "running" }, content: [{
+      type: "tool-call", toolName, toolCallId: toolName === "dispatch_subagent" ? "dispatch" : "follow-up",
+      args: {}, ...(failed ? { result: "private failure output", isError: true } : {}),
+    }] }];
+    const runtime = aui.useExternalStoreRuntime({ messages, isRunning: true, convertMessage: (message) => message, onNew: async () => {} });
+    return <aui.AssistantRuntimeProvider runtime={runtime}><aui.ThreadPrimitive.Messages components={{ AssistantMessage: Message }} /></aui.AssistantRuntimeProvider>;
+  }
+  try {
+    useStore.setState({ currentSessionId: "session", activeRunId: "parent", subagents: [], toolCalls: [] });
+    const container = document.createElement("div"); document.body.append(container);
+    root = createRoot(container);
+    await act(async () => { root!.render(<Fixture />); });
+    const disclosure = () => container.querySelector<HTMLButtonElement>('[data-slot="collapsible-trigger"]')!;
+    const link = () => container.querySelector<HTMLButtonElement>('[data-slot="tool-target-link"]');
+    expect(disclosure().disabled).toBe(true);
+    await act(async () => { disclosure().click(); });
+    expect(container.querySelector('[data-slot="tool-result-panel"]')).toBeNull();
+    expect(link()).toBeNull();
+
+    await act(async () => { useStore.setState({ subagents: [child] }); });
+    expect(link()?.textContent).toContain(child.title);
+    await act(async () => { link()!.click(); });
+    expect(received).toEqual([{ runId: "child", sessionId: "session" }]);
+
+    toolName = "control_subagent";
+    await act(async () => {
+      useStore.setState({ activeRunId: "later-parent", toolCalls: [{
+        toolCallId: "follow-up", toolName, runId: "later-parent", status: "running", args: { runId: "child", action: "follow_up" },
+      }] });
+      root!.render(<Fixture />);
+    });
+    expect(link()?.textContent).toContain(child.title);
+    await act(async () => { link()!.click(); });
+    expect(received).toHaveLength(2);
+    expect(disclosure().disabled).toBe(true);
+    expect(container.querySelector('[data-slot="tool-result-panel"]')).toBeNull();
+
+    failed = true;
+    await act(async () => {
+      useStore.setState({ toolCalls: [], subagents: [{ ...child, status: "failed" }] });
+      root!.render(<Fixture />);
+    });
+    // Once the structured target arguments arrive, a failed child remains navigable.
+    await act(async () => { useStore.setState({ toolCalls: [{ toolCallId: "follow-up", toolName, runId: "later-parent", status: "failed", args: { runId: "child" } }] }); });
+    expect(link()?.textContent).toContain(child.title);
+    await act(async () => { link()!.click(); });
+    expect(received).toHaveLength(3);
+    expect(container.textContent).not.toContain("private failure output");
+    expect(container.querySelector('[data-slot="tool-result-panel"]')).toBeNull();
+  } finally {
+    window.removeEventListener(OPEN_SUBAGENT_EVENT, onOpen);
+    await act(async () => { useStore.setState(previous); });
+  }
 });
