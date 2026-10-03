@@ -43,3 +43,14 @@ test("official MessagePair renders supplied message and action content once", ()
   expect(html.match(/unique action/g)).toHaveLength(1);
   expect(html).not.toContain("Copy response");
 });
+
+test("MessagePair does not create a second default assistant action bar", () => {
+  const html = renderToStaticMarkup(createElement(MessagePair, {
+    userMessage: "",
+    words: [],
+    visibleWords: 0,
+    streaming: true,
+    assistantContent: createElement("span", null, "streaming reply"),
+  }));
+  expect(html).not.toContain("q-assistant-message-action-slot");
+});

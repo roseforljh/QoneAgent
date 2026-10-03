@@ -131,6 +131,7 @@ export const zh = {
   "attachment.add": "添加附件",
   "attachment.remove": "移除文件",
   "attachment.label": "附件：{name}",
+  "attachment.preview": "预览附件：{name}",
   "attachment.file": "文件",
   "attachment.document": "文档",
   "attachment.uploadFailed": "上传失败",

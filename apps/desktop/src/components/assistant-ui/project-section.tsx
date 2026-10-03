@@ -86,13 +86,18 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = ({ session, 
 const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({ workspace, sessions }) => {
   const { t } = useLocale();
   const pinnedWorkspaceIds = useStore((s) => s.pinnedWorkspaceIds);
+  const allWorkspaces = useStore((s) => s.workspaces);
   const currentWorkspaceId = useStore((s) => s.currentWorkspaceId);
   const selectWorkspace = useStore((s) => s.selectWorkspace);
   const newSessionInWorkspace = useStore((s) => s.newSessionInWorkspace);
   const renameWorkspace = useStore((s) => s.renameWorkspace);
   const deleteWorkspace = useStore((s) => s.deleteWorkspace);
   const togglePinWorkspace = useStore((s) => s.togglePinWorkspace);
-  const [expanded, setExpanded] = useState(currentWorkspaceId === workspace.id);
+  const expandedWorkspaceIds = useSidebarPreferences((s) => s.expandedWorkspaceIds);
+  const expandedStateInitialized = useSidebarPreferences((s) => s.workspaceExpandedStateInitialized);
+  const setWorkspaceExpanded = useSidebarPreferences((s) => s.setWorkspaceExpanded);
+  const defaultExpandedWorkspaceIds = allWorkspaces.filter((item) => item.id === currentWorkspaceId).map((item) => item.id);
+  const expanded = expandedStateInitialized ? expandedWorkspaceIds.includes(workspace.id) : currentWorkspaceId === workspace.id;
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(workspace.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -114,7 +119,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
         onTogglePinned={() => togglePinWorkspace(workspace.id)}
         onRename={() => setRenaming(true)}
         onDelete={deleteProject}
-        onNewChat={() => { setExpanded(true); newSessionInWorkspace(workspace.id); }}
+        onNewChat={() => { setWorkspaceExpanded(workspace.id, true, defaultExpandedWorkspaceIds); newSessionInWorkspace(workspace.id); }}
         newChatLabel={t("sidebar.newChatInProject", { name: workspace.name })}
         disabled={renaming}
       >
@@ -128,7 +133,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
               aria-label={t("sidebar.renameProject")} />
           ) : (
             <button type="button" data-sidebar-drag-handle="" className={cn(rowButtonClass, "q-sidebar-project-trigger")}
-              onClick={() => { selectWorkspace(workspace.id); setExpanded((value) => !value); }}
+              onClick={() => { selectWorkspace(workspace.id); setWorkspaceExpanded(workspace.id, !expanded, defaultExpandedWorkspaceIds); }}
               title={workspace.path} aria-expanded={expanded}>
               <CodexIcon src={expanded ? folderOpenIcon : folderIcon} className="text-muted-foreground size-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
@@ -142,7 +147,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
                 ariaLabel={t("sidebar.projectOptions", { name: workspace.name })} />
               <button type="button" className="text-muted-foreground hover:text-foreground grid size-6 shrink-0 place-items-center rounded-md"
                 aria-label={t("sidebar.newChatInProject", { name: workspace.name })} title={t("sidebar.newChat")}
-                onClick={() => { setExpanded(true); newSessionInWorkspace(workspace.id); }}>
+                onClick={() => { setWorkspaceExpanded(workspace.id, true, defaultExpandedWorkspaceIds); newSessionInWorkspace(workspace.id); }}>
                 <CodexIcon src={plusIcon} className="size-3.5" />
               </button>
             </div>
@@ -173,13 +178,16 @@ interface ProjectGroupProps {
   actions?: ReactNode;
 }
 
-const ProjectGroup: FC<ProjectGroupProps> = ({ dragGroup, label, workspaces, sessionsByWorkspace, emptyText, leadingSessions = [], actions }) => {
-  const [open, setOpen] = useState(true);
+const ProjectGroup: FC<ProjectGroupProps & { sectionId: string }> = ({ sectionId, dragGroup, label, workspaces, sessionsByWorkspace, emptyText, leadingSessions = [], actions }) => {
+  const expandedSectionIds = useSidebarPreferences((s) => s.expandedSectionIds);
+  const expandedStateInitialized = useSidebarPreferences((s) => s.sectionExpandedStateInitialized);
+  const setSectionExpanded = useSidebarPreferences((s) => s.setSectionExpanded);
+  const open = expandedStateInitialized ? expandedSectionIds.includes(sectionId) : true;
   return (
     <div>
       <div className="q-sidebar-section-row group/section relative flex h-7 items-center">
         <button type="button" className="q-sidebar-section-label text-muted-foreground hover:text-foreground flex min-w-0 flex-1 items-center gap-1 px-1.5 text-sm font-semibold transition-colors"
-          onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+          onClick={() => setSectionExpanded(sectionId, !open, ["pinned", "projects", "chats"])} aria-expanded={open}>
           <span>{label}</span>
           <ChevronDownIcon className={cn("size-3.5 shrink-0 transition-[transform,rotate,opacity] group-hover/section:opacity-100", open ? "opacity-0" : "-rotate-90 opacity-100")} />
         </button>
@@ -220,10 +228,10 @@ export const ProjectSection: FC = () => {
   return (
     <div className="flex flex-col gap-4">
       {(pinned.length > 0 || sessionGroups.pinned.length > 0) && (
-        <ProjectGroup dragGroup="session:pinned" label={t("sidebar.pinnedProjects")} workspaces={pinned}
+        <ProjectGroup sectionId="pinned" dragGroup="session:pinned" label={t("sidebar.pinnedProjects")} workspaces={pinned}
           sessionsByWorkspace={sessionGroups.byWorkspace} leadingSessions={sessionGroups.pinned} emptyText={t("sidebar.noPinnedProjects")} />
       )}
-      <ProjectGroup dragGroup="session:projects" label={t("sidebar.projects")} workspaces={regular}
+      <ProjectGroup sectionId="projects" dragGroup="session:projects" label={t("sidebar.projects")} workspaces={regular}
         sessionsByWorkspace={sessionGroups.byWorkspace} emptyText={t("sidebar.noProjects")}
         actions={
           <div className={cn("q-sidebar-section-actions flex shrink-0 items-center gap-1 pr-1", sectionMenuOpen && "is-open")}>
@@ -235,7 +243,7 @@ export const ProjectSection: FC = () => {
           </div>
         } />
       {sessionGroups.unassigned.length > 0 && (
-        <ProjectGroup dragGroup="session:unassigned" label={t("sidebar.chats")} workspaces={[]}
+        <ProjectGroup sectionId="chats" dragGroup="session:unassigned" label={t("sidebar.chats")} workspaces={[]}
           sessionsByWorkspace={sessionGroups.byWorkspace} leadingSessions={sessionGroups.unassigned} emptyText="" />
       )}
     </div>

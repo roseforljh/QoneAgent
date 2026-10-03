@@ -7,6 +7,11 @@ import type { FileMessagePartComponent } from "@assistant-ui/react";
 import { cn } from "../../../lib/utils";
 import { CodexIcon } from "../../ui/CodexIcon";
 import { attachmentFileIcon } from "../../../lib/attachment-file-kind";
+import { openWorkspaceFile } from "../../../lib/workspace-file-navigation";
+import { getFileDataKind, inlineFilePreviewable, localPathFromFileMetadata, type FileDataKind } from "../../../lib/message-file-preview";
+import { useConversationStore } from "../../../lib/conversation-context";
+import { DIRECTORY_MIME_TYPE } from "@qone/protocol";
+import { useLocale } from "../../../localization";
 
 const fileVariants = cva(
   "aui-file-root inline-flex min-w-0 max-w-full items-center gap-3 rounded-lg transition-colors",
@@ -30,18 +35,7 @@ const fileVariants = cva(
   },
 );
 
-export type FileDataKind = "data-uri" | "url" | "base64" | "id";
-
-function getFileDataKind(
-  data: string,
-  sourceType?: "url" | "id",
-): FileDataKind {
-  if (sourceType === "url" && /^data:/i.test(data)) return "data-uri";
-  if (sourceType) return sourceType;
-  if (/^data:/i.test(data)) return "data-uri";
-  if (/^https?:\/\//i.test(data)) return "url";
-  return "base64";
-}
+export type { FileDataKind };
 
 function getBase64PayloadSize(payload: string): number {
   const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
@@ -220,13 +214,39 @@ const FileImpl: FileMessagePartComponent = ({
   data,
   mimeType,
   sourceType,
+  providerMetadata,
 }) => {
+  const { t } = useLocale();
+  const workspaceId = useConversationStore((state) => state.currentWorkspaceId);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const localPath = localPathFromFileMetadata(providerMetadata);
   const kind = getFileDataKind(data, sourceType);
   const showSize =
     Boolean(data) && (kind === "base64" || kind === "data-uri");
+  const attachment = { data, mimeType, sourceType };
+  const previewable = mimeType !== DIRECTORY_MIME_TYPE && (Boolean(localPath) || inlineFilePreviewable(attachment));
+  const preview = () => {
+    if (!previewable) return;
+    openWorkspaceFile({ sessionId, workspaceId, path: localPath ?? filename ?? t("attachment.file"), attachment: localPath ? undefined : attachment });
+  };
 
   return (
-    <FileRoot>
+    <FileRoot
+      className={previewable ? "cursor-pointer hover:bg-muted/50" : undefined}
+      role={previewable ? "button" : undefined}
+      tabIndex={previewable ? 0 : undefined}
+      aria-label={previewable ? t("attachment.preview", { name: filename || t("attachment.file") }) : undefined}
+      onClick={previewable ? (event) => {
+        if ((event.target as HTMLElement).closest('[data-slot="file-download"]')) return;
+        preview();
+      } : undefined}
+      onKeyDown={previewable ? (event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        preview();
+      } : undefined}
+    >
       <FileIconDisplay mimeType={mimeType} filename={filename} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <FileName>{filename}</FileName>
@@ -244,6 +264,7 @@ const FileImpl: FileMessagePartComponent = ({
         mimeType={mimeType}
         {...(filename !== undefined && { filename })}
         {...(sourceType !== undefined && { sourceType })}
+        onClick={(event) => event.stopPropagation()}
       />
     </FileRoot>
   );

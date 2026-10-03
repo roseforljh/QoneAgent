@@ -1,4 +1,4 @@
-.q-morphing-spinner { transform-box: fill-box; transform-origin: center; animation: q-spinner-turn .85s linear infinite; }
+.q-morphing-spinner { transform-box: fill-box; transform-origin: center; animation: q-spinner-turn 1s linear infinite; }
 .q-session-completion-dot { display: block; width: .375rem; height: .375rem; border-radius: 9999px; background: currentColor; }
 
 @keyframes q-spinner-turn {

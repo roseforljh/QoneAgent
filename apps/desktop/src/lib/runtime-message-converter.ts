@@ -2,6 +2,7 @@ import type { ThreadMessageLike } from "@assistant-ui/react";
 import type { ChatMessage, ToolCall } from "../store";
 import { assistantMessageContent } from "./assistant-message-parts";
 import { appendSubagentImages, type subagentImagesByRun } from "./subagent-images";
+import { QONE_FILE_PROVIDER } from "./message-file-preview";
 
 export interface MessageConversionContext {
   imagePreviews: Readonly<Record<string, string>>;
@@ -52,7 +53,15 @@ export function createMessageConverter() {
             const image = attachment.localPath ? context.imagePreviews[attachment.localPath] : attachment.data;
             return attachment.type === "image" && image
               ? { type: "image" as const, image, filename: attachment.name }
-              : { type: "file" as const, filename: attachment.name, mimeType: attachment.mimeType, data: attachment.data };
+              : {
+                type: "file" as const,
+                filename: attachment.name,
+                mimeType: attachment.mimeType,
+                data: attachment.data,
+                providerMetadata: attachment.localPath
+                  ? { [QONE_FILE_PROVIDER]: { localPath: attachment.localPath } }
+                  : undefined,
+              };
           }),
         ],
       };

@@ -1,10 +1,11 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type { BrowserDockRequest } from "./browser-dock";
 import type { RunChangesTarget } from "./run-changes-navigation";
 import type { WorkspaceFileLocation, WorkspaceFileTarget } from "./workspace-file-navigation";
 
 export type DockView = "session" | "terminal" | "files" | "file" | "git" | "browser" | "mcp" | "skills" | "subagents" | "changes" | "sideChat";
-export type DockFileTarget = WorkspaceFileLocation & { path: string; requestId: string };
+export type DockFileTarget = WorkspaceFileLocation & Pick<WorkspaceFileTarget, "attachment"> & { path: string; requestId: string };
 export type DockTab = { id: string; view: DockView; workspaceId?: string; browserTarget?: BrowserDockRequest; fileTarget?: DockFileTarget; changesTarget?: RunChangesTarget; refreshNonce?: number };
 export interface DockScope {
   sessionId?: string;
@@ -24,7 +25,9 @@ interface DockStore {
   remove: (key: string) => void;
   reconcile: (sessions?: readonly { id: string }[], workspaces?: readonly { id: string }[]) => void;
 }
-export const useDockState = create<DockStore>((set) => ({
+type DockPersistedState = Pick<DockStore, "scopes">;
+export function createDockStateStore(storage = createJSONStorage<DockPersistedState>(() => localStorage)) {
+  return create<DockStore>()(persist((set) => ({
   scopes: {},
   update: (key, owner, change) => set((state) => ({ scopes: { ...state.scopes, [key]: change(state.scopes[key] ?? { ...EMPTY_DOCK, ...owner }) } })),
   remove: (key) => set((state) => {
@@ -42,7 +45,15 @@ export const useDockState = create<DockStore>((set) => ({
     ));
     return Object.keys(scopes).length === Object.keys(state.scopes).length ? state : { scopes };
   }),
-}));
+  }), {
+    name: "qone-dock-scopes",
+    storage,
+    version: 1,
+    partialize: ({ scopes }) => ({ scopes }),
+  }));
+}
+
+export const useDockState = createDockStateStore();
 
 export function removeDockTab(scope: DockScope, id: string): DockScope {
   const index = scope.openTabs.findIndex((tab) => tab.id === id);
@@ -74,9 +85,12 @@ export function dockActiveView(scope: DockScope): DockView | undefined {
 
 /** Each selected document has its own reader; reselecting it preserves the tab. */
 export function filePreviewTab(tabs: readonly DockTab[], target: WorkspaceFileTarget, newId: () => string): DockTab {
-  const existing = tabs.find((tab) => tab.view === "file" && tab.workspaceId === target.workspaceId && tab.fileTarget?.path === target.path);
+  const existing = tabs.find((tab) => tab.view === "file" && tab.workspaceId === target.workspaceId && tab.fileTarget?.path === target.path
+    && tab.fileTarget?.attachment?.data === target.attachment?.data
+    && tab.fileTarget?.attachment?.mimeType === target.attachment?.mimeType
+    && tab.fileTarget?.attachment?.sourceType === target.attachment?.sourceType);
   return {
     ...existing, id: existing?.id ?? newId(), view: "file", workspaceId: target.workspaceId,
-    fileTarget: { path: target.path, line: target.line, column: target.column, endLine: target.endLine, requestId: newId() },
+    fileTarget: { path: target.path, attachment: target.attachment, line: target.line, column: target.column, endLine: target.endLine, requestId: newId() },
   };
 }

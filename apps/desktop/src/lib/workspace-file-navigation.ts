@@ -1,3 +1,5 @@
+import type { InlineFileSource } from "./message-file-preview";
+
 export interface WorkspaceFileLocation {
   line?: number;
   column?: number;
@@ -8,6 +10,7 @@ export interface WorkspaceFileTarget extends WorkspaceFileLocation {
   sessionId?: string;
   workspaceId?: string;
   path: string;
+  attachment?: InlineFileSource;
 }
 
 export const OPEN_WORKSPACE_FILE_EVENT = "qone-open-workspace-file";

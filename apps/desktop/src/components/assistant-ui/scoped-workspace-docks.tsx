@@ -35,6 +35,7 @@ export function ScopedWorkspaceDocks({ onViewChange }: { onViewChange: (view: st
       : owner.workspaceId;
     return <WorkspaceDock
       key={owner.key}
+      scopeKey={owner.key}
       scopeActive={active}
       sessionId={owner.sessionId}
       workspaceId={ownerWorkspaceId}

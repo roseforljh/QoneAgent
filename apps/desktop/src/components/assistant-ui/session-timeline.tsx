@@ -203,6 +203,16 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   const lastIndex = steps.length - 1;
   const lastStep = lastIndex >= 0 ? steps[lastIndex] : undefined;
   const summaryStep = steps.find((step) => step.integration) ?? lastStep;
+  const latestInternalText = useMemo(() => {
+    for (let index = activityRanges ? activityRanges.length - 1 : -1; index >= 0; index--) {
+      const range = activityRanges?.[index];
+      if (range?.type !== "reasoning") continue;
+      const part = parts[range.index];
+      if (part?.type !== "reasoning" || !part.text.trim()) continue;
+      return latestReasoningText(part.text);
+    }
+    return undefined;
+  }, [activityRanges, parts]);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -228,8 +238,13 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
     : thinking ? activeLabel : "";
   // While a stage is running, keep the header tied to the latest live action.
   // The authored stage title becomes the resting summary after the work settles.
-  const liveLabel = activeLabel || title || restingLabel;
-  const liveFullLabel = fullActiveLabel || title || fullSummary;
+  const activelyExecuting = toolWorking || thinking || Boolean(stageCompacting);
+  const liveLabel = activelyExecuting
+    ? latestInternalText || activeLabel || title || restingLabel
+    : title || restingLabel;
+  const liveFullLabel = activelyExecuting
+    ? latestInternalText || fullActiveLabel || title || fullSummary
+    : title || fullSummary;
 
   const stepsById = useMemo(() => new Map(steps.map((step, index) => [step.id, index])), [steps]);
   const details = activityRanges?.flatMap((range) => {

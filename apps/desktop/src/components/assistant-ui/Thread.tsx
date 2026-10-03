@@ -2,7 +2,7 @@ import { useConversationStore, useConversationStoreApi } from "../../lib/convers
 import { conversationSession } from "../../lib/session-execution-state";
 import { localizeError } from "../../lib/error-localization";
 import { ComposerAttachments, ComposerAddAttachment } from "./elements/attachment.aui";
-import { UserMessage, UserMessageContent, UserMessageAttachments } from "./user-message";
+import { UserMessage, UserMessageContent } from "./user-message";
 import { ComposerToolsPopover, type ComposerTool } from "./composer-tools";
 import { ComposerTriggers } from "./composer-triggers";
 import { ComposerEditorBridge, type ComposerMentionControls, type InsertComposerCommand, type InsertComposerTool } from "./composer-editor-bridge";
@@ -17,7 +17,7 @@ import { ComposerLinkOptionsPlugin } from "./composer-link-options";
 import { ComposerUnlinkedNode } from "./composer-unlinked-node";
 import "./composer-links.css";
 import { AssistantParts } from "./assistant-parts";
-import { assistantWaitingPhase } from "./assistant-waiting-phase";
+import { AssistantMessageLayout } from "./assistant-message-layout";
 import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
 import { MessagePair } from "./elements/message-pair";
 import { DaySeparatorMarker } from "./elements/day-separator";
@@ -34,7 +34,6 @@ import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
 import { RunOptionsPopover } from "./run-options-popover";
-import { EllipsisDots, ShimmerLabel } from "./elements/surfaces";
 import { ConversationMapAui } from "./elements/conversation-map.aui";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { RunFileChangesSummary } from "./run-file-changes-summary";
@@ -208,11 +207,13 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           </div>
           <div data-thread-end-content className="mx-auto w-full shrink-0 q-thread-content pb-7 empty:hidden">{children}</div>
 
-          <ThreadPrimitive.ViewportFooter data-thread-scroll-footer className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full shrink-0 flex-col overflow-visible pb-2">
+          <ThreadPrimitive.ViewportFooter data-thread-scroll-footer className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full shrink-0 flex-col overflow-visible">
             <ThreadScrollToBottom />
             {canChat && <RunFileChangesSummary />}
-            <div className="relative mx-auto w-full q-composer-content">
-              {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
+            <div className="q-chat-composer-anchor relative w-full pb-2">
+              <div className="relative mx-auto w-full q-composer-content">
+                {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
+              </div>
             </div>
           </ThreadPrimitive.ViewportFooter>
           </ThreadScrollFollower>
@@ -222,7 +223,6 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     </ThreadPrimitive.Root>
   );
 };
-
 const ProjectImportPrompt: FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { t } = useLocale();
   const chooseWorkspace = useConversationStore((state) => state.chooseWorkspace);
@@ -445,6 +445,7 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
   const owner = useConversationStoreApi();
   const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
+  const messageRunning = useAuiState((state) => state.message.status?.type === "running");
   const answerError = useConversationStore((state) => {
     const error = state.chatRunError;
     if (!error || error.sessionId !== state.currentSessionId) return undefined;
@@ -467,12 +468,6 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
           />
         ) : undefined}
         userContentIsSurface={Boolean(userMessageId)}
-        userAttachmentContent={userMessageId ? (
-          <ThreadPrimitive.Unstable_MessageById
-            messageId={userMessageId}
-            components={{ Message: UserMessageAttachments }}
-          />
-        ) : undefined}
         userActions={userMessageId ? (
           <ThreadPrimitive.Unstable_MessageById
             messageId={userMessageId}
@@ -481,7 +476,7 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
         ) : undefined}
         betweenContent={betweenContent}
         assistantContent={
-          <MessagePrimitive.Root className="q-message-root q-message-assistant relative flex w-full flex-col">
+          <AssistantMessageLayout actions={answerError || messageRunning ? undefined : <AssistantMessageActions />}>
             {answerError ? <div className="flex flex-col gap-1 text-sm leading-relaxed" role="alert">
               <p className="font-medium text-foreground">{t("chat.runFailed")}</p>
               <p className="whitespace-pre-wrap break-words text-muted-foreground">{answerError.detail || t("chat.runFailedDetail")}</p>
@@ -493,77 +488,9 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
               <GeneratedMediaArtifacts runIds={runIds} />
               <MessageSourcesView />
               <AssistantMemoryChips visible={showLatestExtras} />
-              <AgentPreparation />
             </>}
-          </MessagePrimitive.Root>
+          </AssistantMessageLayout>
         }
-        actions={answerError ? <></> : <AssistantMessageActions />}
       />
-  );
-};
-
-const AgentPreparation: FC = () => {
-  const { t } = useLocale();
-  const activeRunId = useConversationStore((state) => state.activeRunId);
-  const compacting = useConversationStore((state) => Boolean(activeRunId && state.currentSessionId
-    && state.autoCompactionStatuses[state.currentSessionId]?.runId === activeRunId));
-  const request = useConversationStore((state) => state.modelRequest);
-  const requestStartedAt = request?.runId === activeRunId ? request?.startedAt : undefined;
-  const [now, setNow] = useState(Date.now);
-  const messageRunning = useAuiState((state) => state.message.status?.type === "running");
-  const activeMessageSequence = useConversationStore((state) => state.activeMessageSequence);
-  const streaming = useConversationStore((state) => state.streaming);
-  const streamingParts = useConversationStore((state) => state.streamingParts);
-  const toolCalls = useConversationStore((state) => state.toolCalls);
-  const toolCallsById = useMemo(
-    () => new Map(toolCalls.map((call) => [call.toolCallId, call] as const)),
-    [toolCalls],
-  );
-  const latestMessageSequence = streamingParts.at(-1)?.messageSequence;
-  const phaseKey = String(activeMessageSequence ?? latestMessageSequence ?? "run-start");
-  const currentParts = useMemo(
-    () => (activeMessageSequence ?? latestMessageSequence) === undefined
-      ? []
-      : streamingParts.filter((part) => part.messageSequence === (activeMessageSequence ?? latestMessageSequence)),
-    [activeMessageSequence, latestMessageSequence, streamingParts],
-  );
-  const hasCurrentText = Boolean(streaming.trim()) || (activeMessageSequence !== undefined && currentParts.some(
-    (part) => part.type === "text" && part.text.trim().length > 0,
-  ));
-  const parts = useAuiState((state) => state.message.parts);
-  const tailPart = parts.at(-1);
-  // The run can be active before Pi emits message.started. Keep this fallback
-  // independent of activeMessageSequence so the first visible state is not a
-  // blank assistant bubble.
-  const hasReasoning = tailPart?.type === "reasoning" && tailPart.status.type === "running" && Boolean(tailPart.text.trim());
-  const phase = assistantWaitingPhase({ messageRunning, compacting, hasCurrentText, hasReasoning, parts: streamingParts, toolCallsById, requestStartedAt });
-  const candidate = phase !== undefined;
-  const [visiblePhase, setVisiblePhase] = useState<string>();
-
-  useEffect(() => {
-    if (!candidate) {
-      setVisiblePhase(undefined);
-      return undefined;
-    }
-    const timer = setTimeout(() => setVisiblePhase(phaseKey), 400);
-    return () => clearTimeout(timer);
-  }, [candidate, phaseKey]);
-
-  useEffect(() => {
-    if (!candidate || requestStartedAt === undefined) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [candidate, requestStartedAt]);
-
-  if (!candidate || visiblePhase !== phaseKey) return null;
-  return (
-    <div className="text-foreground/55 flex items-center py-1 text-sm" role="status" aria-live="polite">
-      <ShimmerLabel active className="relative inline-block leading-none">
-        {t(phase === "thinking" ? "chat.reasoningActive" : phase === "waiting" ? "chat.waitingResponse" : "chat.preparingRequest")}
-      </ShimmerLabel>
-      <EllipsisDots />
-      {requestStartedAt !== undefined && <span className="ms-2 text-xs tabular-nums opacity-70" aria-hidden="true">{Math.max(0, Math.floor((now - requestStartedAt) / 1000))}s</span>}
-    </div>
   );
 };

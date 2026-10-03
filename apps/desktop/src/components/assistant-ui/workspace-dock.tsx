@@ -39,6 +39,7 @@ import { OPEN_WORKSPACE_FILE_EVENT, resolveFileReferencePath, type WorkspaceFile
 import { OPEN_RUN_CHANGES_EVENT, runChangesTab, type RunChangesTarget } from "../../lib/run-changes-navigation";
 import { RunChangesPanel } from "./run-changes-panel";
 import FileReader from "./file-reader";
+import { InlineFileReader } from "./inline-file-reader";
 import { clampDockWidth, defaultDockWidth, dockWidthBounds, dockResizeState } from "../../lib/dock-layout";
 import { usePaneSizes } from "../../lib/pane-size-preferences";
 import { usePaneResize } from "../../lib/use-pane-resize";
@@ -52,7 +53,7 @@ import { CodexIcon } from "../ui/CodexIcon";
 import terminalIcon from "../../assets/codex-icons/terminal-light-16.svg";
 import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import closeIcon from "../../assets/codex-icons/xmark-md-light-16.svg";
-import { closeDockTabsExcept, closeDockTabsToRight, filePreviewTab, type DockTab, type DockView } from "../../lib/dock-state";
+import { closeDockTabsExcept, closeDockTabsToRight, filePreviewTab, useDockState, type DockTab, type DockView } from "../../lib/dock-state";
 import {
   initWorkspaceView, removeWorkspaceView, requestWorkspaceFiles, requestWorkspaceFileRead,
   requestWorkspaceGit, requestWorkspaceGitDiff, useWorkspaceViewState, useWorkspaceViewStore,
@@ -440,7 +441,8 @@ function SessionDetails() {
     </section>
   );
 }
-export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChange, onTabsChange }: {
+export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, onViewChange, onTabsChange }: {
+  scopeKey: string;
   scopeActive: boolean;
   sessionId?: string;
   workspaceId?: string;
@@ -450,10 +452,12 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   const { t } = useLocale();
   const workspaces = useStore((state) => state.workspaces);
   const sideChats = useStore((state) => state.sideChats);
-  const [openTabs, setOpenTabs] = useState<DockTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string>();
+  const storedScope = useDockState((state) => state.scopes[scopeKey]);
+  const updateDock = useDockState((state) => state.update);
+  const [openTabs, setOpenTabs] = useState<DockTab[]>(() => storedScope?.openTabs ?? []);
+  const [activeTabId, setActiveTabId] = useState<string | undefined>(() => storedScope?.activeTabId);
   const [selectedSubagentId, setSelectedSubagentId] = useState<string>();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => storedScope?.collapsed ?? true);
   const activeTab = openTabs.find((tab) => tab.id === activeTabId);
   const view = scopeActive && !collapsed ? activeTab?.view : undefined;
   const [paneMounted, setPaneMounted] = useState(false);
@@ -499,10 +503,23 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   const saveWidth = usePaneSizes((state) => state.setDockWidth);
   const migrateDockWidth = usePaneSizes((state) => state.migrateDockWidth);
   const [dragWidth, setDragWidth] = useState<number>();
-  const [maximized, setMaximized] = useState(false);
+  const [maximized, setMaximized] = useState(() => storedScope?.maximized ?? false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(() => typeof window !== "undefined" && window.innerWidth <= NARROW_SCREEN_WIDTH);
   const panelW = clampDockWidth(dragWidth ?? preferredWidth ?? defaultDockWidth(availableWidth, availableHeight, isNarrowScreen), availableWidth, isNarrowScreen);
   const { minimum: minPanelW, maximum: maxPanelW } = dockWidthBounds(availableWidth, isNarrowScreen);
+
+  useEffect(() => {
+    updateDock(scopeKey, { sessionId, workspaceId }, (scope) => ({ ...scope, openTabs }));
+  }, [scopeKey, sessionId, workspaceId, openTabs, updateDock]);
+  useEffect(() => {
+    updateDock(scopeKey, { sessionId, workspaceId }, (scope) => ({ ...scope, activeTabId }));
+  }, [scopeKey, sessionId, workspaceId, activeTabId, updateDock]);
+  useEffect(() => {
+    updateDock(scopeKey, { sessionId, workspaceId }, (scope) => ({ ...scope, collapsed }));
+  }, [scopeKey, sessionId, workspaceId, collapsed, updateDock]);
+  useEffect(() => {
+    updateDock(scopeKey, { sessionId, workspaceId }, (scope) => ({ ...scope, maximized }));
+  }, [scopeKey, sessionId, workspaceId, maximized, updateDock]);
 
   useEffect(() => {
     if (!scopeActive) return;
@@ -857,7 +874,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                     onClose={() => void closeTab(tab.id)}
                     onCloseOther={openTabs.length > 1 ? () => void closeTabs(tab.id, "other") : undefined}
                     onCloseRight={index < openTabs.length - 1 ? () => void closeTabs(tab.id, "right") : undefined}
-                    filePath={tab.view === "file" && tab.fileTarget
+                    filePath={tab.view === "file" && tab.fileTarget && !tab.fileTarget.attachment
                       ? resolveFileReferencePath(tab.fileTarget.path, workspace?.path) ?? tab.fileTarget.path
                       : undefined}
                   >
@@ -928,7 +945,9 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
                   {tab.view === "terminal" && tabWorkspaceId && <TerminalView tabId={tab.id} workspaceId={tabWorkspaceId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
                   {tab.view === "browser" && <DockBrowserView browserId={tab.id} active={active && !launcherOpen && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} />}
                   {tab.view === "files" && tabWorkspaceId && <FilesView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} fileTarget={tab.fileTarget} active={active} />}
-                  {tab.view === "file" && tab.fileTarget && <FileReader tabId={tab.id} workspaceId={tab.workspaceId} sessionId={sessionId} target={tab.fileTarget} active={active} refreshNonce={tab.refreshNonce ?? 0} />}
+                  {tab.view === "file" && tab.fileTarget && (tab.fileTarget.attachment
+                    ? <InlineFileReader target={tab.fileTarget} active={active} refreshNonce={tab.refreshNonce ?? 0} />
+                    : <FileReader tabId={tab.id} workspaceId={tab.workspaceId} sessionId={sessionId} target={tab.fileTarget} active={active} refreshNonce={tab.refreshNonce ?? 0} />)}
                   {tab.view === "git" && tabWorkspaceId && <GitView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "changes" && tab.changesTarget && <RunChangesPanel target={tab.changesTarget} />}
                   {/* Keep one assistant-ui/Lexical tree alive; queue execution is session-scoped and survives tab unmounts. */}

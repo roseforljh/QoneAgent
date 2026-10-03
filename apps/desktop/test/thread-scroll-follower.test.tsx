@@ -205,3 +205,27 @@ test.each([false, true])("switching away and back restores the actual reading po
   expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(320);
   expect(getThreadScrollState("reading-b")?.current?.scrollTop).toBe(420);
 });
+
+test("a session that was following the tail returns to the new tail after growing while away", async () => {
+  contentHeight = 1200; scrollHeight = 1800;
+  useStore.setState({ currentSessionId: "tail-a" });
+  const container = document.createElement("div"); document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root!.render(<Fixture sessionId="tail-a" running={false} />); });
+  await flush();
+  const firstTop = document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop;
+
+  await act(async () => {
+    useStore.setState({ currentSessionId: "tail-b" });
+    root!.render(<Fixture sessionId="tail-b" running={false} />);
+  });
+  contentHeight = 1500; scrollHeight = 2100;
+  await flush();
+
+  await act(async () => {
+    useStore.setState({ currentSessionId: "tail-a" });
+    root!.render(<Fixture sessionId="tail-a" running={false} />);
+  });
+  await flush();
+  expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(firstTop + 300);
+});

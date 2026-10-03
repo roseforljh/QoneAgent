@@ -65,6 +65,18 @@
 .q-dock-terminal .xterm,
 .q-dock-terminal .xterm-viewport { background-color: transparent !important; }
 .q-dock-terminal .xterm { height: 100%; }
+.q-dock-terminal .xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 4px !important;
+  background: transparent;
+}
+.q-dock-terminal .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  width: 4px !important;
+  background: var(--q-scrollbar-color) !important;
+}
+.q-dock-terminal .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider:hover,
+.q-dock-terminal .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider.active {
+  background: var(--q-scrollbar-surface-hover-color) !important;
+}
 .q-dock-terminal-tab-icon[data-status="starting"] { color: var(--aui-warning); }
 .q-dock-terminal-tab-icon[data-status="error"] { color: var(--destructive); }
 .q-dock-terminal-tab-icon[data-status="exited"] { opacity: .5; }

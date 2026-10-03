@@ -133,6 +133,7 @@ export const en: Messages = {
   "attachment.add": "Add Attachment",
   "attachment.remove": "Remove file",
   "attachment.label": "Attachment: {name}",
+  "attachment.preview": "Preview attachment: {name}",
   "attachment.file": "File",
   "attachment.document": "Document",
   "attachment.uploadFailed": "Upload failed",

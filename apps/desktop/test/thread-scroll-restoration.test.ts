@@ -172,6 +172,22 @@ test("completed history restores without needing an active anchor", () => {
   dispose();
 });
 
+test("history restores from native distance when the transcript grew while away", () => {
+  const f = fixture();
+  Object.assign(f.state, {
+    topAnchorTurn: null,
+    targetConfig: null,
+    element: { viewport: f.viewport, anchor: null, target: null },
+  });
+  f.viewport.contentHeight = 2000;
+  const dispose = mountTopAnchorReserve(f.store, {
+    current: { scrollTop: 120, distanceFromBottomPx: 500, topAnchorTurn: null },
+  });
+  expect(f.viewport.scrollTop).toBe(1100);
+  expect(f.viewport.calls).toEqual([{ top: 1100, behavior: "instant" }]);
+  dispose();
+});
+
 test("missing message refs defer restoration until the official store registers them", () => {
   const f = fixture();
   Object.assign(f.state.element, { anchor: null, target: null }); f.state.targetConfig = null as never;

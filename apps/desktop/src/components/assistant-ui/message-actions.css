@@ -35,7 +35,7 @@
 .q-user-message-action-slot:empty,
 .q-assistant-message-action-slot:empty { display: none; }
 .q-user-message-group:is(:hover, :focus-within) > .q-user-message-action-slot,
-.q-assistant-message-group:is(:hover, :focus-within) > .q-assistant-message-action-slot {
+.q-assistant-message-group:is(:hover, :focus-within) .q-assistant-message-action-slot {
   opacity: 1;
   pointer-events: auto;
 }

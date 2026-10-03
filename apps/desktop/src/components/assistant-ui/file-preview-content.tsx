@@ -11,14 +11,15 @@ import { FadeScroll } from "./elements/surfaces";
 import { WorkspaceFileContent } from "./workspace-file-content";
 import { MarkdownDocument } from "./markdown-document";
 
-export function FilePreviewContent({ file, source, target, active, revision, relativePath }: {
-  file: FilePreviewInfo; source: boolean; target: DockFileTarget; active: boolean; revision: string; relativePath?: string;
+export function FilePreviewContent({ file, source, target, active, revision, relativePath, resourceUrl }: {
+  file: FilePreviewInfo; source: boolean; target: DockFileTarget; active: boolean; revision: string; relativePath?: string; resourceUrl?: string;
 }) {
   const { t } = useLocale();
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const resource = ["image", "pdf", "audio", "video"].includes(file.kind) && !source;
-  const preview = useLocalFilePreview(resource ? file.absolutePath : undefined, revision, fileReferenceDirectory(file.absolutePath));
+  const localPreview = useLocalFilePreview(resource && !resourceUrl ? file.absolutePath : undefined, revision, fileReferenceDirectory(file.absolutePath));
+  const preview = resourceUrl ? { url: resourceUrl } : localPreview;
   const [failedRevision, setFailedRevision] = useState<string>();
   useEffect(() => { if (!active) { videoRef.current?.pause(); audioRef.current?.pause(); } }, [active]);
   if (source || file.kind === "text") return <FadeScroll data-file-viewport className="min-h-0 flex-1">

@@ -32,6 +32,9 @@ import { DIRECTORY_MIME_TYPE } from "@qone/protocol";
 import type { NativeAttachmentFile } from "../../../lib/native-attachment-file";
 import { useLocale } from "../../../localization";
 import { attachmentFileIcon, attachmentFileKind, attachmentFileLabel } from "../../../lib/attachment-file-kind";
+import { fileToDataUrl } from "../../../lib/message-file-preview";
+import { openWorkspaceFile } from "../../../lib/workspace-file-navigation";
+import { useConversationStore } from "../../../lib/conversation-context";
 
 const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
   const { t } = useLocale();
@@ -66,11 +69,15 @@ const AttachmentUI: FC = () => {
   const aui = useAui();
   const { t } = useLocale();
   const isComposer = aui.attachment.source !== "message";
+  const workspaceId = useConversationStore((state) => state.currentWorkspaceId);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
 
   const isImage = useAuiState((s) => s.attachment.type === "image");
   const isDirectory = useAuiState((s) => (s.attachment.file as NativeAttachmentFile | undefined)?.qoneIsDirectory === true || s.attachment.contentType === DIRECTORY_MIME_TYPE);
   const attachmentName = useAuiState((s) => s.attachment.name);
   const mimeType = useAuiState((s) => s.attachment.contentType ?? s.attachment.file?.type ?? "");
+  const nativeFile = useAuiState((s) => s.attachment.file as NativeAttachmentFile | undefined);
+  const inlineData = useAuiState((s) => s.attachment.content?.find((part) => part.type === "file")?.data ?? "");
   const kind = attachmentFileKind(attachmentName, mimeType);
   const attachmentSize = useAuiState((s) => (s.attachment.file as NativeAttachmentFile | undefined)?.qoneFileSize ?? s.attachment.file?.size);
   const attachmentSizeLabel = formatAttachmentSize(attachmentSize);
@@ -117,6 +124,21 @@ const AttachmentUI: FC = () => {
       ? (s.attachment.status.message ?? t("attachment.uploadFailed"))
       : undefined,
   );
+  const previewable = isComposer && !isImage && !isDirectory && !isUploading && Boolean(
+    nativeFile?.qoneLocalPath || inlineData || nativeFile,
+  );
+  const openPreview = async () => {
+    if (!previewable) return;
+    const localPath = nativeFile?.qoneLocalPath;
+    const data = localPath ? "" : inlineData || (nativeFile ? await fileToDataUrl(nativeFile, mimeType) : "");
+    if (!localPath && !data) return;
+    openWorkspaceFile({
+      sessionId,
+      workspaceId,
+      path: (localPath ?? attachmentName) || t("attachment.file"),
+      attachment: localPath ? undefined : { data, mimeType },
+    });
+  };
 
   return (
     <TooltipProvider>
@@ -139,10 +161,19 @@ const AttachmentUI: FC = () => {
                   isComposer && "w-full",
                   isError &&
                     "after:ring-destructive/60 dark:after:ring-destructive/60",
+                  previewable && "cursor-pointer",
                 )}
                 data-state={isError ? "error" : isUploading ? "uploading" : "done"}
                 data-attachment-kind={kind}
+                role={previewable ? "button" : undefined}
+                tabIndex={previewable ? 0 : undefined}
                 aria-label={t("attachment.label", { name: attachmentName || typeLabel }) + (isError || isUploading ? `, ${attachmentMeta}` : "")}
+                onClick={previewable ? () => void openPreview() : undefined}
+                onKeyDown={previewable ? (event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  void openPreview();
+                } : undefined}
               >
                 <div className="aui-attachment-tile-thumb size-8 shrink-0 overflow-hidden rounded-[8px]">
                   <AttachmentThumb />

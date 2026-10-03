@@ -51,6 +51,28 @@ test("a running authored stage shows the latest operation and settles on its pur
   }
 });
 
+test("a running stage shows the latest internal text and restores its purpose when idle", () => {
+  const content: ThreadMessageLike["content"] = [
+    stage("inspect", "排查启动配置为何被覆盖"),
+    { type: "reasoning", text: "Inspecting activeNode and resolvedTag variables" },
+    { type: "tool-call", toolName: "read", toolCallId: "active-read", args: { path: "ConfigRepository.kt" } },
+  ];
+  const serverState = useStore.getInitialState();
+  const previous = serverState.toolCalls;
+  try {
+    serverState.toolCalls = [{ toolCallId: "active-read", toolName: "read", runId: "run", status: "running", args: { path: "ConfigRepository.kt" } }];
+    const running = renderToStaticMarkup(<Fixture running content={content} />);
+    expect(running).toContain('title="Inspecting activeNode and resolvedTag variables"');
+    expect(running).not.toContain('title="排查启动配置为何被覆盖"');
+
+    serverState.toolCalls = [{ toolCallId: "active-read", toolName: "read", runId: "run", status: "success", args: { path: "ConfigRepository.kt" } }];
+    const completed = renderToStaticMarkup(<Fixture content={[...content.slice(0, 2), { ...content[2]!, result: "done" }]} />);
+    expect(completed).toContain('title="排查启动配置为何被覆盖"');
+  } finally {
+    serverState.toolCalls = previous;
+  }
+});
+
 test("a purpose is visible immediately and the next declaration creates the next stage", () => {
   const pending = renderToStaticMarkup(<Fixture running content={[stage("inspect", "排查生命周期状态")]}/>);
   expect(pending).toContain('title="排查生命周期状态"');

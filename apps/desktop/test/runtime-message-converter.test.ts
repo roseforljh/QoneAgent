@@ -53,6 +53,18 @@ test("local preview resolution updates only the owning user message", () => {
   expect(convert(saved, next)).toBe(oldSaved);
 });
 
+test("local file attachments retain their path for the right dock preview", () => {
+  const convert = createMessageConverter();
+  const message: ChatMessage = { id: "file", role: "user", content: "", attachments: [{
+    id: "attachment", type: "file", name: "notes.md", mimeType: "text/markdown", data: "", localPath: "C:/project/notes.md",
+  }] };
+  expect(convert(message, context()).content).toMatchObject([{
+    type: "file",
+    filename: "notes.md",
+    providerMetadata: { qone: { localPath: "C:/project/notes.md" } },
+  }]);
+});
+
 test("legacy tool results invalidate their run and unchanged regrouped calls remain cached", () => {
   const convert = createMessageConverter();
   const legacy = { ...answer(), parts: undefined };

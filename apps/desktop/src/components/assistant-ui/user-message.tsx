@@ -10,7 +10,7 @@ function UserMessageText({ paired = false }: { paired?: boolean }) {
   ));
   if (!hasText) return null;
   return (
-    <div data-aui-quote-selectable="true" className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-full" : "max-w-[70%]")}>
+    <div data-aui-quote-selectable="true" className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-[70%]" : "max-w-[70%]")}>
       <MessagePrimitive.Parts>
         {({ part }) => part.type === "text" ? <span className="whitespace-pre-wrap">{part.text}</span> : null}
       </MessagePrimitive.Parts>
@@ -30,7 +30,9 @@ export function UserMessage() {
 
 export function UserMessageContent() {
   return (
-    <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-fit max-w-[70%] flex-col items-end gap-0.5 self-end">
+    // The top-anchor measures this root; keep the attachment and bubble in it.
+    <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-full flex-col items-end gap-1 self-end">
+      <UserMessageAttachments />
       <UserMessageText paired />
     </MessagePrimitive.Root>
   );

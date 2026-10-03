@@ -1,11 +1,21 @@
 .q-chat-footer {
   isolation: isolate;
+}
+
+.q-chat-composer-anchor {
   background: var(--q-chat-bg, var(--background));
 }
 
-/* Codex keeps a surface/fade layer above the transcript and below the sticky
-   composer. It is absolute so it does not create another scrollable tail. */
-.q-chat-footer::before {
+/* Keep the summary above the composer fade without giving the component a
+   global stacking level. */
+.q-chat-footer > [data-slot="run-file-changes-summary"] {
+  position: relative;
+  z-index: 1;
+}
+
+/* Keep the transcript fade tied to the composer. Content placed above the
+   composer, such as the current-run file summary, must not move this layer. */
+.q-chat-composer-anchor::before {
   position: absolute;
   z-index: 0;
   inset-inline: 0;

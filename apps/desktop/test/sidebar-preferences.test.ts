@@ -9,7 +9,7 @@ const session = (id: string, updatedAt: number, workspaceId?: string): SessionIn
 
 test("sidebar preferences use safe defaults and discard malformed ids", () => {
   expect(parseSidebarPreferences({ layout: "bad", sort: "bad", priorityIds: ["a", 1, "a"] })).toEqual({
-    collapsed: false, layout: "project", sort: "recent", manualOrder: [], manualActivity: {}, priorityIds: ["a"], workspaceOrder: [],
+    collapsed: false, layout: "project", sort: "recent", manualOrder: [], manualActivity: {}, priorityIds: ["a"], workspaceOrder: [], expandedWorkspaceIds: [], expandedSectionIds: [], workspaceExpandedStateInitialized: false, sectionExpandedStateInitialized: false,
   });
 });
 
@@ -89,6 +89,26 @@ test("workspace ordering tolerates deleted projects, new projects and malformed 
   expect(prefs.workspaceOrder).toEqual(["deleted", "b", "a"]);
   expect(sortSidebarWorkspaces(workspaces, prefs.workspaceOrder).map((item) => item.id)).toEqual(["b", "a", "new"]);
   expect(workspaces.map((item) => item.id)).toEqual(["a", "b", "new"]);
+});
+
+test("project and section expansion survive reload independently", async () => {
+  const saved = new Map<string, string>();
+  const storage = createJSONStorage<SidebarPreferences>(() => ({
+    getItem: (key) => saved.get(key) ?? null,
+    setItem: (key, value) => { saved.set(key, value); },
+    removeItem: (key) => { saved.delete(key); },
+  }));
+  const preferences = createSidebarPreferencesStore(storage);
+  preferences.getState().setWorkspaceExpanded("project-b", true, ["project-a"]);
+  preferences.getState().setWorkspaceExpanded("project-a", false, ["project-a"]);
+  preferences.getState().setSectionExpanded("projects", false, ["pinned", "projects", "chats"]);
+
+  const restored = createSidebarPreferencesStore(storage);
+  await restored.persist.rehydrate();
+  expect(restored.getState().expandedWorkspaceIds).toEqual(["project-b"]);
+  expect(restored.getState().expandedSectionIds).toEqual(["pinned", "chats"]);
+  expect(restored.getState().workspaceExpandedStateInitialized).toBe(true);
+  expect(restored.getState().sectionExpandedStateInitialized).toBe(true);
 });
 
 test("dragging freezes the current order, saves it, and preserves project membership and pinned chats", async () => {

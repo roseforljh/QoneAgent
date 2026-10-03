@@ -34,6 +34,7 @@ function mergeSessionActivity(previous: SessionInfo, next: SessionInfo): Session
 }
 let wired = false;
 let lastSequence = -1;
+const lastRunSequences = new Map<string, number>();
 export function initRuntimeBridge(dependencies: ReturnType<typeof import("./store").bridgeDependencies>) {
   const { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
   if (wired) return;
@@ -42,6 +43,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
 
   const ready = listen<string>("runtime-event", (e) => {
     if (e.payload.includes('"type":"runtime.exited"')) {
+      lastRunSequences.clear();
       for (const sessionId of deltas.keys()) clearDelta(sessionId);
       setMetadataLookupSupported(false);
       pendingAgentRuns.clear();
@@ -319,11 +321,25 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             && message.runId === eventStore.getState().activeRunId
             && queue?.adapter.steerItems.some((item) => queue.getPersistentId(item.id) === message.id));
           if (deliveredSteer) clearDelta(msg.sessionId);
+          const live = msg.streaming && msg.streaming.sequence >= (lastRunSequences.get(msg.streaming.runId) ?? -1)
+            ? msg.streaming : undefined;
+          if (live) {
+            clearDelta(msg.sessionId);
+            lastRunSequences.set(live.runId, live.sequence);
+          }
           eventStore.setState((st) => {
             const pendingIds = new Set([...pendingAgentRuns.values()].filter((pending) => pending.sessionId === msg.sessionId).map((pending) => pending.userMessageId));
             if (st.chatRunError) pendingIds.add(st.chatRunError.userMessageId);
             const merged = [...messages, ...st.messages.filter((message) => pendingIds.has(message.id) && !messages.some((saved) => saved.id === message.id))];
             return { messagesLoadingSessionId: undefined, messages: merged, compactions: msg.compactions ?? [], toolCalls: alignToolCallIds(st.toolCalls, merged),
+              ...(live ? {
+                streaming: live.content,
+                streamingParts: live.parts,
+                activeMessageSequence: live.messageSequence,
+                activeRunId: live.runId,
+                running: true,
+                runningSessionIds: st.runningSessionIds.includes(msg.sessionId) ? st.runningSessionIds : [...st.runningSessionIds, msg.sessionId],
+              } : {}),
               ...(deliveredSteer ? { streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [] } : {}),
             };
           });
@@ -752,6 +768,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       case "agent.event": {
         const ev = msg.event;
         lastSequence = Math.max(lastSequence, ev.sequence);
+        if (ev.runId) lastRunSequences.set(ev.runId, Math.max(lastRunSequences.get(ev.runId) ?? -1, ev.sequence));
         if (ev.sessionId && ev.runId && ev.type === "context.compaction.started") {
           const p = ev.payload as { id?: unknown; throughMessageId?: unknown; partIndex?: number; startedAt?: unknown; source?: unknown } | null;
           if (p?.source === "automatic" && typeof p.id === "string" && typeof p.throughMessageId === "string" && typeof p.startedAt === "number") {

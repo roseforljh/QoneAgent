@@ -1,10 +1,7 @@
-import { useLocale } from "../../../localization";
 "use client";
 
 import type { ComponentProps, ReactNode } from "react";
-import { CopyIcon, RefreshCwIcon } from "lucide-react";
 import { cn } from "../../../lib/utils";
-import { ghostButton } from "./surfaces";
 import { take } from "../utils/range";
 import "../message-actions.css";
 
@@ -18,7 +15,6 @@ export interface MessagePairProps extends Omit<
   streaming: boolean;
   variant?: "bubble" | "flat";
   userContent?: ReactNode;
-  userAttachmentContent?: ReactNode;
   userActions?: ReactNode;
   userContentIsSurface?: boolean;
   betweenContent?: ReactNode;
@@ -34,7 +30,6 @@ export function MessagePair({
   streaming,
   variant = "bubble",
   userContent,
-  userAttachmentContent,
   userActions,
   userContentIsSurface = false,
   betweenContent,
@@ -44,7 +39,6 @@ export function MessagePair({
   className,
   ...props
 }: MessagePairProps) {
-  const { t } = useLocale();
   const shown = take(words, visibleWords);
   const userSurfaceClass = cn(
     "min-w-0 max-w-[70%] self-end break-words text-start",
@@ -61,7 +55,6 @@ export function MessagePair({
     >
       {showUser && (
         <div className="q-user-message-group flex w-full flex-col items-end gap-1">
-          {userAttachmentContent}
           {userContent ? (
             userContentIsSurface ? userContent : <div className={userSurfaceClass}>{userContent}</div>
           ) : (
@@ -99,26 +92,7 @@ export function MessagePair({
             })}
           </p>
         )}
-        <div className="q-assistant-message-action-slot">
-          {actions ?? (
-            <>
-              <button
-                type="button"
-                aria-label={t("chat.copyResponse")}
-                className={cn(ghostButton, "size-7")}
-              >
-                <CopyIcon className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                aria-label={t("chat.regenerateResponse")}
-                className={cn(ghostButton, "size-7")}
-              >
-                <RefreshCwIcon className="size-3.5" />
-              </button>
-            </>
-          )}
-        </div>
+        {actions && <div className="q-assistant-message-action-slot">{actions}</div>}
       </div>
     </div>
   );

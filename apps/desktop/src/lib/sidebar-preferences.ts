@@ -14,6 +14,10 @@ export interface SidebarPreferences {
   manualActivity: Record<string, number>;
   priorityIds: string[];
   workspaceOrder: string[];
+  expandedWorkspaceIds: string[];
+  expandedSectionIds: string[];
+  workspaceExpandedStateInitialized: boolean;
+  sectionExpandedStateInitialized: boolean;
 }
 
 export const SIDEBAR_STORAGE_KEY = "qone-sidebar-preferences";
@@ -30,6 +34,10 @@ export function parseSidebarPreferences(value: unknown): SidebarPreferences {
       ? Object.fromEntries(Object.entries(saved.manualActivity).filter(([, at]) => typeof at === "number" && Number.isFinite(at))) : {},
     priorityIds: ids(saved.priorityIds),
     workspaceOrder: ids(saved.workspaceOrder),
+    expandedWorkspaceIds: ids(saved.expandedWorkspaceIds),
+    expandedSectionIds: ids(saved.expandedSectionIds),
+    workspaceExpandedStateInitialized: saved.workspaceExpandedStateInitialized === true,
+    sectionExpandedStateInitialized: saved.sectionExpandedStateInitialized === true,
   };
 }
 
@@ -102,6 +110,8 @@ interface SidebarState extends SidebarPreferences {
   togglePriority: (id: string) => void;
   moveSession: (sessions: readonly SessionInfo[], source: string, target: string, after?: boolean) => void;
   moveWorkspace: (workspaces: readonly WorkspaceInfo[], source: string, target: string, after?: boolean) => void;
+  setWorkspaceExpanded: (id: string, expanded: boolean, defaultExpandedIds: readonly string[]) => void;
+  setSectionExpanded: (id: string, expanded: boolean, defaultExpandedIds: readonly string[]) => void;
 }
 
 export const createSidebarPreferencesStore = (storage = createJSONStorage<SidebarPreferences>(() => localStorage)) => create<SidebarState>()(persist((set, get) => ({
@@ -128,6 +138,16 @@ export const createSidebarPreferencesStore = (storage = createJSONStorage<Sideba
     if (source === target || !workspaces.some((workspace) => workspace.id === source) || !workspaces.some((workspace) => workspace.id === target)) return;
     set({ workspaceOrder: moveSidebarSession(sortSidebarWorkspaces(workspaces, current.workspaceOrder).map((workspace) => workspace.id), source, target, after) });
   },
+  setWorkspaceExpanded: (id, expanded, defaultExpandedIds) => set((state) => {
+    const current = state.workspaceExpandedStateInitialized ? state.expandedWorkspaceIds : [...defaultExpandedIds];
+    const next = expanded ? [...new Set([...current, id])] : current.filter((value) => value !== id);
+    return { expandedWorkspaceIds: next, workspaceExpandedStateInitialized: true };
+  }),
+  setSectionExpanded: (id, expanded, defaultExpandedIds) => set((state) => {
+    const current = state.sectionExpandedStateInitialized ? state.expandedSectionIds : [...defaultExpandedIds];
+    const next = expanded ? [...new Set([...current, id])] : current.filter((value) => value !== id);
+    return { expandedSectionIds: next, sectionExpandedStateInitialized: true };
+  }),
 }), {
   name: SIDEBAR_STORAGE_KEY,
   storage,
@@ -138,7 +158,7 @@ export const createSidebarPreferencesStore = (storage = createJSONStorage<Sideba
     const preferences = parseSidebarPreferences(saved);
     return { ...preferences, sort: preferences.sort === "manual" ? "recent" : preferences.sort };
   },
-  partialize: ({ collapsed, layout, sort, manualOrder, manualActivity, priorityIds, workspaceOrder }) => ({ collapsed, layout, sort, manualOrder, manualActivity, priorityIds, workspaceOrder }),
+  partialize: ({ collapsed, layout, sort, manualOrder, manualActivity, priorityIds, workspaceOrder, expandedWorkspaceIds, expandedSectionIds, workspaceExpandedStateInitialized, sectionExpandedStateInitialized }) => ({ collapsed, layout, sort, manualOrder, manualActivity, priorityIds, workspaceOrder, expandedWorkspaceIds, expandedSectionIds, workspaceExpandedStateInitialized, sectionExpandedStateInitialized }),
   merge: (saved, current) => ({ ...current, ...parseSidebarPreferences(saved) }),
 }));
 
