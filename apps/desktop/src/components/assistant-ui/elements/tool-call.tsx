@@ -36,6 +36,7 @@ export interface ToolCallProps {
   pending?: boolean;
   waiting?: boolean;
   failed?: boolean;
+  canExpand?: boolean;
   requestLabel?: string;
   resultLabel?: string;
   open: boolean;
@@ -58,6 +59,7 @@ export function ToolCall({
   pending = false,
   waiting = false,
   failed = false,
+  canExpand = true,
   open,
   onOpenChange,
   className,
@@ -71,12 +73,12 @@ export function ToolCall({
       ref={disclosureRef}
       data-slot="tool-call"
       data-status={failed ? "failed" : waiting ? "waiting" : pending ? "pending" : running ? "running" : "success"}
-      open={open}
+      open={open && canExpand}
       onOpenChange={onOpenChange}
       className={cn("min-w-0 w-full max-w-full", className)}
     >
       {header ? header(panelId) : <div className="flex min-w-0 max-w-full items-center gap-1.5">
-        <CollapsibleTrigger aria-controls={panelId} title={title} className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent">
+        <CollapsibleTrigger disabled={!canExpand} aria-controls={panelId} title={title} className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent disabled:pointer-events-none">
           {Icon && <Icon className="size-3.5 shrink-0 opacity-60 transition-opacity group-hover/trigger:opacity-90" />}
           <OverflowFade title={target || undefined}>
             <span className="inline-flex items-center gap-1.5">
@@ -105,8 +107,8 @@ export function ToolCall({
           {stat.removed > 0 && <span className="text-rose-600 dark:text-rose-400 font-medium">−{stat.removed}</span>}
         </span>}
       </div>}
-      <MeasuredCollapse id={panelId} open={open} className="outline-none">
-        {open && <div data-slot="tool-result-panel" className={cn("mt-1.5", !resultHasOwnFrame && "overflow-hidden rounded-lg border border-border/40 bg-muted/20 dark:bg-muted/10 shadow-xs")}>
+      <MeasuredCollapse id={panelId} open={open && canExpand} className="outline-none">
+        {open && canExpand && <div data-slot="tool-result-panel" className={cn("mt-1.5", !resultHasOwnFrame && "overflow-hidden rounded-lg border border-border/40 bg-muted/20 dark:bg-muted/10 shadow-xs")}>
           <FadeScroll
             className={cn(failed ? detailViewport : regionViewport, resultHasOwnFrame ? "pe-2" : "p-2.5")}
             autoScrollToBottom={running}

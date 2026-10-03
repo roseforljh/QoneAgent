@@ -21,26 +21,26 @@ function Fixture({ running, complete, text = "**分析**视频", grouped = false
   }} /></AssistantRuntimeProvider>;
 }
 
-test("active reasoning shows scrollable content with only the disclosure icon", () => {
-  const html = renderToStaticMarkup(<Fixture running complete={false} />);
+test("active reasoning uses the latest thought as its disclosure label", () => {
+  const html = renderToStaticMarkup(<Fixture running complete={false} text={"规划 VPN 启动优化\n\n分析 VPN 启动日志"} />);
   expect(html).toContain('data-slot="reasoning"');
-  expect(html).toContain('aria-expanded="true"');
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain("q-reasoning-preview");
+  expect(html).toContain('title="分析 VPN 启动日志"');
   expect(html).toContain('data-slot="codex-icon"');
   expect(html.match(/data-slot="codex-icon"/g)).toHaveLength(1);
   expect(html).not.toContain("brain-light");
-  expect(html).toContain('role="region"');
-  expect(html).toContain("overflow-y-auto");
-  expect(html).toContain("分析视频");
+  expect(html).not.toContain('role="region"');
+  expect(html).not.toContain("overflow-y-auto");
   expect(html).not.toContain("<strong");
   expect(html).not.toContain('role="dialog"');
 });
 
-test("long reasoning retains its beginning and ending inside the bounded scroll area", () => {
+test("long reasoning keeps the latest line in the collapsed label and uses a bounded viewport", async () => {
   const text = "开头保留\n\n" + "完整思考内容。".repeat(500) + "\n\n末尾保留";
   const html = renderToStaticMarkup(<Fixture running complete={false} text={text} />);
-  expect(html).toContain("开头保留");
-  expect(html).toContain("末尾保留");
-  expect(html).toContain("max-h-[min(22rem,60dvh)]");
+  expect(html).toContain('title="末尾保留"');
+  expect(await Bun.file("apps/desktop/src/components/assistant-ui/reasoning.css").text()).toContain("max-height: min(22rem, 60dvh);");
 });
 
 test("block completion collapses the preview while the answer is still running", () => {

@@ -1,6 +1,19 @@
 .q-chat-footer {
   isolation: isolate;
-  background: transparent;
+  background: var(--q-chat-bg, var(--background));
+}
+
+/* Codex keeps a surface/fade layer above the transcript and below the sticky
+   composer. It is absolute so it does not create another scrollable tail. */
+.q-chat-footer::before {
+  position: absolute;
+  z-index: 0;
+  inset-inline: 0;
+  bottom: 100%;
+  height: calc(8 * var(--spacing));
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(to bottom, transparent, var(--q-chat-bg, var(--background)));
 }
 
 /* Initial history and submitted-turn placement share the same safe top edge. */

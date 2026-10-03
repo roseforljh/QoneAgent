@@ -22,6 +22,11 @@ test("dispatch and follow-up tools resolve the same child by structured IDs", ()
   expect(subagentForTool({ toolName: "control_subagent", toolCallId: "later", args: { runId: "child" } }, undefined, [child], "session", "later-parent")).toBe(child);
 });
 
+test("workflow tools resolve a child step for the existing open-subagent action", () => {
+  const workflowChild = { ...child, id: "workflow-child", toolCallId: "workflow:wf-1:scout", status: "running" } as SubagentRunInfo;
+  expect(subagentForTool({ toolName: "run_subagent_workflow", toolCallId: "workflow-call" }, undefined, [workflowChild], "session", "parent")).toBe(workflowChild);
+});
+
 test("agent title is a separate accessible button beside the tool disclosure", () => {
   const html = renderToStaticMarkup(<ToolCall
     label="control_subagent" activeLabel="正在执行" query="control_subagent"

@@ -179,3 +179,127 @@ test("pending-message reveal uses the same safe top edge as the primitive placem
   f.controller.reveal(message.dom());
   expect(f.viewport.calls).toEqual([768]);
 });
+
+test.each([false, true])("new turn watches its reserve then follows overflow (prework batched: %s)", (batched) => {
+  const f = fixture();
+  f.reserve.height = 800;
+  f.controller.sync({ turnId: "next", running: true, phase: batched ? "prework" : "idle" });
+  if (!batched) {
+    const message = new ElementStub(); message.viewport = f.viewport; message.top = 600;
+    f.controller.reveal(message.dom());
+    f.controller.sync({ turnId: "next", running: true, phase: "prework" });
+  }
+  flush();
+  expect(f.viewport.scrollTop).toBe(600);
+  f.reserve.height = 600;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(600);
+  f.reserve.height = 300;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(800);
+  f.controller.sync({ turnId: "next", running: true, phase: "final_answer" }); flush();
+  f.reserve.height = 200;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(900);
+});
+
+test("a direct final answer still follows after skipping prework", () => {
+  const f = fixture();
+  f.reserve.height = 800;
+  f.controller.sync({ turnId: "next", running: true, phase: "idle" });
+  f.controller.sync({ turnId: "next", running: true, phase: "final_answer" });
+  flush();
+  expect(f.viewport.scrollTop).toBe(600);
+  f.reserve.height = 600;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(600);
+  f.reserve.height = 300;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(800);
+});
+
+test("final answer overflow follows even when prework fit inside the reserve", () => {
+  const f = fixture();
+  f.reserve.height = 800;
+  f.controller.sync({ turnId: "next", running: true, phase: "prework" }); flush();
+  f.controller.sync({ turnId: "next", running: true, phase: "final_answer" }); flush();
+  expect(f.viewport.scrollTop).toBe(600);
+  f.reserve.height = 300;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(800);
+});
+
+test("reading pauses a direct final answer before its first overflow", () => {
+  const f = fixture();
+  f.reserve.height = 800;
+  f.controller.sync({ turnId: "next", running: true, phase: "idle" }); flush();
+  f.viewport.scrollTo({ top: 550 });
+  f.controller.sync({ turnId: "next", running: true, phase: "final_answer" });
+  f.reserve.height = 300;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(550);
+});
+
+test("reading after placement stays paused through the first work and final answer", () => {
+  const f = fixture();
+  f.reserve.height = 800;
+  f.controller.sync({ turnId: "next", running: true, phase: "idle" }); flush();
+  f.viewport.scrollTo({ top: 550 });
+  f.controller.sync({ turnId: "next", running: true, phase: "prework" });
+  f.reserve.height = 300;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(550);
+  f.controller.sync({ turnId: "next", running: true, phase: "final_answer" }); flush();
+  expect(f.viewport.scrollTop).toBe(550);
+  f.controller.scrollToBottom();
+  expect(f.viewport.scrollTop).toBe(800);
+});
+
+test.each([0, 180])("completed tail including its spacing agrees with the native scroll limit (end content %ipx)", (endHeight) => {
+  const f = fixture();
+  f.controller.dispose(); disposers.pop();
+  // The existing 28px separation is now inside each measured content box.
+  f.reserve.height = 0;
+  f.content.height = 1200 + 28;
+  const end = new ElementStub(); end.viewport = f.viewport;
+  end.top = f.content.height; end.height = endHeight ? endHeight + 28 : 0;
+  f.viewport.scrollHeight = f.content.height + end.height + 100;
+  const controller = mountThreadScrollController({
+    viewport: f.viewport.dom(), content: f.content.dom(), footer: f.footer.dom(), endContent: end.dom(),
+    turn: { turnId: "u", running: false, phase: "idle" }, hasRestoration: false,
+    onVisibility: () => {}, onSave: () => {},
+  });
+  disposers.push(controller.dispose);
+  expect(f.viewport.scrollTop).toBe(f.viewport.scrollHeight - f.viewport.clientHeight);
+  f.viewport.scrollTo({ top: f.viewport.scrollHeight });
+  const nativeBottom = f.viewport.scrollTop;
+  ResizeStub.change(f.content); flush();
+  expect(f.viewport.scrollTop).toBe(nativeBottom);
+  // Expanding final file changes still uses that same bottom.
+  f.content.height += 120; end.top += 120; f.viewport.scrollHeight += 120;
+  ResizeStub.change(f.content); flush();
+  expect(f.viewport.scrollTop).toBe(f.viewport.scrollHeight - f.viewport.clientHeight);
+});
+
+test.each(["wheel", "touch", "pointer"])("scrolling down into the top-anchor reserve does not snap back (%s)", (input) => {
+  const f = fixture();
+  f.controller.sync({ turnId: "next", running: true, phase: "prework" });
+  flush();
+  if (input === "wheel") {
+    const wheel = new Event("wheel");
+    Object.defineProperties(wheel, { deltaY: { value: 80 }, deltaX: { value: 0 } });
+    f.viewport.dispatchEvent(wheel);
+  } else if (input === "touch") {
+    const start = new Event("touchstart");
+    Object.defineProperty(start, "touches", { value: [{ clientY: 300 }] });
+    f.viewport.dispatchEvent(start);
+    const move = new Event("touchmove");
+    Object.defineProperty(move, "touches", { value: [{ clientY: 220 }] });
+    f.viewport.dispatchEvent(move);
+  } else f.viewport.dispatchEvent(new Event("pointerdown"));
+  f.viewport.scrollTop = 780;
+  f.viewport.dispatchEvent(new Event("scroll"));
+  f.reserve.height = 300;
+  ResizeStub.change(f.reserve); flush();
+  expect(f.viewport.scrollTop).toBe(780);
+});

@@ -5,7 +5,7 @@ import { sessionStore, switchSessionState, type SessionExecutionState } from "./
 import { updateSessionActivity } from "./lib/session-recency";
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type GoalInfo } from "@qone/protocol";
+import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo } from "@qone/protocol";
 import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
@@ -106,6 +106,7 @@ export interface AgentState {
   mcpServers: McpServerInfo[];
   subagentConfig: SubagentConfigInfo;
   subagents: SubagentRunInfo[];
+  subagentNotifications: SubagentNotificationInfo[];
   mcpConnectingIds: string[];
   browserStatus?: BrowserSyncStatus;
   reachChannels: ReachChannelInfo[];
@@ -135,6 +136,7 @@ export interface AgentState {
   preparedToolCallIds: string[];
   running: boolean;
   runningSessionIds: string[];
+  completedSessionIds: string[];
   activeRunId?: string;
   approvals: PendingApproval[];
   toolCalls: ToolCall[];
@@ -224,7 +226,7 @@ function rememberBrowserConnection(): void {
   catch { /* Local storage may be unavailable in a restricted preview. */ }
 }
 
-const pendingAgentRuns = new Map<string, { requestId: string; sessionId: string; userMessageId: string }>();
+const pendingAgentRuns = new Map<string, { requestId: string; sessionId: string; userMessageId: string; completed?: boolean }>();
 const stopRequestedSessionIds = new Set<string>();
 const stopRequests = new Map<string, { sessionId: string; runId: string }>();
 function stopRun(sessionId: string, runId: string) {
@@ -343,6 +345,7 @@ export const useStore = create<AgentState>((set, get) => ({
   mcpServers: [],
   subagentConfig: loadLocalSubagentConfig(),
   subagents: [],
+  subagentNotifications: [],
   mcpConnectingIds: [],
   browserStatus: undefined,
   reachChannels: [],
@@ -359,6 +362,7 @@ export const useStore = create<AgentState>((set, get) => ({
   preparedToolCallIds: [],
   running: false,
   runningSessionIds: [],
+  completedSessionIds: [],
   draftWorkspaceId: undefined,
   creatingSession: false,
   pendingMessage: undefined,
@@ -439,7 +443,7 @@ export const useStore = create<AgentState>((set, get) => ({
             activeRunId: undefined,
           });
         }
-        set((state) => ({ runningSessionIds: state.runningSessionIds.filter((id) => id !== cmd.sessionId), titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
+        set((state) => ({ runningSessionIds: state.runningSessionIds.filter((id) => id !== cmd.sessionId), completedSessionIds: state.completedSessionIds.filter((id) => id !== cmd.sessionId), titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
       } else if (cmd.type === "session.generate-title") {
         pendingTitleRequests.delete(cmd.requestId);
         set((state) => ({ titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
@@ -466,14 +470,13 @@ export const useStore = create<AgentState>((set, get) => ({
       set({ lastError: t("error.projectBeforeChat") });
       return;
     }
-    set({ draftRunOptions: {}, lastError: undefined });
-    get().send({ type: "session.create", requestId: rid(), workspaceId });
+    get().newSessionInWorkspace(workspaceId);
   },
 
   newSessionInWorkspace: (workspaceId) => {
     if (!get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
     flushNow();
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(get()) });
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(get()) });
     get().refreshWorkspace(workspaceId);
   },
 
@@ -547,17 +550,27 @@ export const useStore = create<AgentState>((set, get) => ({
   },
 
   selectSession: (id) => {
-    if (get().currentSessionId === id) return;
+    const current = get();
+    if (current.currentSessionId === id) return;
     flushNow();
-    const workspaceId = get().sessions.find((session) => session.id === id)?.workspaceId;
-    const workspaceChanged = workspaceId !== undefined && workspaceId !== get().currentWorkspaceId;
-    set({ currentSessionId: id, queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: get().runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? get().currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], chatRunError: undefined, ...switchSessionState(get(), id), messagesLoadingSessionId: id });
-    get().send({ type: "session.messages", requestId: rid(), sessionId: id });
+    const state = get();
+    const workspaceId = state.sessions.find((session) => session.id === id)?.workspaceId;
+    const workspaceChanged = workspaceId !== undefined && workspaceId !== state.currentWorkspaceId;
+    const cached = state.backgroundSessions[id];
+    // A loaded background conversation can render immediately while its history
+    // is refreshed. Only show the blocking skeleton for a first load or a load
+    // that was already pending when the conversation was left.
+    const messagesLoadingSessionId = cached?.messagesLoadingSessionId === id ? id : cached ? undefined : id;
+    set({ currentSessionId: id, completedSessionIds: state.completedSessionIds.filter((sessionId) => sessionId !== id), queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: state.runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? state.currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], chatRunError: undefined, ...switchSessionState(state, id), messagesLoadingSessionId });
+    requestSessionMessages(id);
     get().send({ type: "goal.get", requestId: rid(), sessionId: id });
     get().send({ type: "session.queue.list", requestId: rid(), sessionId: id });
     get().send({ type: "session.toolCalls", requestId: rid(), sessionId: id });
     get().send({ type: "session.runs", requestId: rid(), sessionId: id });
     get().send({ type: "session.subagents", requestId: rid(), sessionId: id });
+    if (get().runtimeCapabilities.includes("subagent.notifications")) {
+      get().send({ type: "session.subagentNotifications", requestId: rid(), sessionId: id });
+    }
     get().send({ type: "artifact.list", requestId: rid(), sessionId: id });
     if (workspaceId) get().refreshWorkspace(workspaceId);
   },
@@ -627,6 +640,7 @@ export const useStore = create<AgentState>((set, get) => ({
       preparedToolCallIds: [],
       running: true,
       runningSessionIds: s.runningSessionIds.includes(sid) ? s.runningSessionIds : [...s.runningSessionIds, sid],
+      completedSessionIds: s.completedSessionIds.filter((id) => id !== sid),
       contextUsage: replaceIndex >= 0 ? undefined : s.contextUsage,
       contextUsageRequestId: undefined,
       creatingSession: false,
@@ -839,10 +853,37 @@ function ensureStreamingToolPart(
 // older session.messages response that still contains that turn, otherwise a
 // delayed response can restore the old bubble beside the replacement.
 const pendingMessageReplacements = new Map<string, string>();
+const pendingSessionMessageRequests = new Map<string, { sessionId: string }>();
+const latestSessionMessageRequest = new Map<string, string>();
 const pendingTitleRequests = new Map<string, string>();
 
+function requestSessionMessages(sessionId: string) {
+  const requestId = rid();
+  pendingSessionMessageRequests.set(requestId, { sessionId });
+  latestSessionMessageRequest.set(sessionId, requestId);
+  void useStore.getState().send({ type: "session.messages", requestId, sessionId }).then((sent) => {
+    if (sent) return;
+    const pending = pendingSessionMessageRequests.get(requestId);
+    if (!pending) return;
+    pendingSessionMessageRequests.delete(requestId);
+    if (latestSessionMessageRequest.get(sessionId) !== requestId) return;
+    clearSessionMessageRequests(sessionId);
+    const owner = sessionStore(useStore, sessionId);
+    if (owner.getState().messagesLoadingSessionId === sessionId) {
+      owner.setState({ messagesLoadingSessionId: undefined, lastError: t("error.runtimeUnavailable") });
+    }
+  });
+}
+
+function clearSessionMessageRequests(sessionId: string) {
+  for (const [requestId, pending] of pendingSessionMessageRequests) {
+    if (pending.sessionId === sessionId) pendingSessionMessageRequests.delete(requestId);
+  }
+  latestSessionMessageRequest.delete(sessionId);
+}
+
 export function bridgeDependencies() {
-  return { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, pendingMessageReplacements, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
+  return { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
 }
 
 export function initBridge() { initRuntimeBridge(bridgeDependencies()); }

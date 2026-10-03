@@ -23,6 +23,11 @@ export function useThreadBottomControl() {
 export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null>; children: ReactNode }> = ({ contentRef, children }) => {
   const sessionId = useConversationStore((state) => state.currentSessionId);
   const running = useAuiState((state) => state.thread.isRunning);
+  const hasActiveTopAnchorTurn = useAuiState((state) => {
+    if (!state.thread.isRunning) return false;
+    const messages = state.thread.messages;
+    return messages.at(-2)?.role === "user" && messages.at(-1)?.role === "assistant";
+  });
   const phase = useAuiState((state) => threadPhase(state.thread.isRunning, state.thread.messages));
   const turnId = useAuiState((state) => [...state.thread.messages].reverse().find((message) => message.role === "user")?.id);
   const viewportStore = useThreadViewportStore();
@@ -70,11 +75,14 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
   useLayoutEffect(() => {
     const previous = previousTurn.current;
     previousTurn.current = { sessionId, turnId };
-    if (previous.sessionId !== sessionId || previous.turnId === turnId || !turnId) return;
+    // A live pair belongs to assistant-ui even before its refs register. Let it
+    // measure the response reserve before placing the turn.
+    if (previous.sessionId !== sessionId || previous.turnId === turnId || !turnId
+      || hasActiveTopAnchorTurn) return;
     const message = [...(contentRef.current?.querySelectorAll<HTMLElement>(".q-message-user[data-message-id]") ?? [])]
       .find((element) => element.dataset.messageId === turnId);
     if (message) controller.current?.reveal(message);
-  }, [sessionId, turnId, contentRef]);
+  }, [hasActiveTopAnchorTurn, sessionId, turnId, contentRef]);
 
   const scrollToBottom = useCallback(() => {
     if (controller.current) controller.current.scrollToBottom();

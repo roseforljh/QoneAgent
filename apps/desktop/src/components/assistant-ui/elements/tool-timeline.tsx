@@ -109,6 +109,7 @@ export function ToolTimeline({
             <>{restingLabel}</>
           </SwapLabel>
         </OverflowFade>
+        {failureLabel && <span className="shrink-0 text-xs text-muted-foreground" aria-label={failureLabel}>{failureLabel}</span>}
         {canExpand && <ChevronRightIcon data-slot="tool-disclosure-chevron" className="size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover/trigger:opacity-75 group-focus-visible/trigger:opacity-100 group-data-[state=open]/trigger:opacity-100 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />}
       </CollapsibleTrigger>
       <MeasuredCollapse id={panelId} open={open && canExpand} className="outline-none">

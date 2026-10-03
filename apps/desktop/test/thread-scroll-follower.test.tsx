@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { act, StrictMode, useRef } from "react";
-import { pruneThreadScrollStates } from "../src/lib/thread-scroll-state";
+import { getThreadScrollState, pruneThreadScrollStates } from "../src/lib/thread-scroll-state";
 
 // Real React ref/effect ordering with deterministic geometry. No browser is used.
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
@@ -85,19 +85,22 @@ function BottomButton() {
   const control = follower.useThreadBottomControl();
   return <button data-test-bottom data-visible={control.show} onClick={control.scrollToBottom}>Bottom</button>;
 }
-function Fixture({ sessionId = "mount-order" }: { sessionId?: string }) {
+function Fixture({ sessionId = "mount-order", running = true, messageRoots = false }: { sessionId?: string; running?: boolean; messageRoots?: boolean }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const runtime = aui.useExternalStoreRuntime({
     messages: [{ id: "u", role: "user", content: [{ type: "text", text: "question" }] },
       { id: "a", role: "assistant", content: [{ type: "tool-call", toolName: "read", toolCallId: "t", args: {} }] }],
     convertMessage: (message) => message,
-    isRunning: true, onNew: async () => {},
+    isRunning: running, onNew: async () => {},
   });
   return <aui.AssistantRuntimeProvider runtime={runtime}>
     <aui.ThreadPrimitive.Viewport key={sessionId} data-test-viewport turnAnchor="top"
+      scrollRestoration={getThreadScrollState(sessionId)}
       scrollToBottomOnInitialize={false} scrollToBottomOnRunStart={false} scrollToBottomOnThreadSwitch={false}>
       <follower.ThreadScrollFollower contentRef={contentRef}>
-        <div ref={contentRef} data-test-content>tool output</div>
+        <div ref={contentRef} data-test-content>{messageRoots
+          ? <aui.ThreadPrimitive.Messages>{({ message }) => <aui.MessagePrimitive.Root>{message.id}</aui.MessagePrimitive.Root>}</aui.ThreadPrimitive.Messages>
+          : "tool output"}</div>
         <aui.ThreadPrimitive.ViewportFooter data-thread-scroll-footer><BottomButton /></aui.ThreadPrimitive.ViewportFooter>
       </follower.ThreadScrollFollower>
     </aui.ThreadPrimitive.Viewport>
@@ -171,4 +174,34 @@ test("StrictMode ref/effect replay retains exactly one functioning scroll owner"
   await act(async () => { root!.unmount(); }); root = undefined;
   expect(ResizeStub.instances.size).toBe(0);
   expect(frames.size).toBe(0);
+});
+
+test.each([false, true])("switching away and back restores the actual reading position (running: %s)", async (running) => {
+  contentHeight = 1200; scrollHeight = 1800;
+  useStore.setState({ currentSessionId: "reading-a" });
+  const container = document.createElement("div"); document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root!.render(<Fixture sessionId="reading-a" running={running} messageRoots />); });
+  await flush();
+  const a = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  await act(async () => {
+    a.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
+    a.scrollTo({ top: 320 });
+  });
+  await act(async () => {
+    useStore.setState({ currentSessionId: "reading-b" });
+    root!.render(<Fixture sessionId="reading-b" running={running} messageRoots />);
+  });
+  await flush();
+  expect(getThreadScrollState("reading-a")?.current?.scrollTop).toBe(320);
+  const b = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  await act(async () => {
+    b.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
+    b.scrollTo({ top: 420 });
+    useStore.setState({ currentSessionId: "reading-a" });
+    root!.render(<Fixture sessionId="reading-a" running={running} messageRoots />);
+  });
+  await flush();
+  expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(320);
+  expect(getThreadScrollState("reading-b")?.current?.scrollTop).toBe(420);
 });

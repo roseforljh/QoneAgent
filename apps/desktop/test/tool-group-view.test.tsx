@@ -72,13 +72,13 @@ function RunningGroupFixture() {
   }} /></AssistantRuntimeProvider>;
 }
 
-test("the active tool group opens and uses the running command as its title", () => {
+test("the active tool group starts collapsed and uses the running command as its title", () => {
   const previous = useStore.getState().toolCalls;
   try {
     useStore.setState({ toolCalls: [{ toolCallId: "running-command", toolName: "powershell", runId: "run", status: "running" }] });
     const html = renderToStaticMarkup(<RunningGroupFixture />);
     expect(html).toContain('data-slot="tool-timeline"');
-    expect(html).toContain('data-state="open"');
+    expect(html).toMatch(/data-slot="tool-timeline"[^>]*data-state="closed"|data-state="closed"[^>]*data-slot="tool-timeline"/);
     expect(html).toMatch(/title="[^"]*gradlew test/);
   } finally {
     useStore.setState({ toolCalls: previous });

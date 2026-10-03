@@ -20,7 +20,7 @@ import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { useSidebarPreferences } from "../../lib/sidebar-preferences";
 import { useLocale, type MessageKey } from "../../localization";
 import "./sidebar-menu.css";
-import { MorphingSpinner } from "./morphing-spinner";
+import { MorphingSpinner, SessionCompletionDot } from "./morphing-spinner";
 import { SidebarSessionTitle } from "./sidebar-session-title";
 import { SidebarSessionActions } from "./sidebar-session-pin-action";
 import { SidebarContextMenu } from "./sidebar-menu";
@@ -131,6 +131,7 @@ ThreadListNew.displayName = "ThreadListNew";
 export const ThreadListItem: FC = () => {
   const id = useAuiState((s) => s.threadListItem.id);
   const isRunning = useStore((s) => s.runningSessionIds.includes(id));
+  const isCompleted = useStore((s) => s.completedSessionIds.includes(id));
   const sessions = useStore((s) => s.sessions);
   const renameSession = useStore((s) => s.renameSession);
   const deleteSession = useStore((s) => s.deleteSession);
@@ -175,19 +176,19 @@ export const ThreadListItem: FC = () => {
         </span>
         {isRunning && <span className="sr-only">{t("goal.active")}</span>}
       </ThreadListItemPrimitive.Trigger>}
-      {!renaming && <ThreadListItemMore isRunning={isRunning} onRename={() => setRenaming(true)} onDelete={deleteChat} />}
+      {!renaming && <ThreadListItemMore isRunning={isRunning} isCompleted={isCompleted} onRename={() => setRenaming(true)} onDelete={deleteChat} />}
     </ThreadListItemPrimitive.Root>
     </SidebarContextMenu>
   );
 };
 
-const ThreadListItemMore: FC<{ isRunning: boolean; onRename: () => void; onDelete: () => void | Promise<void> }> = ({ isRunning, onRename, onDelete }) => {
+const ThreadListItemMore: FC<{ isRunning: boolean; isCompleted: boolean; onRename: () => void; onDelete: () => void | Promise<void> }> = ({ isRunning, isCompleted, onRename, onDelete }) => {
   const { t } = useLocale();
   const id = useAuiState((s) => s.threadListItem.id);
   const priority = useSidebarPreferences((s) => s.priorityIds.includes(id));
   const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   return (
-    <SidebarSessionActions pinned={priority} onTogglePinned={() => togglePriority(id)} status={isRunning ? <MorphingSpinner data-slot="aui_thread-list-item-running" className="size-3.5" /> : undefined}>
+    <SidebarSessionActions pinned={priority} onTogglePinned={() => togglePriority(id)} status={isRunning ? <MorphingSpinner data-slot="aui_thread-list-item-running" className="size-3.5" /> : isCompleted ? <SessionCompletionDot /> : undefined}>
       <ThreadListItemMorePrimitive.Root sharedFocusGroup>
         <ThreadListItemMorePrimitive.Trigger asChild>
           <Button

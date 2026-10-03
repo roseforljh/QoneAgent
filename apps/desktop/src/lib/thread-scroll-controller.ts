@@ -119,14 +119,19 @@ export function mountThreadScrollController(options: ControllerOptions) {
   const schedule = () => { if (!disposed && frame === null) frame = requestAnimationFrame(refresh); };
   const scroll = () => {
     if (programmatic) return;
-    const distance = geometry().distance;
+    const { distance, reserveHeight } = geometry();
     // Only a real change in scroll position releases intent; content growth does not.
     // Pointer dragging the scrollbar can happen while content height is being
     // measured, so it must not depend on scrollHeight staying unchanged.
-    if (animation === null && pointerActive && viewport.scrollTop !== pointerStartTop
-      && distance > THREAD_BOTTOM_TOLERANCE_PX) hold();
+    if (animation === null && touchY !== undefined && reserveHeight > THREAD_BOTTOM_TOLERANCE_PX
+      && viewport.scrollTop !== previousTop) hold();
+    else if (animation === null && pointerActive && viewport.scrollTop !== pointerStartTop
+      && (distance > THREAD_BOTTOM_TOLERANCE_PX || reserveHeight > THREAD_BOTTOM_TOLERANCE_PX)) hold();
     else if (animation === null && viewport.scrollTop < previousTop) hold();
-    else if (animation === null && viewport.scrollTop > previousTop && distance <= THREAD_BOTTOM_TOLERANCE_PX) {
+    // A top-anchor placement also scrolls downward, but its blank response
+    // reserve is not a user request to resume tail following.
+    else if (animation === null && viewport.scrollTop > previousTop && distance <= THREAD_BOTTOM_TOLERANCE_PX
+      && (reserveHeight === 0 || pointerActive || touchY !== undefined)) {
       held = false;
       mode = nextThreadFollowMode(mode, { type: "bottom", phase: turn.phase });
     }
@@ -136,7 +141,14 @@ export function mountThreadScrollController(options: ControllerOptions) {
   const gesture = (away: boolean, target: EventTarget | null) => {
     if (nestedScrollConsumes(target, viewport, away)) return;
     if (away) hold();
-    else if (geometry().distance <= THREAD_BOTTOM_TOLERANCE_PX) followBottom();
+    else {
+      const { distance, reserveHeight } = geometry();
+      // Scrolling into the top-anchor reserve is still explicit user intent.
+      // Keep that position stable instead of letting the following refresh
+      // snap back to the real transcript tail.
+      if (reserveHeight > THREAD_BOTTOM_TOLERANCE_PX) hold();
+      else if (distance <= THREAD_BOTTOM_TOLERANCE_PX) followBottom();
+    }
   };
   const wheel = (event: WheelEvent) => {
     if (event.defaultPrevented || event.ctrlKey || event.shiftKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
@@ -203,15 +215,16 @@ export function mountThreadScrollController(options: ControllerOptions) {
     sync(next: ThreadScrollTurn) {
       if (next.turnId !== turn.turnId) {
         cancelAnimation();
-        held = true;
+        // Placement is not a user hold. Watch the new reply for overflow once
+        // prework starts, without consuming its initial response reserve.
+        held = false;
         mode = nextThreadFollowMode(mode, { type: "placed" });
         turn = { ...next, phase: "idle" };
-      } else if (!held) {
-        mode = nextThreadFollowMode(mode, { type: "phase", previous: turn.phase, phase: next.phase });
-        turn = next;
-      } else {
-        turn = next;
       }
+      if (!held) {
+        mode = nextThreadFollowMode(mode, { type: "phase", previous: turn.phase, phase: next.phase });
+      }
+      turn = next;
       schedule();
     },
     reveal(message: HTMLElement) {
@@ -221,8 +234,8 @@ export function mountThreadScrollController(options: ControllerOptions) {
       const vpTop = viewport.getBoundingClientRect().top;
       const target = viewport.scrollTop + rect.top - (vpTop + topInset);
       cancelAnimation();
-      held = true;
-      mode = "static";
+      held = false;
+      mode = nextThreadFollowMode("static", { type: "phase", previous: "idle", phase: turn.phase });
       writeTop(target);
       publish();
     },

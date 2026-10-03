@@ -20,7 +20,8 @@ export function nextThreadFollowMode(mode: ThreadFollowMode, event: ThreadFollow
   switch (event.type) {
     case "hold": case "placed": return "static";
     case "bottom": return event.phase === "prework" ? "prework_follow" : "user_follow";
-    case "content": return event.phase === "prework" && mode === "prework_watch" && event.overflow > 0 ? "prework_follow" : mode;
+    case "content": return event.phase !== "idle" && mode === "prework_watch" && event.overflow > 0
+      ? event.phase === "prework" ? "prework_follow" : "user_follow" : mode;
     case "distance": return event.distance <= THREAD_BOTTOM_TOLERANCE_PX ? mode
       : mode === "prework_follow" ? "prework_watch"
       : mode === "user_follow" ? (event.phase === "prework" ? "prework_watch" : "static") : mode;
@@ -29,7 +30,13 @@ export function nextThreadFollowMode(mode: ThreadFollowMode, event: ThreadFollow
         if (mode === "static") mode = "prework_watch";
         if (mode === "user_follow") mode = "prework_follow";
       }
-      if (event.previous === "prework" && event.phase === "final_answer") mode = mode === "prework_follow" ? "user_follow" : "static";
+      // Text-only replies can skip prework; collapsed prework can finish before
+      // overflowing. Keep watching the reserve in both cases, rather than
+      // clearing intent or scrolling past the newly placed user message.
+      if (event.previous !== "final_answer" && event.phase === "final_answer") {
+        if (mode === "prework_follow") mode = "user_follow";
+        if (mode === "static") mode = "prework_watch";
+      }
       if (event.previous !== "idle" && event.phase === "idle") {
         mode = mode === "prework_follow" || mode === "user_follow" ? "user_follow" : "static";
       }

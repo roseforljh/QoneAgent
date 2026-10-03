@@ -17,6 +17,7 @@ mod native_error;
 use native_error::NativeError;
 mod native_copy;
 mod webview_policy;
+mod window_state;
 use native_copy::{NativeCopy, NativeCopyState, set_native_copy};
 
 fn ensure_global_instructions_file() -> Result<(), String> {
@@ -617,6 +618,7 @@ fn main() {
             });
             let generation = Arc::new(AtomicU64::new(0));
             let state = spawn_sidecar(app.handle(), generation.clone(), 0)?;
+            window_state::restore(app.handle());
             app.manage(Sidecar {
                 state: Arc::new(Mutex::new(state)),
                 generation,
@@ -656,7 +658,9 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            window_state::observe(window, event);
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window_state::save(window.app_handle());
                 #[cfg(debug_assertions)]
                 {
                     // Let `tauri dev` exit normally so the debug executable is
@@ -703,6 +707,7 @@ fn main() {
         .expect("error while building tauri application")
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {
+                window_state::save(_app);
                 #[cfg(debug_assertions)]
                 eprintln!("[qone:lifecycle] application exited");
                 #[cfg(windows)]

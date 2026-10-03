@@ -27,6 +27,7 @@ import { isIntegrationTool } from "./tool-activity-category";
 import type { McpServerInfo } from "@qone/protocol";
 import type { AssistantPartRange } from "./assistant-part-ranges";
 import { Reasoning } from "./reasoning";
+import { latestReasoningText } from "./reasoning-preview";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
@@ -77,6 +78,7 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
   const parentRunId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : state.messages.find((message) => message.id === messageId)?.runId);
   const subagents = useConversationStore((state) => state.subagents);
   const subagent = subagentForTool(part, call?.args, subagents, sessionId, parentRunId);
+  const backgroundSubagent = Boolean(subagent?.background || part.toolName === "run_subagent_workflow" && subagent);
   const status = toolActivity(part, call, prepared, messageRunning);
   const failed = String(status) === "failed";
   const result = call?.result !== undefined ? call.result : part.result !== undefined ? part.result : call?.summary;
@@ -139,6 +141,7 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
       pending={status === "queued" || status === "generating"}
       waiting={status === "waiting"}
       failed={failed}
+      canExpand={!backgroundSubagent}
       requestLabel={t("chat.toolRequest")}
       resultLabel={t("chat.toolResult")}
       open={open}
@@ -150,7 +153,7 @@ const ToolCallEntry: FC<{ part: ToolPartState; step: SessionTimelineStep; prepar
 
 export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activityRanges?: readonly AssistantPartRange[]; title?: string }> = ({ startIndex, endIndex, activityRanges, title }) => {
   const { locale, t } = useLocale();
-  const [runningClosed, setRunningClosed] = useState(false);
+  const [runningOpen, setRunningOpen] = useState(false);
   const [completedOpen, setCompletedOpen] = useState(false);
   // `useAuiState` compares selected values by reference. Select the stable
   // parts array first, then derive the filtered list during render; filtering
@@ -189,9 +192,9 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   const awaitingStageWork = Boolean(title) && messageRunning && endIndex === parts.length;
   const stageCompacting = Boolean(title) && activityRanges?.some((range) => range.type === "compaction" && range.marker.status === "running");
   const working = toolWorking || thinking || awaitingStageWork || Boolean(stageCompacting);
-  const open = working ? !runningClosed : completedOpen;
+  const open = working ? runningOpen : completedOpen;
   const setOpen = (nextOpen: boolean) => {
-    if (working) setRunningClosed(!nextOpen);
+    if (working) setRunningOpen(nextOpen);
     else setCompletedOpen(nextOpen);
   };
   const activePart = activeIndex >= 0 ? executedToolParts[activeIndex] : undefined;
@@ -211,13 +214,14 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   }, [activeCall?.startedAt, activeCall?.status, activeCall?.toolCallId]);
 
   const restingLabel = toolGroupSummary(steps, locale);
+  const failedCount = steps.filter((step) => step.failed).length;
   const activity = activePart ? toolActivity(activePart, activeCall, preparedIds.has(activePart.toolCallId), messageRunning) : undefined;
   const describeActive = (part: ToolPartState, step: SessionTimelineStep) => activity === "generating"
     ? [step.category === "file-change" ? t("chat.toolGeneratingEdit") : toolPreparationLabel(part, step, locale), step.target].filter(Boolean).join(" · ")
     : activity === "queued" ? [t("chat.toolQueued"), step.target].filter(Boolean).join(" · ")
       : activity === "waiting" ? [t("chat.toolApprovalPending"), step.target].filter(Boolean).join(" · ")
         : toolActionSummary(part, step, activeCall, true, now, locale);
-  const activeLabel = thinking ? t("chat.reasoningActive") : activePart && activeStep ? describeActive(activePart, activeStep) : "";
+  const activeLabel = thinking && lastPart?.type === "reasoning" ? latestReasoningText(lastPart.text) : activePart && activeStep ? describeActive(activePart, activeStep) : "";
   const fullSummary = toolGroupSummary(steps, locale, { fullTargets: true });
   const fullActiveLabel = activePart && activeStep
     ? describeActive(activePart, { ...activeStep, target: activeStep.fullTarget ?? activeStep.target })
@@ -266,6 +270,7 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
       className="q-tool-timeline max-w-2xl"
       fullActiveLabel={liveFullLabel}
       activeLabel={liveLabel}
+      failureLabel={title && failedCount ? t("chat.toolGroupFailedMany", { count: failedCount }) : undefined}
     />
   );
 };

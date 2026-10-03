@@ -1,6 +1,7 @@
 import type { SessionInfo, WorkspaceInfo } from "@qone/protocol";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { sessionActivityAt } from "./session-recency";
 
 export type SidebarLayout = "project" | "list";
 export type ChatSort = "priority" | "recent" | "manual";
@@ -36,7 +37,7 @@ export function sortSidebarSessions(sessions: readonly SessionInfo[], prefs: Sid
   const priority = new Set(prefs.priorityIds);
   const positions = new Map(prefs.manualOrder.map((id, index) => [id, index]));
   const changed = (session: SessionInfo) => !Object.hasOwn(prefs.manualActivity, session.id)
-    || session.updatedAt > prefs.manualActivity[session.id]!;
+    || sessionActivityAt(session) > prefs.manualActivity[session.id]!;
   return [...sessions].sort((a, b) => {
     if (prefs.sort === "priority") {
       const rank = Number(priority.has(b.id)) - Number(priority.has(a.id));
@@ -52,7 +53,7 @@ export function sortSidebarSessions(sessions: readonly SessionInfo[], prefs: Sid
         if (rank) return rank;
       }
     }
-    return b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id);
+    return sessionActivityAt(b) - sessionActivityAt(a) || b.createdAt - a.createdAt || a.id.localeCompare(b.id);
   });
 }
 
@@ -112,7 +113,7 @@ export const createSidebarPreferencesStore = (storage = createJSONStorage<Sideba
     // Capture the visible order on entry, including any chats promoted by activity.
     set({ sort, ...(sort === "manual" && current.sort !== "manual"
       ? { manualOrder: sortSidebarSessions(sessions, current).map((session) => session.id),
-          manualActivity: Object.fromEntries(sessions.map((session) => [session.id, session.updatedAt])) } : {}) });
+          manualActivity: Object.fromEntries(sessions.map((session) => [session.id, sessionActivityAt(session)])) } : {}) });
   },
   togglePriority: (id) => set((state) => ({ priorityIds: state.priorityIds.includes(id)
     ? state.priorityIds.filter((value) => value !== id) : [...state.priorityIds, id] })),
@@ -120,7 +121,7 @@ export const createSidebarPreferencesStore = (storage = createJSONStorage<Sideba
     const current = get();
     if (source === target || !sessions.some((session) => session.id === source) || !sessions.some((session) => session.id === target)) return;
     set({ sort: "manual", manualOrder: moveSidebarSession(sortSidebarSessions(sessions, current).map((session) => session.id), source, target, after),
-      manualActivity: Object.fromEntries(sessions.map((session) => [session.id, session.updatedAt])) });
+      manualActivity: Object.fromEntries(sessions.map((session) => [session.id, sessionActivityAt(session)])) });
   },
   moveWorkspace: (workspaces, source, target, after = false) => {
     const current = get();

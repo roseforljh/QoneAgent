@@ -19,6 +19,7 @@ import { selectSubagentImages } from "./lib/subagent-images";
 import { serializeMessageAttachments } from "./lib/message-attachments";
 import { extractComposerPrompt } from "./lib/composer-prompt";
 import { addComposerHistory } from "./lib/composer-history";
+import { sessionActivityAt } from "./lib/session-recency";
 import { useComposerDrafts } from "./lib/use-composer-drafts";
 import { composerDrafts } from "./lib/composer-drafts";
 import { queueMessageDraft } from "./lib/queue-composer-edit";
@@ -125,12 +126,12 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       });
       return true;
     },
-    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); if (prompt.text.trim()) addComposerHistory(prompt.text); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId); },
+    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); if (prompt.text.trim()) addComposerHistory(currentSessionId, prompt.text); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId); },
     steer: (message, queueItemId, attachments, targetRunId) => {
       const state = sessionStore(useStore, currentSessionId).getState();
       if (!targetRunId || state.activeRunId !== targetRunId || !state.running) return Promise.resolve(false);
       const prompt = extractComposerPrompt(message);
-      if (prompt.text.trim()) addComposerHistory(prompt.text);
+      if (prompt.text.trim()) addComposerHistory(currentSessionId, prompt.text);
       return steerAgent({ sessionId: currentSessionId, runId: targetRunId, queueItemId, message: prompt.text, attachments });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId: currentSessionId, items }); },
@@ -164,7 +165,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
       title: session.title,
       status: "regular",
       // passed through to threadItems via the adapter's spread
-      lastMessageAt: new Date(session.updatedAt),
+      lastMessageAt: new Date(sessionActivityAt(session)),
     } as ExternalStoreThreadData<"regular">)),
     [sessions, sidebarPreferences, currentSessionId],
   );
@@ -192,7 +193,7 @@ function useQoneRuntime(pendingRun: { current: { text: string; attachments: Mess
     onNew: async (message) => {
       const prompt = extractComposerPrompt(message);
       const text = prompt.text;
-      if (text.trim()) addComposerHistory(text);
+      if (currentSessionId && text.trim()) addComposerHistory(currentSessionId, text);
       let attachments: MessageAttachmentInfo[];
       try { attachments = await serializeMessageAttachments(message); }
       catch (error) { useStore.setState({ lastError: String(error) }); throw error; }
@@ -320,6 +321,8 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
   }, []);
   const lastError = useStore((s) => s.lastError);
   const currentSessionId = useStore((s) => s.currentSessionId);
+  const currentWorkspaceId = useStore((s) => s.currentWorkspaceId);
+  const workspaces = useStore((s) => s.workspaces);
 
   const runAgent = useStore((s) => s.runAgent);
   const sidebarLayout = useSidebarPreferences((s) => s.layout);
@@ -371,6 +374,7 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
           <ThreadListRoot className="relative min-h-0 w-full flex-1 gap-0 overflow-hidden">
             <div className="flex shrink-0 flex-col gap-0.5 px-2 pb-2">
               <ThreadListNew
+                disabled={!currentWorkspaceId || !workspaces.some((workspace) => workspace.id === currentWorkspaceId)}
                 className={cn(
                   "group h-[30px] overflow-hidden transition-all duration-200",
                   "w-full gap-2 px-2.5",

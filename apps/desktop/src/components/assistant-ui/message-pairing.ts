@@ -2,6 +2,7 @@ export interface PairableMessage {
   id: string;
   role: string;
   parentId: string | null;
+  status?: { type?: string };
 }
 
 export function pairMessageIds(messages: readonly PairableMessage[]) {
@@ -9,7 +10,7 @@ export function pairMessageIds(messages: readonly PairableMessage[]) {
   for (let index = 1; index < messages.length; index++) {
     const user = messages[index - 1];
     const assistant = messages[index];
-    if (user?.role === "user" && assistant?.role === "assistant" && assistant.parentId === user.id) {
+    if (user?.role === "user" && assistant?.role === "assistant" && assistant.status?.type !== "running" && assistant.parentId === user.id) {
       userIdByAssistant.set(assistant.id, user.id);
     }
   }

@@ -174,7 +174,7 @@ export function ComposerHistoryPlugin({ menuOpen }: { menuOpen: boolean }) {
         }
         if (menuOpen || editingQueueItem) return false;
 
-        const history = getCombinedComposerHistory(sessionUserMessages);
+        const history = getCombinedComposerHistory(sessionId, sessionUserMessages);
         if (history.length === 0) return false;
 
         // 已经处于回溯模式中
@@ -215,7 +215,7 @@ export function ComposerHistoryPlugin({ menuOpen }: { menuOpen: boolean }) {
           return false;
         }
 
-        const history = getCombinedComposerHistory(sessionUserMessages);
+        const history = getCombinedComposerHistory(sessionId, sessionUserMessages);
         event.preventDefault();
 
         // 如果还可以继续向前翻到更新的历史

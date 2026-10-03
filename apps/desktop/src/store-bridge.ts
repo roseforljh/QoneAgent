@@ -3,7 +3,7 @@ import { localizeError } from "./lib/error-localization";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
 import { saveRunOptions } from "./lib/run-options";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
@@ -23,10 +23,19 @@ const rid = () => crypto.randomUUID();
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 const CAPABILITY_ROUTING_STORAGE_KEY = "qone-capability-routing";
 const SUBAGENT_RUNTIME_STORAGE_KEY = "qone-subagent-runtime";
+
+function mergeSessionActivity(previous: SessionInfo, next: SessionInfo): SessionInfo {
+  const lastUserMessageAt = Math.max(previous.lastUserMessageAt ?? 0, next.lastUserMessageAt ?? 0);
+  return {
+    ...next,
+    updatedAt: Math.max(previous.updatedAt, next.updatedAt),
+    ...(lastUserMessageAt > 0 ? { lastUserMessageAt } : {}),
+  };
+}
 let wired = false;
 let lastSequence = -1;
 export function initRuntimeBridge(dependencies: ReturnType<typeof import("./store").bridgeDependencies>) {
-  const { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, pendingMessageReplacements, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
+  const { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
   if (wired) return;
   if (!hasTauriBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
@@ -39,6 +48,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       stopRequestedSessionIds.clear();
       stopRequests.clear();
       pendingTitleRequests.clear();
+      pendingSessionMessageRequests.clear();
+      latestSessionMessageRequest.clear();
       mcpConnectRequests.clear();
       restoredMcpSecrets.clear();
       clearTrackedWorkspaceRequests();
@@ -48,8 +59,13 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
         return {
           connected: false,
+          // Capabilities belong to one runtime process. Keeping them across a
+          // restart can send a newly added optional command to an older
+          // sidecar before its handshake completes.
+          runtimeCapabilities: [],
           ...queueEditsOnDisconnect(st),
           runningSessionIds: [],
+          completedSessionIds: [],
           compactionStatuses: {},
           autoCompactionStatuses: {},
           browserStatus: st.browserStatus ? { ...st.browserStatus, targetConnected: false, phase: "error", lastError: t("browser.runtimeExited") } : undefined,
@@ -63,6 +79,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           streamingParts: [],
           activeMessageSequence: undefined,
           preparedToolCallIds: [],
+          messagesLoadingSessionId: undefined,
           queueItems: [],
           queueLoadedSessionId: undefined,
           ...(st.running && st.currentSessionId && userMessage ? {
@@ -109,11 +126,9 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           break;
         }
         if (pendingAgentRuns.has(msg.requestId)) {
-          const { sessionId, userMessageId } = pendingAgentRuns.get(msg.requestId)!;
-          pendingAgentRuns.delete(msg.requestId);
-          eventStore.setState((state) => state.currentSessionId === sessionId
-            ? { messages: state.messages.map((message) => message.id === userMessageId ? { ...message, persisted: true } : message) }
-            : state);
+          const { sessionId } = pendingAgentRuns.get(msg.requestId)!;
+          // A pong only acknowledges that runtime_send accepted the command;
+          // it does not confirm that the user turn is durable yet.
           void s.send({ type: "session.runs", requestId: rid(), sessionId });
           break;
         }
@@ -167,6 +182,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           toolCalls: [],
           runs: [],
           subagents: [],
+          subagentNotifications: [],
           artifacts: [],
           running: false,
           activeRunId: undefined,
@@ -217,17 +233,21 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             toolCalls: [],
             runs: [],
             subagents: [],
+            subagentNotifications: [],
             artifacts: [],
             ...switchSessionState(state, selected?.id),
           } : {}),
         });
         if (selected) {
-          s.send({ type: "session.messages", requestId: rid(), sessionId: selected.id });
+          requestSessionMessages(selected.id);
           s.send({ type: "goal.get", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.queue.list", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.toolCalls", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.runs", requestId: rid(), sessionId: selected.id });
           s.send({ type: "session.subagents", requestId: rid(), sessionId: selected.id });
+          if (eventStore.getState().runtimeCapabilities.includes("subagent.notifications")) {
+            s.send({ type: "session.subagentNotifications", requestId: rid(), sessionId: selected.id });
+          }
           s.send({ type: "artifact.list", requestId: rid(), sessionId: selected.id });
           if (selected.workspaceId) eventStore.getState().refreshWorkspace(selected.workspaceId);
         }
@@ -237,7 +257,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         eventStore.setState((st) => msg.session.sideChat
           ? { sideChats: { ...st.sideChats, [msg.session.id]: msg.session } }
           : { sessions: st.sessions.map((session) => session.id === msg.session.id
-              ? { ...msg.session, updatedAt: Math.max(session.updatedAt, msg.session.updatedAt) } : session) });
+              ? mergeSessionActivity(session, msg.session) : session) });
         break;
       case "session.search":
         if (msg.query === eventStore.getState().activeSearchQuery) eventStore.setState({ searchResults: msg.results, searchLoading: false });
@@ -248,15 +268,41 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         eventStore.setState((st) => ({
           sessions: st.sessions.map((session) => session.id === msg.session.id
-            ? { ...msg.session, updatedAt: Math.max(session.updatedAt, msg.session.updatedAt) } : session),
+            ? mergeSessionActivity(session, msg.session) : session),
           titleGeneratingSessionIds: st.titleGeneratingSessionIds.filter((id) => id !== msg.session.id),
         }));
         break;
-      case "session.messages":
+      case "session.messages": {
+        const pendingRequest = msg.requestId ? pendingSessionMessageRequests.get(msg.requestId) : undefined;
+        const requestSessionId = pendingRequest?.sessionId ?? msg.sessionId;
+        const isLatestRequest = !msg.requestId || latestSessionMessageRequest.get(requestSessionId) === msg.requestId;
+        if (msg.requestId && !pendingRequest) break;
+        if (msg.requestId) {
+          pendingSessionMessageRequests.delete(msg.requestId);
+          if (isLatestRequest) latestSessionMessageRequest.delete(requestSessionId);
+        }
+        // A response to an older history query must never replace the current
+        // conversation snapshot. The request id is the only ordering signal
+        // that survives the runtime IPC boundary.
+        if (!isLatestRequest) break;
+        const savedMessageIds = new Set(msg.messages.map((message) => message.id));
+        for (const [requestId, pending] of pendingAgentRuns) {
+          // A run may produce an up-to-date snapshot before an older in-flight
+          // query returns. Do not drop the protection until the run is over;
+          // otherwise that older snapshot can remove the newest user bubble.
+          if (pending.sessionId === msg.sessionId && pending.completed && savedMessageIds.has(pending.userMessageId)) {
+            pendingAgentRuns.delete(requestId);
+          }
+        }
         if (msg.sessionId === eventStore.getState().currentSessionId) {
           const replacedMessageId = pendingMessageReplacements.get(msg.sessionId);
-          if (replacedMessageId && msg.messages.some((message) => message.id === replacedMessageId)) break;
+          if (replacedMessageId && msg.messages.some((message) => message.id === replacedMessageId)) {
+            clearSessionMessageRequests(msg.sessionId);
+            eventStore.setState((state) => state.messagesLoadingSessionId === msg.sessionId ? { messagesLoadingSessionId: undefined } : state);
+            break;
+          }
           if (replacedMessageId) pendingMessageReplacements.delete(msg.sessionId);
+          clearSessionMessageRequests(msg.sessionId);
           const messages = msg.messages.map((m: MessageInfo) => ({
             id: m.id,
             role: m.role,
@@ -283,6 +329,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           });
         }
         break;
+      }
       case "goal.current":
         if (msg.sessionId === eventStore.getState().currentSessionId) eventStore.setState({ goal: msg.goal });
         break;
@@ -320,7 +367,10 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         {
           const activeRun = msg.runs.find((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));
           eventStore.setState((st) => {
-            const pending = [...pendingAgentRuns.values()].some((request) => request.sessionId === msg.sessionId);
+            // A completed run may still be waiting for its history snapshot to
+            // persist the optimistic user message. That persistence wait must
+            // not keep the conversation marked as running.
+            const pending = [...pendingAgentRuns.values()].some((request) => request.sessionId === msg.sessionId && !request.completed);
             const runningSessionIds = activeRun || pending || (st.running && st.activeRunId && !msg.runs.some((run) => run.id === st.activeRunId))
               ? st.runningSessionIds.includes(msg.sessionId) ? st.runningSessionIds : [...st.runningSessionIds, msg.sessionId]
               : st.runningSessionIds.filter((id) => id !== msg.sessionId);
@@ -354,6 +404,9 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             return { subagents: [...byId.values()].sort((a, b) => a.startedAt - b.startedAt) };
           });
         }
+        break;
+      case "session.subagentNotifications":
+        if (msg.sessionId === eventStore.getState().currentSessionId) eventStore.setState({ subagentNotifications: msg.notifications });
         break;
       case "subagent.updated":
         if (msg.subagent.parentSessionId === eventStore.getState().currentSessionId) {
@@ -400,7 +453,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined,
         }));
         eventStore.getState().refreshWorkspace(msg.workspace.id);
-        eventStore.setState({ draftWorkspaceId: msg.workspace.id, draftDockId: crypto.randomUUID(), currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [], ...switchSessionState(eventStore.getState()) });
+        eventStore.setState({ draftWorkspaceId: msg.workspace.id, draftDockId: crypto.randomUUID(), currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], approvals: [], ...switchSessionState(eventStore.getState()) });
         break;
       case "workspace.renamed":
         eventStore.setState((st) => ({ workspaces: st.workspaces.map((workspace) => workspace.id === msg.workspace.id ? msg.workspace : workspace) }));
@@ -566,6 +619,24 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         eventStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
         break;
       case "error":
+        // Notification snapshots are an optional UI enhancement. A sidecar
+        // from before this command was added must not turn that compatibility
+        // gap into a visible red error; the next handshake will advertise the
+        // capability when the runtime supports it.
+        if (msg.message === "invalid or unsupported command: session.subagentNotifications") break;
+        if (msg.requestId && pendingSessionMessageRequests.has(msg.requestId)) {
+          const pending = pendingSessionMessageRequests.get(msg.requestId)!;
+          const sessionId = pending.sessionId;
+          const isLatestRequest = latestSessionMessageRequest.get(sessionId) === msg.requestId;
+          pendingSessionMessageRequests.delete(msg.requestId);
+          if (!isLatestRequest) break;
+          clearSessionMessageRequests(sessionId);
+          const owner = sessionStore(useStore, sessionId);
+          if (owner.getState().messagesLoadingSessionId === sessionId) {
+            owner.setState({ messagesLoadingSessionId: undefined, lastError: displayRuntimeError(msg.message) });
+          }
+          break;
+        }
         if (dispatchFilePreviewError(msg.requestId, msg.message)) break;
         if (msg.requestId && stopRequests.has(msg.requestId)) {
           const request = stopRequests.get(msg.requestId)!;
@@ -720,6 +791,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             activeRunId: ev.runId,
             running: true,
             runningSessionIds: ev.sessionId && !st.runningSessionIds.includes(ev.sessionId) ? [...st.runningSessionIds, ev.sessionId] : st.runningSessionIds,
+            completedSessionIds: ev.sessionId ? st.completedSessionIds.filter((id) => id !== ev.sessionId) : st.completedSessionIds,
             runs: st.runs.some((run) => run.id === ev.runId)
               ? st.runs
               : [{ id: ev.runId!, sessionId: ev.sessionId ?? st.currentSessionId ?? "", status: "running", startedAt: ev.timestamp }, ...st.runs],
@@ -978,14 +1050,20 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           if (isActiveRun) {
             eventStore.setState((st) => ({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], running: false, activeRunId: undefined, approvals: [], runningSessionIds: ev.sessionId ? st.runningSessionIds.filter((id) => id !== ev.sessionId) : st.runningSessionIds }));
           }
+          if (ev.sessionId) {
+            eventStore.setState((st) => ({ completedSessionIds: st.completedSessionIds.includes(ev.sessionId!) ? st.completedSessionIds : [...st.completedSessionIds, ev.sessionId!] }));
+          }
           if (ev.type === "agent.cancelled") {
             const cancelledSessionId = ev.sessionId ?? eventStore.getState().currentSessionId;
             eventStore.setState((st) => ({ titleGeneratingSessionIds: st.titleGeneratingSessionIds.filter((id) => id !== cancelledSessionId) }));
           }
           const sessionId = ev.sessionId ?? eventStore.getState().currentSessionId;
           if (sessionId) {
+            for (const pending of pendingAgentRuns.values()) {
+              if (pending.sessionId === sessionId) pending.completed = true;
+            }
             const state = eventStore.getState();
-            state.send({ type: "session.messages", requestId: rid(), sessionId });
+            requestSessionMessages(sessionId);
             state.send({ type: "session.toolCalls", requestId: rid(), sessionId });
             state.send({ type: "session.runs", requestId: rid(), sessionId });
             state.send({ type: "artifact.list", requestId: rid(), sessionId });

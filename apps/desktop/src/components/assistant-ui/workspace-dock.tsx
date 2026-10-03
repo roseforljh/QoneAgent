@@ -39,7 +39,8 @@ import { OPEN_WORKSPACE_FILE_EVENT, resolveFileReferencePath, type WorkspaceFile
 import { OPEN_RUN_CHANGES_EVENT, runChangesTab, type RunChangesTarget } from "../../lib/run-changes-navigation";
 import { RunChangesPanel } from "./run-changes-panel";
 import FileReader from "./file-reader";
-import { clampDockWidth, defaultDockWidth, DOCK_WIDTH_STORAGE_KEY, dockWidthBounds, dockWidthFromRatio, dockWidthRatio, dockResizeState } from "../../lib/dock-layout";
+import { clampDockWidth, defaultDockWidth, dockWidthBounds, dockResizeState } from "../../lib/dock-layout";
+import { usePaneSizes } from "../../lib/pane-size-preferences";
 import { usePaneResize } from "../../lib/use-pane-resize";
 import { usePaneMotion } from "../../lib/use-pane-motion";
 import { DOCK_VISIBILITY_TRANSITION } from "../../lib/pane-motion";
@@ -416,16 +417,6 @@ function GitView({ tabId, workspaceId, refreshNonce }: { tabId: string; workspac
   );
 }
 
-function readSavedDockRatio(): number | undefined {
-  try {
-    const value = Number(window.localStorage.getItem(DOCK_WIDTH_STORAGE_KEY));
-    return Number.isFinite(value) && value >= 0 && value <= 1 && window.localStorage.getItem(DOCK_WIDTH_STORAGE_KEY) !== null
-      ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function SessionDetails() {
   const { locale, t } = useLocale();
   const session = useStore((state) => state.sessions.find((item) => item.id === state.currentSessionId));
@@ -504,11 +495,13 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
   const panelRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(() => typeof window === "undefined" ? 0 : window.innerWidth);
   const [availableHeight, setAvailableHeight] = useState(() => typeof window === "undefined" ? 0 : window.innerHeight);
-  const [savedWidthRatio, setSavedWidthRatio] = useState(readSavedDockRatio);
+  const preferredWidth = usePaneSizes((state) => state.dockWidth);
+  const saveWidth = usePaneSizes((state) => state.setDockWidth);
+  const migrateDockWidth = usePaneSizes((state) => state.migrateDockWidth);
   const [dragWidth, setDragWidth] = useState<number>();
   const [maximized, setMaximized] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(() => typeof window !== "undefined" && window.innerWidth <= NARROW_SCREEN_WIDTH);
-  const panelW = dragWidth ?? dockWidthFromRatio(savedWidthRatio, availableWidth, availableHeight, isNarrowScreen);
+  const panelW = clampDockWidth(dragWidth ?? preferredWidth ?? defaultDockWidth(availableWidth, availableHeight, isNarrowScreen), availableWidth, isNarrowScreen);
   const { minimum: minPanelW, maximum: maxPanelW } = dockWidthBounds(availableWidth, isNarrowScreen);
 
   useEffect(() => {
@@ -523,6 +516,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
       setAvailableWidth(Math.max(0, fullWidth - sidebarWidth));
       setAvailableHeight(container.clientHeight);
       setIsNarrowScreen(window.innerWidth <= NARROW_SCREEN_WIDTH);
+      migrateDockWidth(Math.max(0, fullWidth - sidebarWidth), container.clientHeight, window.innerWidth <= NARROW_SCREEN_WIDTH);
     };
     const observer = new ResizeObserver(measure);
     observer.observe(container);
@@ -534,7 +528,7 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [scopeActive]);
+  }, [scopeActive, migrateDockWidth]);
   const terminalApiRefs = useRef(new Map<string, MutableRefObject<TerminalApi | undefined>>());
   const getTerminalApiRef = (tabId: string) => {
     let ref = terminalApiRefs.current.get(tabId);
@@ -615,12 +609,6 @@ export function WorkspaceDock({ scopeActive, sessionId, workspaceId, onViewChang
     window.addEventListener(OPEN_RUN_CHANGES_EVENT, showChanges);
     return () => window.removeEventListener(OPEN_RUN_CHANGES_EVENT, showChanges);
   }, [scopeActive, sessionId]);
-
-  const saveWidth = (width: number) => {
-    const ratio = dockWidthRatio(width, availableWidth, isNarrowScreen);
-    setSavedWidthRatio(ratio);
-    try { window.localStorage.setItem(DOCK_WIDTH_STORAGE_KEY, String(ratio)); } catch { /* unavailable storage */ }
-  };
 
   const { dragging, startResize, cancelResize } = usePaneResize({
     direction: -1,

@@ -5,7 +5,7 @@ export function emptySessionState() {
   return {
     messages: [], compactions: [], streaming: "", streamingParts: [],
     activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [],
-    runs: [], subagents: [], artifacts: [], approvals: [], running: false,
+    runs: [], subagents: [], subagentNotifications: [], artifacts: [], approvals: [], running: false,
     activeRunId: undefined, modelRequest: undefined, chatRunError: undefined,
     goal: undefined, queueItems: [], queueLoadedSessionId: undefined,
     editingQueueItem: undefined, contextUsage: undefined, contextUsageRequestId: undefined,

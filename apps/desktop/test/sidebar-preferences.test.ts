@@ -55,6 +55,15 @@ test("recent and priority sorting are deterministic", () => {
   expect(sortSidebarSessions(sessions, { ...parseSidebarPreferences(null), sort: "priority", priorityIds: ["old"] }).map((item) => item.id)).toEqual(["old", "new", "middle"]);
 });
 
+test("recent sorting follows the latest user message instead of assistant completion", () => {
+  const sessions = [
+    { ...session("assistant-finished-later", 20), lastUserMessageAt: 3 },
+    { ...session("user-spoke-later", 10), lastUserMessageAt: 5 },
+  ];
+  expect(sortSidebarSessions(sessions, { ...parseSidebarPreferences(null), sort: "recent" }).map((item) => item.id))
+    .toEqual(["user-spoke-later", "assistant-finished-later"]);
+});
+
 test("manual order moves one chat and project filtering isolates orphan chats", () => {
   expect(moveSidebarSession(["a", "b", "c"], "c", "a")).toEqual(["c", "a", "b"]);
   const sessions = [session("a", 1, "project-a"), session("b", 2), session("c", 3, "project-b")];

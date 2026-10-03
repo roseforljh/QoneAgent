@@ -47,7 +47,7 @@ export function useSideConversationRuntime(sessionId: string) {
   const owner = useMemo(() => sessionStore(useStore, sessionId), [sessionId]);
   const submit = (message: AppendMessage, queueItemId: string | undefined, attachments: Awaited<ReturnType<typeof serializeMessageAttachments>>) => {
     const prompt = extractComposerPrompt(message);
-    if (prompt.text.trim()) addComposerHistory(prompt.text);
+    if (prompt.text.trim()) addComposerHistory(sessionId, prompt.text);
     useStore.getState().runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, sessionId);
   };
   const queue = useMemo(() => ready ? getQoneMessageQueue(sessionId) ?? createQoneMessageQueue({
@@ -75,7 +75,9 @@ export function useSideConversationRuntime(sessionId: string) {
     send: (message, id, attachments) => submit(message, id, attachments),
     steer: (message, queueItemId, attachments, runId) => {
       if (!runId || !owner.getState().running || owner.getState().activeRunId !== runId) return Promise.resolve(false);
-      return useStore.getState().steerAgent({ sessionId, runId, queueItemId, message: extractComposerPrompt(message).text, attachments });
+      const prompt = extractComposerPrompt(message);
+      if (prompt.text.trim()) addComposerHistory(sessionId, prompt.text);
+      return useStore.getState().steerAgent({ sessionId, runId, queueItemId, message: prompt.text, attachments });
     },
     sync: (items) => { void useStore.getState().send({ type: "queue.sync", requestId: crypto.randomUUID(), sessionId, items }); },
     onError: (message) => useStore.setState({ lastError: message }),

@@ -170,11 +170,11 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           scrollToBottomOnInitialize={false}
           scrollToBottomOnRunStart={false}
           scrollToBottomOnThreadSwitch={false}
-          className="aui-viewport flex min-h-0 grow flex-col gap-7 overflow-y-auto"
+          className="aui-viewport flex min-h-0 grow flex-col overflow-y-auto"
         >
           <ThreadScrollFollower contentRef={messageListRef}>
           <ConversationMapAui />
-          <div ref={messageListRef} className="q-message-list relative flex w-full min-w-0 flex-col gap-5">
+          <div ref={messageListRef} className="q-message-list relative flex w-full min-w-0 shrink-0 flex-col gap-5 pb-7">
             <div data-conversation-rail-content aria-hidden="true" className="pointer-events-none invisible absolute inset-x-0 top-0 mx-auto h-0 w-full q-thread-content" />
             <ThreadPrimitive.Messages>
               {({ message }) => {
@@ -206,9 +206,9 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
               }}
             </ThreadPrimitive.Messages>
           </div>
-          <div data-thread-end-content className="mx-auto w-full q-thread-content empty:hidden">{children}</div>
+          <div data-thread-end-content className="mx-auto w-full shrink-0 q-thread-content pb-7 empty:hidden">{children}</div>
 
-          <ThreadPrimitive.ViewportFooter data-thread-scroll-footer className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full flex-col overflow-visible bg-transparent pb-2">
+          <ThreadPrimitive.ViewportFooter data-thread-scroll-footer className="q-chat-footer sticky bottom-0 z-20 mt-auto flex w-full shrink-0 flex-col overflow-visible pb-2">
             <ThreadScrollToBottom />
             {canChat && <RunFileChangesSummary />}
             <div className="relative mx-auto w-full q-composer-content">

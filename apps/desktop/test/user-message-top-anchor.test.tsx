@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
+import type { ThreadMessageLike } from "@assistant-ui/react";
 import { act, useRef } from "react";
 import { pruneThreadScrollStates } from "../src/lib/thread-scroll-state";
 
@@ -93,7 +94,7 @@ afterAll(() => {
   dom.window.close();
 });
 
-test("sending a new user message automatically pins it to the top edge and does not immediately jump to bottom", async () => {
+test("pending user messages remain visible before the assistant pair exists", async () => {
   let runtimeMessages: any[] = [
     { id: "u1", role: "user", content: [{ type: "text", text: "first" }] },
     { id: "a1", role: "assistant", content: [{ type: "text", text: "answer" }], status: { type: "complete", reason: "stop" } },
@@ -143,9 +144,8 @@ test("sending a new user message automatically pins it to the top edge and does 
   runtimeMessages = [
     ...runtimeMessages,
     { id: "u2", role: "user", content: [{ type: "text", text: "second question" }] },
-    { id: "streaming", role: "assistant", content: [{ type: "text", text: "thinking" }], status: { type: "running" } },
   ];
-  isRunning = true;
+  isRunning = false;
 
   await act(async () => {
     root!.render(<Fixture />);
@@ -166,4 +166,101 @@ test("sending a new user message automatically pins it to the top edge and does 
   // CRITICAL: Next frame must NOT have yanked the viewport down to the bottom (1000)
   // It must stay anchored at the user message top (668)!
   expect(viewport.scrollTop).toBe(668);
+});
+
+test.each([80, 320])("real message primitives own placement and response reserve (user height %ipx)", async (userHeight) => {
+  const viewportTop = 80;
+  const userTop = 700;
+  let replyHeight = 40;
+  let running = false;
+  let messages: ThreadMessageLike[] = [
+    { id: "u1", role: "user", content: [{ type: "text", text: "first" }] },
+    { id: "a1", role: "assistant", content: [{ type: "text", text: "answer" }] },
+  ];
+  const calls: ScrollToOptions[] = [];
+  const reserveHeight = () => Number.parseFloat(document.querySelector<HTMLElement>("[data-aui-top-anchor-reserve]")?.style.height ?? "0");
+  const tail = () => userTop + userHeight + replyHeight;
+  Object.defineProperties(view.HTMLElement.prototype, {
+    offsetParent: { configurable: true, get() { return this.hasAttribute("data-message-id") ? this.closest("[data-test-viewport]") : null; } },
+    offsetTop: { configurable: true, get() { return this.hasAttribute("data-test-viewport") ? viewportTop : this.dataset.messageId === "u2" ? userTop : this.dataset.messageId === "a2" ? userTop + userHeight : 100; } },
+    offsetHeight: { configurable: true, get() { return this.hasAttribute("data-aui-top-anchor-reserve") ? Number.parseFloat(this.style.height) : this.dataset.messageId === "u2" ? userHeight : replyHeight; } },
+    scrollHeight: { configurable: true, get() { return Math.max(600, tail() + 100 + reserveHeight()); } },
+  });
+  view.HTMLElement.prototype.getBoundingClientRect = function () {
+    const scroll = this.closest("[data-test-viewport]")?.scrollTop ?? 0;
+    if (this.hasAttribute("data-test-viewport")) return new view.DOMRect(0, viewportTop, 600, 600);
+    if (this.hasAttribute("data-thread-scroll-footer")) return new view.DOMRect(0, viewportTop + 500, 600, 100);
+    if (this.hasAttribute("data-message-id")) return new view.DOMRect(0, viewportTop + this.offsetTop - scroll, 600, this.offsetHeight);
+    if (this.hasAttribute("data-aui-top-anchor-reserve")) return new view.DOMRect(0, viewportTop + tail() - scroll, 600, reserveHeight());
+    return new view.DOMRect(0, viewportTop - scroll, 600, tail() + reserveHeight());
+  };
+  view.HTMLElement.prototype.scrollTo = function (options: ScrollToOptions) {
+    calls.push(options);
+    this.scrollTop = Math.max(0, Math.min(options.top ?? 0, this.scrollHeight - this.clientHeight));
+    this.dispatchEvent(new view.Event("scroll"));
+  } as typeof view.HTMLElement.prototype.scrollTo;
+  function Fixture() {
+    const contentRef = useRef<HTMLDivElement>(null);
+    const runtime = aui.useExternalStoreRuntime({ messages, isRunning: running, convertMessage: (m) => m, onNew: async () => {} });
+    return <aui.AssistantRuntimeProvider runtime={runtime}>
+      <aui.ThreadPrimitive.Viewport data-test-viewport turnAnchor="top"
+        scrollToBottomOnInitialize={false} scrollToBottomOnRunStart={false} scrollToBottomOnThreadSwitch={false}>
+        <follower.ThreadScrollFollower contentRef={contentRef}>
+          <div ref={contentRef} data-test-content>
+            <aui.ThreadPrimitive.Messages>{({ message }) => (
+              <aui.MessagePrimitive.Root className={message.role === "user" ? "q-message-user" : "q-message-assistant"}>{message.id}</aui.MessagePrimitive.Root>
+            )}</aui.ThreadPrimitive.Messages>
+          </div>
+          <aui.ThreadPrimitive.ViewportFooter data-thread-scroll-footer>Footer</aui.ThreadPrimitive.ViewportFooter>
+        </follower.ThreadScrollFollower>
+      </aui.ThreadPrimitive.Viewport>
+    </aui.AssistantRuntimeProvider>;
+  }
+  const flush = async () => act(async () => {
+    ResizeStub.change();
+    for (let index = 0; frames.size && index < 20; index++) {
+      const pending = [...frames.values()]; frames.clear();
+      pending.forEach((fn) => fn(performance.now()));
+    }
+    expect(frames.size).toBe(0);
+  });
+  const container = document.createElement("div"); document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root!.render(<Fixture />); });
+  await flush();
+  calls.length = 0;
+  messages = [...messages,
+    { id: "u2", role: "user", content: [{ type: "text", text: "second" }] },
+    { id: "a2", role: "assistant", content: [{ type: "text", text: "Working", parentId: "pi:phase:commentary:1" }], status: { type: "running" } },
+  ];
+  running = true;
+  await act(async () => { root!.render(<Fixture />); });
+  // No fallback instant jump before the primitive has measured its reserve.
+  expect(calls).toEqual([]);
+  await flush();
+  const viewport = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  const user = document.querySelector<HTMLElement>('[data-message-id="u2"]')!;
+  const visibleHeight = userHeight <= 160 ? userHeight : 96;
+  expect(user.getBoundingClientRect().bottom).toBe(viewportTop + 32 + visibleHeight);
+  expect(reserveHeight()).toBeGreaterThan(0);
+  expect(calls).toEqual([{ top: userTop + userHeight - visibleHeight - 32, behavior: "smooth" }]);
+  const oldReserve = reserveHeight();
+  const oldTop = viewport.scrollTop;
+  replyHeight += 60;
+  await flush();
+  expect(reserveHeight()).toBe(oldReserve - 60);
+  expect(viewport.scrollTop).toBe(oldTop);
+
+  // Once actual activity reaches the footer, the same mounted controller follows.
+  replyHeight += 600;
+  await flush();
+  expect(viewport.scrollTop).toBe(tail() - 500);
+  const userReadingTop = viewport.scrollTop - 80;
+  await act(async () => {
+    viewport.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
+    viewport.scrollTo({ top: userReadingTop });
+  });
+  replyHeight += 100;
+  await flush();
+  expect(viewport.scrollTop).toBe(userReadingTop);
 });

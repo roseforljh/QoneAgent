@@ -1,10 +1,14 @@
 import { expect, test } from "bun:test";
 import { nextThreadFollowMode, threadPhase } from "../src/lib/thread-scroll-policy";
 
-test("follow mode matches Codex prework, final answer, and idle transitions", () => {
+test("follow mode watches live replies and follows overflow through final answer and idle", () => {
   expect(nextThreadFollowMode("static", { type: "phase", previous: "idle", phase: "prework" })).toBe("prework_watch");
   expect(nextThreadFollowMode("prework_watch", { type: "content", phase: "prework", overflow: 1 })).toBe("prework_follow");
   expect(nextThreadFollowMode("prework_follow", { type: "phase", previous: "prework", phase: "final_answer" })).toBe("user_follow");
+  expect(nextThreadFollowMode("static", { type: "phase", previous: "idle", phase: "final_answer" })).toBe("prework_watch");
+  expect(nextThreadFollowMode("prework_watch", { type: "phase", previous: "prework", phase: "final_answer" })).toBe("prework_watch");
+  expect(nextThreadFollowMode("prework_watch", { type: "content", phase: "final_answer", overflow: -100 })).toBe("prework_watch");
+  expect(nextThreadFollowMode("prework_watch", { type: "content", phase: "final_answer", overflow: 1 })).toBe("user_follow");
   expect(nextThreadFollowMode("user_follow", { type: "phase", previous: "final_answer", phase: "idle" })).toBe("user_follow");
   expect(nextThreadFollowMode("user_follow", { type: "distance", phase: "final_answer", distance: 25 })).toBe("static");
   expect(nextThreadFollowMode("static", { type: "bottom", phase: "prework" })).toBe("prework_follow");

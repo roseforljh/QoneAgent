@@ -12,7 +12,7 @@ import { useEffect, useRef, useState, type FC, type ReactNode } from "react";
 import { SidebarContextMenu, SidebarEntityMenu, SidebarMenu } from "./sidebar-menu";
 import { useLocale } from "../../localization";
 import { groupProjectSidebarSessions, sortSidebarWorkspaces, useSidebarPreferences } from "../../lib/sidebar-preferences";
-import { MorphingSpinner } from "./morphing-spinner";
+import { MorphingSpinner, SessionCompletionDot } from "./morphing-spinner";
 import { SidebarSessionTitle } from "./sidebar-session-title";
 import { SidebarSessionActions } from "./sidebar-session-pin-action";
 
@@ -27,6 +27,7 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = ({ session, 
   const priority = useSidebarPreferences((s) => s.priorityIds.includes(session.id));
   const titleGenerating = useStore((s) => s.titleGeneratingSessionIds.includes(session.id));
   const isRunning = useStore((s) => s.runningSessionIds.includes(session.id));
+  const isCompleted = useStore((s) => s.completedSessionIds.includes(session.id));
   const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(session.title);
@@ -72,7 +73,7 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = ({ session, 
       )}
       {!renaming && (
         <SidebarSessionActions pinned={priority} onTogglePinned={togglePinned}
-          status={isBusy ? <MorphingSpinner className="size-3.5" label={isRunning ? undefined : t("chat.generatingTitle")} /> : undefined}>
+          status={isRunning ? <MorphingSpinner className="size-3.5" /> : isCompleted ? <SessionCompletionDot /> : isBusy ? <MorphingSpinner className="size-3.5" label={t("chat.generatingTitle")} /> : undefined}>
           <SidebarEntityMenu pinned={priority} onTogglePinned={togglePinned} onRename={() => setRenaming(true)}
             onDelete={deleteChat} ariaLabel={t("sidebar.chatOptions")} />
         </SidebarSessionActions>

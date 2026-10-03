@@ -17,6 +17,14 @@ test("each assistant answer takes its adjacent user message once", () => {
     ["assistant-2", "user-2"],
   ]);
   expect(pairMessageIds([...messages, { id: "extra-assistant", role: "assistant", parentId: "user-1" }]).has("extra-assistant")).toBe(false);
+  expect(pairMessageIds([
+    { id: "user-latest", role: "user", parentId: "assistant-2" },
+    { id: "streaming", role: "assistant", parentId: "user-latest", status: { type: "running" } },
+  ])).toEqual(new Map());
+  expect(pairMessageIds([
+    { id: "user-latest", role: "user", parentId: "assistant-2" },
+    { id: "generated-placeholder", role: "assistant", parentId: "user-latest", status: { type: "running" } },
+  ])).toEqual(new Map());
 });
 
 test("official MessagePair renders supplied message and action content once", () => {

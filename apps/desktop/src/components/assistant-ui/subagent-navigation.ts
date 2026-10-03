@@ -18,9 +18,18 @@ export function subagentForTool(
   if (!sessionId) return undefined;
   const inSession = subagents.filter((item) => item.parentSessionId === sessionId);
   if (part.toolName === "dispatch_subagent") return inSession.find((item) => item.parentRunId === parentRunId && item.toolCallId === part.toolCallId);
+  if (part.toolName === "run_subagent_workflow") {
+    return inSession
+      .filter((item) => item.parentRunId === parentRunId && item.toolCallId.startsWith("workflow:"))
+      .sort((a, b) => Number(isActive(b.status)) - Number(isActive(a.status)) || b.startedAt - a.startedAt)[0];
+  }
   if (part.toolName !== "inspect_subagent" && part.toolName !== "control_subagent" && part.toolName !== "wait_subagent") return undefined;
   const runId = runIdFromArgs(part.args) ?? runIdFromArgs(callArgs);
   return runId ? inSession.find((item) => item.id === runId) : undefined;
+}
+
+function isActive(status: SubagentRunInfo["status"]): boolean {
+  return status === "created" || status === "running" || status === "waiting_approval" || status === "paused";
 }
 
 export const OPEN_SUBAGENT_EVENT = "qone-open-subagents";

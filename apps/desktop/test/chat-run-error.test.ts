@@ -176,7 +176,7 @@ test("shows an install hint when an MCP preset cannot find Node.js/npm", async (
   }
 });
 
-test("session creation requires an imported selected workspace and stays available during another run", () => {
+test("new-session draft requires an imported selected workspace and stays available during another run", () => {
   const previous = useStore.getState();
   const start = commands.length;
   const workspace = { id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 };
@@ -194,17 +194,19 @@ test("session creation requires an imported selected workspace and stays availab
 
     useStore.setState({ currentWorkspaceId: workspace.id, running: true });
     useStore.getState().newSession();
-    expect(commands.slice(start)).toContainEqual(expect.objectContaining({ type: "session.create", workspaceId: workspace.id }));
+    expect(commands.slice(start).filter((command) => command.type === "session.create")).toHaveLength(0);
+    expect(useStore.getState().draftWorkspaceId).toBe(workspace.id);
+    expect(useStore.getState().currentSessionId).toBeUndefined();
 
     useStore.setState({ running: false });
     useStore.getState().newSession();
-    expect(commands.slice(start).at(-1)).toEqual(expect.objectContaining({ type: "session.create", workspaceId: workspace.id }));
+    expect(commands.slice(start).filter((command) => command.type === "session.create")).toHaveLength(0);
+    expect(useStore.getState().draftWorkspaceId).toBe(workspace.id);
 
     useStore.getState().newSessionInWorkspace(workspace.id);
     expect(useStore.getState().draftWorkspaceId).toBe(workspace.id);
     useStore.getState().createSessionForWorkspace(workspace.id);
-    expect(commands.filter((command) => command.type === "session.create").slice(-2)).toEqual([
-      expect.objectContaining({ workspaceId: workspace.id }),
+    expect(commands.filter((command) => command.type === "session.create").slice(-1)).toEqual([
       expect.objectContaining({ workspaceId: workspace.id }),
     ]);
   } finally {
@@ -391,6 +393,82 @@ test("an active run snapshot fills in the run id while the optimistic UI is alre
     emit({ type: "session.runs", sessionId: "session-1", runs: [{ id: "run-1", sessionId: "session-1", status: "running", startedAt: 1 }] });
     expect(useStore.getState().activeRunId).toBe("run-1");
     expect(useStore.getState().running).toBe(true);
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("a stale history snapshot does not remove the optimistic user turn after pong", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({
+      currentSessionId: "session-optimistic-history",
+      sessions: [{ id: "session-optimistic-history", title: "Test", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
+      workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }],
+      messages: [], running: false, activeRunId: undefined,
+    });
+    useStore.getState().runAgent("hello");
+    const command = commands.filter((item) => item.type === "agent.run").at(-1)!;
+    expect(command.type).toBe("agent.run");
+    if (command.type !== "agent.run") return;
+    const optimisticId = command.messageId;
+
+    emit({ type: "pong", requestId: command.requestId });
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual([optimisticId]);
+
+    // This is the old snapshot race: the runtime accepted the run, but has not
+    // committed the user row before the history query returns.
+    emit({ type: "session.messages", sessionId: "session-optimistic-history", messages: [] });
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual([optimisticId]);
+
+    emit({ type: "session.messages", sessionId: "session-optimistic-history", messages: [
+      { id: optimisticId, sessionId: "session-optimistic-history", role: "user", content: "hello", createdAt: 1 },
+    ] });
+    expect(useStore.getState().messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: optimisticId, persisted: true }),
+    ]));
+
+    // A second, older response must not remove it before the run reaches a
+    // terminal event, even though the first response already contained it.
+    emit({ type: "session.messages", sessionId: "session-optimistic-history", messages: [] });
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual([optimisticId]);
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
+test("a late completion snapshot cannot remove the next submitted user turn", () => {
+  const previous = useStore.getState();
+  try {
+    const sessionId = "session-consecutive-turns";
+    useStore.setState({
+      currentSessionId: sessionId,
+      sessions: [{ id: sessionId, title: "Test", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
+      workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }],
+      messages: [], running: false, activeRunId: undefined, chatRunError: undefined,
+    });
+
+    useStore.getState().runAgent("first");
+    const first = commands.filter((item) => item.type === "agent.run").at(-1)!;
+    expect(first.type).toBe("agent.run");
+    if (first.type !== "agent.run") return;
+    emit({ type: "agent.event", event: { ...event("agent.started"), sessionId, runId: "first-run" } });
+    emit({ type: "agent.event", event: { ...event("agent.completed", {}), sessionId, runId: "first-run", payload: { message: { id: "first-answer", role: "assistant", content: "first answer", runId: "first-run", createdAt: 2 } } } });
+
+    const completionSnapshot = commands.filter((item) => item.type === "session.messages").at(-1)!;
+    expect(completionSnapshot?.type).toBe("session.messages");
+
+    useStore.getState().runAgent("second");
+    const second = commands.filter((item) => item.type === "agent.run").at(-1)!;
+    expect(second.type).toBe("agent.run");
+    if (second.type !== "agent.run") return;
+
+    emit({ type: "session.messages", requestId: completionSnapshot.requestId, sessionId, messages: [
+      { id: first.messageId, sessionId, role: "user", content: "first", createdAt: 1 },
+      { id: "first-answer", sessionId, role: "assistant", content: "first answer", runId: "first-run", createdAt: 2 },
+    ] });
+
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual([first.messageId, "first-answer", second.messageId]);
   } finally {
     useStore.setState(previous, true);
   }
@@ -779,6 +857,29 @@ function emitFor(sessionId: string, type: string, payload: unknown = {}) {
   emit({ type: "agent.event", event: { ...event(type, payload), sessionId, runId: `${sessionId}-run`, sequence: 10 } });
 }
 
+test("session history loading always settles on success and runtime errors", async () => {
+  const previous = useStore.getState();
+  try {
+    setupConcurrentSessions();
+    const firstRequest = commands.filter((command) => command.type === "session.messages").at(-1)!;
+    expect(useStore.getState().messagesLoadingSessionId).toBe("background-a");
+    emit({ type: "session.messages", sessionId: "background-a", messages: [] });
+    expect(useStore.getState().messagesLoadingSessionId).toBeUndefined();
+
+    useStore.getState().selectSession("background-b");
+    const secondRequest = commands.filter((command) => command.type === "session.messages").at(-1)!;
+    await Promise.resolve();
+    expect(useStore.getState().messagesLoadingSessionId).toBe("background-b");
+    emit({ type: "error", requestId: secondRequest.requestId, message: "history unavailable" });
+    expect(useStore.getState().messagesLoadingSessionId).toBeUndefined();
+    expect(useStore.getState().lastError).toBe("history unavailable");
+    expect(firstRequest.requestId).not.toBe(secondRequest.requestId);
+
+    useStore.getState().selectSession("background-a");
+    expect(useStore.getState().messagesLoadingSessionId).toBeUndefined();
+  } finally { useStore.setState(previous, true); }
+});
+
 function startConcurrentRun(sessionId: string) {
   useStore.getState().selectSession(sessionId);
   useStore.getState().runAgent(`work on ${sessionId}`);
@@ -848,6 +949,22 @@ test("a background completion saves its answer without stopping the foreground r
     expect(useStore.getState().chatRunError).toBeUndefined();
     useStore.getState().selectSession("background-b");
     expect(useStore.getState().chatRunError?.detail).toBe("B failed");
+  } finally { useStore.setState(previous, true); }
+});
+
+test("a completed run is not revived by a run snapshot waiting for history", () => {
+  const previous = useStore.getState();
+  try {
+    setupConcurrentSessions();
+    startConcurrentRun("background-a");
+    emitFor("background-a", "agent.completed");
+
+    // The completion handler asks for both history and runs. Runs can arrive
+    // first while the completed request is still retained for history merge.
+    emit({ type: "session.runs", sessionId: "background-a", runs: [] });
+
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().runningSessionIds).not.toContain("background-a");
   } finally { useStore.setState(previous, true); }
 });
 
