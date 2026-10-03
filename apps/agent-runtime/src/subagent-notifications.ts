@@ -1,9 +1,9 @@
 import type { SubagentNotificationInfo } from "@qone/protocol";
 import type { RunRepo, SubagentNotificationRepo, SubagentRunRepo } from "@qone/database";
 import type { PiAdapter } from "./pi-adapter.js";
+import { extractTextContent } from "./pi-message-utils.js";
 
-/** Marker kept in the prompt so the runtime can distinguish an internal
- * follow-up from a user steer when Pi emits the queued user message event. */
+/** Reserved prefixes distinguish internal updates from user steering messages. */
 export const SUBAGENT_NOTIFICATION_MARKER = "[QONE_SUBAGENT_NOTIFICATION]";
 export const SUBAGENT_LEDGER_MARKER = "[QONE_SUBAGENT_LEDGER]";
 
@@ -42,12 +42,13 @@ export function buildSubagentNotificationPrompt(notifications: readonly Subagent
     "后台子代理状态更新：",
     ...lines,
     ledger,
-    "请先在当前对话中输出一条简短、可见的确认消息，明确说已收到这些子代理状态更新；成功、失败、取消或中断要按实际状态说明。确认消息发送后，再按需要调用 inspect_subagent(runId) 读取最后总结，或继续当前工作。不要原样复述这段内部通知，也不要输出子代理的过程内容。",
+    "在收到本通知后的下一条助手回复中，先输出一条简短、可见的进度确认，明确说明收到哪个子代理的状态更新；成功、失败、取消或中断要按实际状态说明。先确认，再按需要调用 inspect_subagent(runId) 读取最后总结，或继续当前工作。不要把确认留到最终结论末尾；尚未读取结果时只确认收到状态，不要声称已查看、已采纳或验证通过。不要原样复述这段内部通知，也不要输出子代理的过程内容。",
   ].filter(Boolean).join("\n");
 }
 
-export function isSubagentNotificationPrompt(value: unknown): boolean {
-  return typeof value === "string" && value.includes(SUBAGENT_NOTIFICATION_MARKER);
+export function isSubagentUpdatePrompt(value: unknown): boolean {
+  const text = extractTextContent(value);
+  return text.startsWith(SUBAGENT_NOTIFICATION_MARKER) || text.startsWith(SUBAGENT_LEDGER_MARKER);
 }
 
 function notificationResult(kind: SubagentNotificationInfo["kind"]): string {
@@ -55,7 +56,7 @@ function notificationResult(kind: SubagentNotificationInfo["kind"]): string {
 }
 
 /**
- * Coordinates durable child completion notices with Pi's live follow-up queue.
+ * Coordinates durable child completion notices with Pi's next-turn input queue.
  * The queue is intentionally outside the model transcript: a failed or late
  * delivery remains pending and can be recovered on the next user turn.
  */
@@ -175,11 +176,7 @@ export class SubagentNotificationCoordinator {
     this.inFlight.add(sessionId);
     try {
       // This path must remain synchronous through the actual Pi queue write.
-      // Fall back to the general adapter method only for older test doubles or
-      // adapters; the production PiAdapter exposes the sync queue entrypoint.
-      const accepted = this.adapter.queueFollowUpNow
-        ? this.adapter.queueFollowUpNow(sessionId, prompt, activeRunId)
-        : await this.adapter.sendToSession(sessionId, prompt, "follow_up", undefined, activeRunId);
+      const accepted = this.adapter.queueSubagentUpdateNow(sessionId, prompt, activeRunId);
       if (!accepted) return false;
       this.markDelivered(delivery.ids);
       this.ledgerRequested.delete(sessionId);

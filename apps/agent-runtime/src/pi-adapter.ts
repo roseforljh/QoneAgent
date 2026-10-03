@@ -967,24 +967,24 @@ export class PiAdapter {
   }
 
   /**
-   * Queue an internal follow-up synchronously. Pi's AgentSession.followUp()
-   * performs async input-handler work before touching Agent's queue. That is
-   * too late for compaction_end, where Pi checks hasQueuedMessages() as soon
-   * as the event listener returns.
+   * Queue an internal update at the next assistant-turn boundary. Pi's
+   * follow-up queue waits until the agent stops calling tools, which places
+   * completion acknowledgements after the final answer. Agent.steer() waits
+   * for the current generation and tool batch without aborting either.
    *
    * Notification prompts are already expanded plain text, so they can use
    * Agent's synchronous queue API directly while retaining the same run and
    * streaming ownership checks as sendToSession().
    */
-  queueFollowUpNow(sessionId: string, message: string, expectedRunId = this.activeRunIds.get(sessionId)): boolean {
+  queueSubagentUpdateNow(sessionId: string, message: string, expectedRunId = this.activeRunIds.get(sessionId)): boolean {
     const session = this.activeRunIds.has(sessionId) ? this.sessions.get(sessionId) : undefined;
     if (!session || !expectedRunId || this.activeRunIds.get(sessionId) !== expectedRunId
       || this.runs.get(expectedRunId) !== session || this.stoppedRuns.has(expectedRunId) || !session.isStreaming) return false;
     try {
-      session.agent.followUp({ role: "user", content: [{ type: "text", text: message }], timestamp: Date.now() });
+      session.agent.steer({ role: "user", content: [{ type: "text", text: message }], timestamp: Date.now() });
       return true;
     } catch (error) {
-      log.warn("failed to queue internal follow-up", { sessionId, runId: expectedRunId, error: String(error) });
+      log.warn("failed to queue subagent update", { sessionId, runId: expectedRunId, error: String(error) });
       return false;
     }
   }

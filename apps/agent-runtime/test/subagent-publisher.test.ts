@@ -10,9 +10,20 @@ function fixture() {
   }]));
   const events: RuntimeEvent[] = [];
   let loads = 0;
+  const revisions = new Map<string, number>();
   const publisher = createSubagentPublisher({
     load: (id) => { loads++; return items.get(id); },
-    send: (event) => { events.push(event); }, intervalMs: 1,
+    epoch: "test",
+    send: (event) => {
+      const value = event.type === "subagent.updated" ? event.subagent : event.type === "subagent.patch" ? event.patch : event.type === "subagent.streaming" ? event : undefined;
+      expect(value).toBeDefined();
+      const revision = (revisions.get(value!.id) ?? 0) + 1; revisions.set(value!.id, revision);
+      expect(value!.revision).toBe(revision); expect(value!.revisionEpoch).toBe("test");
+      const copy = structuredClone(event);
+      const copied = copy.type === "subagent.updated" ? copy.subagent : copy.type === "subagent.patch" ? copy.patch : copy.type === "subagent.streaming" ? copy : undefined;
+      delete copied!.revision; delete copied!.revisionEpoch;
+      events.push(copy);
+    }, intervalMs: 1,
   });
   return { publisher, items, events, loads: () => loads };
 }
@@ -118,7 +129,7 @@ test("state changes after creation use a compact patch instead of reloading tran
   } finally { publisher.dispose(); }
 });
 
-test("part updates transmit only the changed suffix", () => {
+test("part updates transmit only changed indices", () => {
   const { publisher, events, items } = fixture();
   try {
     const first = { type: "text" as const, text: "old", messageSequence: 1 };
@@ -130,7 +141,7 @@ test("part updates transmit only the changed suffix", () => {
     ] });
     expect(events.at(-1)).toMatchObject({
       type: "subagent.patch",
-      patch: { partsPatch: { start: 1, parts: [{ type: "text", text: "new", messageSequence: 1 }] } },
+      patch: { partsChanges: { length: 2, updates: [{ index: 1, part: { type: "text", text: "new", messageSequence: 1 } }] } },
     });
   } finally { publisher.dispose(); }
 });

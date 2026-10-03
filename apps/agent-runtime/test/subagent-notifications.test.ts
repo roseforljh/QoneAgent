@@ -1,8 +1,16 @@
 import { expect, test } from "bun:test";
-import { buildSubagentNotificationPrompt, SubagentNotificationCoordinator } from "../src/subagent-notifications";
+import { buildSubagentNotificationPrompt, isSubagentUpdatePrompt, SUBAGENT_LEDGER_MARKER, SubagentNotificationCoordinator } from "../src/subagent-notifications";
 import type { SubagentNotificationInfo } from "@qone/protocol";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test("internal notice and ledger messages cannot be mistaken for a user steer delivery", () => {
+  const notice = buildSubagentNotificationPrompt([]);
+  expect(isSubagentUpdatePrompt({ message: { role: "user", content: [{ type: "text", text: notice }] } })).toBe(true);
+  expect(isSubagentUpdatePrompt({ message: { role: "user", content: [{ type: "text", text: `${SUBAGENT_LEDGER_MARKER}\n账本` }] } })).toBe(true);
+  expect(isSubagentUpdatePrompt({ message: { role: "user", content: [{ type: "text", text: "继续修复" }] } })).toBe(false);
+  expect(isSubagentUpdatePrompt(`解释 ${notice}`)).toBe(false);
+});
 
 function fixture(running = true) {
   const notices = new Map<string, SubagentNotificationInfo>();
@@ -35,8 +43,7 @@ function fixture(running = true) {
   const adapter = {
     isRunning: () => running,
     activeRunId: () => running ? "parent" : undefined,
-    queueFollowUpNow: (_sessionId: string, prompt: string) => { sent.push(prompt); return running; },
-    sendToSession: async (_sessionId: string, prompt: string) => { sent.push(prompt); return running; },
+    queueSubagentUpdateNow: (_sessionId: string, prompt: string) => { sent.push(prompt); return running; },
   };
   const published: string[] = [];
   const coordinator = new SubagentNotificationCoordinator(
@@ -45,7 +52,7 @@ function fixture(running = true) {
   return { coordinator, notices, sent, published };
 }
 
-test("completion is persisted and delivered through a live parent follow-up", async () => {
+test("completion is persisted and queued at the live parent's next turn", async () => {
   const f = fixture(true);
   f.coordinator.enqueue({ sessionId: "session", subagentRunId: "child", version: 1, kind: "completed", title: "检查配置", content: "已完成" });
   expect(f.sent).toHaveLength(1);
@@ -92,8 +99,9 @@ test("notification prompt remains compact and does not include a full child tran
   const prompt = buildSubagentNotificationPrompt([notification]);
   expect(prompt).toContain("结论摘要");
   expect(prompt).not.toContain("message");
-  expect(prompt).toContain("输出一条简短、可见的确认消息");
-  expect(prompt).toContain("已收到这些子代理状态更新");
+  expect(prompt).toContain("下一条助手回复");
+  expect(prompt).toContain("不要把确认留到最终结论末尾");
+  expect(prompt).toContain("尚未读取结果时只确认收到状态");
   expect(prompt).toContain("不要原样复述这段内部通知");
 });
 

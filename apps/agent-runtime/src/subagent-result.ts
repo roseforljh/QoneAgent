@@ -88,6 +88,7 @@ export function subagentResultForModel(info: SubagentRunInfo) {
   });
   const summary = {
     runId: info.id,
+    title: info.title,
     status: info.status,
     result: finalSubagentSummary(info),
     error: info.error,

@@ -27,6 +27,7 @@ export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo
   const run = runs.get(runId);
   if (!row || !run) return undefined;
   const parts = liveParts ?? JSON.parse(row.parts) as AssistantMessagePart[];
+  const tools = new Map(parts.flatMap((part) => part.type === "tool-call" ? [[part.toolCallId, part] as const] : []));
   return {
     id: runId, parentSessionId: row.parentSessionId, parentRunId: row.parentRunId,
     parentSubagentId: row.parentSubagentId ?? undefined, depth: row.depth ?? 0,
@@ -52,7 +53,7 @@ export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo
       role: message.role as "user" | "assistant" | "tool" | "system", content: message.content,
       internal: message.role === "user" && Boolean(message.rawMessage),
       parts: message.parts ? (JSON.parse(message.parts) as AssistantMessagePart[]).map(part => part.type === "tool-call"
-        ? parts.find(current => current.type === "tool-call" && current.toolCallId === part.toolCallId) ?? part : part) : undefined,
+        ? tools.get(part.toolCallId) ?? part : part) : undefined,
       createdAt: message.createdAt,
     })),
   };
@@ -85,7 +86,7 @@ export function registerSubagentDispatcher(options: {
     partsByRun, messageSequenceByRun, assistantBuffers, streamBuffers, subagentStreams,
     activeSubagents, publish, emit } = options;
   const policy = () => options.runtime?.() ?? options.config().runtime;
-  type Job = { abort: AbortController; done: Promise<void>; state: "queued" | "running"; failure?: Error; cancelled: boolean };
+  type Job = { abort: AbortController; done: Promise<void>; state: "queued" | "running"; failure?: Error; cancelled: boolean; lastMessageRole?: string };
   const jobs = new Map<string, Job>();
   const scheduler = new SubagentScheduler(() => policy().maxConcurrent);
   const yielding = new Map<string, { count: number; held: boolean }>();
@@ -154,6 +155,7 @@ export function registerSubagentDispatcher(options: {
     runRepo.setStatus(id, "created");
     if (!newTurn) repo.incrementTurn(id);
     if (persistUserMessage) repo.appendMessage(id, "user", prompt);
+    job.lastMessageRole = repo.latestMessage(id)?.role;
     const onAbort = () => interrupt(id);
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) onAbort();
@@ -316,15 +318,16 @@ export function registerSubagentDispatcher(options: {
     },
     catalog: () => subagentCatalog(options.config()),
     recordEvent: (id, type, payload, sequence) => {
-      if (!jobs.has(id)) return;
+      const job = jobs.get(id);
+      if (!job) return;
       const raw = (payload as { message?: { role?: string; content?: unknown; usage?: unknown } })?.message;
       if (type === "message.completed" && raw?.role) {
         const text = typeof raw.content === "string" ? raw.content
           : Array.isArray(raw.content) ? raw.content.filter(p => p?.type === "text").map(p => p.text).join("") : "";
-        const last = repo.listMessages(id).reverse().find(message => message.role !== "system");
-        if (raw.role === "user" && last?.role === "user") return;
+        if (raw.role === "user" && job.lastMessageRole === "user") return;
         const parts = raw.role === "assistant" ? (partsByRun.get(id) ?? []).filter(p => p.messageSequence === sequence) : undefined;
         repo.appendMessage(id, raw.role === "toolResult" ? "tool" : raw.role, text, parts, raw);
+        if (raw.role !== "system") job.lastMessageRole = raw.role === "toolResult" ? "tool" : raw.role;
       }
     },
     fail: (id, message) => interrupt(id, new Error(message)),
@@ -355,6 +358,7 @@ export function registerSubagentDispatcher(options: {
         if (job.state !== "running" || !row.executionSessionId ||
             !await adapter.sendToSession(row.executionSessionId, message.trim(), action)) throw new Error("Subagent is not ready for input");
         repo.appendMessage(id, "user", message.trim());
+        job.lastMessageRole = "user";
         repo.incrementTurn(id);
       } else {
         if ((action === "steer" || action === "follow_up") && !message?.trim()) throw new Error(`${action} requires a message`);

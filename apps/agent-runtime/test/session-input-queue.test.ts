@@ -6,7 +6,7 @@ function fixture() {
   const adapter = new PiAdapter(() => {});
   const sent: string[] = [];
   const session = {
-    isStreaming: true, agent: { state: { model: undefined }, followUp: (message: { content: Array<{ text: string }> }) => { sent.push(message.content[0]!.text); } }, clears: 0,
+    isStreaming: true, agent: { state: { model: undefined }, steer: (message: { content: Array<{ text: string }> }) => { sent.push(message.content[0]!.text); } }, clears: 0,
     steer: async (text: string) => { sent.push(text); },
     followUp: async (text: string) => { sent.push(text); },
     clearQueue: () => { session.clears++; },
@@ -35,10 +35,18 @@ test("live input delivery is serialized in submission order", async () => {
   expect(f.sent).toEqual(["first", "second"]);
 });
 
-test("internal follow-ups are written to Pi's queue synchronously", () => {
+test("subagent updates are written to Pi's next-turn queue synchronously", () => {
   const f = fixture();
-  expect(f.adapter.queueFollowUpNow("s", "notification")).toBe(true);
+  expect(f.adapter.queueSubagentUpdateNow("s", "notification")).toBe(true);
   expect(f.sent).toEqual(["notification"]);
+});
+
+test("subagent updates reject stale runs and idle sessions without queueing", () => {
+  const f = fixture();
+  expect(f.adapter.queueSubagentUpdateNow("s", "stale", "ended-run")).toBe(false);
+  f.session.isStreaming = false;
+  expect(f.adapter.queueSubagentUpdateNow("s", "idle")).toBe(false);
+  expect(f.sent).toEqual([]);
 });
 
 test("a stale expected run is rejected before any input is queued", async () => {

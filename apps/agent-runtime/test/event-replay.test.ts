@@ -2,6 +2,19 @@ import { describe, expect, test } from "bun:test";
 import { SequencedEventJournal } from "@qone/shared";
 
 describe("event ordering and reconnect replay", () => {
+  test("transient tokens advance the cursor without evicting durable lifecycle events", () => {
+    const journal = new SequencedEventJournal<{ sequence: number; sessionId: string; value: string }>(0, 3);
+    const started = journal.record((sequence) => ({ sequence, sessionId: "a", value: "started" }));
+    for (let index = 0; index < 10000; index++) {
+      const delta = journal.record((sequence) => ({ sequence, sessionId: index % 2 ? "a" : "b", value: "delta" }), false);
+      expect(delta.sequence).toBe(index + 1);
+    }
+    const completed = journal.record((sequence) => ({ sequence, sessionId: "a", value: "completed" }));
+    expect(completed.sequence).toBe(10001);
+    expect(journal.replay()).toEqual([started, completed]);
+    expect(journal.replay(5000, "a")).toEqual([completed]);
+    expect(journal.next).toBe(10002);
+  });
   test("keeps monotonic sequence across a restored seed and filters replay", () => {
     const journal = new SequencedEventJournal<{ sequence: number; sessionId?: string; value: string }>(40, 3);
     journal.record((sequence) => ({ sequence, sessionId: "a", value: "one" }));

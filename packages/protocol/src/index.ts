@@ -74,6 +74,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "session.rename"; requestId: string; sessionId: string; title: string }
   | { type: "session.delete"; requestId: string; sessionId: string }
   | { type: "session.messages"; requestId: string; sessionId: string }
+  | { type: "session.snapshot"; requestId: string; sessionId: string }
   | { type: "session.queue.list"; requestId: string; sessionId: string }
   | { type: "session.runs"; requestId: string; sessionId: string }
   | { type: "session.toolCalls"; requestId: string; sessionId: string }
@@ -216,7 +217,7 @@ export type RuntimeEvent =
   | { type: "goal.cleared"; sessionId: string; goalId: string }
   | { type: "subagent.updated"; subagent: SubagentRunInfo }
   | { type: "subagent.patch"; sessionId: string; id: string; patch: SubagentRunPatch }
-  | { type: "subagent.streaming"; sessionId: string; id: string; delta: string; reasoning?: { delta: string; messageSequence: number; contentIndex?: number; complete?: boolean }[] }
+  | { type: "subagent.streaming"; sessionId: string; id: string; revision?: number; revisionEpoch?: string; delta: string; reasoning?: { delta: string; messageSequence: number; contentIndex?: number; complete?: boolean }[] }
   | { type: "artifact.list"; sessionId: string; artifacts: ArtifactInfo[] }
   | { type: "workspace.list"; workspaces: WorkspaceInfo[] }
   | { type: "workspace.updated"; workspace: WorkspaceInfo }
@@ -383,6 +384,8 @@ export interface WorkspaceFileInfo {
 
 export interface SubagentRunInfo {
   id: string;
+  revision?: number;
+  revisionEpoch?: string;
   parentSessionId: string;
   parentRunId: string;
   parentSubagentId?: string;
@@ -420,7 +423,10 @@ export type SubagentRunPatch = Pick<SubagentRunInfo, "id"> & Partial<Pick<Subage
   "status" | "completedAt" | "content" | "error" | "turnCount" | "retryCount" | "tokenUsage" | "children"
 >> & {
   streaming?: string | null;
+  revision?: number;
+  revisionEpoch?: string;
   partsPatch?: { start: number; parts: AssistantMessagePart[] };
+  partsChanges?: { length: number; updates: { index: number; part: AssistantMessagePart }[] };
   messagesAppend?: SubagentMessageInfo[];
 };
 
@@ -792,6 +798,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.rename": z.object({ type: z.literal("session.rename"), ...request, sessionId: id, title: id }),
   "session.delete": z.object({ type: z.literal("session.delete"), ...request, sessionId: id }),
   "session.messages": z.object({ type: z.literal("session.messages"), ...request, sessionId: id }),
+  "session.snapshot": z.object({ type: z.literal("session.snapshot"), ...request, sessionId: id }),
   "session.queue.list": z.object({ type: z.literal("session.queue.list"), ...request, sessionId: id }),
   "session.runs": z.object({ type: z.literal("session.runs"), ...request, sessionId: id }),
   "session.toolCalls": z.object({ type: z.literal("session.toolCalls"), ...request, sessionId: id }),

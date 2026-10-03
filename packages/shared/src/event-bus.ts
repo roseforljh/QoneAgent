@@ -25,8 +25,9 @@ export class SequencedEventJournal<E extends { sequence: number; sessionId?: str
     this.nextSequence = startSequence;
   }
 
-  record(factory: (sequence: number) => E): E {
+  record(factory: (sequence: number) => E, retain = true): E {
     const event = factory(this.nextSequence++);
+    if (!retain) return event;
     if (this.events.length < this.capacity) this.events.push(event);
     else if (this.capacity > 0) {
       this.events[this.oldest] = event;

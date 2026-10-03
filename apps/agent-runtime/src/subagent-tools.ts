@@ -37,8 +37,8 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
   const inspectTools: ToolDefinition[] = options.controller ? [{
     name: "inspect_subagent",
     label: "Inspect subagent",
-    description: "Read a subagent's status, latest result, generated images, streaming output and child IDs by run ID.",
-    promptSnippet: "Use inspect_subagent to read current progress or the latest result before following up with an existing agent.",
+    description: "Read a subagent's actual status, latest turn summary, generated images and child IDs by run ID. Returns a compact result, not the full transcript.",
+    promptSnippet: "Use inspect_subagent before following up with an existing agent. After reading, briefly tell the user what was actually returned and how you will use it before calling other tools. An active status or empty summary does not establish completion or verification; do not defer this acknowledgement to the end of the final answer.",
     parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }) }),
     execute: async (_toolCallId, params) => {
       const runId = (params as { runId: string }).runId;
@@ -77,7 +77,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
     name: "wait_subagent",
     label: "Wait for subagent",
     description: "Wait for a subagent to finish and return its current result.",
-    promptSnippet: "Use wait_subagent after starting a background subagent when you need its final result.",
+    promptSnippet: "Use wait_subagent when you need a background child's final result. After it returns, briefly acknowledge the actual returned status and summary before continuing; a timeout or empty summary is not a completed result.",
     parameters: Type.Object({ runId: Type.String({ minLength: 1, maxLength: 128 }), timeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86_400_000 })) }),
     executionMode: "sequential",
     execute: async (_toolCallId, params, signal) => {
@@ -90,7 +90,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
     name: "control_subagent",
     label: "Control subagent",
     description: "Stop, resume, retry, steer or send a follow-up to an existing subagent session.",
-    promptSnippet: "For follow-up questions about the same task or media, reuse the existing runId with follow_up, including after completion and in later user turns. Use steer to correct an active task. This retains the child conversation; do not dispatch a new agent merely because the previous turn completed.",
+    promptSnippet: "For follow-up questions about the same task or media, reuse the existing runId with follow_up, including after completion and in later user turns. Use steer to correct an active task. This retains the child conversation; do not dispatch a new agent merely because the previous turn completed. If this call returns a finished turn's result, briefly acknowledge that result before continuing other tools; if the child remains active, only report that the control request was accepted, not that the task finished.",
     parameters: Type.Object({
       runId: Type.String({ minLength: 1, maxLength: 128 }),
       action: Type.Union([Type.Literal("stop"), Type.Literal("resume"), Type.Literal("retry"), Type.Literal("steer"), Type.Literal("follow_up")]),
@@ -117,7 +117,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
   }, {
     name: "dispatch_subagent",
     label: "Delegate to subagent",
-    description: `Create a NEW agent session. For ordinary code review, file analysis, research, or read-only work, explicitly choose capability="temporary" to use the configured temporary general agent. Choose a media capability only for a task that explicitly needs that named media ability. To select a saved profile, supply subagentId and omit capability or set it to null. Do not combine targets. Omitted/null capability with no profile also uses the temporary agent for legacy calls. Ordinary tasks run in the background by default; set background=false only when the parent must wait for the result. Media tasks with a temporary attachment remain foreground. For follow-up questions, reuse the existing runId. The user's original attachments are forwarded by reference; do not download them before delegation. Background children remain attached to this parent conversation: their completion or failure is queued and delivered as a lightweight follow-up while the parent is running, and the persistent ledger is restored after compaction or on the next run. Do not assume a background child was forgotten; use list_subagents or inspect_subagent when you choose to process it. The configured maximum of ${options.maxConcurrent ?? "the current"} is a simultaneous running limit.`,
+    description: `Create a NEW agent session. For ordinary code review, file analysis, research, or read-only work, explicitly choose capability="temporary" to use the configured temporary general agent. Choose a media capability only for a task that explicitly needs that named media ability. To select a saved profile, supply subagentId and omit capability or set it to null. Do not combine targets. Omitted/null capability with no profile also uses the temporary agent for legacy calls. Ordinary tasks run in the background by default; set background=false only when the parent must wait for the result. Media tasks with a temporary attachment remain foreground. For follow-up questions, reuse the existing runId. The user's original attachments are forwarded by reference; do not download them before delegation. Background children remain attached to this parent conversation: their completion or failure is delivered at the next assistant-turn boundary after the current generation and tool batch, and the persistent ledger is restored after compaction or on the next run. Do not assume a background child was forgotten; use list_subagents or inspect_subagent when you choose to process it. The configured maximum of ${options.maxConcurrent ?? "the current"} is a simultaneous running limit.`,
     promptSnippet: 'Use dispatch_subagent with capability="temporary" for ordinary code or research work. Leave subagentId omitted/null/empty. Ordinary tasks run in the background by default; set background=false only when the parent must wait. Select media targets only for matching media tasks. Background children remain tracked by the parent runtime and completion signals will arrive later; do not forget them. Before creating an agent for a follow-up, recover existing runIds and use control_subagent follow_up.',
     parameters: Type.Object({
       title: Type.String({ minLength: 1, maxLength: 120 }),

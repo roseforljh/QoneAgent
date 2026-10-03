@@ -61,7 +61,7 @@ export function applyReasoningDelta(parts: readonly AssistantMessagePart[], payl
   const delta = typeof event.delta === "string" ? event.delta : "";
   const contentIndex = typeof event.contentIndex === "number" ? event.contentIndex : undefined;
   const index = parts.findIndex((part) => part.type === "reasoning" && part.messageSequence === messageSequence && part.contentIndex === contentIndex);
-  if (index < 0) return delta ? [...parts, { type: "reasoning", text: delta, messageSequence, contentIndex }] : [...parts];
+  if (index < 0) return delta ? [...parts, { type: "reasoning", text: delta, messageSequence, contentIndex, ...(event.complete === true ? { complete: true } : {}) }] : [...parts];
   return parts.map((part, i) => i === index && part.type === "reasoning" ? { ...part, text: part.text + delta, ...(event.complete === true ? { complete: true } : {}) } : part);
 }
 
