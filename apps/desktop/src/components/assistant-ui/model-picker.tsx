@@ -127,7 +127,7 @@ export const ModelPicker: FC = () => {
     setOpen(nextOpen);
   }}>
     <Popover.Trigger asChild>
-      <button ref={triggerRef} type="button" aria-label={open ? openLabel : t("chat.selectModel")} title={open ? openLabel : displayLabel} aria-expanded={open} data-selected={Boolean(selected)} data-state={open ? "open" : "closed"} className="q-model-picker-trigger" style={openTriggerWidth === undefined ? undefined : { width: openTriggerWidth }}>
+      <button ref={triggerRef} type="button" aria-label={open ? openLabel : t("chat.selectModel")} title={open ? openLabel : displayLabel} aria-expanded={open} data-selected={Boolean(selected)} data-state={open ? "open" : "closed"} className="q-model-picker-trigger" style={!open || openTriggerWidth === undefined ? undefined : { width: openTriggerWidth }}>
         <span ref={openLabelRef} className="q-model-picker-trigger-measure" aria-hidden="true"><span>{openLabel}</span><ChevronDownIcon size={14} /></span>
         {open ? <span className="q-model-picker-trigger-placeholder">{openLabel}</span> : <>
           <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={16} />
