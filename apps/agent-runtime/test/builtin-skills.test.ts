@@ -12,6 +12,7 @@ import { ensureGlobalInstructions, readGlobalInstructions, writeGlobalInstructio
 import { readSystemPrompt } from "../src/system-prompt.js";
 
 const previousRoot = process.env.QONE_DATA_DIR;
+const expectedSkills = ["ponytail", "ponytail-review", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help"];
 let root: string;
 let db: ReturnType<typeof openConfigDb>;
 beforeEach(() => {
@@ -32,12 +33,13 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function upstream(revision: string, content = "---\nname: ponytail\ndescription: Updated ponytail\n---\nNew upstream instructions.\n", badSize = false): typeof fetch {
+function upstream(revision: string, content?: string, badSize = false, id = "ponytail"): typeof fetch {
+  content ??= `---\nname: ${id}\ndescription: Updated ${id}\n---\nNew upstream instructions.\n`;
   return (async (input) => {
     const url = String(input);
     if (url.endsWith("/commits/HEAD")) return Response.json({ sha: revision });
     if (url.includes("/git/trees/")) return Response.json({ tree: [
-      { path: "skills/ponytail/SKILL.md", type: "blob", size: badSize ? 1 : Buffer.byteLength(content) },
+      { path: `skills/${id}/SKILL.md`, type: "blob", size: badSize ? 1 : Buffer.byteLength(content) },
       { path: "LICENSE", type: "blob", size: Buffer.byteLength("MIT License") },
     ] });
     expect(url).toContain(`/${revision}/`);
@@ -48,7 +50,14 @@ function upstream(revision: string, content = "---\nname: ponytail\ndescription:
 }
 
 test("offline installation loads the bundle and license; disabling survives reopening the database", async () => {
-  const [builtin] = await listBuiltinSkills();
+  const builtins = await listBuiltinSkills();
+  expect(builtins.map((skill) => skill.id)).toEqual(expectedSkills);
+  for (const bundle of builtinSkillBundles) {
+    const skill = builtins.find((item) => item.id === bundle.id)!;
+    expect(readFileSync(skill.path, "utf8")).toBe(bundle.files["SKILL.md"]);
+    expect(readFileSync(path.join(path.dirname(skill.path), "LICENSE"), "utf8")).toBe(bundle.files.LICENSE);
+  }
+  const [builtin] = builtins;
   expect(builtin).toMatchObject({ id: "ponytail", builtin: true, enabled: true, source: "DietrichGebert/ponytail" });
   expect(readFileSync(builtin!.path, "utf8")).toBe(builtinSkillBundles[0]!.files["SKILL.md"]);
   expect(readFileSync(path.join(path.dirname(builtin!.path), "LICENSE"), "utf8")).toContain("MIT License");
@@ -60,10 +69,10 @@ test("offline installation loads the bundle and license; disabling survives reop
   configureBuiltinSkills(new SettingsRepo(db));
   const disabled = await createResourceLoader(root);
   expect(disabled.skills.find((skill) => skill.id === "ponytail")?.enabled).toBe(false);
-  expect(disabled.loader.getSkills().skills).toEqual([]);
+  expect(disabled.loader.getSkills().skills.map((skill) => skill.name)).toEqual(expectedSkills.slice(1));
   expect(disabled.loader.getAppendSystemPrompt().join("\n")).toContain('skill "ponytail" is disabled');
   await setBuiltinSkillEnabled("ponytail", true);
-  expect((await createResourceLoader(root)).loader.getSkills().skills.map((skill) => skill.name)).toEqual(["ponytail"]);
+  expect((await createResourceLoader(root)).loader.getSkills().skills.map((skill) => skill.name)).toEqual(expectedSkills);
 });
 
 test("reserved identity blocks creation/import/cloud installs and manually copied overrides", async () => {
@@ -75,12 +84,44 @@ test("reserved identity blocks creation/import/cloud installs and manually copie
   mkdirSync(copied, { recursive: true });
   writeFileSync(path.join(copied, "SKILL.md"), content);
   const enabled = await createResourceLoader(root);
-  expect(enabled.loader.getSkills().skills).toHaveLength(1);
+  expect(enabled.loader.getSkills().skills).toHaveLength(expectedSkills.length);
   expect(enabled.loader.getSkills().skills[0]!.filePath).toBe(enabled.skills[0]!.path);
   await setBuiltinSkillEnabled("ponytail", false);
-  expect((await createResourceLoader(root)).loader.getSkills().skills).toEqual([]);
+  expect((await createResourceLoader(root)).loader.getSkills().skills.map((skill) => skill.name)).toEqual(expectedSkills.slice(1));
   expect(decodeCommand(JSON.stringify({ type: "skills.delete", requestId: "delete", skillId: "ponytail" }))).toBeNull();
   await expect(setBuiltinSkillEnabled("../outside", false)).rejects.toThrow("未知的内置技能");
+});
+
+test("existing main-skill preferences survive adding the rest of the upstream collection", async () => {
+  const main = builtinSkillBundles[0]!;
+  const directory = path.join(root, "skills", "builtin", main.id, main.revision);
+  mkdirSync(directory, { recursive: true });
+  for (const [file, content] of Object.entries(main.files)) writeFileSync(path.join(directory, file), content);
+  new SettingsRepo(db).set("skills.builtin.ponytail", { enabled: false, revision: main.revision });
+  const skills = await listBuiltinSkills();
+  expect(skills.map((skill) => skill.id)).toEqual(expectedSkills);
+  expect(skills[0]).toMatchObject({ enabled: false, revision: main.revision });
+  expect(skills.slice(1).every((skill) => skill.enabled && skill.builtin)).toBe(true);
+  expect(readFileSync(path.join(directory, "SKILL.md"), "utf8")).toBe(main.files["SKILL.md"]);
+});
+
+test("every companion skill is protected, independently toggleable and updateable", async () => {
+  for (const [index, id] of expectedSkills.slice(1).entries()) {
+    const content = `---\nname: ${id}\ndescription: User override\n---\nOverride.\n`;
+    await expect(createLocalSkill(id, "Override", "Override")).rejects.toThrow("是内置技能");
+    await expect(installLocalSkill(content)).rejects.toThrow("是内置技能");
+    await expect(installCloudSkill("someone/ponytail", id)).rejects.toThrow("是内置技能");
+    await setBuiltinSkillEnabled(id, false);
+    const disabled = await createResourceLoader(root);
+    expect(disabled.loader.getSkills().skills.some((skill) => skill.name === id)).toBe(false);
+    expect(disabled.loader.getSkills().skills.some((skill) => skill.name === "ponytail")).toBe(true);
+    const sha = String(index + 1).repeat(40);
+    const result = await updateBuiltinSkill(id, upstream(sha, undefined, false, id));
+    expect(result).toMatchObject({ updated: true, skill: { id, enabled: false, revision: sha, builtin: true } });
+    expect(readFileSync(result.skill.path, "utf8")).toContain(`name: ${id}`);
+    await setBuiltinSkillEnabled(id, true);
+  }
+  expect((await createResourceLoader(root)).loader.getSkills().skills.map((skill) => skill.name)).toEqual(expectedSkills);
 });
 
 test("the disable directive covers default global ponytail rules while preserving user content and the fixed preamble", async () => {

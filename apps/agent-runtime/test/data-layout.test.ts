@@ -57,6 +57,9 @@ test("the real sidecar creates, restores and deletes project/session resources w
     const skills = await request({ type: "skills.list", requestId: "skills", cwd: source }, "skills.list");
     if (skills.type !== "skills.list") throw new Error("Missing skills");
     expect(skills.skills).toContainEqual(expect.objectContaining({ id: "ponytail", builtin: true, enabled: true }));
+    expect(skills.skills.filter((skill) => skill.builtin).map((skill) => skill.name)).toEqual([
+      "ponytail", "ponytail-review", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help",
+    ]);
     const disabled = await request({ type: "skills.builtin.set-enabled", requestId: "disable", skillId: "ponytail", enabled: false }, "skills.builtin.changed");
     if (disabled.type !== "skills.builtin.changed") throw new Error("Missing skill change");
     expect(disabled.skill.enabled).toBe(false);

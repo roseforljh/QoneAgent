@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import { createLocalSkill, createResourceLoader, installLocalSkill } from "../src/skills.js";
+import { builtinSkillBundles } from "../src/builtin-skills/identity.js";
 
 const originalAppData = process.env.APPDATA;
 const originalDataDir = process.env.QONE_DATA_DIR;
@@ -41,7 +42,7 @@ test("loads only QoneAgent skills, excluding workspace and Pi skills", async () 
   const { loader, skills } = await createResourceLoader(cwd);
   expect(skills.filter((skill) => !skill.builtin)).toEqual([{ id: "own", name: "own", description: "own skill", path: ownSkill }]);
   expect(skills.find((skill) => skill.id === "ponytail")).toMatchObject({ builtin: true, enabled: true });
-  expect(loader.getSkills().skills.map((skill) => skill.name)).toEqual(["ponytail", "own"]);
+  expect(loader.getSkills().skills.map((skill) => skill.name)).toEqual([...builtinSkillBundles.map((skill) => skill.id), "own"]);
   expect(loader.getAgentsFiles().agentsFiles).toEqual([]);
   const projectFile = path.join(cwd, "AGENTS.md");
   writeFileSync(projectFile, "Workspace guidance.");

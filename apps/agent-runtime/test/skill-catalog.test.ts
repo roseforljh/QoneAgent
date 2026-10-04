@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { installCloudSkill, listCloudSkills } from "../src/skill-catalog.js";
 import { createResourceLoader } from "../src/skills.js";
+import { builtinSkillBundles } from "../src/builtin-skills/identity.js";
 
 const oldAppData = process.env.APPDATA;
 const oldDataDir = process.env.QONE_DATA_DIR;
@@ -53,7 +54,7 @@ test("imports only the selected skill into QoneAgent and makes it discoverable",
   expect(skill.path).toBe(path.join(process.env.QONE_DATA_DIR, "skills", "installed", "demo", "SKILL.md"));
   expect(readFileSync(path.join(path.dirname(skill.path), "references", "info.md"), "utf8")).toBe(reference);
   expect(existsSync(path.join(path.dirname(skill.path), "..", "other"))).toBe(false);
-  expect((await createResourceLoader(path.join(root, "workspace"))).skills.map((item) => item.name)).toEqual(["ponytail", "demo"]);
+  expect((await createResourceLoader(path.join(root, "workspace"))).skills.map((item) => item.name)).toEqual([...builtinSkillBundles.map((skill) => skill.id), "demo"]);
   await expect(installCloudSkill("owner/repo", "demo", fetcher)).rejects.toThrow("已安装");
 });
 
