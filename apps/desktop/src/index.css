@@ -593,8 +593,9 @@ a { text-decoration: none; }
 .settings-dialog.is-dragging .settings-dialog-nav-item { cursor: pointer !important; }
 .settings-drag-preview { position: fixed; z-index: 3; display: flex; width: 228px; height: 43px; align-items: center; gap: 11px; padding: 0 13px; border: 1px solid color-mix(in srgb, var(--foreground) 18%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--q-surface-muted) 94%, transparent); box-shadow: 0 13px 28px rgb(0 0 0 / 32%); color: var(--foreground); pointer-events: none; transform: translateY(-50%); }
 .settings-drag-preview strong { font-size: 13px; font-weight: var(--q-weight-medium); }
-.settings-dialog-content { min-width: 0; overflow: auto; scrollbar-gutter: stable; padding: 24px 31px 32px; background: var(--q-surface); }
+.settings-dialog-content { --settings-content-top-padding: 24px; min-width: 0; overflow: auto; scrollbar-gutter: stable; padding: var(--settings-content-top-padding) 31px 32px; background: var(--q-surface); }
 .settings-dialog-section { min-height: 100%; }
+.settings-page-header { position: sticky; z-index: 4; top: calc(-1 * var(--settings-content-top-padding)); margin-top: calc(-1 * var(--settings-content-top-padding)); padding-top: var(--settings-content-top-padding); background: var(--q-surface); isolation: isolate; }
 .settings-dialog-heading { margin-bottom: 15px; padding: 0 0 13px; border-bottom: 1px solid var(--border); }
 .settings-dialog-heading > span { display: none; }
 .settings-dialog-heading h2 { margin: 0 0 5px; color: var(--foreground); font-size: 16px; letter-spacing: -.02em; }
@@ -725,6 +726,16 @@ a { text-decoration: none; }
 .settings-capability-status { display: inline-block; color: var(--muted-foreground); font-size: var(--q-text-xs); }
 .settings-capability-status.is-ready { color: #16a34a; }
 .settings-subagent-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.settings-builtin-subagent-settings { display: grid; gap: 12px; }
+.settings-builtin-subagent-search { display: flex; align-items: center; gap: 8px; min-height: 34px; margin-bottom: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--muted-foreground); }
+.settings-builtin-subagent-search:focus-within { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 13%, transparent); }
+.settings-builtin-subagent-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--foreground); font-size: 12px; }
+.settings-builtin-subagent-list { display: grid; gap: 7px; }
+.settings-builtin-subagent-entry { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); }
+.settings-builtin-subagent-entry.is-disabled { opacity: .65; }
+.settings-builtin-subagent-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.settings-builtin-subagent-copy strong { overflow: hidden; color: var(--foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-builtin-subagent-entry > .settings-secondary-action { flex: 0 0 auto; }
 .q-subagent-logo { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 11px; }
 .settings-subagent-list .settings-empty-card { grid-column: 1 / -1; }
 .settings-subagent-settings-card { display: flex; width: 100%; min-height: 58px; align-items: center; gap: 11px; margin-top: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--q-surface-muted) 72%, var(--q-surface)); color: var(--foreground); text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
@@ -928,7 +939,7 @@ a { text-decoration: none; }
   .settings-dialog-nav-item { min-height: 43px; justify-content: center; padding: 5px; }
   .settings-dialog-nav-item span { flex: 0 1 auto; }
   .settings-dialog-nav-item.is-active { box-shadow: inset 0 -2px 0 var(--primary); }
-  .settings-dialog-content { padding: 29px 22px 30px; }
+  .settings-dialog-content { --settings-content-top-padding: 29px; padding: var(--settings-content-top-padding) 22px 30px; }
 }
 
 @media (max-width: 480px) {

@@ -4,6 +4,16 @@ import type { AssistantMessagePart } from "./assistant-parts";
 export { ACTIVITY_TITLE_TOOL, ACTIVITY_TITLE_MAX_LENGTH, activityTitleFromArgs } from "./activity-title";
 import type { FilePreviewInfo } from "./file-preview";
 import { isRuntimeMessageKey, type RuntimeLocale, type LocalizedErrorInfo, type RuntimeMessageKey } from "./localized-error";
+import { isEccBuiltinSubagentId } from "./builtin-subagents/catalog";
+export {
+  ECC_BUILTIN_SUBAGENT_REVISION,
+  ECC_BUILTIN_SUBAGENT_SOURCE,
+  ECC_BUILTIN_SUBAGENT_SOURCE_URL,
+  ECC_BUILTIN_SUBAGENTS,
+  eccBuiltinSubagentId,
+  isEccBuiltinSubagentId,
+} from "./builtin-subagents/catalog";
+export type { BuiltinSubagentCatalogEntry } from "./builtin-subagents/catalog";
 export { runtimeMessage, isRuntimeMessageKey } from "./localized-error";
 export type { RuntimeLocale, RuntimeMessageKey, LocalizedErrorInfo } from "./localized-error";
 
@@ -560,7 +570,7 @@ export const SKILL_CATALOG_TIMEOUT = "SKILL_CATALOG_TIMEOUT";
 export const CAPABILITY_IDS = ["videoRecognition", "imageGeneration", "videoGeneration", "stt", "tts"] as const;
 export type CapabilityId = (typeof CAPABILITY_IDS)[number];
 export const builtinSubagentId = (capability: CapabilityId) => `builtin:${capability}`;
-export const isBuiltinSubagentId = (id: string) => CAPABILITY_IDS.some((capability) => builtinSubagentId(capability) === id);
+export const isBuiltinSubagentId = (id: string) => CAPABILITY_IDS.some((capability) => builtinSubagentId(capability) === id) || isEccBuiltinSubagentId(id);
 /** Retired built-ins are removed from saved configurations during migration. */
 export const REMOVED_BUILTIN_SUBAGENT_IDS: readonly string[] = ["builtin:webSearch"];
 export const SUBAGENT_LOGO_IDS = [

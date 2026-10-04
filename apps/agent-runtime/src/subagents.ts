@@ -17,6 +17,10 @@ function routeTarget(routing: CapabilityRouting, capability: CapabilityId): stri
   return value && value !== "auto" ? value : undefined;
 }
 
+function isCapabilityBuiltinSubagentId(id: string): boolean {
+  return CAPABILITY_IDS.some((capability) => builtinSubagentId(capability) === id);
+}
+
 export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
   const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const profiles = Array.isArray(record.profiles) ? record.profiles.flatMap((item) => {
@@ -85,7 +89,7 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
   const orderedProfiles = profiles.flatMap((profile) => {
     if (seenProfileIds.has(profile.id)) return [];
     seenProfileIds.add(profile.id);
-    return [isBuiltinSubagentId(profile.id)
+    return [isCapabilityBuiltinSubagentId(profile.id)
       ? builtins.find((builtin) => builtin.id === profile.id)!
       : profile];
   });

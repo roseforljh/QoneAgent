@@ -1,6 +1,6 @@
 import { localizeError } from "../../lib/error-localization";
 import { subagentProfileCopy } from "../../lib/subagent-profile-copy";
-import { detectImageModel, isBuiltinSubagentId, modelListUrl, modelNamesEqual, REMOVED_BUILTIN_SUBAGENT_IDS, supportsExtendedImageQuality, type ImageApiFormat, type ProviderApiType } from "@qone/protocol";
+import { detectImageModel, ECC_BUILTIN_SUBAGENTS, isBuiltinSubagentId, isEccBuiltinSubagentId, modelListUrl, modelNamesEqual, REMOVED_BUILTIN_SUBAGENT_IDS, supportsExtendedImageQuality, type BuiltinSubagentCatalogEntry, type ImageApiFormat, type ProviderApiType } from "@qone/protocol";
 import { NumberField } from "@base-ui/react/number-field";
 import { Switch } from "@base-ui/react/switch";
 import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
@@ -27,6 +27,7 @@ import {
   Command,
   CircleHelp,
   Globe2,
+  Library,
   LoaderCircle,
   Mail,
   MonitorCog,
@@ -62,6 +63,7 @@ import { ProviderLogo } from "./ProviderLogo";
 import { SkillsSection } from "./SkillsSection";
 import { SubagentRuntimeSettings } from "./SubagentRuntimeSettings";
 import { SubagentTemporarySettings } from "./SubagentTemporarySettings";
+import { BuiltinSubagentSettings } from "./BuiltinSubagentDialog";
 import { AppearanceOptions } from "./AppearanceOptions";
 import { normalizeSubagentLogos, SubagentLogo } from "./subagent-logo";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
@@ -115,6 +117,10 @@ function SectionHeader({ eyebrow, title, children }: { eyebrow: string; title: s
       {children && <p>{children}</p>}
     </div>
   );
+}
+
+function SettingsPageHeader({ children }: { children: ReactNode }) {
+  return <div className="settings-page-header">{children}</div>;
 }
 
 const providerApiLabelKeys = {
@@ -203,7 +209,7 @@ function GeneralSection() {
 
   return (
     <>
-      <SectionHeader eyebrow={t("general.eyebrow")} title={t("general.title")}>{t("general.description")}</SectionHeader>
+      <SettingsPageHeader><SectionHeader eyebrow={t("general.eyebrow")} title={t("general.title")}>{t("general.description")}</SectionHeader></SettingsPageHeader>
       <div className="settings-general-options">
         <AppearanceOptions />
         <div className="settings-option-row">
@@ -287,7 +293,7 @@ function PersonalizationSection() {
 
   return (
     <>
-      <SectionHeader eyebrow={t("personalization.eyebrow")} title={t("personalization.title")}>{t("personalization.description")}</SectionHeader>
+      <SettingsPageHeader><SectionHeader eyebrow={t("personalization.eyebrow")} title={t("personalization.title")}>{t("personalization.description")}</SectionHeader></SettingsPageHeader>
       <div className="settings-profile-form">
         <label>{t("personalization.nickname")}<input value={profile.nickname} onChange={(event) => updateProfile("nickname", event.target.value)} /></label>
         <label>{t("personalization.occupation")}<input value={profile.occupation} onChange={(event) => updateProfile("occupation", event.target.value)} /></label>
@@ -546,8 +552,7 @@ function ConfigurationSection() {
   };
   const openProvider = (profile: ProviderProfile) => { setEditing(profile); setDialogOpen(true); };
   return <>
-    <SectionHeader eyebrow={t("nav.configuration")} title={t("nav.configuration")} />
-    <div className="settings-section-toolbar"><div><strong>{t("provider.configuration")}</strong><span>{profiles.length ? t("provider.configuredProviders", { count: profiles.length }) : t("provider.noProviders")}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("provider.newProvider")}</button></div>
+    <SettingsPageHeader><SectionHeader eyebrow={t("nav.configuration")} title={t("nav.configuration")} /><div className="settings-section-toolbar"><div><strong>{t("provider.configuration")}</strong><span>{profiles.length ? t("provider.configuredProviders", { count: profiles.length }) : t("provider.noProviders")}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("provider.newProvider")}</button></div></SettingsPageHeader>
     <div className="settings-provider-grid" role="radiogroup" aria-label={t("provider.configuration")}>{profiles.map((profile) => {
       const selected = profile.id === selectedProviderId;
       return <div
@@ -818,8 +823,7 @@ function ModelsSection() {
   };
   const selectProvider = (id: string) => { setSelectedProviderId(id); window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, id); window.dispatchEvent(new Event(MODEL_CONFIG_CHANGE_EVENT)); };
   return <>
-    <SectionHeader eyebrow="Models" title={t("model.title")} />
-    <div className="settings-model-toolbar"><label>{t("model.currentProvider")}<QoneSelect value={provider?.id ?? ""} onChange={selectProvider} placeholder={t("model.selectProvider")} options={profiles.map((item) => ({ value: item.id, label: item.name }))} ariaLabel={t("model.currentProvider")} /></label><button type="button" className="settings-secondary-action" disabled={!provider} onClick={() => { setEditing(undefined); setEditorOpen(true); }}><Plus size={15} />{t("model.manualAdd")}</button></div>
+    <SettingsPageHeader><SectionHeader eyebrow="Models" title={t("model.title")} /><div className="settings-model-toolbar"><label>{t("model.currentProvider")}<QoneSelect value={provider?.id ?? ""} onChange={selectProvider} placeholder={t("model.selectProvider")} options={profiles.map((item) => ({ value: item.id, label: item.name }))} ariaLabel={t("model.currentProvider")} /></label><button type="button" className="settings-secondary-action" disabled={!provider} onClick={() => { setEditing(undefined); setEditorOpen(true); }}><Plus size={15} />{t("model.manualAdd")}</button></div></SettingsPageHeader>
     {provider ? <><div className="settings-section-toolbar settings-model-summary"><div><strong>{provider.name}</strong><span>{t(providerApiLabelKeys[provider.apiType])} · {models.length} {t("provider.models")}</span></div></div><div className="settings-model-grid" role="group" aria-label={`${provider.name} ${t("model.title")}`}>
       {models.map((model) => {
         const modelConfigId = `${provider.id}/${model.id}`;
@@ -901,7 +905,7 @@ function CompactionSection() {
 
   return (
     <>
-      <SectionHeader eyebrow={t("compaction.eyebrow")} title={t("compaction.title")} />
+      <SettingsPageHeader><SectionHeader eyebrow={t("compaction.eyebrow")} title={t("compaction.title")} /></SettingsPageHeader>
       <section className="settings-compaction-section">
         <div className="settings-compaction-row">
           <div>
@@ -968,7 +972,7 @@ function SubagentsSection() {
   const [runtime, setRuntime] = useState(runtimeSubagentConfig.runtime);
   const [editing, setEditing] = useState<SubagentProfile | undefined>();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [view, setView] = useState<"overview" | "runtime" | "temporary">("overview");
+  const [view, setView] = useState<"overview" | "runtime" | "temporary" | "builtins">("overview");
   const modelOptions = Array.from(new Map([
     ...modelConfigs.map((model) => [`${model.provider}/${model.model}`, { id: model.id, label: `${model.provider} / ${model.model}` }] as const),
     ...profiles.flatMap((provider) => provider.models.map((model) => [`${provider.id}/${model.id}`, { id: `${provider.id}/${model.id}`, label: `${provider.name} / ${model.label}` }] as const)),
@@ -992,6 +996,14 @@ function SubagentsSection() {
       ? agents.map((item) => item.id === agent.id ? agent : item)
       : [...agents, agent],
   );
+  const toggleBuiltin = (entry: BuiltinSubagentCatalogEntry, enabled: boolean) => {
+    const existing = agents.find((agent) => agent.id === entry.id);
+    if (existing) {
+      saveAgents(agents.map((agent) => agent.id === entry.id ? { ...agent, enabled, updatedAt: Date.now() } : agent));
+      return;
+    }
+    saveAgents([...agents, { id: entry.id, name: entry.name, instructions: entry.instructions, modelId: "", tools: entry.tools, permissionMode: "ask", enabled, updatedAt: Date.now() }]);
+  };
   const saveRuntime = (next: typeof runtime) => {
     setRuntime(next);
     const config = { profiles: dedupeSubagents(agents), routing: runtimeSubagentConfig.routing, runtime: next, updatedAt: Date.now() };
@@ -1002,29 +1014,38 @@ function SubagentsSection() {
     ? modelOptions.find((model) => model.id === runtime.temporaryModelId)?.label ?? runtime.temporaryModelId
     : t("subagent.followMainModel");
   if (view === "temporary") return <>
-    <button type="button" className="settings-subagent-back" onClick={() => setView("overview")}>
-      <ArrowLeft size={14} aria-hidden="true" />
-      {t("subagent.temporaryBack")}
-    </button>
-    <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.temporaryTitle")}>
-      {t("subagent.temporaryDescription")}
-    </SectionHeader>
+    <SettingsPageHeader>
+      <button type="button" className="settings-subagent-back" onClick={() => setView("overview")}>
+        <ArrowLeft size={14} aria-hidden="true" />
+        {t("subagent.temporaryBack")}
+      </button>
+      <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.temporaryTitle")}>
+        {t("subagent.temporaryDescription")}
+      </SectionHeader>
+    </SettingsPageHeader>
     <SubagentTemporarySettings value={runtime.temporaryModelId} modelOptions={modelOptions} onChange={(temporaryModelId) => saveRuntime({ ...runtime, temporaryModelId })} />
   </>;
   if (view === "runtime") return <>
-    <button type="button" className="settings-subagent-back" onClick={() => setView("overview")}>
-      <ArrowLeft size={14} aria-hidden="true" />
-      {t("subagent.runtimeBack")}
-    </button>
-    <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.runtimeTitle")}>
-      {t("subagent.runtimeDescription")}
-    </SectionHeader>
+    <SettingsPageHeader>
+      <button type="button" className="settings-subagent-back" onClick={() => setView("overview")}>
+        <ArrowLeft size={14} aria-hidden="true" />
+        {t("subagent.runtimeBack")}
+      </button>
+      <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.runtimeTitle")}>
+        {t("subagent.runtimeDescription")}
+      </SectionHeader>
+    </SettingsPageHeader>
     <SubagentRuntimeSettings value={runtime} onChange={saveRuntime} />
   </>;
+  if (view === "builtins") return <BuiltinSubagentSettings profiles={agents.filter((agent) => isEccBuiltinSubagentId(agent.id))} onToggle={toggleBuiltin} onBack={() => setView("overview")} backLabel={t("subagent.builtInBack")} />;
   return <>
-    <SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.title")} />
-    <div className="settings-section-toolbar"><div><strong>{t("subagent.mine")}</strong><span>{t("subagent.count", { count: agents.length })}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("subagent.new")}</button></div>
+    <SettingsPageHeader><SectionHeader eyebrow={t("subagent.eyebrow")} title={t("subagent.title")} /><div className="settings-section-toolbar"><div><strong>{t("subagent.mine")}</strong><span>{t("subagent.count", { count: agents.length })}</span></div><button type="button" className="settings-primary-action" onClick={() => { setEditing(undefined); setDialogOpen(true); }}><Plus size={15} />{t("subagent.new")}</button></div></SettingsPageHeader>
     <div className="settings-subagent-list">{agents.map((agent) => { const builtin = isBuiltinSubagentId(agent.id); const display = subagentProfileCopy(agent, locale); const openEditor = () => { setEditing(agent); setDialogOpen(true); }; return <div className={cn("settings-subagent-card", "is-actionable", !agent.enabled && "is-disabled")} key={agent.id} role="button" tabIndex={0} aria-label={`${display.name} · ${t("common.edit")}`} onClick={openEditor} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openEditor(); } }}><div className="settings-subagent-card-main"><SubagentLogo logo={agent.logo} name={display.name} size={36} /><div><strong>{display.name}</strong><small>{modelOptions.find((model) => model.id === agent.modelId)?.label ?? (agent.modelId ? agent.modelId : t("subagent.followMainModel"))} · {builtin ? t("subagent.builtIn") : agent.enabled ? t("subagent.enabled") : t("subagent.disabled")}</small></div></div><div className="settings-subagent-actions"><Switch.Root checked={agent.enabled} aria-label={t(agent.enabled ? "subagent.disable" : "subagent.enable")} className={cn("settings-switch", agent.enabled && "is-on")} onClick={(event) => event.stopPropagation()} onCheckedChange={(checked) => { saveAgents(agents.map((item) => item.id === agent.id ? { ...item, enabled: checked, updatedAt: Date.now() } : item)); }}><Switch.Thumb /></Switch.Root>{!builtin && <button type="button" aria-label={t("subagent.delete", { name: agent.name })} onClick={(event) => { event.stopPropagation(); void deleteAgent(agent); }}><Trash2 size={14} /></button>}</div></div>; })}{agents.length === 0 && <div className="settings-empty-card"><BotMessageSquare size={22} /><p>{t("subagent.noAgents")}</p></div>}</div>
+    <button type="button" className="settings-subagent-settings-card" onClick={() => setView("builtins")}>
+      <span className="settings-subagent-settings-icon"><Library size={17} aria-hidden="true" /></span>
+      <span className="settings-subagent-settings-copy"><strong>{t("subagent.builtInCatalog")}</strong><small>{t("subagent.builtInCount", { count: ECC_BUILTIN_SUBAGENTS.length })}</small></span>
+      <ChevronRight size={16} aria-hidden="true" />
+    </button>
     <button type="button" className="settings-subagent-settings-card" onClick={() => setView("temporary")}>
       <span className="settings-subagent-settings-icon"><BotMessageSquare size={17} aria-hidden="true" /></span>
       <span className="settings-subagent-settings-copy"><strong>{t("subagent.temporaryTitle")}</strong><small>{temporaryModelLabel}</small></span>
@@ -1319,15 +1340,17 @@ function McpSection() {
 
   return (
     <>
-      <SectionHeader eyebrow={t("mcp.eyebrow")} title={t("mcp.title")} />
-      {lastError === t("mcp.nodeRequired") && <div className="error-banner" role="alert">
+      <SettingsPageHeader>
+        <SectionHeader eyebrow={t("mcp.eyebrow")} title={t("mcp.title")} />
+        {lastError === t("mcp.nodeRequired") && <div className="error-banner" role="alert">
         <span>{lastError}</span>
         <div className="settings-toolbar-actions">
           <button type="button" className="settings-secondary-action" onClick={() => void openUrl("https://nodejs.org/en/download")}>{t("mcp.downloadNode")}</button>
           <button type="button" className="icon-button" aria-label={t("common.close")} onClick={() => useStore.setState({ lastError: undefined })}><X size={15} /></button>
         </div>
-      </div>}
-      <div className="settings-section-toolbar"><div><strong>{t("mcp.addService")}</strong><span>{t("mcp.addDescription")}</span></div><div className="settings-toolbar-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" className="settings-primary-action" onClick={() => openAdd()}><Plus size={15} />{t("mcp.add")}</button></div></div>
+        </div>}
+        <div className="settings-section-toolbar"><div><strong>{t("mcp.addService")}</strong><span>{t("mcp.addDescription")}</span></div><div className="settings-toolbar-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" className="settings-primary-action" onClick={() => openAdd()}><Plus size={15} />{t("mcp.add")}</button></div></div>
+      </SettingsPageHeader>
       <div className="settings-mcp-list">{MCP_PRESETS.filter((preset) => { const q = query.trim().toLowerCase(); return !q || presetName(preset).toLowerCase().includes(q) || t(preset.descKey).toLowerCase().includes(q); }).map((preset) => {
         const server = servers.find((item) => item.id === preset.id);
         const connecting = pendingOn.has(preset.id) || connectingIds.includes(preset.id);

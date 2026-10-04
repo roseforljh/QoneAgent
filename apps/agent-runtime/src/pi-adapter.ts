@@ -511,9 +511,11 @@ export class PiAdapter {
 
     const workspacePath = cwd ?? process.cwd();
     const sideConversation = this.isSideConversation(sessionId);
-    const resourceKey = sideConversation ? `side-chat:${sessionId}` : workspacePath;
+    const resourceKey = sideConversation
+      ? `${subagentDepth > 0 ? "subagent-side-chat" : "side-chat"}:${sessionId}`
+      : subagentDepth > 0 ? `subagent:${workspacePath}` : workspacePath;
     if (!this.resourceLoaders.has(resourceKey)) {
-      const { loader } = await createResourceLoader(workspacePath, sideConversation ? SIDE_CHAT_INSTRUCTIONS : undefined, true);
+      const { loader } = await createResourceLoader(workspacePath, sideConversation ? SIDE_CHAT_INSTRUCTIONS : undefined, true, subagentDepth > 0);
       this.resourceLoaders.set(resourceKey, loader);
     }
     const builtinTools = [

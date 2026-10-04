@@ -9,12 +9,13 @@ import {
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 import { readSystemPrompt } from "./system-prompt.js";
-import { qonePiStateDir, qoneSkillsDir, qoneSkillCacheDir } from "@qone/shared";
+import { qonePiStateDir, qoneSkillsDir, qoneBuiltinSkillsDir, qoneSkillCacheDir } from "@qone/shared";
 import { readGlobalInstructions } from "./global-instructions.js";
 import { workspaceInstructions } from "./workspace-instructions.js";
 import { toolPromptContextExtension } from "./tool-prompt-context.js";
 import { assertUserSkillName, isBuiltinSkillName } from "./builtin-skills/identity.js";
 import { listBuiltinSkills } from "./builtin-skills/manager.js";
+import eccResources from "./builtin-subagents/ecc-resources.json";
 import type { SkillInfo } from "@qone/protocol";
 export type { SkillInfo } from "@qone/protocol";
 
@@ -24,6 +25,19 @@ export function qoneAgentDir(): string {
 
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_SKILL_CONTENT_BYTES = 2 * 1024 * 1024;
+
+async function ensureEccReferenceSkills(): Promise<string[]> {
+  const root = path.join(qoneBuiltinSkillsDir(), "ecc-reference", eccResources.revision);
+  const paths = new Set<string>();
+  for (const [relative, content] of Object.entries(eccResources.files)) {
+    const destination = path.resolve(root, relative.replaceAll("/", path.sep));
+    if (destination !== root && !destination.startsWith(`${root}${path.sep}`)) throw new Error("Invalid ECC reference path");
+    await mkdir(path.dirname(destination), { recursive: true });
+    if (!existsSync(destination)) await writeFile(destination, content, "utf8");
+    if (relative.startsWith("skills/") && relative.endsWith("/SKILL.md")) paths.add(path.dirname(destination));
+  }
+  return [...paths];
+}
 
 export async function installLocalSkill(content: string): Promise<SkillInfo> {
   return writeSkillContent(content);
@@ -79,13 +93,14 @@ async function writeSkillContent(content: string, expectedName?: string): Promis
  * product-facing catalog for the GUI and persistence; it does not create a
  * second skill format.
  */
-export async function createResourceLoader(cwd: string, additionalInstructions?: string, enableCodemode = false): Promise<{
+export async function createResourceLoader(cwd: string, additionalInstructions?: string, enableCodemode = false, includeEccReferences = false): Promise<{
   loader: ResourceLoader;
   skills: SkillInfo[];
 }> {
   const agentDir = qoneAgentDir();
   const ownSkills = qoneSkillsDir();
   const builtinSkills = await listBuiltinSkills();
+  const eccReferencePaths = includeEccReferences ? await ensureEccReferenceSkills() : [];
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir,
@@ -102,6 +117,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
     additionalSkillPaths: [
       ...builtinSkills.filter((skill) => skill.enabled).map((skill) => path.dirname(skill.path)),
       ...(existsSync(ownSkills) ? [ownSkills] : []),
+      ...eccReferencePaths,
     ],
     // A manually copied user skill cannot override a reserved built-in name,
     // including while the built-in is disabled.

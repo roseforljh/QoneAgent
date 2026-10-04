@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeCommand, isBuiltinSubagentId, type SubagentConfigInfo } from "@qone/protocol";
+import { decodeCommand, ECC_BUILTIN_SUBAGENTS, isBuiltinSubagentId, isEccBuiltinSubagentId, type SubagentConfigInfo } from "@qone/protocol";
 import { buildSubagentPrompt, normalizeSubagentConfig, resolveSubagent, subagentCatalog } from "../src/subagents";
 import { Database } from "bun:sqlite";
 import { closeDb, MessageRepo, openDb, RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
@@ -20,6 +20,16 @@ const config: SubagentConfigInfo = {
 };
 
 describe("capability subagent routing", () => {
+  test("ships the complete ECC built-in catalog and accepts its profiles without a dedicated model", () => {
+    expect(ECC_BUILTIN_SUBAGENTS).toHaveLength(68);
+    expect(ECC_BUILTIN_SUBAGENTS.every((agent) => agent.id.startsWith("builtin:ecc:") && agent.instructions.length > 0)).toBe(true);
+    const planner = ECC_BUILTIN_SUBAGENTS.find((agent) => agent.name === "planner")!;
+    expect(isEccBuiltinSubagentId(planner.id)).toBe(true);
+    expect(isBuiltinSubagentId(planner.id)).toBe(true);
+    expect(planner.tools).toEqual(["read", "grep", "find"]);
+    expect(normalizeSubagentConfig({ profiles: [{ ...planner, modelId: "", enabled: true, updatedAt: 1 }] }).profiles).toContainEqual(expect.objectContaining({ id: planner.id, instructions: planner.instructions }));
+  });
+
   test("always lists the temporary general agent with its configured or inherited model", () => {
     const empty = normalizeSubagentConfig({});
     expect(subagentCatalog(empty).temporary).toMatchObject({
