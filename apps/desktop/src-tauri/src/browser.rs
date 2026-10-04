@@ -81,7 +81,9 @@ pub fn open(app: &AppHandle, browser_id: &str, url: &str, x: f64, y: f64, w: f64
     let app2 = app.clone();
     let navigation_id = browser_id.to_owned();
     let label = format!("dock-browser-{browser_id}");
-    let builder = WebviewBuilder::new(label, WebviewUrl::External(target)).devtools(false).on_navigation(
+    let builder = WebviewBuilder::new(label, WebviewUrl::External(target))
+        .data_directory(crate::data_paths::webview()?)
+        .devtools(false).on_navigation(
         move |next| {
             let _ = app2.emit(
                 "browser:navigated",

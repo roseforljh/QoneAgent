@@ -20,10 +20,11 @@ fn last_normal_state() -> &'static Mutex<Option<WindowState>> {
     LAST_NORMAL_STATE.get_or_init(|| Mutex::new(None))
 }
 
-fn state_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    let directory = app.path().app_config_dir().map_err(|error| error.to_string())?;
+fn state_path<R: Runtime>(_app: &AppHandle<R>) -> Result<PathBuf, String> {
+    let directory = crate::data_paths::runtime()?;
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    Ok(directory.join(STATE_FILE))
+    let file = directory.join(STATE_FILE);
+    Ok(file)
 }
 
 fn intersects_monitor<R: Runtime>(window: &tauri::WebviewWindow<R>, state: &WindowState) -> bool {

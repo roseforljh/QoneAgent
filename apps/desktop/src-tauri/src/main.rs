@@ -2,7 +2,6 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
-use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 use std::sync::{
@@ -19,29 +18,12 @@ use native_error::NativeError;
 mod native_copy;
 mod webview_policy;
 mod window_state;
+mod data_paths;
 mod runtime_transport;
 mod credential_bridge;
 use credential_bridge::persist_runtime_secret;
 use runtime_transport::{RuntimeBatch, RuntimeTransport, runtime_subscribe};
 use native_copy::{NativeCopy, NativeCopyState, set_native_copy};
-
-fn ensure_global_instructions_file() -> Result<(), String> {
-    let root = std::env::var_os("APPDATA")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .ok_or_else(|| "Could not determine the Qone data directory".to_string())?;
-    let directory = root.join("Qone");
-    std::fs::create_dir_all(&directory).map_err(|error| format!("Failed to create the Qone data directory: {error}"))?;
-    let file = directory.join("Qone.md");
-    if !file.exists() {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&file)
-            .map_err(|error| format!("Failed to create Qone.md: {error}"))?;
-    }
-    Ok(())
-}
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -200,6 +182,7 @@ fn spawn_sidecar(
 
     let mut child = command
         .current_dir(&runtime_dir)
+        .env("QONE_DATA_DIR", data_paths::root()?)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -625,7 +608,13 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            ensure_global_instructions_file().map_err(std::io::Error::other)?;
+            data_paths::ensure_global_instructions().map_err(std::io::Error::other)?;
+            let config = app.config().app.windows.iter()
+                .find(|config| config.label == "main")
+                .ok_or("Missing main window configuration")?;
+            tauri::WebviewWindowBuilder::from_config(app, config)?
+                .data_directory(data_paths::webview().map_err(std::io::Error::other)?)
+                .build()?;
             #[cfg(all(windows, debug_assertions))]
             dev_network::install(app.handle());
             let show = MenuItem::with_id(app, "show", "Show Qone", true, None::<&str>)?;

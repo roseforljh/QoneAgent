@@ -16,7 +16,8 @@
         "width": 1200,
         "height": 800,
         "decorations": false,
-        "devtools": false
+        "devtools": false,
+        "create": false
       }
     ],
     "security": {
