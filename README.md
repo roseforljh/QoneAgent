@@ -17,14 +17,27 @@ bun run apps/agent-runtime/test/smoke.ts
 
 ## 运行时数据
 
-默认保存到 Windows `%APPDATA%\QoneAgent\`：
+默认保存到 Windows 用户目录 `C:\Users\<用户名>\.qone\`：
 
-- `agent.db`：SQLite 持久化数据
-- `artifacts/`：截图和下载的文件
+- `runtime/qone.db`：SQLite 索引和持久化数据
+- `config/settings.db`：模型配置、全局设置和权限
+- `mcp/servers.db`：MCP 服务配置；凭据仍保存在 Windows Credential Manager
+- `runtime/window-state.json`、`runtime/webview/`：窗口状态和 WebView 数据
+- `Qone.md`：全局提示词，直接放在数据根目录
+- `skills/installed/`、`skills/cache/`：已安装 Skill 和目录缓存
+- `plugins/installed/`、`plugins/cache/`、`plugins/data/`：插件代码、缓存和私有数据
+- `projects/<项目>/project.json`：项目名称与源码位置；源码保留在原目录
+- `projects/<项目>/sessions/<会话>/session.json`：会话元信息
+- `projects/<项目>/sessions/<会话>/attachments/`、`artifacts/`：会话资源与生成媒体；用户本地附件保留原路径
 - `logs/runtime.log`：结构化运行日志
+- `cache/`：临时缓存
 - API Key 和 MCP OAuth Token：Windows Credential Manager
 
-可用 `QONE_DB`、`QONE_LOG_DIR`、`QONE_ARTIFACTS_DIR` 覆盖测试路径。
+测试时可用 `QONE_DATA_DIR`、`QONE_DB`、`QONE_LOG_DIR` 覆盖数据、数据库和日志路径。
+
+项目、消息、会话和运行索引由 `runtime/qone.db` 保存。`project.json`、`session.json` 是目录说明，由数据库重建。配置和 MCP 使用各自目录内的 SQLite 数据库；原统一数据库内的配置在启动时迁入对应数据库，不保留旧路径回退读取。Skill 安装内容和缓存、插件代码和私有数据使用各自的目录。插件加载模块已有目录支持，主运行时尚未启用插件执行。
+
+全局提示词只从数据根目录的 `Qone.md` 读取，项目规则读取选定工作区根目录的 `AGENTS.md` 等 Pi 支持文件，不向用户目录或其他父目录扫描。桌面和运行时都按同一个 `QONE_DATA_DIR` 解析目录，WebView 数据路径与源码、安装位置无关。
 
 ## OpenCLI 当前浏览器
 
