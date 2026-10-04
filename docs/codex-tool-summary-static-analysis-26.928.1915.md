@@ -42,8 +42,6 @@ ASAR 解析：前 16 字节中的 uint32LE(12) 为 JSON 索引长度，资源数
 - 最后一次 `bun x tsc --noEmit -p apps/desktop/tsconfig.json`：通过。
 - `git diff --check`：通过。
 - 整个桌面测试目录合跑曾返回 223 pass / 10 fail / 2 errors，涉及 compaction-flow、dock-browser-session 和 Lexical 模块初始化。独立重跑 compaction-flow（4 项）及 composer-tool-editor（10 项）均通过，说明不能把合跑结果标为全绿。未扩展到本轮工具条之外修改这些测试或浏览器生命周期实现。
-- 知识图谱用 `graphify.watch._rebuild_code` 重建，遵守项目忽略配置。
-
 不生成 exe 或安装包。静态渲染和尺寸桩测试不能代替实际 WebView 视觉验收；界面效果由用户启动开发环境确认。
 
 ## 工具标题状态与文案补查（2026-09-30）

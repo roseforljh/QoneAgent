@@ -43,6 +43,4 @@
 
 修复后：队列视图、引用、草稿及队列编辑共 39 项通过；链接测试单独运行 15 项通过；桌面 `tsc --noEmit` 与定向 diff 格式检查通过。五个文件合在一个 Bun 测试进程时，链接测试触发 Lexical 的 `CAN_USE_DOM` 初始化顺序异常；拆开运行全部通过，未把这个测试加载问题混入输入框样式修复。
 
-已按项目要求调用 `_rebuild_code(Path('.'))` 更新知识图谱，尊重项目 `.graphifyignore`，没有使用 `collect_files`。图谱成功更新；日志提示 SQL 解析依赖缺失、3 个 JSON 文件没有可提取节点，不影响本次 TSX 和 Markdown 提取。
-
 不启动浏览器、不构建 exe 或安装包。实际 WebView 外观由用户运行 `bun run --cwd apps/desktop tauri dev` 验收。
