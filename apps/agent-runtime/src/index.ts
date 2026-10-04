@@ -139,6 +139,30 @@ const queueEventPersistence = (event: AgentEvent) => {
 
 const compactionPositions = new CompactionPositions();
 const liveAssistantByRun = new Map<string, LiveAssistantState>();
+function runRequiresSubagentFinalization(sessionId: string, runId: string): boolean {
+  const owner = subagentRunRepo.getByExecutionSession(sessionId);
+  const ownerRunId = owner?.runId ?? runId;
+  const ownerSessionId = owner?.parentSessionId ?? sessionId;
+  const rows = subagentRunRepo.listBySession(ownerSessionId);
+  const direct = rows.filter((row) => row.requiredBeforeFinal && row.parentRunId === ownerRunId);
+  const recoveredRoots = !owner
+    ? rows.filter((row) => row.requiredBeforeFinal && !row.parentSubagentId && row.parentRunId !== ownerRunId
+      && runRepo.get(row.parentRunId)?.status === "interrupted"
+      && !runRepo.isFinalizationAuthorized(row.parentRunId))
+    : [];
+  const recoveredRootIds = new Set(recoveredRoots.map((row) => row.runId));
+  const recovered = rows.filter((row) => {
+    if (!row.requiredBeforeFinal) return false;
+    let current = row;
+    while (current.parentSubagentId) {
+      const parent = rows.find((candidate) => candidate.runId === current.parentRunId);
+      if (!parent) return false;
+      current = parent;
+    }
+    return recoveredRootIds.has(current.runId);
+  });
+  return [...direct, ...recovered].length > 0;
+}
 eventBus.subscribe((busEvent) => {
   const childExecution = busEvent.scope === "subagent" || Boolean(busEvent.runId && subagentRunIds.has(busEvent.runId));
   if (busEvent.type === "approval.requested" && busEvent.runId) {
@@ -174,7 +198,9 @@ eventBus.subscribe((busEvent) => {
         const messageSequence = assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence;
         assistantPartsByRun.set(agentEvent.runId, [
           ...parts.filter((part) => part.messageSequence !== messageSequence),
-          ...assistantPartsFromPiMessage(agentEvent.payload, messageSequence),
+          ...assistantPartsFromPiMessage(agentEvent.payload, messageSequence,
+            runRequiresSubagentFinalization(agentEvent.sessionId ?? "", agentEvent.runId)
+              && !runRepo.isFinalizationAuthorized(agentEvent.runId) ? "commentary" : undefined),
         ]);
         assistantMessageSequenceByRun.delete(agentEvent.runId);
       } else if (agentEvent.type === "message.reasoning.delta") {

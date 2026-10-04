@@ -23,12 +23,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-export function assistantPartsFromPiMessage(payload: unknown, messageSequence: number): AssistantMessagePart[] {
+export function assistantPartsFromPiMessage(payload: unknown, messageSequence: number, forcedPhase?: AssistantTextPhase): AssistantMessagePart[] {
   const message = asRecord(asRecord(payload)?.message);
   if (message?.role !== "assistant" || !Array.isArray(message.content)) return [];
-  const phase: AssistantTextPhase | undefined = message.content.some((block) => asRecord(block)?.type === "toolCall")
+  const phase: AssistantTextPhase | undefined = forcedPhase ?? (message.content.some((block) => asRecord(block)?.type === "toolCall")
     || message.stopReason === "toolUse" ? "commentary"
-    : message.stopReason === "stop" ? "final_answer" : undefined;
+    : message.stopReason === "stop" ? "final_answer" : undefined);
 
   return message.content.flatMap((value: unknown, index: number): AssistantMessagePart[] => {
     const block = asRecord(value);

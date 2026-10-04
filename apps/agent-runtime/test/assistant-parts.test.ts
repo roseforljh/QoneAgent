@@ -50,3 +50,10 @@ test("bootstrap adds ordered parts to an existing messages table", () => {
   expect(new MessageRepo(db).listBySession("session")[0]).toMatchObject({ content: "旧内容", parts: null });
   closeDb(db);
 });
+
+test("a response before finalization is persisted as commentary", () => {
+  const parts = assistantPartsFromPiMessage({ message: {
+    role: "assistant", stopReason: "stop", content: [{ type: "text", text: "先处理子代理结果" }],
+  } }, 4, "commentary");
+  expect(parts).toEqual([{ type: "text", text: "先处理子代理结果", messageSequence: 4, phase: "commentary" }]);
+});

@@ -60,7 +60,7 @@ function assertModelToolNames(names: Iterable<string>): void {
 
 type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
-type DelegateSubagent = (input: SubagentSelection & { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
+type DelegateSubagent = (input: SubagentSelection & { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; reason: string; expectedResult: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
 type SubagentController = import("./subagent-runner.js").SubagentController;
 
 export interface GoalRuntimeBridge {
@@ -577,6 +577,7 @@ export class PiAdapter {
     }] : [];
     const internalTools = [createActivityTitleTool(), ...goalTools];
     const internalToolNames = new Set(internalTools.map((tool) => tool.name));
+    internalToolNames.add("finalize_response");
     const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...internalTools].map((t) =>
       withPermission(t, {
         queue: this.approvals,
@@ -638,6 +639,28 @@ export class PiAdapter {
       thinkingLevel: thinking,
     });
     await session.bindExtensions({});
+    const previousFinishTurn = session.agent.finishTurn;
+    session.agent.finishTurn = (async (turn, signal) => {
+      const previous = await previousFinishTurn?.(turn, signal);
+      const runId = this.activeRunIds.get(sessionId);
+      if (!runId || !this.subagentController || turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return previous;
+      let dependencies = this.subagentController.dependencyStatus?.(runId);
+      if (!dependencies || (!dependencies.blocking.length && !dependencies.unacknowledged.length && dependencies.authorized !== false)) return previous;
+      const active = () => dependencies!.blocking.filter((child) => ["created", "running", "waiting_approval", "paused"].includes(child.status));
+      if (active().length) {
+        this.push("agent.waiting_subagents", { subagents: active().map((child) => ({ runId: child.id, title: child.title })) }, eventSessionId, runId);
+        await this.subagentController.waitForDependencyChange(runId, signal);
+        dependencies = this.subagentController.dependencyStatus(runId);
+      }
+      const ids = dependencies.blocking.map((child) => child.id);
+      const instruction = ids.length
+        ? `Required subagent results remain unresolved: ${ids.join(", ")}. Confirm the actual state, inspect each compact result, continue retryable failures with the same runId using follow_up, then call finalize_response before the final answer.`
+        : "All required subagent results have been processed, but finalization has not been authorized. Call finalize_response with the handled run IDs before the final answer.";
+      if (!session.agent.hasQueuedMessages()) {
+        session.agent.steer({ role: "user", content: [{ type: "text", text: `[QONE_SUBAGENT_LEDGER]\n${instruction}` }], timestamp: Date.now() });
+      }
+      return { action: "continue" };
+    }) as NonNullable<typeof session.agent.finishTurn>;
     try {
       assertModelToolNames(session.getActiveToolNames());
     } catch (error) {

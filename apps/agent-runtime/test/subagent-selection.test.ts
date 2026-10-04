@@ -41,7 +41,7 @@ function fixture() {
     assistantBuffers, streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(),
     attachmentsProvider: () => [attachment], publish: () => undefined, emit: () => undefined,
   });
-  const input = { parentSessionId: session.id, parentRunId: parent.id, task: "审查代码", title: "审查", toolCallId: "call", fallbackModel: "provider/parent", permissionMode: "full" as const };
+  const input = { parentSessionId: session.id, parentRunId: parent.id, task: "审查代码", title: "审查", reason: "需要独立审查结果", expectedResult: "列出审查发现和建议", toolCallId: "call", fallbackModel: "provider/parent", permissionMode: "full" as const };
   return { db, repo, session, parent, config: () => config, setConfig: (value: typeof config) => { config = value; }, calls,
     attachment, dispatch, controller, input };
 }
@@ -105,6 +105,15 @@ describe("explicit temporary subagent selection", () => {
       await expect(f.dispatch({ ...f.input, subagentId: "reviewer" })).rejects.toThrow("profile unavailable");
       expect(f.repo.listBySession(f.session.id)).toHaveLength(0);
       expect(f.calls).toHaveLength(0);
+    } finally { closeDb(f.db); }
+  });
+
+  test("dispatch requires structured delegation rationale before creating a child", async () => {
+    const f = fixture();
+    try {
+      await expect(f.dispatch({ ...f.input, reason: "", expectedResult: "返回结果" })).rejects.toThrow("reason and expectedResult are required");
+      await expect(f.dispatch({ ...f.input, reason: "需要独立检查", expectedResult: "" })).rejects.toThrow("reason and expectedResult are required");
+      expect(f.repo.listBySession(f.session.id)).toHaveLength(0);
     } finally { closeDb(f.db); }
   });
 

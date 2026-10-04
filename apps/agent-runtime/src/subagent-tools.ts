@@ -35,6 +35,19 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
     }
   };
   const inspectTools: ToolDefinition[] = options.controller ? [{
+    name: "finalize_response",
+    label: "Finalize response",
+    description: "Authorize the final answer only after every required subagent has ended and its result or failure has been processed.",
+    promptSnippet: "Call finalize_response only after inspecting every required child and handling retryable failures. If it reports missing dependencies, continue the required child work first.",
+    parameters: Type.Object({ resolvedSubagentRunIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 256 }) }),
+    executionMode: "sequential",
+    execute: async (_toolCallId, params) => {
+      const parentRunId = options.parentRunId();
+      if (!parentRunId) throw new Error("No active parent run");
+      const result = options.controller!.finalize(parentRunId, (params as { resolvedSubagentRunIds: string[] }).resolvedSubagentRunIds);
+      return { content: [{ type: "text" as const, text: JSON.stringify(result) }], details: result };
+    },
+  }, {
     name: "inspect_subagent",
     label: "Inspect subagent",
     description: "Read a subagent's actual status, latest turn summary, generated images and child IDs by run ID. Returns a compact result, not the full transcript.",
@@ -84,6 +97,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       const input = params as { runId: string; timeoutMs?: number };
       checkChild(input.runId);
       const result = await options.controller!.wait(input.runId, input.timeoutMs, signal, subagentRunId);
+      options.controller!.acknowledge(input.runId);
       return subagentResultForModel(result);
     },
   }, {
@@ -117,11 +131,13 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
   }, {
     name: "dispatch_subagent",
     label: "Delegate to subagent",
-    description: `Create a NEW agent session. For ordinary code review, file analysis, research, or read-only work, explicitly choose capability="temporary" to use the configured temporary general agent. Choose a media capability only for a task that explicitly needs that named media ability. To select a saved profile, supply subagentId and omit capability or set it to null. Do not combine targets. Omitted/null capability with no profile also uses the temporary agent for legacy calls. Ordinary tasks run in the background by default; set background=false only when the parent must wait for the result. Media tasks with a temporary attachment remain foreground. For follow-up questions, reuse the existing runId. The user's original attachments are forwarded by reference; do not download them before delegation. Background children remain attached to this parent conversation: their completion or failure is delivered at the next assistant-turn boundary after the current generation and tool batch, and the persistent ledger is restored after compaction or on the next run. Do not assume a background child was forgotten; use list_subagents or inspect_subagent when you choose to process it. The configured maximum of ${options.maxConcurrent ?? "the current"} is a simultaneous running limit.`,
-    promptSnippet: 'Use dispatch_subagent with capability="temporary" for ordinary code or research work. Leave subagentId omitted/null/empty. Ordinary tasks run in the background by default; set background=false only when the parent must wait. Select media targets only for matching media tasks. Background children remain tracked by the parent runtime and completion signals will arrive later; do not forget them. Before creating an agent for a follow-up, recover existing runIds and use control_subagent follow_up.',
+    description: `Create a NEW agent session only when the parent cannot efficiently complete the work directly. The required reason and expectedResult fields must explain why delegation is needed, what concrete compact result is required, and which parent step depends on it. For ordinary code review, file analysis, research, or read-only work, explicitly choose capability="temporary" to use the configured temporary general agent. Choose a media capability only for a task that explicitly needs that named media ability. To select a saved profile, supply subagentId and omit capability or set it to null. Do not combine targets. Omitted/null capability with no profile also uses the temporary agent for legacy calls. Ordinary tasks run in the background by default; background permits parallel work but every created child blocks finalization until its result or failure is processed. Media tasks with a temporary attachment remain foreground. For follow-up questions, reuse the existing runId. The user's original attachments are forwarded by reference; do not download them before delegation. Background children remain attached to this parent conversation: their completion or failure is delivered at the next assistant-turn boundary after the current generation and tool batch, and the persistent ledger is restored after compaction or on the next run. Do not assume a background child was forgotten; use list_subagents or inspect_subagent to process it. The configured maximum of ${options.maxConcurrent ?? "the current"} is a simultaneous running limit.`,
+    promptSnippet: 'Before dispatching, explain why the child is needed, what concrete result it must return, and which parent step depends on it. Do not dispatch simple work the parent can complete directly. Use capability="temporary" for ordinary code or research work and leave subagentId omitted/null/empty. Background execution allows independent work in parallel but still blocks finalization until every child result is processed. Reuse existing runIds with control_subagent follow_up for recoverable failures and follow-up work.',
     parameters: Type.Object({
       title: Type.String({ minLength: 1, maxLength: 120 }),
       task: Type.String({ minLength: 1, maxLength: 32_000 }),
+      reason: Type.String({ minLength: 1, maxLength: 4_000 }),
+      expectedResult: Type.String({ minLength: 1, maxLength: 8_000 }),
       capability: subagentTargetSchema,
       subagentId: subagentProfileSchema,
       mediaPath: Type.Optional(Type.String()),
@@ -129,7 +145,8 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
     }),
     executionMode: "parallel",
     execute: async (toolCallId, params, signal) => {
-      const input = params as SubagentSelection & { title: string; task: string; mediaPath?: string; background?: boolean };
+      const input = params as SubagentSelection & { title: string; task: string; reason: string; expectedResult: string; mediaPath?: string; background?: boolean };
+      if (!input.reason?.trim() || !input.expectedResult?.trim()) throw new Error("Subagent reason and expectedResult are required");
       const parentRunId = options.parentRunId();
       if (!parentRunId || !options.delegate) throw new Error("No active parent run");
       const background = input.background ?? !input.mediaPath;
@@ -141,6 +158,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
         title: input.title.trim(), task: input.task.trim(), subagentId: input.subagentId, capability: input.capability,
         mediaAttachment: input.mediaPath ? { type: "file", name: input.mediaPath.split(/[\\/]/).at(-1) ?? "video", mimeType: mediaMimeType!, data: "", localPath: input.mediaPath, temporary: true } : undefined,
         fallbackModel: modelName, permissionMode: options.permissionMode(), background, signal,
+        reason: input.reason.trim(), expectedResult: input.expectedResult.trim(),
       });
       const completed = (() => {
         try { return JSON.parse(result) as { runId?: string }; } catch { return undefined; }

@@ -49,6 +49,7 @@ export const runs = sqliteTable(
     origin: text("origin").notNull().default("manual"),
     goalId: text("goal_id"),
     goalEpoch: integer("goal_epoch"),
+    finalizationAuthorized: integer("finalization_authorized", { mode: "boolean" }).notNull().default(false),
   },
   (t) => [index("idx_runs_session").on(t.sessionId)]
 );
@@ -75,6 +76,10 @@ export const subagentRuns = sqliteTable("subagent_runs", {
   parts: text("parts").notNull().default("[]"),
   turnCount: integer("turn_count").notNull().default(1),
   retryCount: integer("retry_count").notNull().default(0),
+  requiredBeforeFinal: integer("required_before_final", { mode: "boolean" }).notNull().default(true),
+  failureKind: text("failure_kind"),
+  dependencyState: text("dependency_state").notNull().default("pending"),
+  completionAcknowledged: integer("completion_acknowledged", { mode: "boolean" }).notNull().default(false),
   workflowId: text("workflow_id"),
   workflowStepId: text("workflow_step_id"),
   dependsOn: text("depends_on"),

@@ -183,7 +183,7 @@ test("two delegation calls launch independent Pi runs before either finishes", a
       streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(),
       publish: () => undefined, emit: () => undefined,
     });
-    const input = { parentSessionId: session.id, parentRunId: parent.id, task: "检查", title: "检查", fallbackModel: "provider/main", permissionMode: "ask" as const };
+    const input = { parentSessionId: session.id, parentRunId: parent.id, task: "检查", title: "检查", reason: "需要独立检查", expectedResult: "返回检查结论", fallbackModel: "provider/main", permissionMode: "ask" as const };
     const first = dispatch({ ...input, toolCallId: "call-a" });
     const second = dispatch({ ...input, toolCallId: "call-b" });
     expect(releases).toHaveLength(2);
@@ -224,7 +224,7 @@ test("persists the initial child turn exactly once", async () => {
       assistantBuffers, streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(),
       publish: () => undefined, emit: () => undefined,
     });
-    const child = await dispatch({ parentSessionId: session.id, parentRunId: parent.id, task: "首轮任务", title: "任务", toolCallId: "call", fallbackModel: "provider/main", permissionMode: "ask" });
+    const child = await dispatch({ parentSessionId: session.id, parentRunId: parent.id, task: "首轮任务", title: "任务", reason: "需要独立执行", expectedResult: "返回任务结果", toolCallId: "call", fallbackModel: "provider/main", permissionMode: "ask" });
     const row = repo.listBySession(session.id)[0]!;
     expect(row.background).toBe(false);
     expect(repo.listMessages(row.runId).map((message) => message.role)).toEqual(["user", "assistant"]);
@@ -277,7 +277,7 @@ test("capability dispatch uses the configured model with the parent's attachment
       attachmentsProvider: (sessionId, runId) => sessionId === session.id && runId === parent.id ? [audio] : [],
       publish: () => undefined, emit: () => undefined,
     });
-    const input = { parentSessionId: session.id, parentRunId: parent.id, task: "转写", title: "转写", toolCallId: "call", fallbackModel: "provider/main", permissionMode: "ask" as const };
+    const input = { parentSessionId: session.id, parentRunId: parent.id, task: "转写", title: "转写", reason: "需要专用媒体模型", expectedResult: "返回转写文本", toolCallId: "call", fallbackModel: "provider/main", permissionMode: "ask" as const };
     await dispatch({ ...input, capability: "stt" });
     expect(calls).toEqual([{ model: "provider/audio", attachments: [audio] }]);
     expect(calls[0]?.attachments?.[0]).toBe(audio);
@@ -324,4 +324,292 @@ test("scheduler admits queued children in FIFO order", async () => {
   expect(scheduler.activeCount).toBe(1);
   scheduler.release("b");
   first.abort();
+});
+
+test("a background child blocks finalization until its compact result is acknowledged", async () => {
+  const db = openDb(":memory:");
+  try {
+    const workspaceRepo = new WorkspaceRepo(db);
+    const workspace = workspaceRepo.upsert("test", process.cwd());
+    const sessionRepo = new SessionRepo(db);
+    const session = sessionRepo.create("dependency", workspace.id);
+    const runRepo = new RunRepo(db);
+    const parent = runRepo.create(session.id);
+    const repo = new SubagentRunRepo(db);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    let release!: () => void;
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async () => new Promise<void>((resolve) => { release = resolve; }),
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(),
+      streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(), publish: () => undefined, emit: () => undefined,
+    });
+    await dispatch({ parentSessionId: session.id, parentRunId: parent.id, title: "检查", task: "执行检查", reason: "需要独立验证", expectedResult: "返回验证总结", toolCallId: "dependency-call", background: true, permissionMode: "full" });
+    const child = repo.listBySession(session.id)[0]!;
+    expect(controller.dependencyStatus(parent.id).blocking.map((item) => item.id)).toEqual([child.runId]);
+    expect(controller.finalize(parent.id, [child.runId]).ok).toBe(false);
+    release();
+    await controller.wait(child.runId, 1000);
+    expect(controller.finalize(parent.id, [child.runId]).ok).toBe(false);
+    controller.acknowledge(child.runId);
+    expect(controller.query(child.runId)?.dependencyState).toBe("resolved");
+    expect(controller.finalize(parent.id, [child.runId])).toEqual({ ok: true, missing: [] });
+    expect(runRepo.isFinalizationAuthorized(parent.id)).toBe(true);
+  } finally {
+    closeDb(db);
+  }
+});
+
+test("registers every workflow dependency before starting the first step", async () => {
+  const db = openDb(":memory:");
+  try {
+    const workspaceRepo = new WorkspaceRepo(db);
+    const workspace = workspaceRepo.upsert("test", process.cwd());
+    const sessionRepo = new SessionRepo(db);
+    const session = sessionRepo.create("workflow-dependency", workspace.id);
+    const runRepo = new RunRepo(db);
+    const parent = runRepo.create(session.id);
+    const repo = new SubagentRunRepo(db);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    let releaseFirst!: () => void;
+    const calls: string[] = [];
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async (_sessionId: string, prompt: string) => {
+        calls.push(prompt);
+        if (calls.length === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      },
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(),
+      streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(), publish: () => undefined, emit: () => undefined,
+    });
+    const workflow = controller.workflow(session.id, parent.id, [
+      { id: "scout", title: "侦查", task: "先检查", capability: "temporary" },
+      { id: "review", title: "复核", task: "再复核", capability: "temporary", dependsOn: ["scout"] },
+    ], { model: "provider/main", permissionMode: "full", background: true });
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const rows = repo.listBySession(session.id).filter((row) => row.workflowId);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.workflowStepId).sort()).toEqual(["review", "scout"]);
+    expect(controller.dependencyStatus(parent.id).blocking.map((item) => item.id)).toHaveLength(2);
+    expect(calls).toHaveLength(1);
+
+    releaseFirst();
+    const results = await workflow;
+    expect(results.map((item) => item.status)).toEqual(["completed", "completed"]);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain("Dependency scout:");
+  } finally {
+    closeDb(db);
+  }
+});
+
+test("nested dependencies belong to the nested parent and survive database reopen", async () => {
+  const db = openDb(":memory:");
+  let snapshot: Uint8Array;
+  let sessionId: string;
+  let parentId: string;
+  let childId: string;
+  try {
+    const workspaceRepo = new WorkspaceRepo(db);
+    const workspace = workspaceRepo.upsert("test", process.cwd());
+    const sessionRepo = new SessionRepo(db);
+    const session = sessionRepo.create("nested-dependency", workspace.id);
+    sessionId = session.id;
+    const runRepo = new RunRepo(db);
+    const parent = runRepo.create(session.id);
+    parentId = parent.id;
+    const repo = new SubagentRunRepo(db);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async () => undefined,
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(),
+      streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(), publish: () => undefined, emit: () => undefined,
+    });
+    const outer = JSON.parse(await dispatch({ parentSessionId: session.id, parentRunId: parent.id, title: "外层", task: "外层任务", reason: "需要外层独立执行", expectedResult: "返回外层总结", toolCallId: "outer", permissionMode: "full" })) as { runId: string };
+    const outerInfo = controller.query(outer.runId)!;
+    const nested = JSON.parse(await dispatch({ parentSessionId: outerInfo.executionSessionId!, parentRunId: outer.runId, title: "内层", task: "内层任务", reason: "需要内层独立执行", expectedResult: "返回内层总结", toolCallId: "nested", permissionMode: "full" })) as { runId: string };
+    childId = nested.runId;
+    expect(controller.dependencyStatus(outer.runId).blocking).toEqual([]);
+    expect(controller.finalize(outer.runId, [nested.runId])).toEqual({ ok: true, missing: [] });
+    expect(controller.dependencyStatus(parent.id).blocking).toEqual([]);
+    expect(controller.finalize(parent.id, [outer.runId, nested.runId])).toEqual({ ok: true, missing: [] });
+    snapshot = db.$client.serialize();
+  } finally {
+    closeDb(db);
+  }
+
+  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot!) });
+  try {
+    const sessionRepo = new SessionRepo(reopened);
+    const runRepo = new RunRepo(reopened);
+    const repo = new SubagentRunRepo(reopened);
+    const workspaceRepo = new WorkspaceRepo(reopened);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async () => undefined,
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(),
+      streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(), publish: () => undefined, emit: () => undefined,
+    });
+    expect(controller.query(childId!)).toMatchObject({ id: childId, dependencyState: "resolved", completionAcknowledged: true });
+    expect(controller.dependencyStatus(parentId!).authorized).toBe(true);
+    expect(controller.list(sessionId!)).toHaveLength(2);
+  } finally {
+    closeDb(reopened);
+  }
+});
+
+test("a new parent run still inherits unresolved children from a parent interrupted by restart", () => {
+  const db = openDb(":memory:");
+  let snapshot: Uint8Array;
+  let sessionId: string;
+  let childId: string;
+  try {
+    const workspaceRepo = new WorkspaceRepo(db);
+    const workspace = workspaceRepo.upsert("test", process.cwd());
+    const sessionRepo = new SessionRepo(db);
+    const session = sessionRepo.create("restart-dependency", workspace.id);
+    sessionId = session.id;
+    const runRepo = new RunRepo(db);
+    const parent = runRepo.create(session.id);
+    const child = runRepo.create(session.id);
+    childId = child.id;
+    new SubagentRunRepo(db).create({ runId: child.id, parentSessionId: session.id, parentRunId: parent.id, toolCallId: "restart-child", title: "重启后的子代理", task: "继续任务" });
+    snapshot = db.$client.serialize();
+  } finally {
+    closeDb(db);
+  }
+
+  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot!) });
+  try {
+    const workspaceRepo = new WorkspaceRepo(reopened);
+    const sessionRepo = new SessionRepo(reopened);
+    const runRepo = new RunRepo(reopened);
+    const repo = new SubagentRunRepo(reopened);
+    runRepo.markInterrupted();
+    const nextParent = runRepo.create(sessionId!);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async () => undefined,
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(),
+      streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(), publish: () => undefined, emit: () => undefined,
+    });
+    expect(controller.dependencyStatus(nextParent.id).blocking.map((item) => item.id)).toEqual([childId!]);
+    controller.acknowledge(childId!);
+    expect(controller.query(childId!)).toMatchObject({ status: "interrupted", dependencyState: "exhausted", completionAcknowledged: true });
+    expect(controller.dependencyStatus(nextParent.id).authorized).toBe(false);
+    expect(controller.finalize(nextParent.id, [childId!])).toEqual({ ok: true, missing: [] });
+    const laterParent = runRepo.create(sessionId!);
+    expect(controller.dependencyStatus(laterParent.id).requiresFinalization).toBe(false);
+  } finally {
+    closeDb(reopened);
+  }
+});
+
+test("recoverable failures continue the original run at most twice before exhaustion", async () => {
+  const db = openDb(":memory:");
+  try {
+    const workspaceRepo = new WorkspaceRepo(db);
+    const workspace = workspaceRepo.upsert("test", process.cwd());
+    const sessionRepo = new SessionRepo(db);
+    const session = sessionRepo.create("retry", workspace.id);
+    const runRepo = new RunRepo(db);
+    const parent = runRepo.create(session.id);
+    const repo = new SubagentRunRepo(db);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    let attempts = 0;
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async () => { attempts++; if (attempts === 1) throw Object.assign(new Error("connection reset"), { code: "ECONNRESET" }); },
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(),
+      streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(), publish: () => undefined, emit: () => undefined,
+    });
+    await dispatch({ parentSessionId: session.id, parentRunId: parent.id, title: "网络检查", task: "执行网络检查", reason: "需要独立网络验证", expectedResult: "返回网络检查总结", toolCallId: "retry-call", background: true, permissionMode: "full" });
+    const child = repo.listBySession(session.id)[0]!;
+    await controller.wait(child.runId, 1000);
+    expect(controller.query(child.runId)?.failureKind).toBe("network");
+    controller.acknowledge(child.runId);
+    expect(controller.query(child.runId)?.dependencyState).toBe("retry_required");
+    const continued = await controller.control(child.runId, "follow_up", "请从当前进度继续，先处理上一次失败原因");
+    expect(continued.id).toBe(child.runId);
+    expect(continued.status).toBe("completed");
+    expect(attempts).toBe(2);
+    expect(controller.query(child.runId)?.dependencyState).toBe("resolved");
+  } finally {
+    closeDb(db);
+  }
+});
+
+test("exhausted recoverable failures can finalize only with the same run's failure fact", async () => {
+  const db = openDb(":memory:");
+  try {
+    const workspaceRepo = new WorkspaceRepo(db);
+    const workspace = workspaceRepo.upsert("test", process.cwd());
+    const sessionRepo = new SessionRepo(db);
+    const session = sessionRepo.create("retry-exhausted", workspace.id);
+    const runRepo = new RunRepo(db);
+    const parent = runRepo.create(session.id);
+    const repo = new SubagentRunRepo(db);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    let attempts = 0;
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async () => { attempts++; throw Object.assign(new Error("connection reset"), { code: "ECONNRESET" }); },
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(),
+      streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(), publish: () => undefined, emit: () => undefined,
+    });
+    await dispatch({ parentSessionId: session.id, parentRunId: parent.id, title: "重试检查", task: "执行检查", reason: "需要独立网络检查", expectedResult: "返回检查总结", toolCallId: "retry-exhausted", background: true, permissionMode: "full" });
+    const child = repo.listBySession(session.id)[0]!;
+    for (const message of ["第一次继续", "第二次继续"]) {
+      await controller.wait(child.runId, 1000);
+      controller.acknowledge(child.runId);
+      expect(controller.query(child.runId)?.dependencyState).toBe("retry_required");
+      await controller.control(child.runId, "follow_up", message);
+    }
+    await controller.wait(child.runId, 1000);
+    controller.acknowledge(child.runId);
+    expect(attempts).toBe(3);
+    expect(controller.query(child.runId)).toMatchObject({ id: child.runId, failureKind: "network", dependencyState: "exhausted", completionAcknowledged: true });
+    expect(controller.finalize(parent.id, [child.runId])).toEqual({ ok: true, missing: [] });
+  } finally {
+    closeDb(db);
+  }
 });

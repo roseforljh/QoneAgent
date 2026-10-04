@@ -408,6 +408,10 @@ export interface SubagentRunInfo {
   error?: string;
   turnCount: number;
   retryCount: number;
+  requiredBeforeFinal: boolean;
+  failureKind?: SubagentFailureKind;
+  dependencyState: SubagentDependencyState;
+  completionAcknowledged: boolean;
   workflowId?: string;
   workflowStepId?: string;
   dependsOn?: string[];
@@ -418,9 +422,13 @@ export interface SubagentRunInfo {
   messages?: SubagentMessageInfo[];
 }
 
+export type SubagentFailureKind = "network" | "provider_unavailable" | "timeout" | "permission" | "tool_failure" | "cancelled" | "unknown";
+export type SubagentDependencyState = "pending" | "running" | "retry_required" | "resolved" | "exhausted";
+
 /** Incremental fields sent while a child is active. History is never copied here. */
 export type SubagentRunPatch = Pick<SubagentRunInfo, "id"> & Partial<Pick<SubagentRunInfo,
   "status" | "completedAt" | "content" | "error" | "turnCount" | "retryCount" | "tokenUsage" | "children"
+  | "requiredBeforeFinal" | "failureKind" | "dependencyState" | "completionAcknowledged"
 >> & {
   streaming?: string | null;
   revision?: number;

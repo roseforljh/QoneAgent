@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { sessions, messages, runs, subagentRuns, subagentNotifications, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
 import type { Db } from "./index.js";
-import { persistedToolResult, type CompactionMarkerInfo, type AssistantMessagePart, type GoalInfo, type GoalStatus, type MessageAttachmentInfo, type QueueItemInfo, type RunPermissionMode, type RunThinkingLevel, type SubagentNotificationInfo } from "@qone/protocol";
+import { persistedToolResult, type CompactionMarkerInfo, type AssistantMessagePart, type GoalInfo, type GoalStatus, type MessageAttachmentInfo, type QueueItemInfo, type RunPermissionMode, type RunThinkingLevel, type SubagentNotificationInfo, type SubagentDependencyState, type SubagentFailureKind } from "@qone/protocol";
 
 export class SessionRepo {
   constructor(private db: Db) {}
@@ -188,7 +188,7 @@ export class MessageRepo {
 export class SubagentRunRepo {
   constructor(private db: Db) {}
 
-  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; background?: boolean; profileId?: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number }) {
+  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; background?: boolean; profileId?: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number; requiredBeforeFinal?: boolean }) {
     this.db.insert(subagentRuns).values({
       runId: input.runId, parentSessionId: input.parentSessionId, parentRunId: input.parentRunId,
       mediaAttachment: input.mediaAttachment ? JSON.stringify(input.mediaAttachment) : null,
@@ -198,6 +198,8 @@ export class SubagentRunRepo {
       workflowId: input.workflowId ?? null, workflowStepId: input.workflowStepId ?? null,
       dependsOn: input.dependsOn?.length ? JSON.stringify(input.dependsOn) : null,
       contextMode: input.contextMode ?? "snapshot", contextMessageCount: input.contextMessageCount ?? 0,
+      requiredBeforeFinal: input.requiredBeforeFinal ?? true,
+      dependencyState: "pending", completionAcknowledged: false, failureKind: null,
     }).run();
   }
 
@@ -211,6 +213,18 @@ export class SubagentRunRepo {
 
   incrementRetry(runId: string) {
     this.db.update(subagentRuns).set({ retryCount: sql`${subagentRuns.retryCount} + 1` }).where(eq(subagentRuns.runId, runId)).run();
+  }
+
+  setDependencyState(runId: string, state: SubagentDependencyState, patch: { failureKind?: SubagentFailureKind | null; completionAcknowledged?: boolean } = {}) {
+    this.db.update(subagentRuns).set({
+      dependencyState: state,
+      ...(patch.failureKind === undefined ? {} : { failureKind: patch.failureKind }),
+      ...(patch.completionAcknowledged === undefined ? {} : { completionAcknowledged: patch.completionAcknowledged }),
+    }).where(eq(subagentRuns.runId, runId)).run();
+  }
+
+  acknowledgeResult(runId: string, state: SubagentDependencyState) {
+    this.setDependencyState(runId, state, { completionAcknowledged: true });
   }
 
   updateExecutionSession(runId: string, executionSessionId: string) {
@@ -384,6 +398,18 @@ export class RunRepo {
       .set({ status, completedAt: Date.now(), error: error ?? null })
       .where(eq(runs.id, id))
       .run();
+  }
+
+  authorizeFinalization(id: string) {
+    this.db.update(runs).set({ finalizationAuthorized: true }).where(eq(runs.id, id)).run();
+  }
+
+  revokeFinalization(id: string) {
+    this.db.update(runs).set({ finalizationAuthorized: false }).where(eq(runs.id, id)).run();
+  }
+
+  isFinalizationAuthorized(id: string) {
+    return Boolean(this.db.select({ authorized: runs.finalizationAuthorized }).from(runs).where(eq(runs.id, id)).get()?.authorized);
   }
 
   setStatus(id: string, status: "created" | "running" | "waiting_approval" | "paused") {

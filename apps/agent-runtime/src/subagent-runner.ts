@@ -1,5 +1,5 @@
 import { runtimeText } from "./runtime-localization";
-import { detectImageModel, type AssistantMessagePart, type MessageAttachmentInfo, type SubagentConfigInfo, type SubagentRunInfo } from "@qone/protocol";
+import { detectImageModel, type AssistantMessagePart, type MessageAttachmentInfo, type SubagentConfigInfo, type SubagentRunInfo, type SubagentDependencyState, type SubagentFailureKind } from "@qone/protocol";
 import type { RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
 import type { PiAdapter } from "./pi-adapter.js";
 import { buildSubagentPrompt, subagentCatalog } from "./subagents.js";
@@ -11,6 +11,9 @@ export interface SubagentController {
   list(sessionId: string, ownerId?: string): { runId: string; title: string; task: string; status: string; profileId: string | null; model: string | null }[];
   query(runId: string): SubagentRunInfo | undefined;
   acknowledge(runId: string): void;
+  dependencyStatus(parentRunId: string): { blocking: SubagentRunInfo[]; unacknowledged: SubagentRunInfo[]; retryRequired: SubagentRunInfo[]; requiresFinalization: boolean; authorized: boolean };
+  finalize(parentRunId: string, resolvedSubagentRunIds: string[]): { ok: boolean; missing: { runId: string; title: string; status: string; dependencyState: string; failureKind?: string }[] };
+  waitForDependencyChange(parentRunId: string, signal?: AbortSignal): Promise<void>;
   catalog(): ReturnType<typeof subagentCatalog>;
   control(runId: string, action: "stop" | "resume" | "retry" | "steer" | "follow_up", message?: string): Promise<SubagentRunInfo>;
   wait(runId: string, timeoutMs?: number, signal?: AbortSignal, callerId?: string): Promise<SubagentRunInfo>;
@@ -21,6 +24,24 @@ export interface SubagentController {
 }
 
 type TextChunkBuffers = Map<string, string[]>;
+
+function classifyFailure(error: unknown): SubagentFailureKind {
+  const value = error && typeof error === "object" ? error as {
+    failureKind?: unknown; name?: unknown; code?: unknown; status?: unknown; statusCode?: unknown; toolFailure?: unknown; cause?: unknown;
+  } : {};
+  const declared = value.failureKind;
+  if (declared === "network" || declared === "provider_unavailable" || declared === "timeout" || declared === "permission"
+    || declared === "tool_failure" || declared === "cancelled" || declared === "unknown") return declared;
+  if (value.name === "TimeoutError" || value.code === "ETIMEDOUT") return "timeout";
+  const status = Number(value.statusCode ?? value.status);
+  if (status === 401 || status === 403) return "permission";
+  if (status === 408) return "timeout";
+  if (status === 429 || status === 502 || status === 503 || status === 504) return "provider_unavailable";
+  if (["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EAI_AGAIN", "ENETUNREACH", "ENOTFOUND"].includes(String(value.code))) return "network";
+  if (value.toolFailure === true) return "tool_failure";
+  if (value.cause && value.cause !== error) return classifyFailure(value.cause);
+  return "unknown";
+}
 
 export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo, streams: TextChunkBuffers, liveParts?: AssistantMessagePart[]): SubagentRunInfo | undefined {
   const row = repo.get(runId);
@@ -43,6 +64,10 @@ export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo
     content: row.content, parts,
     streaming: streams.get(runId)?.join(""), error: run.error ?? undefined,
     turnCount: row.turnCount ?? 1, retryCount: row.retryCount ?? 0,
+    requiredBeforeFinal: row.requiredBeforeFinal ?? true,
+    failureKind: row.failureKind as SubagentFailureKind | undefined,
+    dependencyState: (row.dependencyState ?? "pending") as SubagentDependencyState,
+    completionAcknowledged: Boolean(row.completionAcknowledged),
     workflowId: row.workflowId ?? undefined, workflowStepId: row.workflowStepId ?? undefined,
     dependsOn: row.dependsOn ? JSON.parse(row.dependsOn) as string[] : undefined,
     contextMode: row.contextMode as SubagentRunInfo["contextMode"], contextMessageCount: row.contextMessageCount ?? 0,
@@ -90,12 +115,94 @@ export function registerSubagentDispatcher(options: {
   const jobs = new Map<string, Job>();
   const scheduler = new SubagentScheduler(() => policy().maxConcurrent);
   const yielding = new Map<string, { count: number; held: boolean }>();
+  const dependencyWaiters = new Map<string, Set<() => void>>();
+  const maxContinuations = 2;
 
   const query = (id: string) => subagentInfo(id, repo, runRepo, subagentStreams, partsByRun.get(id));
   const requireInfo = (id: string) => {
     const info = query(id);
     if (!info) throw new Error(`Unknown subagent ${id}`);
     return info;
+  };
+  const descendants = (parentRunId: string) => {
+    const rows = repo.list();
+    const children = new Map<string, typeof rows>();
+    for (const row of rows) children.set(row.parentRunId, [...(children.get(row.parentRunId) ?? []), row]);
+    const result: typeof rows = [];
+    const visit = (id: string) => { for (const child of children.get(id) ?? []) { result.push(child); visit(child.runId); } };
+    visit(parentRunId);
+    return result;
+  };
+  const recoveredRootRows = (parentRunId: string) => {
+    const parentRun = runRepo.get(parentRunId);
+    if (!parentRun || repo.get(parentRunId)) return [] as ReturnType<typeof repo.listBySession>;
+    return repo.listBySession(parentRun.sessionId).filter((row) =>
+      !row.parentSubagentId && row.parentRunId !== parentRunId && row.requiredBeforeFinal
+      && runRepo.get(row.parentRunId)?.status === "interrupted"
+      && !runRepo.isFinalizationAuthorized(row.parentRunId));
+  };
+  const notifyDependencyChange = (runId: string) => {
+    let current = repo.get(runId);
+    while (current) {
+      for (const resolve of dependencyWaiters.get(current.parentRunId) ?? []) resolve();
+      dependencyWaiters.delete(current.parentRunId);
+      current = repo.get(current.parentRunId);
+    }
+  };
+  const dependencyStatus = (parentRunId: string) => {
+    const ownRows = descendants(parentRunId);
+    const recoveredRoots = recoveredRootRows(parentRunId);
+    const rows = [...new Map([...ownRows, ...recoveredRoots, ...recoveredRoots.flatMap((row) => descendants(row.runId))]
+      .map((row) => [row.runId, row])).values()];
+    const infos = rows.map((row) => query(row.runId)).filter((info): info is SubagentRunInfo => Boolean(info && info.requiredBeforeFinal));
+    return {
+      blocking: infos.filter((info) => !["resolved", "exhausted"].includes(info.dependencyState)),
+      unacknowledged: infos.filter((info) => !info.completionAcknowledged && ["completed", "failed", "cancelled", "interrupted"].includes(info.status)),
+      retryRequired: infos.filter((info) => info.dependencyState === "retry_required"),
+      requiresFinalization: infos.length > 0,
+      authorized: infos.length === 0 || runRepo.isFinalizationAuthorized(parentRunId),
+    };
+  };
+  const waitForDependencyChange = (parentRunId: string, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+    const cleanup = () => { dependencyWaiters.get(parentRunId)?.delete(finish); signal?.removeEventListener("abort", abort); };
+    const finish = () => { cleanup(); resolve(); };
+    const abort = () => { cleanup(); reject(signal?.reason ?? new Error("aborted")); };
+    const waiters = dependencyWaiters.get(parentRunId) ?? new Set<() => void>();
+    waiters.add(finish); dependencyWaiters.set(parentRunId, waiters);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (!dependencyStatus(parentRunId).blocking.length) finish();
+  });
+  const finalize = (parentRunId: string, resolvedSubagentRunIds: string[]) => {
+    const status = dependencyStatus(parentRunId);
+    const listed = new Set(resolvedSubagentRunIds);
+    const missing = [...status.blocking, ...status.unacknowledged.filter((info) => !["resolved", "exhausted"].includes(info.dependencyState))]
+      .filter((info, index, all) => all.findIndex((candidate) => candidate.id === info.id) === index)
+      .map((info) => ({ runId: info.id, title: info.title, status: info.status, dependencyState: info.dependencyState, failureKind: info.failureKind }));
+    for (const row of descendants(parentRunId)) {
+      const info = query(row.runId);
+      if (info?.requiredBeforeFinal && info.completionAcknowledged && !listed.has(info.id)) {
+        missing.push({ runId: info.id, title: info.title, status: info.status, dependencyState: info.dependencyState, failureKind: info.failureKind });
+      }
+    }
+    if (missing.length) return { ok: false, missing };
+    runRepo.authorizeFinalization(parentRunId);
+    for (const root of recoveredRootRows(parentRunId)) {
+      const group = [root, ...descendants(root.runId)].filter((row) => row.requiredBeforeFinal);
+      if (group.every((row) => ["resolved", "exhausted"].includes(row.dependencyState))) {
+        runRepo.authorizeFinalization(root.parentRunId);
+      }
+    }
+    return { ok: true, missing: [] };
+  };
+  const acknowledge = (id: string) => {
+    const info = query(id);
+    if (info && ["completed", "failed", "cancelled", "interrupted"].includes(info.status)) {
+      const retryable = ["network", "provider_unavailable", "timeout"].includes(info.failureKind ?? "");
+      const state = info.status === "completed" ? "resolved" : retryable && info.retryCount < maxContinuations ? "retry_required" : "exhausted";
+      repo.acknowledgeResult(id, state as SubagentDependencyState);
+      notifyDependencyChange(id);
+    }
+    options.acknowledge?.(id);
   };
   const sourceRunId = (runId: string): string => {
     let source = runId;
@@ -153,6 +260,8 @@ export function registerSubagentDispatcher(options: {
     activeSubagents.add(id);
     partsByRun.set(id, JSON.parse(row.parts));
     runRepo.setStatus(id, "created");
+    runRepo.revokeFinalization(row.parentRunId);
+    repo.setDependencyState(id, "running", { completionAcknowledged: false });
     if (!newTurn) repo.incrementTurn(id);
     if (persistUserMessage) repo.appendMessage(id, "user", prompt);
     job.lastMessageRole = repo.latestMessage(id)?.role;
@@ -170,7 +279,7 @@ export function registerSubagentDispatcher(options: {
         job.state = "running";
         runRepo.setStatus(id, "running");
         publish(id);
-        timer = setTimeout(() => interrupt(id, new Error("Subagent timed out")), policy().timeoutMs);
+        timer = setTimeout(() => interrupt(id, Object.assign(new Error("Subagent timed out"), { name: "TimeoutError" })), policy().timeoutMs);
         const messagesBefore = repo.listMessages(id).length;
         const partCount = (partsByRun.get(id) ?? []).length;
         assistantBuffers.delete(id);
@@ -195,8 +304,16 @@ export function registerSubagentDispatcher(options: {
           }
         }
         runRepo.finish(id, "completed");
+        repo.setDependencyState(id, "pending", { failureKind: null, completionAcknowledged: false });
       } catch (error) {
-        runRepo.finish(id, job.cancelled ? "cancelled" : "failed", String(job.failure ?? error));
+        const status = job.cancelled ? "cancelled" : "failed";
+        const failure = String(job.failure ?? error);
+        runRepo.finish(id, status, failure);
+        const kind = status === "cancelled" ? "cancelled" : classifyFailure(job.failure ?? error);
+        const retryable = ["network", "provider_unavailable", "timeout"].includes(kind);
+        repo.setDependencyState(id, retryable && requireInfo(id).retryCount < maxContinuations ? "retry_required" : "pending", {
+          failureKind: kind, completionAcknowledged: false,
+        });
       } finally {
         if (timer) clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
@@ -219,6 +336,7 @@ export function registerSubagentDispatcher(options: {
         streamBuffers.delete(id);
         publish(id);
         emit("subagent.finished", { id, status: runRepo.get(id)?.status }, row.executionSessionId ?? undefined, id);
+        notifyDependencyChange(id);
       }
     };
     job.done = execute();
@@ -226,7 +344,8 @@ export function registerSubagentDispatcher(options: {
   };
 
   type Dispatch = Parameters<NonNullable<Parameters<PiAdapter["setSubagentDispatcher"]>[0]>>[0] &
-    { workflowId?: string; workflowStepId?: string; dependsOn?: string[] };
+    { workflowId?: string; workflowStepId?: string; dependsOn?: string[]; deferStart?: boolean };
+  const deferredStarts = new Map<string, (taskOverride?: string) => Promise<string>>();
   const waitForCompletion = async (id: string, timeoutMs = policy().timeoutMs, signal?: AbortSignal): Promise<SubagentRunInfo> => {
     requireInfo(id);
     const deadline = Date.now() + timeoutMs;
@@ -238,6 +357,7 @@ export function registerSubagentDispatcher(options: {
   };
 
   const dispatch = async (input: Dispatch) => {
+    if (!input.reason?.trim() || !input.expectedResult?.trim()) throw new Error("Subagent reason and expectedResult are required");
     const inherited = repo.get(input.parentRunId) ?? repo.getByExecutionSession(input.parentSessionId);
     const parentSessionId = inherited?.parentSessionId ?? input.parentSessionId;
     const parent = sessionRepo.get(parentSessionId);
@@ -251,9 +371,12 @@ export function registerSubagentDispatcher(options: {
     const context = count ? inherited
       ? options.subagentContextProvider?.(inherited.runId, count) ?? ""
       : options.contextProvider?.(parentSessionId, count) ?? "" : "";
-    const prompt = buildSubagentPrompt(agent
+    const promptForTask = (task: string) => buildSubagentPrompt(agent
       ? { id: agent.id, name: agent.name, instructions: agent.instructions }
-      : { id: "delegate", name: input.title, instructions: runtimeText("subagent-runner.complete_the_delegated_task_parent_context_is_provided_for") }, input.task, context);
+      : { id: "delegate", name: input.title, instructions: runtimeText("subagent-runner.complete_the_delegated_task_parent_context_is_provided_for") },
+      `${task}\n\n父模型委派原因：${input.reason}\n必须返回的具体结果：${input.expectedResult}`,
+      context);
+    const prompt = promptForTask(input.task);
     const inheritedAttachments = originalAttachments(parentSessionId, input.parentRunId);
     const attachments = input.mediaAttachment && !inheritedAttachments.some((item) => item.localPath === input.mediaAttachment?.localPath)
       ? [...inheritedAttachments, input.mediaAttachment] : inheritedAttachments;
@@ -272,18 +395,38 @@ export function registerSubagentDispatcher(options: {
       profileId: agent?.id, model,
       permissionMode, tools, contextMode: policy().contextMode, contextMessageCount: count,
     });
-    const work = async () => {
+    if (input.deferStart) {
+      runRepo.setStatus(child.id, "created");
+      publish(child.id);
+    }
+    const work = async (taskOverride = input.task) => {
       const directGeneration = model && (adapter.isDirectGenerationModel?.(model) ?? detectImageModel({ model }).isImageModel);
-      const job = start(child.id, directGeneration ? input.task : prompt, true, true, input.signal, attachments);
+      let job: Job;
+      try {
+        job = start(child.id, directGeneration ? taskOverride : promptForTask(taskOverride), true, true, input.signal, attachments);
+      } catch (error) {
+        const failure = String(error);
+        runRepo.finish(child.id, "failed", failure);
+        repo.setDependencyState(child.id, "pending", { failureKind: "tool_failure", completionAcknowledged: false });
+        repo.save(child.id, failure, []);
+        publish(child.id);
+        emit("subagent.finished", { id: child.id, status: "failed" }, undefined, child.id);
+        notifyDependencyChange(child.id);
+        throw error;
+      }
       if (input.background) return `Subagent started in background. runId=${child.id}`;
       await job.done;
       // A foreground delegation already returned its terminal result directly
       // to the parent model. Do not leave a duplicate "unread" notification
       // behind for a result the parent has already consumed.
-      if (!input.background) options.acknowledge?.(child.id);
+      if (!input.background) acknowledge(child.id);
       const info = requireInfo(child.id);
       return JSON.stringify({ runId: child.id, status: info.status, result: finalSubagentSummary(info), error: info.error });
     };
+    if (input.deferStart) {
+      deferredStarts.set(child.id, work);
+      return JSON.stringify({ runId: child.id, status: "created" });
+    }
     return input.background ? work() : withoutPermit(inherited?.runId, work);
   };
   adapter.setSubagentDispatcher(dispatch);
@@ -295,7 +438,10 @@ export function registerSubagentDispatcher(options: {
 
   const controller: SubagentController = {
     query,
-    acknowledge: (id) => options.acknowledge?.(id),
+    acknowledge,
+    dependencyStatus,
+    finalize,
+    waitForDependencyChange,
     list: (sessionId, ownerId) => {
       const owner = ownerId ? repo.get(ownerId) : undefined;
       if (ownerId && owner?.executionSessionId !== sessionId) return [];
@@ -362,10 +508,26 @@ export function registerSubagentDispatcher(options: {
         repo.incrementTurn(id);
       } else {
         if ((action === "steer" || action === "follow_up") && !message?.trim()) throw new Error(`${action} requires a message`);
-        if (action === "retry") repo.incrementRetry(id);
+        const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(runRepo.get(id)?.status ?? "");
+        if ((action === "retry" || action === "resume") && terminal && !row.completionAcknowledged) {
+          throw new Error("Inspect the finished subagent result before continuing it");
+        }
+        if (action === "retry") {
+          const retryable = ["network", "provider_unavailable", "timeout"].includes(row.failureKind ?? "");
+          if (retryable && row.retryCount >= maxContinuations) throw new Error("This subagent has reached its continuation limit");
+          repo.incrementRetry(id);
+        }
+        if (action === "follow_up" && runRepo.get(id)?.status !== "completed") {
+          const retryable = ["network", "provider_unavailable", "timeout"].includes(row.failureKind ?? "");
+          if (!retryable || row.retryCount >= maxContinuations) throw new Error("This subagent failure cannot be continued; inspect the result and handle the failure before finalizing");
+          if (!row.completionAcknowledged) throw new Error("Inspect the failed subagent result before continuing it");
+          repo.incrementRetry(id);
+        }
         const attachments = originalAttachments(row.parentSessionId, id);
         await start(id, message?.trim() || (action === "retry" ? row.task : runtimeText("subagent-runner.continue_the_previous_task_and_describe_the_new_results")), false, action !== "retry", undefined, attachments).done;
       }
+      const result = requireInfo(id);
+      if (["completed", "failed", "cancelled", "interrupted"].includes(result.status)) acknowledge(id);
       return requireInfo(id);
     },
     wait: async (id, timeoutMs = policy().timeoutMs, signal, callerId) => withoutPermit(callerId, () => waitForCompletion(id, timeoutMs, signal)),
@@ -375,33 +537,78 @@ export function registerSubagentDispatcher(options: {
       for (const step of steps) resolveSubagentSelection(options.config(), step);
       const parent = repo.get(parentRunId);
       if (parent && !policy().allowNested) throw new Error("Nested subagents are disabled in settings");
-      const root = parent?.parentSessionId ?? sessionId;
       const workflowId = crypto.randomUUID();
       const results = new Map<string, SubagentRunInfo>();
       const pending = new Map(steps.map(step => [step.id, step]));
+      // Register the entire workflow synchronously before starting any step.
+      // This closes the gap where a dependent step did not exist yet and the
+      // parent could incorrectly finalize between two workflow rounds.
+      const prepared = new Map<string, string>();
+      const registrations = steps.map((step) => dispatch({
+        parentSessionId: sessionId, parentRunId, title: step.title, task: step.task,
+        capability: step.capability, subagentId: step.subagentId, toolCallId: `workflow:${workflowId}:${step.id}`,
+        workflowId, workflowStepId: step.id, dependsOn: step.dependsOn ?? [],
+        reason: `工作流步骤「${step.id}」是当前任务的必要环节`,
+        expectedResult: `完成工作流步骤「${step.id}」并返回可供后续步骤使用的紧凑总结`,
+        fallbackModel: context?.model, permissionMode: context?.permissionMode ?? "ask", signal: context?.signal,
+        background: context?.background, deferStart: true,
+      }).then((value) => {
+        const runId = JSON.parse(value).runId as string;
+        prepared.set(step.id, runId);
+        return runId;
+      }));
       return withoutPermit(parent?.runId, async () => {
-        while (pending.size) {
-          if (context?.signal?.aborted) throw context.signal.reason;
-          const ready = [...pending.values()].filter(step => (step.dependsOn ?? []).every(id => results.has(id)));
-          await Promise.all(ready.map(async step => {
-            const dependencies = step.dependsOn ?? [];
-            if (dependencies.some(id => results.get(id)?.status !== "completed")) throw new Error(`Workflow dependency failed for ${step.id}`);
-            await dispatch({
-              parentSessionId: sessionId, parentRunId, title: step.title,
-              task: step.task + dependencies.map(id => `\nDependency ${id}:\n${finalSubagentSummary(results.get(id)!)}`).join("\n"),
-              capability: step.capability, subagentId: step.subagentId, toolCallId: `workflow:${workflowId}:${step.id}`,
-              workflowId, workflowStepId: step.id, dependsOn: dependencies,
-              fallbackModel: context?.model, permissionMode: context?.permissionMode ?? "ask", signal: context?.signal,
-              background: context?.background,
-            });
-            const created = repo.listBySession(root).find(row => row.workflowId === workflowId && row.workflowStepId === step.id)!;
-            results.set(step.id, context?.background
-              ? await waitForCompletion(created.runId, policy().timeoutMs, context.signal)
-              : requireInfo(created.runId));
-            pending.delete(step.id);
-          }));
+        try {
+          await Promise.all(registrations);
+          while (pending.size) {
+            if (context?.signal?.aborted) throw context.signal.reason;
+            const ready = [...pending.values()].filter(step => (step.dependsOn ?? []).every(id => results.has(id)));
+            if (!ready.length) throw new Error("Workflow has no runnable step");
+            await Promise.all(ready.map(async step => {
+              const dependencies = step.dependsOn ?? [];
+              const runId = prepared.get(step.id)!;
+              if (dependencies.some(id => results.get(id)?.status !== "completed")) {
+                const failure = `Workflow dependency failed for ${step.id}`;
+                deferredStarts.delete(runId);
+                runRepo.finish(runId, "failed", failure);
+                repo.setDependencyState(runId, "exhausted", { failureKind: "tool_failure", completionAcknowledged: false });
+                publish(runId);
+                emit("subagent.finished", { id: runId, status: "failed" }, undefined, runId);
+                notifyDependencyChange(runId);
+              } else {
+                const start = deferredStarts.get(runId);
+                if (!start) throw new Error(`Workflow step ${step.id} was not prepared`);
+                deferredStarts.delete(runId);
+                await start(step.task + dependencies.map(id => `\nDependency ${id}:\n${finalSubagentSummary(results.get(id)!)}`).join("\n"));
+                const info = requireInfo(runId);
+                results.set(step.id, context?.background
+                  ? await waitForCompletion(runId, policy().timeoutMs, context.signal)
+                  : info);
+                pending.delete(step.id);
+                return;
+              }
+              results.set(step.id, requireInfo(runId));
+              pending.delete(step.id);
+            }));
+          }
+          return steps.map(step => results.get(step.id)!);
+        } finally {
+          // Any step left unstarted by cancellation or an orchestration error
+          // is a durable terminal failure, so it remains visible to the
+          // finalization gate instead of disappearing from the ledger.
+          for (const step of pending.values()) {
+            const runId = prepared.get(step.id);
+            if (!runId) continue;
+            const info = query(runId);
+            if (!info || ["completed", "failed", "cancelled", "interrupted"].includes(info.status)) continue;
+            runRepo.finish(runId, "cancelled", "Workflow did not start this step");
+            repo.setDependencyState(runId, "exhausted", { failureKind: "cancelled", completionAcknowledged: false });
+            deferredStarts.delete(runId);
+            publish(runId);
+            emit("subagent.finished", { id: runId, status: "cancelled" }, undefined, runId);
+            notifyDependencyChange(runId);
+          }
         }
-        return steps.map(step => results.get(step.id)!);
       });
     },
   };

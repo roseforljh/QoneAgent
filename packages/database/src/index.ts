@@ -98,7 +98,8 @@ function migrate(sqlite: Database) {
       error TEXT,
       origin TEXT NOT NULL DEFAULT 'manual',
       goal_id TEXT,
-      goal_epoch INTEGER
+      goal_epoch INTEGER,
+      finalization_authorized INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
 
@@ -255,6 +256,7 @@ function migrate(sqlite: Database) {
   if (!runColumns.has("origin")) sqlite.exec("ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'");
   if (!runColumns.has("goal_id")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_id TEXT");
   if (!runColumns.has("goal_epoch")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_epoch INTEGER");
+  if (!runColumns.has("finalization_authorized")) sqlite.exec("ALTER TABLE runs ADD COLUMN finalization_authorized INTEGER NOT NULL DEFAULT 0");
   const goalColumns = new Set(sqlite.query("PRAGMA table_info(goals)").all().map((column) => (column as { name: string }).name));
   if (!goalColumns.has("run_options")) sqlite.exec("ALTER TABLE goals ADD COLUMN run_options TEXT");
   if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "attachments")) {
@@ -283,6 +285,10 @@ function migrate(sqlite: Database) {
       parts TEXT NOT NULL DEFAULT '[]',
       turn_count INTEGER NOT NULL DEFAULT 1,
       retry_count INTEGER NOT NULL DEFAULT 0,
+      required_before_final INTEGER NOT NULL DEFAULT 1,
+      failure_kind TEXT,
+      dependency_state TEXT NOT NULL DEFAULT 'pending',
+      completion_acknowledged INTEGER NOT NULL DEFAULT 0,
       workflow_id TEXT,
       workflow_step_id TEXT,
       depends_on TEXT,
@@ -322,7 +328,9 @@ function migrate(sqlite: Database) {
     ["media_attachment", "TEXT"],
     ["parent_subagent_id", "TEXT"], ["depth", "INTEGER NOT NULL DEFAULT 0"],
     ["execution_session_id", "TEXT"], ["background", "INTEGER NOT NULL DEFAULT 1"], ["profile_id", "TEXT"], ["turn_count", "INTEGER NOT NULL DEFAULT 1"],
-    ["retry_count", "INTEGER NOT NULL DEFAULT 0"], ["workflow_id", "TEXT"],
+    ["retry_count", "INTEGER NOT NULL DEFAULT 0"], ["required_before_final", "INTEGER NOT NULL DEFAULT 1"],
+    ["failure_kind", "TEXT"], ["dependency_state", "TEXT NOT NULL DEFAULT 'pending'"],
+    ["completion_acknowledged", "INTEGER NOT NULL DEFAULT 0"], ["workflow_id", "TEXT"],
     ["workflow_step_id", "TEXT"], ["depends_on", "TEXT"],
     ["permission_mode", "TEXT"], ["tools", "TEXT"],
     ["context_mode", "TEXT NOT NULL DEFAULT 'snapshot'"],

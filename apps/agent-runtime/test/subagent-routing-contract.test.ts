@@ -39,16 +39,16 @@ describe("model-facing subagent routing contract", () => {
         expect(tool.description).toContain('capability="temporary"');
         expect(tool.description).toContain("temporary general agent");
         expect(tool.description).toContain("Choose a media capability only");
-        expect(tool.parameters.required).toEqual(["title", "task"]);
+        expect(tool.parameters.required).toEqual(["title", "task", "reason", "expectedResult"]);
         const choices = tool.parameters.properties.capability.anyOf;
         expect(choices.filter((option: any) => option.const).map((option: any) => option.const)).toEqual(["temporary", ...CAPABILITY_IDS]);
         expect(choices.some((option: any) => option.type === "null")).toBe(true);
         expect(tool.parameters.properties.capability.default).toBeUndefined();
-        expect(Check(tool.parameters, { title: "审查", task: "review" })).toBe(true);
+        expect(Check(tool.parameters, { title: "审查", task: "review", reason: "需要独立审查", expectedResult: "返回审查结论" })).toBe(true);
         // Some gateways require every declared field. The captured wire schema must
         // still offer a general-agent route rather than force a media enum choice.
         const requiredSchema = { ...tool.parameters, required: Object.keys(tool.parameters.properties) };
-        const fullArgs = { title: "审查", task: "review", capability: "temporary", subagentId: null, mediaPath: "", background: true };
+        const fullArgs = { title: "审查", task: "review", reason: "需要独立审查", expectedResult: "返回审查结论", capability: "temporary", subagentId: null, mediaPath: "", background: true };
         expect(Check(requiredSchema, fullArgs)).toBe(true);
         expect(Check(requiredSchema, { ...fullArgs, capability: null, subagentId: "reviewer" })).toBe(true);
         const workflow = captured.tools.find((tool: any) => tool.name === "run_subagent_workflow");
@@ -66,8 +66,8 @@ describe("model-facing subagent routing contract", () => {
     runtime.registerNativeProvider(faux.provider);
     const inputs: unknown[] = [];
     faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("dispatch_subagent", { title: "审查", task: "review", capability: "temporary", subagentId: null, mediaPath: "", background: true })),
-      fauxAssistantMessage(fauxToolCall("dispatch_subagent", { title: "审查", task: "review", capability: null, subagentId: "reviewer", mediaPath: "", background: true })),
+      fauxAssistantMessage(fauxToolCall("dispatch_subagent", { title: "审查", task: "review", reason: "需要独立审查", expectedResult: "返回审查结论", capability: "temporary", subagentId: null, mediaPath: "", background: true })),
+      fauxAssistantMessage(fauxToolCall("dispatch_subagent", { title: "审查", task: "review", reason: "需要独立审查", expectedResult: "返回审查结论", capability: null, subagentId: "reviewer", mediaPath: "", background: true })),
       fauxAssistantMessage(fauxText("done")),
     ]);
     const adapter = new PiAdapter(() => {});
