@@ -34,6 +34,8 @@ bun run apps/agent-runtime/test/smoke.ts
 - `cache/`：临时缓存
 - API Key 和 MCP OAuth Token：Windows Credential Manager
 
+内置 Ponytail 包含 `ponytail`、`ponytail-review`、`ponytail-audit`、`ponytail-debt`、`ponytail-gain`、`ponytail-help` 六个技能，设置页按技能包显示，单击打开内部技能面板，每个技能都有独立开关和更新按钮，禁止删除或同名覆盖。输入 `/` 后先选择技能包进入子菜单，再选择具体技能生成标签，可通过返回按钮或 Backspace 回到上级。设置、技能 Dock、输入框菜单及选中的技能标签共用官方 Logo；关闭的技能不会进入菜单或模型技能清单。已有主技能的开关和版本配置保持不变，新增技能默认启用。
+
 测试时可用 `QONE_DATA_DIR`、`QONE_DB`、`QONE_LOG_DIR` 覆盖数据、数据库和日志路径。
 
 项目、消息、会话和运行索引由 `runtime/qone.db` 保存。`project.json`、`session.json` 是目录说明，由数据库重建。配置和 MCP 使用各自目录内的 SQLite 数据库；原统一数据库内的配置在启动时迁入对应数据库，不保留旧路径回退读取。Skill 安装内容和缓存、插件代码和私有数据使用各自的目录。插件加载模块已有目录支持，主运行时尚未启用插件执行。

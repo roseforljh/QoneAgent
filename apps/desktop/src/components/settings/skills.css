@@ -1,6 +1,6 @@
-.settings-builtin-skill { cursor: default; flex-wrap: wrap; }
+.settings-builtin-skill { width: 100%; min-width: 0; cursor: default; flex-wrap: wrap; }
 .settings-builtin-skill.is-disabled > .settings-provider-icon { opacity: .45; }
-.settings-builtin-skill-copy { flex-basis: 180px !important; }
+.settings-builtin-skill-copy { min-width: 0; flex-basis: 180px !important; }
 .settings-builtin-skill-title { display: flex; align-items: center; gap: 8px; }
 .settings-builtin-skill-title > span { padding: 2px 6px; border-radius: 5px; background: var(--q-hover); color: var(--muted-foreground); font-size: var(--q-text-xs); }
 .settings-builtin-skill-copy button { padding: 0; color: inherit; background: none; border: 0; text-align: left; cursor: pointer; }
@@ -8,3 +8,15 @@
 .settings-builtin-skill-copy button:hover { text-decoration: underline; }
 .settings-builtin-skill-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .settings-builtin-skill-status { margin: 5px 11px; color: var(--muted-foreground); font-size: var(--q-text-xs); }
+.settings-skill-package-badge { margin-left: 6px; padding: 2px 6px; border-radius: 5px; background: var(--q-hover); color: var(--muted-foreground); font-size: var(--q-text-xs); font-weight: 400; }
+.settings-skill-package-overlay { position: fixed; inset: 0; z-index: 120; background: rgb(0 0 0 / 54%); animation: skill-package-overlay-in .14s ease-out; }
+.settings-skill-package-dialog { position: fixed; z-index: 121; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; box-sizing: border-box; flex-direction: column; width: 640px; max-width: calc(100vw - 48px); height: min(560px, calc(100dvh - 48px)); overflow: hidden; padding: 22px; border: 1px solid var(--border); border-radius: 20px; background: var(--popover); color: var(--foreground); box-shadow: 0 24px 80px rgb(0 0 0 / 25%); animation: skill-package-dialog-in .16s ease-out; }
+.settings-skill-package-header { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; }
+.settings-skill-package-header > div { flex: 1; min-width: 0; }
+.settings-skill-package-header h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.settings-skill-package-header p { margin: 5px 0 0; font-size: 12px; color: var(--muted-foreground); }
+.settings-skill-package-header .settings-dialog-close { position: static; flex: none; }
+.settings-skill-package-members { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; gap: 10px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+@keyframes skill-package-overlay-in { from { opacity: 0; } }
+@keyframes skill-package-dialog-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 6px)) scale(.985); } }
+@media (prefers-reduced-motion: reduce) { .settings-skill-package-overlay, .settings-skill-package-dialog { animation: none; } }

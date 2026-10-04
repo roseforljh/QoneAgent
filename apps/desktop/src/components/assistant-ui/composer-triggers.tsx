@@ -13,7 +13,10 @@ import { ComposerMenuItem } from "./elements/composer";
 import { ComposerSlashRow, ComposerToolRow, getComposerTools, type ComposerSlashEntry, type ComposerTool } from "./composer-tools";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
 import { bindTopPopupHeight } from "../../lib/popup-height";
-import { PlugZapIcon, SparklesIcon } from "lucide-react";
+import { ChevronRight, PlugZapIcon } from "lucide-react";
+import { groupSkills, skillGroupRepresentative } from "../../lib/skill-groups";
+import { SkillIcon } from "../skills/SkillIcon";
+import { ComposerSlashNavigation } from "./composer-slash-navigation";
 
 // Codex's composer suggestions span their composer anchor and sit 8px above it.
 const popoverClass = "q-composer-suggestions absolute inset-x-0 bottom-full z-50 mb-2 flex flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border/60 bg-background p-1 text-sm dark:bg-popover";
@@ -52,7 +55,7 @@ export const ComposerTriggers: FC<{
   ), [canCompact, canUseGoal, t]);
   const compactTool = tools.find((tool) => tool.id === "compact");
   const slashEntries = useMemo<ComposerSlashEntry[]>(() => [
-    ...(connected && workspacePath ? skills.filter((skill) => skill.enabled !== false).map((skill) => ({ id: `skill:${skill.id}`, label: `/skill:${skill.name}`, description: skill.description, kind: "skill" as const, name: skill.name, icon: SparklesIcon })) : []),
+    ...(connected && workspacePath ? skills.filter((skill) => skill.enabled !== false).map((skill) => ({ id: `skill:${skill.id}`, label: `/skill:${skill.name}`, description: skill.description, kind: "skill" as const, skill })) : []),
     ...(connected && workspacePath ? mcpServers.filter((server) => server.connected && (server.toolCount ?? 0) > 0).map((server) => ({
       id: `mcp:${server.id}`, label: server.name, description: `${server.toolCount} ${t("mcp.tools")}`,
       kind: "mcp" as const, serverId: server.id, icon: PlugZapIcon,
@@ -66,7 +69,7 @@ export const ComposerTriggers: FC<{
     execute: () => {
       // The trigger removes the typed command before editing or compacting.
       setTimeout(() => {
-        if (entry.kind === "skill") onCommandSelect({ kind: "skill", name: entry.name });
+        if (entry.kind === "skill") onCommandSelect({ kind: "skill", name: entry.skill.name });
         else if (entry.kind === "mcp") onCommandSelect({ kind: "mcp", serverId: entry.serverId });
         else onToolSelect(entry.tool);
       }, 0);
@@ -80,6 +83,19 @@ export const ComposerTriggers: FC<{
   })), [tools]);
   const mention = unstable_useMentionAdapter({ items: mentions, includeModelContextTools: false });
   const slash = unstable_useSlashCommandAdapter({ commands: slashCommands, removeOnExecute: true });
+  const skillGroups = useMemo(() => groupSkills(connected && workspacePath ? skills.filter((skill) => skill.enabled !== false) : []), [connected, workspacePath, skills]);
+  const slashAdapter = useMemo(() => ({
+    ...slash.adapter,
+    categories: () => [
+      ...skillGroups.map((group) => ({ id: group.id, label: group.packaged ? `/${group.name}` : `/skill:${group.name}` })),
+      ...slashEntries.filter((entry) => entry.kind !== "skill").map((entry) => ({ id: entry.id, label: entry.label })),
+    ],
+    categoryItems: (id: string) => {
+      const group = skillGroups.find((item) => item.id === id);
+      const items = slash.adapter.search!("");
+      return group ? items.filter((item) => group.skills.some((skill) => item.id === `skill:${skill.id}`)) : items.filter((item) => item.id === id);
+    },
+  }), [slash.adapter, skillGroups, slashEntries]);
 
   useEffect(() => {
     if (!connected) return;
@@ -106,7 +122,7 @@ export const ComposerTriggers: FC<{
         {(items) => items.map((item) => {
           const tool = tools.find((entry) => entry.id === item.id);
           return tool && <ComposerPrimitive.Unstable_TriggerPopoverItem key={item.id} item={item} asChild>
-            <ComposerMenuItem className="q-composer-tool-option">
+            <ComposerMenuItem className="q-composer-tool-option" onMouseDown={(event) => event.preventDefault()}>
               <ComposerToolRow tool={tool} />
             </ComposerMenuItem>
           </ComposerPrimitive.Unstable_TriggerPopoverItem>;
@@ -114,9 +130,24 @@ export const ComposerTriggers: FC<{
       </ComposerPrimitive.Unstable_TriggerPopoverItems>
     </ComposerPrimitive.Unstable_TriggerPopover>
 
-    {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="/" adapter={slash.adapter} className={`${popoverClass} max-h-[min(24rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.slashCommands")}>
+    {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="/" adapter={slashAdapter} className={`${popoverClass} max-h-[min(24rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.slashCommands")}>
       <MentionPopoverState onStateChange={onSlashStateChange} />
       <ComposerPrimitive.Unstable_TriggerPopover.Action {...slash.action} />
+      <ComposerSlashNavigation groups={skillGroups} entries={slashEntries} />
+      <ComposerPrimitive.Unstable_TriggerPopoverCategories>
+        {(categories) => categories.map((category) => {
+          const group = skillGroups.find((item) => item.id === category.id);
+          const entry = slashEntries.find((item) => item.id === category.id);
+          return <ComposerPrimitive.Unstable_TriggerPopoverCategoryItem key={category.id} categoryId={category.id} asChild>
+            <ComposerMenuItem className="q-composer-tool-option" onMouseDown={(event) => event.preventDefault()}>
+              {group?.packaged ? <>
+                <SkillIcon skill={skillGroupRepresentative(group)} className="q-composer-tool-icon size-4 shrink-0" />
+                <span className="q-composer-tool-copy"><strong>{category.label}</strong><small>{t("skills.package.count", { count: group.skills.length })}</small></span><ChevronRight size={14} />
+              </> : entry && <ComposerSlashRow entry={entry} />}
+            </ComposerMenuItem>
+          </ComposerPrimitive.Unstable_TriggerPopoverCategoryItem>;
+        })}
+      </ComposerPrimitive.Unstable_TriggerPopoverCategories>
       <ComposerPrimitive.Unstable_TriggerPopoverItems>
         {(items) => items.map((item) => {
           const entry = slashEntries.find((candidate) => candidate.id === item.id);

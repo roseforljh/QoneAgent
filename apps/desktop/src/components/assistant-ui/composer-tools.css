@@ -9,6 +9,8 @@
 .q-composer-tool-copy strong { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--foreground); font-size: 12px; font-weight: 400; line-height: 17px; text-overflow: ellipsis; white-space: nowrap; }
 .q-composer-tool-copy small { flex: 1; min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 12px; line-height: 17px; text-overflow: ellipsis; white-space: nowrap; }
 .q-composer-tool-icon { color: var(--muted-foreground); stroke-width: 1.8; }
+.q-composer-slash-back { display: flex; align-items: center; gap: 8px; padding: 8px; margin-bottom: 3px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; cursor: pointer; }
+.q-composer-slash-back:hover { color: var(--foreground); }
 .q-composer-tool-chip { display: inline-flex; max-width: min(18rem, 60vw); min-height: 24px; align-items: center; gap: 5px; padding: 2px 9px; border: 1px solid transparent; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; white-space: nowrap; vertical-align: middle; user-select: none; }
 .q-composer-tool-chip-icon { width: 13px; height: 13px; flex: none; stroke-width: 1.8; }
 .q-composer-tool-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

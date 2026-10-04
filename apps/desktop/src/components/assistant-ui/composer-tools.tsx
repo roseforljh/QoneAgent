@@ -1,6 +1,8 @@
 import { type ComponentType, type FC, type ReactNode } from "react";
 import { useAuiState } from "@assistant-ui/react";
-import { PlugZapIcon, SparklesIcon } from "lucide-react";
+import { PlugZapIcon } from "lucide-react";
+import type { SkillInfo } from "@qone/protocol";
+import { SkillIcon } from "../skills/SkillIcon";
 import { useLocale } from "../../localization";
 import { useStore } from "../../store";
 import type { ComposerToolId } from "../../lib/composer-tool-editor";
@@ -23,18 +25,19 @@ type ComposerSlashBase = {
   id: string;
   label: string;
   description: string;
-  icon: ToolIcon;
 };
 export type ComposerSlashEntry = ComposerSlashBase & (
-  | { kind: "skill"; name: string }
-  | { kind: "mcp"; serverId: string }
-  | { kind: "action"; tool: ComposerTool }
+  | { kind: "skill"; skill: SkillInfo }
+  | { kind: "mcp"; serverId: string; icon: ToolIcon }
+  | { kind: "action"; tool: ComposerTool; icon: ToolIcon }
 );
 
 export const ComposerSlashRow: FC<{ entry: ComposerSlashEntry }> = ({ entry }) => {
-  const Icon = entry.icon;
+  const Icon = entry.kind === "skill" ? undefined : entry.icon;
   return <>
-    <Icon data-tool-id={entry.kind} className="q-composer-tool-icon size-4 shrink-0" aria-hidden={true} />
+    {entry.kind === "skill"
+      ? <SkillIcon skill={entry.skill} className="q-composer-tool-icon size-4 shrink-0" />
+      : Icon && <Icon data-tool-id={entry.kind} className="q-composer-tool-icon size-4 shrink-0" aria-hidden={true} />}
     <span className="q-composer-tool-copy">
       <strong>{entry.label}</strong>
       <small>{entry.description}</small>
@@ -51,11 +54,12 @@ export const ComposerToolChip: FC<{ directiveId: string; directiveType: string; 
   }
   const serverName = useStore((state) => serverId ? state.mcpServers.find((server) => server.id === serverId)?.name : undefined);
   const isSkill = directiveType === "qone-command" && directiveId.startsWith("skill:");
+  const skillName = isSkill ? directiveId.slice(6) : undefined;
+  const skill = useStore((state) => skillName ? state.skills.find((item) => item.name === skillName) : undefined);
   const kind = serverId ? "mcp" : isSkill ? "skill" : directiveId.startsWith("qone-") ? directiveId.slice(5) : directiveId;
   const displayLabel = serverId ? serverName ?? serverId : isSkill ? directiveId.slice(6) : label;
-  const Icon = serverId ? PlugZapIcon : isSkill ? SparklesIcon : undefined;
   return <span className="q-composer-tool-chip" data-tool-id={kind} data-directive-type={directiveType} aria-label={displayLabel} title={displayLabel}>
-    {Icon && <Icon className="q-composer-tool-chip-icon" aria-hidden="true" />}
+    {isSkill ? <SkillIcon skill={skill} className="q-composer-tool-chip-icon" /> : serverId && <PlugZapIcon className="q-composer-tool-chip-icon" aria-hidden="true" />}
     <span className="q-composer-tool-chip-label">{displayLabel}</span>
   </span>;
 };
