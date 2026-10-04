@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ensureGlobalInstructions, globalInstructionsPath, readGlobalInstructions, writeGlobalInstructions } from "../src/global-instructions";
+import defaultInstructions from "../src/default-global-instructions.md" with { type: "text" };
 
 const previousDataDir = process.env.QONE_DATA_DIR;
 const previousUserProfile = process.env.USERPROFILE;
@@ -33,15 +34,21 @@ test("persists global instructions as .qone/Qone.md", () => {
   expect(readGlobalInstructions()).toBe("使用中文回答。\n");
 });
 
-test("creates an empty global file without overwriting it", () => {
+test("seeds bundled defaults once without overwriting user edits or an intentionally empty file", () => {
   tempDir = mkdtempSync(path.join(os.tmpdir(), "qone-global-instructions-"));
   process.env.QONE_DATA_DIR = tempDir;
 
   ensureGlobalInstructions();
-  expect(readFileSync(globalInstructionsPath(), "utf8")).toBe("");
+  expect(readGlobalInstructions()).toBe(defaultInstructions);
+  expect(readGlobalInstructions()).toContain("## Ponytail, lazy senior dev mode");
+  ensureGlobalInstructions();
+  expect(readGlobalInstructions()).toBe(defaultInstructions);
   writeGlobalInstructions("保留这段内容");
   ensureGlobalInstructions();
   expect(readGlobalInstructions()).toBe("保留这段内容");
+  writeGlobalInstructions("");
+  ensureGlobalInstructions();
+  expect(readGlobalInstructions()).toBe("");
 });
 
 test("initializes only the new user data root", () => {
@@ -53,7 +60,26 @@ test("initializes only the new user data root", () => {
   ensureGlobalInstructions();
 
   const target = path.join(tempDir, ".qone");
-  expect(readFileSync(path.join(target, "Qone.md"), "utf8")).toBe("");
+  expect(readFileSync(path.join(target, "Qone.md"), "utf8")).toBe(defaultInstructions);
   expect(existsSync(path.join(target, "prompts"))).toBe(false);
   expect(existsSync(path.join(tempDir, "appdata"))).toBe(false);
 });
+
+test("defaults ship in the runtime bundle without a source checkout or network", async () => {
+  tempDir = mkdtempSync(path.join(os.tmpdir(), "qone-global-bundle-"));
+  process.env.QONE_DATA_DIR = tempDir;
+  // Isolate Bun's Windows build-path cache from other in-process bundle tests.
+  const entrypoint = path.resolve(import.meta.dir, "../src/global-instructions.ts");
+  const child = Bun.spawn([process.execPath, "-e", `
+    const build = await Bun.build({ entrypoints: [${JSON.stringify(entrypoint)}], target: "bun", write: false });
+    if (!build.success) throw new Error(String(build.logs));
+    const code = await build.outputs[0].text();
+    const bundled = await import("data:text/javascript;base64," + Buffer.from(code).toString("base64"));
+    bundled.ensureGlobalInstructions();
+    process.stdout.write(bundled.readGlobalInstructions());
+  `], { stdout: "pipe", stderr: "pipe" });
+  const [content, errors, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  expect(errors).toBe("");
+  expect(exitCode).toBe(0);
+  expect(content).toBe(defaultInstructions);
+}, 10000);

@@ -40,6 +40,8 @@ bun run apps/agent-runtime/test/smoke.ts
 
 全局提示词只从数据根目录的 `Qone.md` 读取，项目规则读取选定工作区根目录的 `AGENTS.md` 等 Pi 支持文件，不向用户目录或其他父目录扫描。桌面和运行时都按同一个 `QONE_DATA_DIR` 解析目录，WebView 数据路径与源码、安装位置无关。
 
+新的 `Qone.md` 默认包含 Ponytail 全局规则，默认内容维护在 `apps/agent-runtime/src/default-global-instructions.md` 并随运行时打包，后续默认规则可继续追加到该文件。初始化只创建缺失文件，已有文字和主动清空的文件都不会被覆盖，也不会在每次启动时重复追加。Ponytail 小节受内置技能开关约束；关闭时运行时会在全局指导后明确要求忽略该小节，其他全局规则继续适用。技能更新按钮只更新技能文件，不覆盖用户维护的 `Qone.md`。修改全局提示词后重启开发运行时，以刷新已存在的会话。
+
 固定 System Prompt 与 `Qone.md` 分开。运行时按 Identity → Behavior → Execution → Coding → Verification → Safety → Communication 的显式顺序读取七个 Markdown 文件，统一换行并以两个换行拼接，作为 Pi 自定义 System Prompt 的首段；用户指导、项目规则、技能及工具上下文仍由现有机制放在后续部分。安装时从随运行时打包的 Markdown 创建缺失模块，保留已有内容；空白或不可读的模块会报错，额外文件不参与加载。相同版本和模块内容产生相同的固定前缀；完整请求仍会随任务上下文改变，实际缓存命中由模型服务决定。修改模块后重启开发运行时以刷新已存在的会话。
 
 ## OpenCLI 当前浏览器

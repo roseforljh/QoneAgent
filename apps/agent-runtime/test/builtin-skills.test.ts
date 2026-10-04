@@ -8,6 +8,8 @@ import { configureBuiltinSkills, listBuiltinSkills, setBuiltinSkillEnabled, upda
 import { builtinSkillBundles } from "../src/builtin-skills/identity.js";
 import { createLocalSkill, createResourceLoader, installLocalSkill } from "../src/skills.js";
 import { installCloudSkill } from "../src/skill-catalog.js";
+import { ensureGlobalInstructions, readGlobalInstructions, writeGlobalInstructions } from "../src/global-instructions.js";
+import { readSystemPrompt } from "../src/system-prompt.js";
 
 const previousRoot = process.env.QONE_DATA_DIR;
 let root: string;
@@ -79,6 +81,27 @@ test("reserved identity blocks creation/import/cloud installs and manually copie
   expect((await createResourceLoader(root)).loader.getSkills().skills).toEqual([]);
   expect(decodeCommand(JSON.stringify({ type: "skills.delete", requestId: "delete", skillId: "ponytail" }))).toBeNull();
   await expect(setBuiltinSkillEnabled("../outside", false)).rejects.toThrow("未知的内置技能");
+});
+
+test("the disable directive covers default global ponytail rules while preserving user content and the fixed preamble", async () => {
+  ensureGlobalInstructions();
+  writeGlobalInstructions(`${readGlobalInstructions()}\n## My rules\nKEEP_MY_GLOBAL_RULE\n`);
+  const original = readGlobalInstructions();
+  const fixed = readSystemPrompt();
+  const enabled = await createResourceLoader(root);
+  expect(enabled.loader.getAppendSystemPrompt().join("\n")).toContain("Before writing any code, stop at the first rung that holds:");
+  await setBuiltinSkillEnabled("ponytail", false);
+  const disabled = await createResourceLoader(root);
+  const appended = disabled.loader.getAppendSystemPrompt();
+  expect(appended.join("\n")).toContain("KEEP_MY_GLOBAL_RULE");
+  expect(appended.at(-1)).toContain('skill "ponytail" is disabled');
+  expect(appended.at(-1)).toContain("including its section in Qone.md");
+  expect(disabled.loader.getSystemPrompt()).toBe(fixed);
+  expect(readGlobalInstructions()).toBe(original);
+  await setBuiltinSkillEnabled("ponytail", true);
+  const restored = await createResourceLoader(root);
+  expect(restored.loader.getAppendSystemPrompt().join("\n")).not.toContain('skill "ponytail" is disabled');
+  expect(restored.loader.getSystemPrompt()).toBe(fixed);
 });
 
 test("updates publish validated versions, keep the enabled state and retain old files for running sessions", async () => {

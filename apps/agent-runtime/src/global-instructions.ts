@@ -1,6 +1,7 @@
 import path from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ensureQoneLayout, qoneDataDir as resolveQoneDataDir } from "@qone/shared";
+import defaultInstructions from "./default-global-instructions.md" with { type: "text" };
 
 const GLOBAL_INSTRUCTIONS_FILE = "Qone.md";
 
@@ -16,13 +17,17 @@ export function globalInstructionsDirectory(): string {
   return qoneDataDir();
 }
 
-/** Create the user-level file without changing an existing user's content. */
+/** Seed a new file from bundled defaults; existing content, including empty files, is user-owned. */
 export function ensureGlobalInstructions(): void {
   ensureQoneLayout();
   const directory = qoneDataDir();
   mkdirSync(directory, { recursive: true });
   const file = globalInstructionsPath();
-  if (!existsSync(file)) writeFileSync(file, "", "utf8");
+  try {
+    writeFileSync(file, defaultInstructions, { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
 }
 
 export function readGlobalInstructions(): string {
