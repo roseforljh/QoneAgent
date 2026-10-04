@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { SubagentRunInfo } from "@qone/protocol";
 import { ToolCall } from "../src/components/assistant-ui/elements/tool-call";
-import { subagentForTool } from "../src/components/assistant-ui/subagent-navigation";
+import { hasSubagentCreationCall, shouldRenderSubagentTool, subagentForTool } from "../src/components/assistant-ui/subagent-navigation";
 import { AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useExternalStoreRuntime, type ThreadMessageLike } from "@assistant-ui/react";
 import { SessionTimeline } from "../src/components/assistant-ui/session-timeline";
 import { useStore } from "../src/store";
@@ -28,6 +28,30 @@ test("dispatch and follow-up tools resolve the same child by structured IDs", ()
 test("workflow tools resolve a child step for the existing open-subagent action", () => {
   const workflowChild = { ...child, id: "workflow-child", toolCallId: "workflow:wf-1:scout", status: "running" } as SubagentRunInfo;
   expect(subagentForTool({ toolName: "run_subagent_workflow", toolCallId: "workflow-call" }, undefined, [workflowChild], "session", "parent")).toBe(workflowChild);
+});
+
+test("follow-up operations reuse the creation entry instead of rendering a duplicate", () => {
+  const messages = [{ runId: "parent", parts: [{ type: "tool-call", toolName: "dispatch_subagent", toolCallId: "dispatch" }] }];
+  const currentParts = [{ type: "tool-call", toolName: "control_subagent", toolCallId: "follow-up", args: { runId: child.id } }];
+  expect(hasSubagentCreationCall(messages, currentParts, child)).toBe(true);
+  expect(shouldRenderSubagentTool(currentParts[0]!, child, messages, currentParts)).toBe(false);
+  expect(shouldRenderSubagentTool({ toolName: "control_subagent", toolCallId: "follow-up" }, child, [], currentParts)).toBe(true);
+});
+
+test("historical follow-up rows are hidden when the creation row is in an earlier message", () => {
+  const serverState = useStore.getInitialState();
+  const previous = { ...serverState };
+  try {
+    Object.assign(serverState, {
+      currentSessionId: "session", activeRunId: "later-parent", subagents: [child], toolCalls: [],
+      messages: [{ id: "created-message", role: "assistant", runId: "parent", parts: [{ type: "tool-call", toolName: "dispatch_subagent", toolCallId: "dispatch" }] }],
+    });
+    const html = renderToStaticMarkup(<TimelineFixture content={[{
+      type: "tool-call", toolName: "inspect_subagent", toolCallId: "inspect", args: { runId: child.id }, result: "private child output",
+    }]} />);
+    expect(html).not.toContain('data-slot="tool-target-link"');
+    expect(html).not.toContain("private child output");
+  } finally { Object.assign(serverState, previous); }
 });
 
 test("agent title is a separate accessible button beside the tool disclosure", () => {

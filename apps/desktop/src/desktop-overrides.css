@@ -62,6 +62,8 @@ body {
   min-width: 0;
   overflow-x: clip;
   --q-thread-content-width: 48rem;
+  /* Codex user-message-attachments uses size-20 (5rem). */
+  --q-message-attachment-image-size: 5rem;
 }
 .q-thread-content { max-width: var(--q-thread-content-width); }
 .q-composer-content { max-width: var(--q-thread-content-width); }
@@ -202,19 +204,31 @@ body {
 }
 
 .aui-thread-root [data-slot="image-preview"] img { max-height: min(28rem, 46dvh); }
-.aui-thread-root .q-message-user-attachments [data-slot="file-root"] { width: 100%; }
+.aui-thread-root .q-message-user-attachments {
+  width: fit-content;
+  max-width: 100%;
+}
+.aui-thread-root .q-message-user-attachments [data-slot="file-root"] {
+  max-width: min(20rem, 100%);
+}
 .aui-thread-root .q-user-image-thumbnail [data-slot="image-preview"] {
-  min-height: 0;
-  max-height: 12rem;
+  aspect-ratio: 1;
+  min-height: var(--q-message-attachment-image-size);
+  max-height: var(--q-message-attachment-image-size);
+  height: var(--q-message-attachment-image-size);
   overflow: hidden;
 }
 .aui-thread-root .q-user-image-thumbnail [data-slot="image-preview"] img {
   width: 100%;
-  height: auto;
-  max-height: 12rem;
-  object-fit: contain;
+  height: 100%;
+  max-height: var(--q-message-attachment-image-size);
+  object-fit: cover;
 }
-.aui-thread-root [data-slot="file-root"] { max-width: min(100%, 22rem); }
+.aui-thread-root .q-message-attachment-card {
+  overflow: hidden;
+  border-radius: 0.75rem;
+}
+.aui-thread-root [data-slot="file-root"] { max-width: min(100%, 20rem); }
 .aui-thread-root [data-slot="generative-ui-block"] { overscroll-behavior: auto; }
 /* Codex's eased scroll fade uses a 1.5rem edge, not a background-colored
    overlay. Observe actual label overflow so short rows remain fully opaque. */

@@ -2,6 +2,7 @@ import {
   nextThreadFollowMode, THREAD_BOTTOM_SCROLL_DURATION_MS, THREAD_BOTTOM_TOLERANCE_PX,
   type ThreadFollowSnapshot, type ThreadPhase,
 } from "./thread-scroll-policy";
+import { captureThreadReadingAnchor, type ThreadReadingAnchor } from "./thread-scroll-position";
 
 export interface ThreadScrollTurn { turnId?: string; running: boolean; phase: ThreadPhase }
 interface ControllerOptions {
@@ -14,6 +15,7 @@ interface ControllerOptions {
   hasRestoration: boolean;
   onVisibility: (visible: boolean) => void;
   onSave: (snapshot: ThreadFollowSnapshot) => void;
+  onPosition?: (anchor: ThreadReadingAnchor | undefined) => void;
 }
 
 /** Measure the transcript tail, never the temporary assistant-ui anchor reserve. */
@@ -137,6 +139,7 @@ export function mountThreadScrollController(options: ControllerOptions) {
     }
     previousTop = viewport.scrollTop;
     publish();
+    options.onPosition?.(captureThreadReadingAnchor(viewport, content));
   };
   const gesture = (away: boolean, target: EventTarget | null) => {
     if (nestedScrollConsumes(target, viewport, away)) return;
@@ -240,6 +243,7 @@ export function mountThreadScrollController(options: ControllerOptions) {
       publish();
     },
     dispose() {
+      options.onPosition?.(captureThreadReadingAnchor(viewport, content));
       options.onSave({ turnId: turn.turnId, mode });
       disposed = true;
       cancelAnimation();

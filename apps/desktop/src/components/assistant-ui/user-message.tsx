@@ -89,10 +89,10 @@ export function UserMessageAttachments() {
   ));
   if (!hasAttachments) return null;
   return (
-    <div className="q-message-user-attachments flex w-fit max-w-[75%] min-w-0 flex-wrap items-end justify-end gap-2 self-end">
+    <div className="q-message-user-attachments flex w-fit max-w-full min-w-0 flex-wrap items-end justify-end gap-2 self-end">
       <MessagePrimitive.Parts>
         {({ part }) => {
-          if (part.type === "file") return <div className="w-48 max-w-full min-w-0"><File {...part} /></div>;
+          if (part.type === "file") return <File {...part} />;
           if (part.type === "image") return <UserImageThumbnail {...part} />;
           return null;
         }}

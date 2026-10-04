@@ -4,6 +4,7 @@ import { useConversationStore } from "../../lib/conversation-context";
 import { getThreadScrollState } from "../../lib/thread-scroll-state";
 import { mountThreadScrollController, type ThreadScrollTurn } from "../../lib/thread-scroll-controller";
 import { threadPhase } from "../../lib/thread-scroll-policy";
+import { restoreThreadReadingAnchor } from "../../lib/thread-scroll-position";
 export { userMessageRevealScrollTop } from "../../lib/thread-scroll-policy";
 
 // Kept as a small public predicate for existing scroll tests and integrations.
@@ -22,6 +23,9 @@ export function useThreadBottomControl() {
 /** Share the scroll owner with footer navigation; the primitive owns top anchoring/restoration. */
 export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null>; children: ReactNode }> = ({ contentRef, children }) => {
   const sessionId = useConversationStore((state) => state.currentSessionId);
+  // Entry intent must not be rewritten by the primitive's restoration scroll event.
+  const pendingReadingAnchor = useRef(getThreadScrollState(sessionId)?.readingAnchor);
+  const entryFollowMode = useRef(getThreadScrollState(sessionId)?.follow?.mode);
   const running = useAuiState((state) => state.thread.isRunning);
   const hasActiveTopAnchorTurn = useAuiState((state) => {
     if (!state.thread.isRunning) return false;
@@ -42,6 +46,8 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
   // assistant-ui updates this store when its viewport ref and footer inset are
   // registered. It is the safe fallback during the first layout measurement.
   const isAtBottom = useThreadViewport((state) => state.isAtBottom);
+  const topAnchorReady = useThreadViewport((state) => state.turnAnchor !== "top" || !state.topAnchorTurn
+    || Boolean(state.element.anchor && state.element.target && state.targetConfig));
   const show = controllerShow ?? !isAtBottom;
 
   useLayoutEffect(() => {
@@ -57,6 +63,7 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
       hasRestoration: restoration?.current != null,
       onVisibility: setControllerShow,
       onSave: (follow) => { if (restoration) restoration.follow = follow; },
+      onPosition: (anchor) => { if (restoration) restoration.readingAnchor = anchor; },
     });
     controller.current = owner;
     const unsubscribe = viewportStore.getState().onScrollToBottom(owner.scrollToBottom);
@@ -66,6 +73,18 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
       if (controller.current === owner) controller.current = null;
     };
   }, [contentRef, sessionId, viewport, viewportStore]);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const anchor = pendingReadingAnchor.current;
+    if (!viewport || !content || !topAnchorReady || !anchor
+      || entryFollowMode.current === "user_follow" || entryFollowMode.current === "prework_follow") return;
+    let frame: number | null = requestAnimationFrame(() => {
+      frame = null;
+      if (restoreThreadReadingAnchor(viewport, content, anchor)) pendingReadingAnchor.current = undefined;
+    });
+    return () => { if (frame !== null) cancelAnimationFrame(frame); };
+  }, [contentRef, sessionId, topAnchorReady, viewport]);
 
   useLayoutEffect(() => {
     controller.current?.sync({ turnId, running, phase });

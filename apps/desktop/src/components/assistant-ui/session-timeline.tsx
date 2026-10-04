@@ -19,7 +19,7 @@ import type { ToolCall as StoreToolCall } from "../../store";
 import { toolActivityCategory } from "./tool-activity-category";
 import { ACTIVITY_TITLE_TOOL, toolFileChanges } from "@qone/protocol";
 import { selectActiveToolIndex } from "./tool-timeline-state";
-import { isSubagentTool } from "./subagent-navigation";
+import { isSubagentTool, shouldRenderSubagentTool, subagentForTool } from "./subagent-navigation";
 import { SubagentToolCall } from "./subagent-tool-call";
 import { toolFileActivities } from "./file-change-activity-data";
 import { FileChangeActivityRow } from "./file-change-activity";
@@ -30,7 +30,7 @@ import type { AssistantPartRange } from "./assistant-part-ranges";
 import { Reasoning } from "./reasoning";
 import { latestReasoningText } from "./reasoning-preview";
 import { ContextCompactionMarker } from "./context-compaction-marker";
-import { toolCallById } from "../../lib/store-indexes";
+import { messageById, toolCallById } from "../../lib/store-indexes";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
@@ -77,8 +77,8 @@ function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undef
 }
 
 type ToolCallEntryProps = { part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean };
-const ToolCallEntry: FC<ToolCallEntryProps> = (props) => isSubagentTool(props.part.toolName)
-  ? <SubagentToolCall {...props} /> : <GenericToolCallEntry {...props} />;
+const ToolCallEntry: FC<ToolCallEntryProps> = (props) => props.part.toolName === "finalize_response" ? null
+  : isSubagentTool(props.part.toolName) ? <SubagentToolCall {...props} /> : <GenericToolCallEntry {...props} />;
 
 const GenericToolCallEntry: FC<ToolCallEntryProps> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
   const { locale, t } = useLocale();
@@ -159,12 +159,17 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   // inside the selector would return a new array forever and trigger React's
   // maximum update depth guard.
   const parts = useAuiState((state) => state.message.parts);
+  const messageId = useAuiState((state) => state.message.id);
   const messageRunning = useAuiState((state) => state.message.status?.type === "running");
   const toolParts = useMemo(
     () => parts.slice(startIndex, endIndex).filter((part): part is ToolPartState => part.type === "tool-call" && (part.toolName !== "present" || Boolean(part.isError))),
     [parts, startIndex, endIndex],
   );
   const liveToolCalls = useConversationStore((state) => state.toolCalls);
+  const conversationMessages = useConversationStore((state) => state.messages);
+  const subagents = useConversationStore((state) => state.subagents);
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const parentRunId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : messageById(state.messages, messageId)?.runId);
   const mcpServers = useConversationStore((state) => state.mcpServers);
   const preparedToolCallIds = useConversationStore((state) => state.preparedToolCallIds);
   const preparedIds = useMemo(() => new Set(preparedToolCallIds), [preparedToolCallIds]);
@@ -172,10 +177,16 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
     () => new Map(liveToolCalls.map((call) => [call.toolCallId, call])),
     [liveToolCalls],
   );
+  const visibleToolParts = useMemo(() => toolParts.filter((part) => {
+    if (!isSubagentTool(part.toolName)) return true;
+    const call = liveCallsById.get(part.toolCallId);
+    const child = subagentForTool(part, call?.args, subagents, sessionId, parentRunId);
+    return shouldRenderSubagentTool(part, child, conversationMessages, toolParts);
+  }), [conversationMessages, liveCallsById, parentRunId, sessionId, subagents, toolParts]);
   // Show the row from block start, including while arguments are generated.
-  const executedToolParts = useMemo(() => toolParts.filter((part) =>
+  const executedToolParts = useMemo(() => visibleToolParts.filter((part) =>
     part.toolName !== ACTIVITY_TITLE_TOOL || toolCallStatus(part, liveCallsById.get(part.toolCallId)) === "failed"
-  ), [toolParts, liveCallsById]);
+  ), [liveCallsById, visibleToolParts]);
   const steps = useMemo(
     () => executedToolParts.map((part) => toStep(part, locale, liveCallsById.get(part.toolCallId), mcpServers)),
     [executedToolParts, liveCallsById, locale, mcpServers],

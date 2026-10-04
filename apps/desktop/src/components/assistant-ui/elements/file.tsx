@@ -14,18 +14,18 @@ import { DIRECTORY_MIME_TYPE } from "@qone/protocol";
 import { useLocale } from "../../../localization";
 
 const fileVariants = cva(
-  "aui-file-root inline-flex min-w-0 max-w-full items-center gap-3 rounded-lg transition-colors",
+  "aui-file-root inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border transition-colors",
   {
     variants: {
       variant: {
-        outline: "border-border hover:bg-muted/50 border",
+        outline: "border-border bg-muted/50 hover:bg-accent",
         ghost: "hover:bg-muted/50",
         muted: "bg-muted/50 hover:bg-muted/70",
       },
       size: {
-        sm: "px-2.5 py-1.5 text-xs",
-        default: "px-3 py-2 text-sm",
-        lg: "px-4 py-3 text-base",
+        sm: "px-2 py-1 text-xs",
+        default: "px-2 py-1.5 text-sm",
+        lg: "px-3 py-2 text-base",
       },
     },
     defaultVariants: {
@@ -132,7 +132,7 @@ function FileIconDisplay({
       className={cn("text-muted-foreground shrink-0", className)}
       {...props}
     >
-      {children ?? <CodexIcon src={attachmentFileIcon(filename ?? "", mimeType ?? "")} className="size-5" />}
+      {children ?? <CodexIcon src={attachmentFileIcon(filename ?? "", mimeType ?? "")} className="size-3" />}
     </span>
   );
 }
@@ -145,7 +145,7 @@ function FileName({
   return (
     <span
       data-slot="file-name"
-      className={cn("min-w-0 flex-1 truncate font-medium", className)}
+      className={cn("min-w-0 flex-1 truncate pe-1 text-sm font-medium", className)}
       {...props}
     >
       {children || "Unnamed file"}
@@ -220,9 +220,6 @@ const FileImpl: FileMessagePartComponent = ({
   const workspaceId = useConversationStore((state) => state.currentWorkspaceId);
   const sessionId = useConversationStore((state) => state.currentSessionId);
   const localPath = localPathFromFileMetadata(providerMetadata);
-  const kind = getFileDataKind(data, sourceType);
-  const showSize =
-    Boolean(data) && (kind === "base64" || kind === "data-uri");
   const attachment = { data, mimeType, sourceType };
   const previewable = mimeType !== DIRECTORY_MIME_TYPE && (Boolean(localPath) || inlineFilePreviewable(attachment));
   const preview = () => {
@@ -248,24 +245,16 @@ const FileImpl: FileMessagePartComponent = ({
       } : undefined}
     >
       <FileIconDisplay mimeType={mimeType} filename={filename} />
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <FileName>{filename}</FileName>
-        {showSize && (
-          <FileSize
-            bytes={
-              kind === "data-uri" ? getDataUrlSize(data) : getBase64Size(data)
-            }
-            className="text-xs"
-          />
-        )}
-      </div>
-      <FileDownload
-        data={data}
-        mimeType={mimeType}
-        {...(filename !== undefined && { filename })}
-        {...(sourceType !== undefined && { sourceType })}
-        onClick={(event) => event.stopPropagation()}
-      />
+      <FileName>{filename}</FileName>
+      {!previewable && (
+        <FileDownload
+          data={data}
+          mimeType={mimeType}
+          {...(filename !== undefined && { filename })}
+          {...(sourceType !== undefined && { sourceType })}
+          onClick={(event) => event.stopPropagation()}
+        />
+      )}
     </FileRoot>
   );
 };

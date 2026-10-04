@@ -1,7 +1,8 @@
 import type { SubagentRunInfo } from "@qone/protocol";
 import { subagentById, subagentByParentTool, subagentsForParent } from "../../lib/store-indexes";
 
-type ToolRef = { toolName: string; toolCallId: string; args?: unknown };
+type ToolRef = { type?: string; toolName: string; toolCallId: string; args?: unknown };
+type MessageWithParts = { runId?: string; parts?: readonly { type: string; toolCallId?: string; toolName?: string }[] };
 
 const SUBAGENT_TOOLS = new Set(["dispatch_subagent", "run_subagent_workflow", "inspect_subagent", "control_subagent", "wait_subagent"]);
 
@@ -35,6 +36,35 @@ export function subagentForTool(
   const runId = runIdFromArgs(part.args) ?? runIdFromArgs(callArgs);
   const child = subagentById(subagents, runId);
   return child?.parentSessionId === sessionId ? child : undefined;
+}
+
+/**
+ * A child has one visual entry: the creation/workflow entry owns its status.
+ * inspect/control/wait calls are lifecycle operations on that same child and
+ * must not create a second identical row in the parent timeline.
+ */
+export function hasSubagentCreationCall(
+  messages: readonly MessageWithParts[],
+  currentParts: readonly ToolRef[],
+  child: SubagentRunInfo,
+): boolean {
+  const isCreation = (part: { type?: string; toolCallId?: string; toolName?: string }) => {
+    if (part.type !== "tool-call") return false;
+    if (part.toolName === "dispatch_subagent" && part.toolCallId === child.toolCallId) return true;
+    return child.toolCallId.startsWith("workflow:") && part.toolName === "run_subagent_workflow";
+  };
+  return messages.some((message) => message.runId === child.parentRunId && (message.parts ?? []).some(isCreation))
+    || currentParts.some(isCreation);
+}
+
+export function shouldRenderSubagentTool(
+  part: ToolRef,
+  child: SubagentRunInfo | undefined,
+  messages: readonly MessageWithParts[],
+  currentParts: readonly ToolRef[],
+): boolean {
+  if (!child || part.toolName === "dispatch_subagent" || part.toolName === "run_subagent_workflow") return true;
+  return !hasSubagentCreationCall(messages, currentParts, child);
 }
 
 function isActive(status: SubagentRunInfo["status"]): boolean {

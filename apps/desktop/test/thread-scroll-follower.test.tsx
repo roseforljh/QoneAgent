@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { act, StrictMode, useRef } from "react";
 import { getThreadScrollState, pruneThreadScrollStates } from "../src/lib/thread-scroll-state";
+import { captureThreadReadingAnchor, restoreThreadReadingAnchor } from "../src/lib/thread-scroll-position";
 
 // Real React ref/effect ordering with deterministic geometry. No browser is used.
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
@@ -85,7 +86,7 @@ function BottomButton() {
   const control = follower.useThreadBottomControl();
   return <button data-test-bottom data-visible={control.show} onClick={control.scrollToBottom}>Bottom</button>;
 }
-function Fixture({ sessionId = "mount-order", running = true, messageRoots = false }: { sessionId?: string; running?: boolean; messageRoots?: boolean }) {
+function Fixture({ sessionId = "mount-order", running = true, messageRoots = false, readingRoots = false }: { sessionId?: string; running?: boolean; messageRoots?: boolean; readingRoots?: boolean }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const runtime = aui.useExternalStoreRuntime({
     messages: [{ id: "u", role: "user", content: [{ type: "text", text: "question" }] },
@@ -99,7 +100,7 @@ function Fixture({ sessionId = "mount-order", running = true, messageRoots = fal
       scrollToBottomOnInitialize={false} scrollToBottomOnRunStart={false} scrollToBottomOnThreadSwitch={false}>
       <follower.ThreadScrollFollower contentRef={contentRef}>
         <div ref={contentRef} data-test-content>{messageRoots
-          ? <aui.ThreadPrimitive.Messages>{({ message }) => <aui.MessagePrimitive.Root>{message.id}</aui.MessagePrimitive.Root>}</aui.ThreadPrimitive.Messages>
+          ? <aui.ThreadPrimitive.Messages>{({ message }) => <aui.MessagePrimitive.Root className={readingRoots ? "q-message-root" : undefined}>{message.id}</aui.MessagePrimitive.Root>}</aui.ThreadPrimitive.Messages>
           : "tool output"}</div>
         <aui.ThreadPrimitive.ViewportFooter data-thread-scroll-footer><BottomButton /></aui.ThreadPrimitive.ViewportFooter>
       </follower.ThreadScrollFollower>
@@ -228,4 +229,59 @@ test("a session that was following the tail returns to the new tail after growin
   });
   await flush();
   expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(firstTop + 300);
+});
+
+test("reading restoration follows the same message when content reflows while away", () => {
+  const viewport = document.createElement("div");
+  const content = document.createElement("div");
+  const message = document.createElement("div");
+  message.className = "q-message-root";
+  message.dataset.messageId = "stable-message";
+  content.append(message);
+  let messageTop = 220;
+  Object.defineProperty(viewport, "scrollTop", { configurable: true, writable: true, value: 320 });
+  viewport.getBoundingClientRect = () => new view.DOMRect(0, 100, 600, 600);
+  message.getBoundingClientRect = () => new view.DOMRect(0, messageTop, 600, 120);
+
+  const anchor = captureThreadReadingAnchor(viewport, content);
+  expect(anchor).toEqual({ messageId: "stable-message", offsetPx: 120 });
+  messageTop += 80;
+  expect(restoreThreadReadingAnchor(viewport, content, anchor!)).toBe(true);
+  expect(viewport.scrollTop).toBe(400);
+});
+
+test("native restoration scroll cannot overwrite the entry reading anchor when history grows", async () => {
+  const originalRect = view.HTMLElement.prototype.getBoundingClientRect;
+  view.HTMLElement.prototype.getBoundingClientRect = function () {
+    const id = this.dataset.messageId;
+    if (id) return new view.DOMRect(0, (id === "a" ? 700 : 0) - (this.closest("[data-test-viewport]")?.scrollTop ?? 0), 600, id === "a" ? 500 : 200);
+    return originalRect.call(this);
+  };
+  try {
+    contentHeight = 1200; scrollHeight = 1800;
+    useStore.setState({ currentSessionId: "anchor-a" });
+    const container = document.createElement("div"); document.body.append(container);
+    root = createRoot(container);
+    await act(async () => { root!.render(<Fixture sessionId="anchor-a" running={false} messageRoots readingRoots />); });
+    await flush();
+    const viewport = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+    await act(async () => {
+      viewport.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
+      viewport.scrollTo({ top: 320 });
+    });
+    await act(async () => {
+      useStore.setState({ currentSessionId: "anchor-b" });
+      root!.render(<Fixture sessionId="anchor-b" running={false} messageRoots readingRoots />);
+    });
+    await flush();
+    contentHeight += 300; scrollHeight += 300;
+    await act(async () => {
+      useStore.setState({ currentSessionId: "anchor-a" });
+      root!.render(<Fixture sessionId="anchor-a" running={false} messageRoots readingRoots />);
+    });
+    await flush();
+    expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(320);
+  } finally {
+    view.HTMLElement.prototype.getBoundingClientRect = originalRect;
+  }
 });

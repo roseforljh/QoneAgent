@@ -137,6 +137,7 @@ test("subagent creation becomes a one-click child link and follow-up calls keep 
 
     await act(async () => { useStore.setState({ subagents: [child] }); });
     expect(link()?.textContent).toContain(child.title);
+    expect(container.textContent).toMatch(/等待子代理结果|Waiting for subagent result/);
     await act(async () => { link()!.click(); });
     expect(received).toEqual([{ runId: "child", sessionId: "session" }]);
 
@@ -161,6 +162,7 @@ test("subagent creation becomes a one-click child link and follow-up calls keep 
     // Once the structured target arguments arrive, a failed child remains navigable.
     await act(async () => { useStore.setState({ toolCalls: [{ toolCallId: "follow-up", toolName, runId: "later-parent", status: "failed", args: { runId: "child" } }] }); });
     expect(link()?.textContent).toContain(child.title);
+    expect(container.textContent).toMatch(/子代理失败|Subagent failed/);
     await act(async () => { link()!.click(); });
     expect(received).toHaveLength(3);
     expect(container.textContent).not.toContain("private failure output");

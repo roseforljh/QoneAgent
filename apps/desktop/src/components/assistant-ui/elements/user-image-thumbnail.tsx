@@ -1,40 +1,32 @@
 "use client";
 
-import { useCallback, useState, type ComponentProps, type FC } from "react";
+import type { ComponentProps, FC } from "react";
 import { Image } from "./image";
 import { useLocale } from "../../../localization";
 
-const MAX_SIDE = 192;
-
-function thumbnailSize(width: number, height: number) {
-  if (width <= 0 || height <= 0) return null;
-  const scale = Math.min(1, MAX_SIDE / width, MAX_SIDE / height);
-  return Math.max(1, Math.round(width * scale));
-}
-
+/**
+ * Keep the message geometry stable while the image is loading. The top-anchor
+ * measures the user message before the browser has decoded the image, so a
+ * content-sized thumbnail would initially contribute zero height.
+ */
 export const UserImageThumbnail: FC<ComponentProps<typeof Image>> = (part) => {
   const { t } = useLocale();
-  const { image, filename, status } = part;
-  const [measured, setMeasured] = useState<{ image: string; width: number } | null>(null);
-  const onNaturalSize = useCallback((width: number, height: number) => {
-    const fittedWidth = thumbnailSize(width, height);
-    if (fittedWidth !== null) setMeasured((current) =>
-      current?.image === image && current.width === fittedWidth ? current : { image, width: fittedWidth },
-    );
-  }, [image]);
+  const { filename, status } = part;
 
   if (status?.type === "running" || status?.type === "incomplete") return <Image {...part} />;
 
   return (
     <Image.Root
-      className="q-user-image-thumbnail shrink-0"
+      className="q-user-image-thumbnail q-message-attachment-card shrink-0"
       title={filename}
-      style={{ width: measured?.image === image ? measured.width : 128 }}
+      style={{
+        width: "var(--q-message-attachment-image-size)",
+        height: "var(--q-message-attachment-image-size)",
+      }}
     >
-      <Image.Zoom src={image} alt={filename || t("attachment.imageAlt")} filename={filename}>
-        <Image.Preview src={image} alt={filename || t("attachment.imageAlt")} onNaturalSize={onNaturalSize} />
+      <Image.Zoom src={part.image} alt={filename || t("attachment.imageAlt")} filename={filename}>
+        <Image.Preview src={part.image} alt={filename || t("attachment.imageAlt")} />
       </Image.Zoom>
-      <Image.Filename>{filename}</Image.Filename>
     </Image.Root>
   );
 };
