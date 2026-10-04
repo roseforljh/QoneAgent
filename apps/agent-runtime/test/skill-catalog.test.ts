@@ -53,7 +53,7 @@ test("imports only the selected skill into QoneAgent and makes it discoverable",
   expect(skill.path).toBe(path.join(process.env.QONE_DATA_DIR, "skills", "installed", "demo", "SKILL.md"));
   expect(readFileSync(path.join(path.dirname(skill.path), "references", "info.md"), "utf8")).toBe(reference);
   expect(existsSync(path.join(path.dirname(skill.path), "..", "other"))).toBe(false);
-  expect((await createResourceLoader(path.join(root, "workspace"))).skills.map((item) => item.name)).toEqual(["demo"]);
+  expect((await createResourceLoader(path.join(root, "workspace"))).skills.map((item) => item.name)).toEqual(["ponytail", "demo"]);
   await expect(installCloudSkill("owner/repo", "demo", fetcher)).rejects.toThrow("已安装");
 });
 
@@ -69,5 +69,5 @@ test("rejects a changed file without installing a partial skill", async () => {
     return new Response("changed content");
   }) as typeof fetch;
   await expect(installCloudSkill("owner/repo", "demo", fetcher)).rejects.toThrow("大小与仓库清单不符");
-  expect((await createResourceLoader(root)).skills).toEqual([]);
+  expect((await createResourceLoader(root)).skills.filter((skill) => !skill.builtin)).toEqual([]);
 });

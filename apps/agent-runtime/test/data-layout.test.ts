@@ -54,6 +54,12 @@ test("the real sidecar creates, restores and deletes project/session resources w
     const projectEvent = await request({ type: "workspace.upsert", requestId: "project", name: "Project", path: source }, "workspace.updated");
     if (projectEvent.type !== "workspace.updated") throw new Error("Missing project");
     const project = projectEvent.workspace;
+    const skills = await request({ type: "skills.list", requestId: "skills", cwd: source }, "skills.list");
+    if (skills.type !== "skills.list") throw new Error("Missing skills");
+    expect(skills.skills).toContainEqual(expect.objectContaining({ id: "ponytail", builtin: true, enabled: true }));
+    const disabled = await request({ type: "skills.builtin.set-enabled", requestId: "disable", skillId: "ponytail", enabled: false }, "skills.builtin.changed");
+    if (disabled.type !== "skills.builtin.changed") throw new Error("Missing skill change");
+    expect(disabled.skill.enabled).toBe(false);
     const projects = path.join(data, "projects");
     expect(JSON.parse(readFileSync(path.join(qoneProjectDir(project.id, projects), "project.json"), "utf8"))).toMatchObject({ id: project.id, path: source });
     const created = await request({ type: "session.create", requestId: "create", workspaceId: project.id, title: "First" }, "session.created");
@@ -76,6 +82,10 @@ test("the real sidecar creates, restores and deletes project/session resources w
       new McpServerRepo(db).upsert({ id: "fixture", name: "Fixture", command: "unused-test-tool" });
     } finally { closeDb(db); }
     child = start(); reader = child.stdout.getReader(); buffer = "";
+    const restoredSkills = await request({ type: "skills.list", requestId: "restored-skills", cwd: source }, "skills.list");
+    if (restoredSkills.type !== "skills.list") throw new Error("Missing restored skills");
+    expect(restoredSkills.skills).toContainEqual(expect.objectContaining({ id: "ponytail", builtin: true, enabled: false }));
+    await request({ type: "skills.builtin.set-enabled", requestId: "enable", skillId: "ponytail", enabled: true }, "skills.builtin.changed");
     const restored = await request({ type: "session.list", requestId: "restore" }, "session.list");
     if (restored.type !== "session.list") throw new Error("Missing restored sessions");
     expect(restored.sessions).toContainEqual(expect.objectContaining({ id: session.id, title: "Renamed" }));

@@ -14,12 +14,14 @@ export function qoneDataDir(): string {
 }
 
 export const qoneConfigDir = () => path.join(qoneDataDir(), "config");
+export const qoneSystemPromptsDir = () => path.join(qoneDataDir(), "system-prompts");
 export const qoneConfigDatabasePath = () => path.join(qoneConfigDir(), "settings.db");
 export const qoneRuntimeDir = () => path.join(qoneDataDir(), "runtime");
 export const qoneDatabasePath = () => path.join(qoneRuntimeDir(), "qone.db");
 export const qoneWebviewDir = () => path.join(qoneRuntimeDir(), "webview");
 export const qonePiStateDir = () => path.join(qoneRuntimeDir(), "pi");
 export const qoneSkillsDir = () => path.join(qoneDataDir(), "skills", "installed");
+export const qoneBuiltinSkillsDir = () => path.join(qoneDataDir(), "skills", "builtin");
 export const qoneSkillCacheDir = () => path.join(qoneDataDir(), "skills", "cache");
 export const qonePluginsDir = () => path.join(qoneDataDir(), "plugins", "installed");
 export const qonePluginCacheDir = () => path.join(qoneDataDir(), "plugins", "cache");

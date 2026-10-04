@@ -1,5 +1,6 @@
 import { handleSessionCommand } from "./session-commands.js";
 import { handleRuntimeCommand } from "./runtime-commands.js";
+import { configureBuiltinSkills } from "./builtin-skills/manager.js";
 import { withRuntimeLocale, runtimeErrorInfo } from "./runtime-localization";
 import { CompactionPositions } from "./compaction-position.js";
 import { isAssistantMessageActivity } from "./session-activity.js";
@@ -36,6 +37,7 @@ import { createSubagentPublisher } from "./subagent-publisher.js";
 import { isSubagentUpdatePrompt, SubagentNotificationCoordinator } from "./subagent-notifications.js";
 
 import { ensureGlobalInstructions } from "./global-instructions.js";
+import { ensureSystemPromptModules } from "./system-prompt.js";
 import { updateLiveAssistant, type LiveAssistantState } from "./live-assistant.js";
 import { createRuntimeOutput } from "./runtime-output.js";
 
@@ -58,6 +60,7 @@ const send = output.send;
 
 // Keep the user file and its directory available before the settings UI opens.
 ensureGlobalInstructions();
+ensureSystemPromptModules();
 
 // --- persistence ---
 const dbPath =
@@ -85,6 +88,7 @@ const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
 const preferencesRepo = new SettingsRepo(configDb);
+configureBuiltinSkills(preferencesRepo);
 const queueRepo = new QueueRepo(settingsRepo);
 const sideConversations = new SideConversationService(db);
 const compactionPreferences: PiCompactionPreferences = normalizePiCompactionPreferences(

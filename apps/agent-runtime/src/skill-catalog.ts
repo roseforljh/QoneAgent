@@ -6,7 +6,8 @@ import path from "node:path";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 import { SKILL_CATALOG_TIMEOUT } from "@qone/protocol";
 import { qoneSkillsDir, qoneSkillCacheDir } from "@qone/shared";
-import { type SkillInfo } from "./skills.js";
+import { type SkillInfo } from "@qone/protocol";
+import { assertUserSkillName } from "./builtin-skills/identity.js";
 
 export interface CloudSkill {
   source: string;
@@ -39,8 +40,8 @@ function catalogError(error: unknown): Error {
   return error instanceof Error ? error : runtimeError("skill-catalog.skill_catalog_request_failed", {});
 }
 
-async function getJson(url: string, fetcher: typeof fetch): Promise<unknown> {
-  const canCache = fetcher === fetch;
+async function getJson(url: string, fetcher: typeof fetch, fresh = false): Promise<unknown> {
+  const canCache = fetcher === fetch && !fresh;
   const cachePath = canCache ? path.join(qoneSkillCacheDir(), "catalog", `${createHash("sha256").update(url).digest("hex")}.json`) : undefined;
   const readCache = async () => {
     if (!cachePath) return undefined;
@@ -125,10 +126,26 @@ async function readExactFile(response: Response, expectedSize: number): Promise<
 }
 
 export async function installCloudSkill(source: string, skillId: string, fetcher: typeof fetch = fetch): Promise<SkillInfo> {
+  assertUserSkillName(skillId);
+  const downloaded = await downloadGithubSkill(source, skillId, fetcher);
+  try {
+    assertUserSkillName(downloaded.skill.name);
+    const destination = path.join(qoneSkillsDir(), downloaded.skill.name);
+    if (existsSync(destination)) throw runtimeError("skill-catalog.skill_is_already_installed", { p0: downloaded.skill.name });
+    await mkdir(qoneSkillsDir(), { recursive: true });
+    await rename(downloaded.directory, destination);
+    return { ...downloaded.skill, path: path.join(destination, "SKILL.md") };
+  } finally {
+    await rm(downloaded.directory, { recursive: true, force: true });
+  }
+}
+
+/** Caller owns the validated staging directory and must remove it on completion. */
+export async function downloadGithubSkill(source: string, skillId: string, fetcher: typeof fetch = fetch, options: { fresh?: boolean; license?: boolean } = {}): Promise<{ directory: string; skill: SkillInfo; revision: string }> {
   if (!REPOSITORY.test(source) || source.split("/").some((part) => part === "." || part === "..") || !SKILL_ID.test(skillId)) throw runtimeError("skill-catalog.invalid_skill_source", {});
-  const commit = await getJson(`https://api.github.com/repos/${source}/commits/HEAD`, fetcher) as { sha?: unknown };
+  const commit = await getJson(`https://api.github.com/repos/${source}/commits/HEAD`, fetcher, options.fresh) as { sha?: unknown };
   if (typeof commit.sha !== "string" || !/^[a-f0-9]{40}$/.test(commit.sha)) throw runtimeError("skill-catalog.could_not_determine_the_skill_repository_revision", {});
-  const tree = await getJson(`https://api.github.com/repos/${source}/git/trees/${commit.sha}?recursive=1`, fetcher) as { tree?: unknown; truncated?: unknown };
+  const tree = await getJson(`https://api.github.com/repos/${source}/git/trees/${commit.sha}?recursive=1`, fetcher, options.fresh) as { tree?: unknown; truncated?: unknown };
   if (tree.truncated || !Array.isArray(tree.tree)) throw runtimeError("skill-catalog.the_skill_repository_file_tree_is_incomplete", {});
   const blobs = tree.tree.filter((entry): entry is GithubTreeEntry => Boolean(entry && typeof entry === "object" && typeof entry.path === "string" && entry.type === "blob" && entry.mode !== "120000"));
   const allRoots = blobs.filter((entry) => entry.path === "SKILL.md" || entry.path.endsWith("/SKILL.md"))
@@ -147,19 +164,23 @@ export async function installCloudSkill(source: string, skillId: string, fetcher
     if (!root && relative !== "SKILL.md" && !["scripts", "references", "templates", "assets"].includes(relative.split("/")[0]!)) return false;
     return !allRoots.some((nested) => nested !== root && nested.startsWith(prefix) && entry.path.startsWith(`${nested}/`));
   });
+  if (options.license && !files.some((entry) => entry.path === `${prefix}LICENSE`)) {
+    const license = blobs.find((entry) => entry.path === "LICENSE");
+    if (!license) throw runtimeError("skills.builtin.missingLicense");
+    files.push(license);
+  }
   const total = files.reduce((sum, entry) => sum + (entry.size ?? MAX_BYTES + 1), 0);
   if (files.length > MAX_FILES || total > MAX_BYTES || files.some((entry) => !Number.isSafeInteger(entry.size) || entry.size! < 0)) throw runtimeError("skill-catalog.the_skill_file_count_or_size_exceeds_the_limit", {});
   if (!files.some((entry) => entry.path === `${prefix}SKILL.md`)) throw runtimeError("skill-catalog.the_skill_is_missing_skill_md", {});
 
-  const skillDir = qoneSkillsDir();
   const cacheDir = qoneSkillCacheDir();
   await mkdir(cacheDir, { recursive: true });
   const staging = await mkdtemp(path.join(cacheDir, ".skill-install-"));
   try {
     let downloaded = 0;
     for (let start = 0; start < files.length; start += 6) {
-      await Promise.all(files.slice(start, start + 6).map(async (entry) => {
-        const relative = entry.path.slice(prefix.length);
+      const results = await Promise.allSettled(files.slice(start, start + 6).map(async (entry) => {
+        const relative = options.license && entry.path === "LICENSE" ? "LICENSE" : entry.path.slice(prefix.length);
         const url = `https://raw.githubusercontent.com/${source}/${commit.sha}/${entry.path.split("/").map(encodeURIComponent).join("/")}`;
         const response = await fetcher(url, { signal: AbortSignal.timeout(30_000) });
         if (!response.ok) throw runtimeError("skill-catalog.skill_file_download_failed_http", { p0: response.status });
@@ -169,18 +190,17 @@ export async function installCloudSkill(source: string, skillId: string, fetcher
         const target = path.join(staging, ...relative.split("/"));
         await mkdir(path.dirname(target), { recursive: true });
         await writeFile(target, bytes);
-      })).catch((error) => { throw catalogError(error); });
+      }));
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
     }
     const loaded = loadSkillsFromDir({ dir: staging, source: "path" }).skills;
     if (loaded.length !== 1 || loaded[0]!.filePath !== path.join(staging, "SKILL.md")) throw runtimeError("skill-catalog.invalid_downloaded_skill_format", {});
     const skill = loaded[0]!;
     if (!SKILL_ID.test(skill.name)) throw runtimeError("skill-catalog.invalid_skill_name", {});
-    const destination = path.join(skillDir, skill.name);
-    if (existsSync(destination)) throw runtimeError("skill-catalog.skill_is_already_installed", { p0: skill.name });
-    await mkdir(skillDir, { recursive: true });
-    await rename(staging, destination);
-    return { id: skill.name, name: skill.name, description: skill.description, path: path.join(destination, "SKILL.md") };
-  } finally {
+    return { directory: staging, revision: commit.sha, skill: { id: skill.name, name: skill.name, description: skill.description, path: skill.filePath } };
+  } catch (error) {
     await rm(staging, { recursive: true, force: true });
+    throw catalogError(error);
   }
 }

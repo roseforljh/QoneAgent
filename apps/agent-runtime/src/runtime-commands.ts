@@ -5,6 +5,7 @@ import { thinkingLevelsForApi, parseMcpCommand } from "@qone/protocol";
 import path from "node:path";
 import { createLocalSkill, createResourceLoader, installLocalSkill } from "./skills.js";
 import { installCloudSkill, listCloudSkills } from "./skill-catalog.js";
+import { setBuiltinSkillEnabled, updateBuiltinSkill } from "./builtin-skills/manager.js";
 import { containsSecretConfig } from "./secrets.js";
 import { configurePodcast } from "./reach-podcast.js";
 import { normalizeSubagentConfig } from "./subagents.js";
@@ -44,6 +45,20 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     case "skills.cloud.list": {
       const page = await listCloudSkills(cmd.collection, cmd.page, cmd.query);
       services.send({ type: "skills.cloud.list", requestId: cmd.requestId, ...page });
+      return true;
+    }
+    case "skills.builtin.set-enabled": {
+      const skill = await setBuiltinSkillEnabled(cmd.skillId, cmd.enabled);
+      await services.adapter.refreshSkills();
+      services.skillRepo.upsert(skill);
+      services.send({ type: "skills.builtin.changed", requestId: cmd.requestId, skill });
+      return true;
+    }
+    case "skills.builtin.update": {
+      const result = await updateBuiltinSkill(cmd.skillId);
+      await services.adapter.refreshSkills();
+      services.skillRepo.upsert(result.skill);
+      services.send({ type: "skills.builtin.changed", requestId: cmd.requestId, ...result });
       return true;
     }
     case "skills.cloud.install": {

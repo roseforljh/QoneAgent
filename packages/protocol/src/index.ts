@@ -102,6 +102,8 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "skills.cloud.install"; requestId: string; source: string; skillId: string }
   | { type: "skills.import"; requestId: string; content: string }
   | { type: "skills.create"; requestId: string; name: string; description: string; instructions: string }
+  | { type: "skills.builtin.set-enabled"; requestId: string; skillId: string; enabled: boolean }
+  | { type: "skills.builtin.update"; requestId: string; skillId: string }
   | { type: "plugins.list"; requestId: string }
   | { type: "browser.status"; requestId: string }
   | { type: "browser.connect"; requestId: string }
@@ -230,6 +232,7 @@ export type RuntimeEvent =
   | { type: "skills.cloud.installed"; requestId: string; skill: SkillInfo }
   | { type: "skills.imported"; requestId: string; skill: SkillInfo }
   | { type: "skills.created"; requestId: string; skill: SkillInfo }
+  | { type: "skills.builtin.changed"; requestId: string; skill: SkillInfo; updated?: boolean }
   | { type: "plugins.list"; plugins: PluginInfo[] }
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
   | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
@@ -489,6 +492,10 @@ export interface SkillInfo {
   name: string;
   description: string;
   path: string;
+  builtin?: boolean;
+  enabled?: boolean;
+  source?: string;
+  revision?: string;
 }
 
 export interface PluginInfo {
@@ -832,6 +839,8 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "skills.cloud.install": z.object({ type: z.literal("skills.cloud.install"), ...request, source: z.string().max(200), skillId: z.string().max(64) }),
   "skills.import": z.object({ type: z.literal("skills.import"), ...request, content: z.string().min(1).max(2_097_152) }),
   "skills.create": z.object({ type: z.literal("skills.create"), ...request, name: z.string().max(64), description: z.string().max(500), instructions: z.string().min(1).max(2_000_000) }),
+  "skills.builtin.set-enabled": z.object({ type: z.literal("skills.builtin.set-enabled"), ...request, skillId: z.string().min(1).max(64), enabled: z.boolean() }),
+  "skills.builtin.update": z.object({ type: z.literal("skills.builtin.update"), ...request, skillId: z.string().min(1).max(64) }),
   "plugins.list": z.object({ type: z.literal("plugins.list"), ...request }),
   "browser.status": z.object({ type: z.literal("browser.status"), ...request }),
   "browser.connect": z.object({ type: z.literal("browser.connect"), ...request }),

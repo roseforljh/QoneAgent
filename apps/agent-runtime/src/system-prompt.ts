@@ -1,22 +1,43 @@
-import { ACTIVITY_TITLE_TOOL } from "@qone/protocol";
+import path from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { qoneSystemPromptsDir } from "@qone/shared";
+import identity from "./system-prompts/01-identity.md" with { type: "text" };
+import behavior from "./system-prompts/02-behavior.md" with { type: "text" };
+import execution from "./system-prompts/03-execution.md" with { type: "text" };
+import coding from "./system-prompts/04-coding.md" with { type: "text" };
+import verification from "./system-prompts/05-verification.md" with { type: "text" };
+import safety from "./system-prompts/06-safety.md" with { type: "text" };
+import communication from "./system-prompts/07-communication.md" with { type: "text" };
 
-/** Qone-specific instructions, appended to Pi's existing system prompt. */
-export const QONE_SYSTEM_PROMPT = `## Qone 工作原则
+// Explicit order is part of the product contract; directory enumeration is not.
+export const SYSTEM_PROMPT_MODULES = [
+  { file: "01-identity.md", content: identity },
+  { file: "02-behavior.md", content: behavior },
+  { file: "03-execution.md", content: execution },
+  { file: "04-coding.md", content: coding },
+  { file: "05-verification.md", content: verification },
+  { file: "06-safety.md", content: safety },
+  { file: "07-communication.md", content: communication },
+] as const;
 
-围绕用户目标推进任务，依据实际上下文、工具说明、工具结果和已验证的源码作答；不猜测事实、能力、权限、路径状态或完成情况。
+/** Bundled Markdown seeds a fresh installation without overwriting its source modules. */
+export function ensureSystemPromptModules(directory = qoneSystemPromptsDir()): void {
+  mkdirSync(directory, { recursive: true });
+  for (const module of SYSTEM_PROMPT_MODULES) {
+    try {
+      writeFileSync(path.join(directory, module.file), module.content, { encoding: "utf8", flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+}
 
-先获取完成当前步骤所需的信息，再选择下一步。工具部分成功、失败或返回不完整时，准确说明已知范围、影响和阻塞，并据此调整。回答优先给结论、实际变化、验证结果和必要的下一步；不要复述工具明细或输出与任务无关的过程。
-
-回答要简洁、直接、自然，像熟悉上下文的同事在沟通：先说结论，再按必要的因果或顺序补充依据、处理结果和下一步。根据问题复杂度控制长度；避免空话、模板话、翻译腔、术语堆砌和重复表达，能用常用词就不用复杂说法。需要多个要点时按重要性或依赖关系排列，保证句子完整、指代清楚、逻辑顺畅。
-
-工作目录是默认位置，不代表唯一可读范围；涉及其他路径时按工具实际结果判断。将审批拒绝、路径不存在、权限不足和命令失败分别说明，不用路径位置推断结果。
-
-需要展示执行阶段时，在阶段目的发生变化时调用 ${ACTIVITY_TITLE_TOOL} 设置一句简短、面向用户的标题。标题概括正在解决的问题或目标，使用用户语言，不罗列工具类型，不写未经验证的结论；阶段不变或无需执行时不调用。该工具只更新展示信息，不执行任务。
-
-多个阶段之间有实质进展或关键发现时，用一句简短旁白自然衔接：说明刚确认了什么、为什么进入下一步，或当前正在验证什么。不要只连续输出标题，也不要在每个工具调用后播报；旁白必须基于已知信息，不重复标题和工具明细，不提前宣布未验证的结论。
-
-子代理通知与结果确认属于必要的进度旁白：收到后台子代理结束通知后，在下一条助手回复开头用用户语言确认具体子代理及其实际状态，再决定是否读取结果、继续工作；不要等到最终结论末尾补写。inspect_subagent、wait_subagent 或前台子代理调用返回结果后，在继续其他工具之前简短说明实际读到了什么、准备怎样使用；只拿到状态或空总结时明确说明，不能声称已经读取、采纳或验证。控制请求被接受不等于任务完成。确认必须由你依据真实通知或工具结果自然输出，不使用固定套话，也不复述子代理过程。
-
-创建子代理前必须明确说明为什么主模型不能直接完成、子代理要返回的具体结果，以及该结果影响主任务的哪一步；简单读取、搜索、单文件修改或主模型可以直接完成的工作不要委派。子代理一旦创建，后台执行只表示可以并行，不表示可以忽略结果。子代理结束后必须先处理成功、失败、中断或取消状态，再继续主任务；inspect_subagent 返回紧凑的最终总结，不会把完整过程注入上下文。网络、临时服务不可用或超时优先使用原 runId 调用 control_subagent 的 follow_up 继续，达到次数上限后带着失败事实处理。没有读取结果不能声称已经采纳、验证或完成；所有必需子代理处理完后调用 finalize_response，成功后才能输出最终总结。
-
-直接回答无需设置阶段标题。`;
+/** Fixed prefix only. Project, user, tool and runtime context are appended elsewhere. */
+export function readSystemPrompt(directory = qoneSystemPromptsDir()): string {
+  ensureSystemPromptModules(directory);
+  return SYSTEM_PROMPT_MODULES.map(({ file }) => {
+    const content = readFileSync(path.join(directory, file), "utf8").replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+    if (!content) throw new Error(`System prompt module is empty: ${file}`);
+    return content;
+  }).join("\n\n");
+}

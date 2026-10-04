@@ -8,17 +8,15 @@ import {
   type Skill,
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
-import { QONE_SYSTEM_PROMPT } from "./system-prompt.js";
+import { readSystemPrompt } from "./system-prompt.js";
 import { qonePiStateDir, qoneSkillsDir, qoneSkillCacheDir } from "@qone/shared";
 import { readGlobalInstructions } from "./global-instructions.js";
 import { workspaceInstructions } from "./workspace-instructions.js";
-
-export interface SkillInfo {
-  id: string;
-  name: string;
-  description: string;
-  path: string;
-}
+import { toolPromptContextExtension } from "./tool-prompt-context.js";
+import { assertUserSkillName, isBuiltinSkillName } from "./builtin-skills/identity.js";
+import { listBuiltinSkills } from "./builtin-skills/manager.js";
+import type { SkillInfo } from "@qone/protocol";
+export type { SkillInfo } from "@qone/protocol";
 
 export function qoneAgentDir(): string {
   return qonePiStateDir();
@@ -65,6 +63,7 @@ async function writeSkillContent(content: string, expectedName?: string): Promis
     if (!skill || loaded.getSkills().skills.length !== 1) throw runtimeError("skills.invalid_skill_file_format", {});
     if (!SKILL_NAME.test(skill.name)) throw runtimeError("skills.skill_names_may_only_contain_lowercase_letters_numbers_and", {});
     if (expectedName && skill.name !== expectedName) throw runtimeError("skills.the_skill_name_does_not_match_the_creation_form", {});
+    assertUserSkillName(skill.name);
     const destination = path.join(skillsDir, skill.name);
     if (existsSync(destination)) throw runtimeError("skill-catalog.skill_is_already_installed", { p0: skill.name });
     await mkdir(skillsDir, { recursive: true });
@@ -86,6 +85,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
 }> {
   const agentDir = qoneAgentDir();
   const ownSkills = qoneSkillsDir();
+  const builtinSkills = await listBuiltinSkills();
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir,
@@ -93,23 +93,37 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
     // QoneAgent only loads skills installed in its own data directory.
     noSkills: true,
     noContextFiles: true,
+    // Suppress Pi's SYSTEM.md / APPEND_SYSTEM.md discovery. The seven modules
+    // supply the fixed preamble, before any variable context sections.
+    systemPrompt: "",
+    systemPromptOverride: () => readSystemPrompt(),
+    appendSystemPrompt: [],
     agentsFilesOverride: () => ({ agentsFiles: workspaceInstructions(cwd) }),
-    additionalSkillPaths: existsSync(ownSkills) ? [ownSkills] : [],
+    additionalSkillPaths: [
+      ...builtinSkills.filter((skill) => skill.enabled).map((skill) => path.dirname(skill.path)),
+      ...(existsSync(ownSkills) ? [ownSkills] : []),
+    ],
+    // A manually copied user skill cannot override a reserved built-in name,
+    // including while the built-in is disabled.
+    skillsOverride: (base) => ({
+      ...base,
+      skills: base.skills.filter((skill) => !isBuiltinSkillName(skill.name) || builtinSkills.some((builtin) => builtin.enabled && builtin.path === skill.filePath)),
+    }),
     noExtensions: true,
-    ...(enableCodemode ? { extensionFactories: [createCodemodeExtension({ models: false })] } : {}),
+    extensionFactories: [toolPromptContextExtension, ...(enableCodemode ? [createCodemodeExtension({ models: false })] : [])],
     // Qone.md is user-level global guidance. It stays separate from Qone's
     // built-in rules so updating the file never replaces product behavior.
-    appendSystemPromptOverride: (base) => {
+    appendSystemPromptOverride: () => {
       const instructions = readGlobalInstructions().trim();
       return [
-        ...base, QONE_SYSTEM_PROMPT,
         ...(instructions ? [`## Qone.md\n\n${instructions}`] : []),
         ...(additionalInstructions ? [additionalInstructions] : []),
+        ...builtinSkills.filter((skill) => !skill.enabled).map((skill) => `The built-in skill "${skill.name}" is disabled. Do not apply its instructions, including its section in Qone.md and instructions previously loaded in conversation history.`),
       ];
     },
   });
   await loader.reload();
-  return { loader, skills: loader.getSkills().skills.map(toInfo) };
+  return { loader, skills: [...builtinSkills, ...loader.getSkills().skills.filter((skill) => !isBuiltinSkillName(skill.name)).map(toInfo)] };
 }
 
 function toInfo(skill: Skill): SkillInfo {

@@ -66,7 +66,7 @@ test("inspect returns an identifiable final summary with the model-facing acknow
   }), acknowledge: () => {} } as never);
   faux.setResponses([
     async (context) => {
-      expect(JSON.stringify(context.messages)).toContain("在继续其他工具之前");
+      expect(JSON.stringify(context.messages)).toContain("After reading, briefly tell the user what was actually returned");
       const inspect = context.messages.flatMap((message) => message.role === "system" ? message.toolsAdded ?? [] : []).find((tool) => tool.name === "inspect_subagent");
       expect(inspect?.description).toContain("compact result");
       expect(inspect?.description).not.toContain("streaming output");

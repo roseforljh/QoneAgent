@@ -24,7 +24,8 @@ bun run apps/agent-runtime/test/smoke.ts
 - `mcp/servers.db`：MCP 服务配置；凭据仍保存在 Windows Credential Manager
 - `runtime/window-state.json`、`runtime/webview/`：窗口状态和 WebView 数据
 - `Qone.md`：全局提示词，直接放在数据根目录
-- `skills/installed/`、`skills/cache/`：已安装 Skill 和目录缓存
+- `system-prompts/01-identity.md` 至 `07-communication.md`：固定 System Prompt 的七个源码模块
+- `skills/builtin/`、`skills/installed/`、`skills/cache/`：内置 Skill、用户安装的 Skill 和下载缓存
 - `plugins/installed/`、`plugins/cache/`、`plugins/data/`：插件代码、缓存和私有数据
 - `projects/<项目>/project.json`：项目名称与源码位置；源码保留在原目录
 - `projects/<项目>/sessions/<会话>/session.json`：会话元信息
@@ -38,6 +39,8 @@ bun run apps/agent-runtime/test/smoke.ts
 项目、消息、会话和运行索引由 `runtime/qone.db` 保存。`project.json`、`session.json` 是目录说明，由数据库重建。配置和 MCP 使用各自目录内的 SQLite 数据库；原统一数据库内的配置在启动时迁入对应数据库，不保留旧路径回退读取。Skill 安装内容和缓存、插件代码和私有数据使用各自的目录。插件加载模块已有目录支持，主运行时尚未启用插件执行。
 
 全局提示词只从数据根目录的 `Qone.md` 读取，项目规则读取选定工作区根目录的 `AGENTS.md` 等 Pi 支持文件，不向用户目录或其他父目录扫描。桌面和运行时都按同一个 `QONE_DATA_DIR` 解析目录，WebView 数据路径与源码、安装位置无关。
+
+固定 System Prompt 与 `Qone.md` 分开。运行时按 Identity → Behavior → Execution → Coding → Verification → Safety → Communication 的显式顺序读取七个 Markdown 文件，统一换行并以两个换行拼接，作为 Pi 自定义 System Prompt 的首段；用户指导、项目规则、技能及工具上下文仍由现有机制放在后续部分。安装时从随运行时打包的 Markdown 创建缺失模块，保留已有内容；空白或不可读的模块会报错，额外文件不参与加载。相同版本和模块内容产生相同的固定前缀；完整请求仍会随任务上下文改变，实际缓存命中由模型服务决定。修改模块后重启开发运行时以刷新已存在的会话。
 
 ## OpenCLI 当前浏览器
 

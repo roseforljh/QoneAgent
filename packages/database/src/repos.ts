@@ -922,18 +922,18 @@ export class PluginRepo {
 export class SkillRepo {
   constructor(private db: Db) {}
 
-  upsert(skill: { id: string; name: string; path: string; description?: string }) {
+  upsert(skill: { id: string; name: string; path: string; description?: string; enabled?: boolean }) {
     const row = {
       id: skill.id,
       name: skill.name,
       path: skill.path,
       description: skill.description ?? null,
-      enabled: true,
+      enabled: skill.enabled !== false,
       updatedAt: Date.now(),
     };
     this.db.insert(skills).values(row).onConflictDoUpdate({
       target: skills.id,
-      set: { name: row.name, path: row.path, description: row.description, enabled: true, updatedAt: row.updatedAt },
+      set: { name: row.name, path: row.path, description: row.description, enabled: row.enabled, updatedAt: row.updatedAt },
     }).run();
     return row;
   }

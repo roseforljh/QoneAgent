@@ -39,8 +39,9 @@ test("loads only QoneAgent skills, excluding workspace and Pi skills", async () 
   writeFileSync(path.join(root, "AGENTS.md"), "Ancestor guidance must not be loaded.");
 
   const { loader, skills } = await createResourceLoader(cwd);
-  expect(skills).toEqual([{ id: "own", name: "own", description: "own skill", path: ownSkill }]);
-  expect(loader.getSkills().skills.map((skill) => skill.name)).toEqual(["own"]);
+  expect(skills.filter((skill) => !skill.builtin)).toEqual([{ id: "own", name: "own", description: "own skill", path: ownSkill }]);
+  expect(skills.find((skill) => skill.id === "ponytail")).toMatchObject({ builtin: true, enabled: true });
+  expect(loader.getSkills().skills.map((skill) => skill.name)).toEqual(["ponytail", "own"]);
   expect(loader.getAgentsFiles().agentsFiles).toEqual([]);
   const projectFile = path.join(cwd, "AGENTS.md");
   writeFileSync(projectFile, "Workspace guidance.");
