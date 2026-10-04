@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { Type } from "typebox";
@@ -76,7 +76,7 @@ function chromiumBookmarks(file: string, source: string): BrowserItem[] {
 }
 
 function snapshotSqlite(file: string, read: (db: Database) => BrowserItem[]): BrowserItem[] {
-  const directory = mkdtempSync(path.join(tmpdir(), "qone-browser-history-"));
+  const directory = mkdtempSync(path.join(qoneTemporaryDir(), "qone-browser-history-"));
   const copy = path.join(directory, "history.sqlite");
   try {
     copyFileSync(file, copy);

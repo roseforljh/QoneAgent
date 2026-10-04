@@ -1,7 +1,6 @@
 import { runtimeError } from "./runtime-localization";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import {
   DefaultResourceLoader,
@@ -10,7 +9,9 @@ import {
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 import { QONE_SYSTEM_PROMPT } from "./system-prompt.js";
-import { qoneDataDir, readGlobalInstructions } from "./global-instructions.js";
+import { qonePiStateDir, qoneSkillsDir, qoneSkillCacheDir } from "@qone/shared";
+import { readGlobalInstructions } from "./global-instructions.js";
+import { workspaceInstructions } from "./workspace-instructions.js";
 
 export interface SkillInfo {
   id: string;
@@ -20,7 +21,7 @@ export interface SkillInfo {
 }
 
 export function qoneAgentDir(): string {
-  return path.join(process.env.APPDATA ?? os.homedir(), "QoneAgent", "pi");
+  return qonePiStateDir();
 }
 
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -44,9 +45,10 @@ export async function createLocalSkill(name: string, description: string, instru
 async function writeSkillContent(content: string, expectedName?: string): Promise<SkillInfo> {
   if (!content.trim() || Buffer.byteLength(content, "utf8") > MAX_SKILL_CONTENT_BYTES) throw runtimeError("skills.the_skill_file_is_empty_or_exceeds_2_mb", {});
   const agentDir = qoneAgentDir();
-  const skillsDir = path.join(agentDir, "skills");
-  await mkdir(agentDir, { recursive: true });
-  const staging = await mkdtemp(path.join(agentDir, ".skill-import-"));
+  const skillsDir = qoneSkillsDir();
+  const cacheDir = qoneSkillCacheDir();
+  await mkdir(cacheDir, { recursive: true });
+  const staging = await mkdtemp(path.join(cacheDir, ".skill-import-"));
   try {
     const skillFile = path.join(staging, "SKILL.md");
     await writeFile(skillFile, content, "utf8");
@@ -54,6 +56,7 @@ async function writeSkillContent(content: string, expectedName?: string): Promis
       cwd: staging,
       agentDir,
       noSkills: true,
+      noContextFiles: true,
       additionalSkillPaths: [staging],
       noExtensions: true,
     });
@@ -82,13 +85,15 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
   skills: SkillInfo[];
 }> {
   const agentDir = qoneAgentDir();
-  const ownSkills = path.join(agentDir, "skills");
+  const ownSkills = qoneSkillsDir();
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir,
     // Pi's default discovery also includes project and package skills.
     // QoneAgent only loads skills installed in its own data directory.
     noSkills: true,
+    noContextFiles: true,
+    agentsFilesOverride: () => ({ agentsFiles: workspaceInstructions(cwd) }),
     additionalSkillPaths: existsSync(ownSkills) ? [ownSkills] : [],
     noExtensions: true,
     ...(enableCodemode ? { extensionFactories: [createCodemodeExtension({ models: false })] } : {}),

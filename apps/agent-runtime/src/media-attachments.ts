@@ -1,6 +1,6 @@
 import { runtimeError } from "./runtime-localization";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import type { MessageAttachmentInfo } from "@qone/protocol";
 import { extractVideoAudio } from "./video-download.js";
@@ -23,7 +23,7 @@ export async function videoAttachmentsAsAudio(
       if (!source) {
         const match = /^data:(video\/[^;,]+);base64,([A-Za-z0-9+/=]+)$/i.exec(item.data);
         if (!match) throw runtimeError("media-attachments.video_attachment_has_no_readable_local_path_or_base64", { p0: item.name });
-        staging = await mkdtemp(path.join(tmpdir(), "qone-inline-video-"));
+        staging = await mkdtemp(path.join(qoneTemporaryDir(), "qone-inline-video-"));
         source = path.join(staging, "source");
         await writeFile(source, Buffer.from(match[2]!, "base64"));
       }

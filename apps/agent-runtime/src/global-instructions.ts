@@ -1,12 +1,11 @@
-import os from "node:os";
 import path from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { ensureQoneLayout, qoneDataDir as resolveQoneDataDir } from "@qone/shared";
 
-const QONE_GLOBAL_DIRECTORY = "Qone";
 const GLOBAL_INSTRUCTIONS_FILE = "Qone.md";
 
 export function qoneDataDir(): string {
-  return path.join(process.env.APPDATA ?? os.homedir(), QONE_GLOBAL_DIRECTORY);
+  return resolveQoneDataDir();
 }
 
 export function globalInstructionsPath(): string {
@@ -19,6 +18,7 @@ export function globalInstructionsDirectory(): string {
 
 /** Create the user-level file without changing an existing user's content. */
 export function ensureGlobalInstructions(): void {
+  ensureQoneLayout();
   const directory = qoneDataDir();
   mkdirSync(directory, { recursive: true });
   const file = globalInstructionsPath();

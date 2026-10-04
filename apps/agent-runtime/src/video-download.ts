@@ -1,7 +1,7 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { promisify } from "node:util";
 import { mediaMimeTypeFromName } from "@qone/protocol";
@@ -29,7 +29,7 @@ async function downloadMedia(url: string, audioOnly: boolean, signal?: AbortSign
   if (!["http:", "https:"].includes(parsed.protocol)) throw runtimeError("video-download.the_video_url_must_use_http_or_https", {});
   const executable = ytDlpExecutable();
   if (!executable) throw runtimeError("video-download.yt_dlp_was_not_found_cannot_download_the_video", {});
-  const directory = await mkdtemp(path.join(tmpdir(), audioOnly ? "qone-audio-download-" : "qone-video-"));
+  const directory = await mkdtemp(path.join(qoneTemporaryDir(), audioOnly ? "qone-audio-download-" : "qone-video-"));
   try {
     const ffmpeg = ffmpegExecutable();
     const args = ["--no-playlist", "--no-progress", "--no-warnings", "--print", "after_move:filepath",
@@ -70,7 +70,7 @@ export async function extractVideoAudio(filePath: string, signal?: AbortSignal):
   if (!ffmpeg) throw runtimeError("video-download.ffmpeg_was_not_found_cannot_extract_audio_from_the", {});
   const info = await stat(filePath);
   if (!info.isFile()) throw runtimeError("video-download.the_video_file_no_longer_exists_cannot_extract_audio", {});
-  const directory = await mkdtemp(path.join(tmpdir(), "qone-audio-"));
+  const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-audio-"));
   const output = path.join(directory, "audio.m4a");
   try {
     await execFileAsync(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error", "-i", filePath,

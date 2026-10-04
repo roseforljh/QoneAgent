@@ -22,7 +22,7 @@ test("runtime resend merges persisted identical user turns and preserves distinc
 
   const process = Bun.spawn([Bun.which("bun")!, "run", "src/index.ts"], {
     cwd: path.resolve(import.meta.dir, ".."), stdin: "pipe", stdout: "pipe", stderr: "ignore",
-    env: { ...Bun.env, APPDATA: sandbox, QONE_DB: dbPath, QONE_LOG_DIR: path.join(sandbox, "logs"), QONE_PLUGINS_DIR: path.join(sandbox, "plugins") },
+    env: { ...Bun.env, QONE_DATA_DIR: sandbox, APPDATA: sandbox, QONE_DB: dbPath, QONE_LOG_DIR: path.join(sandbox, "logs"), QONE_PLUGINS_DIR: path.join(sandbox, "plugins") },
   });
   const events: RuntimeEvent[] = [];
   const output = (async () => {
@@ -85,6 +85,14 @@ test("runtime resend merges persisted identical user turns and preserves distinc
     process.kill();
     await process.exited;
     await output;
-    await rm(sandbox, { recursive: true, force: true });
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        await rm(sandbox, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EBUSY" || attempt === 9) throw error;
+        await Bun.sleep(50);
+      }
+    }
   }
 }, 20_000);

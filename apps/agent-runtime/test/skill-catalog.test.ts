@@ -6,10 +6,13 @@ import { installCloudSkill, listCloudSkills } from "../src/skill-catalog.js";
 import { createResourceLoader } from "../src/skills.js";
 
 const oldAppData = process.env.APPDATA;
+const oldDataDir = process.env.QONE_DATA_DIR;
 const roots: string[] = [];
 afterEach(() => {
   if (oldAppData === undefined) delete process.env.APPDATA;
   else process.env.APPDATA = oldAppData;
+  if (oldDataDir === undefined) delete process.env.QONE_DATA_DIR;
+  else process.env.QONE_DATA_DIR = oldDataDir;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -29,7 +32,7 @@ test("cloud catalog reads the skills.sh collection and search", async () => {
 test("imports only the selected skill into QoneAgent and makes it discoverable", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "qone-cloud-"));
   roots.push(root);
-  process.env.APPDATA = path.join(root, "appdata");
+  process.env.QONE_DATA_DIR = path.join(root, "qone");
   const instruction = "---\nname: demo\ndescription: Cloud demo\n---\nUse demo.\n";
   const reference = "Reference content";
   const sha = "a".repeat(40);
@@ -47,7 +50,7 @@ test("imports only the selected skill into QoneAgent and makes it discoverable",
   }) as typeof fetch;
 
   const skill = await installCloudSkill("owner/repo", "demo", fetcher);
-  expect(skill.path).toBe(path.join(process.env.APPDATA, "QoneAgent", "pi", "skills", "demo", "SKILL.md"));
+  expect(skill.path).toBe(path.join(process.env.QONE_DATA_DIR, "skills", "installed", "demo", "SKILL.md"));
   expect(readFileSync(path.join(path.dirname(skill.path), "references", "info.md"), "utf8")).toBe(reference);
   expect(existsSync(path.join(path.dirname(skill.path), "..", "other"))).toBe(false);
   expect((await createResourceLoader(path.join(root, "workspace"))).skills.map((item) => item.name)).toEqual(["demo"]);
@@ -57,7 +60,7 @@ test("imports only the selected skill into QoneAgent and makes it discoverable",
 test("rejects a changed file without installing a partial skill", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "qone-cloud-"));
   roots.push(root);
-  process.env.APPDATA = path.join(root, "appdata");
+  process.env.QONE_DATA_DIR = path.join(root, "qone");
   const sha = "b".repeat(40);
   const fetcher = (async (input: string | URL | Request) => {
     const url = String(input);

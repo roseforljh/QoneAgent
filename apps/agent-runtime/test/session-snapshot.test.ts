@@ -26,7 +26,7 @@ test("a real sidecar returns all conversation state in one ordered stdout batch 
   expect(decodeCommand(JSON.stringify({ ...command, sessionId: "" }))).toBeNull();
   const process = Bun.spawn([Bun.which("bun")!, path.resolve(import.meta.dir, "../src/index.ts")], {
     stdin: "pipe", stdout: "pipe", stderr: "pipe",
-    env: { ...Bun.env, QONE_DB: dbPath, APPDATA: directory, HOME: directory },
+    env: { ...Bun.env, QONE_DB: dbPath, QONE_DATA_DIR: directory, APPDATA: directory, HOME: directory },
   });
   const reader = process.stdout.getReader();
   let timer: ReturnType<typeof setTimeout> | undefined;

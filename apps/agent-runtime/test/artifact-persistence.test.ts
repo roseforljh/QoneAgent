@@ -50,6 +50,34 @@ test("generated video streams to disk and is removed with its run", async () => 
   }
 });
 
+test("runtime artifacts are scoped to the project and session resource directories", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "qone-project-artifact-test-"));
+  const db = openDb(":memory:");
+  try {
+    const session = new SessionRepo(db).create("Scoped");
+    const generated = new GeneratedArtifacts(
+      new ArtifactRepo(db),
+      directory,
+      (sessionId) => path.join(directory, "projects", "project-1", "sessions", sessionId),
+    );
+    const saved = await generated.save({
+      sessionId: session.id,
+      runId: "scoped-run",
+      data: new Uint8Array([1]),
+      mimeType: "audio/mpeg",
+      extension: "mp3",
+      signal: new AbortController().signal,
+    });
+    expect(saved.path).toBe(path.join(directory, "projects", "project-1", "sessions", session.id, "artifacts", `${saved.id}.mp3`));
+    new SessionRepo(db).delete(session.id);
+    await generated.removeFiles([saved]);
+    expect(existsSync(saved.path)).toBe(false);
+  } finally {
+    db.$client.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("cancelling a video download removes the partial generated file", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "qone-artifact-cancel-"));
   const db = openDb(":memory:");

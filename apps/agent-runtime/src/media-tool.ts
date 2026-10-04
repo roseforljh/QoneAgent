@@ -3,7 +3,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { MessageAttachmentInfo, ModelConfigInfo } from "@qone/protocol";
 import { Type } from "typebox";
 import { mkdtemp, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { isBilibiliUrl, readBilibiliFallback } from "./bilibili-fallback.js";
 import { localMediaMarker, youtubeUrlsFromText } from "./google-media.js";
@@ -181,7 +181,7 @@ export function createVideoFallbackTools(options: MediaToolOptions): ToolDefinit
       if (!supportsVideoInput(active.model, input) && !supportsAudioInput(active.model, input)) {
         throw runtimeError("media-tool.the_current_model_cannot_process_video_or_audio_delegate", {});
       }
-      const directory = await mkdtemp(path.join(tmpdir(), "qone-video-fallback-"));
+      const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-video-fallback-"));
       options.registerDirectory?.(active.runId, directory);
       return { content: [{ type: "text", text: runtimeText("media-tool.temporary_download_directory_after_downloading_call_qone_video_use", { p0: directory }) }], details: { directory } };
     },

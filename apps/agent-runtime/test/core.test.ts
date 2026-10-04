@@ -288,14 +288,15 @@ describe("runtime persistence and permissions", () => {
       }
     `);
     try {
-      const plugins = await loadPlugins(root, { permissionRules: { get: () => "allow" } });
+      const pluginDataDir = path.join(root, "plugins-data");
+      const plugins = await loadPlugins(root, { permissionRules: { get: () => "allow" }, pluginDataDir });
       expect(plugins).toHaveLength(1);
       expect(plugins[0].tools[0]?.name).toBe("plugin:demo:echo");
       expect((plugins[0].tools[0] as { qonePermissions?: string[] })?.qonePermissions).toEqual(["network"]);
       expect(plugins[0].skills[0]?.name).toBe("demo-skill");
       expect(plugins[0].hooks).toHaveLength(1);
       expect(plugins[0].shutdown).toHaveLength(1);
-      const storage = JSON.parse(readFileSync(path.join(pluginDir, ".storage", "kv.json"), "utf8"));
+      const storage = JSON.parse(readFileSync(path.join(pluginDataDir, "demo", "kv.json"), "utf8"));
       expect(storage).toEqual({ event: "received", granted: "true" });
     } finally {
       rmSync(root, { recursive: true, force: true });

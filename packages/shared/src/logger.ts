@@ -2,6 +2,7 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { qoneLogsDir } from "./qone-paths.js";
 
 export interface LogFields {
   sessionId?: string;
@@ -21,11 +22,7 @@ export interface Logger {
 // Simple stdout logger for the runtime sidecar. Writes one JSON line per entry
 // to stderr so stdout stays clean for protocol NDJSON.
 export function createLogger(module: string): Logger {
-  const logDir = process.env.QONE_LOG_DIR ?? path.join(
-    process.env.APPDATA ?? process.env.HOME ?? process.cwd(),
-    "QoneAgent",
-    "logs",
-  );
+  const logDir = process.env.QONE_LOG_DIR ?? qoneLogsDir();
   let logFile: string | undefined;
   try {
     mkdirSync(logDir, { recursive: true });

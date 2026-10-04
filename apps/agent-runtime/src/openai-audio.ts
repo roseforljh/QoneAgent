@@ -1,7 +1,7 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -25,7 +25,7 @@ async function audioPart(data: Buffer | string, mimeType: string, signal?: Abort
   }
   const ffmpeg = ffmpegExecutable();
   if (!ffmpeg) throw runtimeError("openai-audio.chat_completions_audio_input_requires_mp3_wav_ffmpeg_was", { p0: mimeType });
-  const directory = await mkdtemp(path.join(tmpdir(), "qone-openai-audio-"));
+  const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-openai-audio-"));
   try {
     const source = typeof data === "string" ? data : path.join(directory, "input");
     if (typeof data !== "string") await writeFile(source, data);

@@ -92,7 +92,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
 
     case "subagent.sync":
       services.subagentConfig = normalizeSubagentConfig(cmd.config);
-      services.settingsRepo.set("subagents.config", services.subagentConfig);
+      services.preferencesRepo.set("subagents.config", services.subagentConfig);
       services.sendSubagentConfig(cmd.requestId);
       return true;
 
@@ -247,7 +247,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
 
     case "compaction.settings.set": {
       const preferences = services.adapter.setCompactionPreferences(cmd);
-      services.settingsRepo.set("compaction.settings", preferences);
+      services.preferencesRepo.set("compaction.settings", preferences);
       services.send({ type: "pong", requestId: cmd.requestId, compaction: preferences });
       return true;
     }

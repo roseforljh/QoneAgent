@@ -1,7 +1,7 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -47,7 +47,7 @@ export async function extractVideoFrames(filePath: string, timestamps: readonly 
   if (!timestamps.length || timestamps.some((seconds) => !Number.isFinite(seconds) || seconds < 0)) {
     throw runtimeError("video-frames.provide_non_negative_video_timestamps_in_seconds", {});
   }
-  const directory = await mkdtemp(path.join(tmpdir(), "qone-video-frames-"));
+  const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-video-frames-"));
   try {
     const frames: ExtractedVideoFrames["frames"] = [];
     for (const [index, seconds] of timestamps.entries()) {
@@ -74,7 +74,7 @@ async function attachmentPath(attachment: MessageAttachmentInfo): Promise<{ path
   if (attachment.localPath) return { path: attachment.localPath };
   const match = /^data:(video\/[^;,]+);base64,([A-Za-z0-9+/=]+)$/i.exec(attachment.data);
   if (!match) throw runtimeError("media-attachments.video_attachment_has_no_readable_local_path_or_base64", { p0: attachment.name });
-  const directory = await mkdtemp(path.join(tmpdir(), "qone-inline-video-"));
+  const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-inline-video-"));
   const filePath = path.join(directory, "source");
   await writeFile(filePath, Buffer.from(match[2]!, "base64"));
   return { path: filePath, directory };

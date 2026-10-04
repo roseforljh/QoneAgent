@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { PluginManifest, type PluginContext, type PluginSetupFn, type PluginToolDefinition } from "@qone/plugin-sdk";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createLogger } from "@qone/shared";
+import { createLogger, qonePluginDataDir, qonePluginsDir } from "@qone/shared";
 import type { PermissionDecision, PermissionRuleStore } from "./permissions.js";
 
 const log = createLogger("plugin-runtime");
@@ -29,7 +29,7 @@ export interface PluginSkillRegistration {
   content: string;
 }
 
-export async function discoverPlugins(pluginsDir: string): Promise<DiscoveredPlugin[]> {
+export async function discoverPlugins(pluginsDir = qonePluginsDir()): Promise<DiscoveredPlugin[]> {
   if (!existsSync(pluginsDir)) return [];
   const discovered: DiscoveredPlugin[] = [];
   const ids = new Set<string>();
@@ -55,8 +55,8 @@ export async function discoverPlugins(pluginsDir: string): Promise<DiscoveredPlu
 }
 
 export async function loadPlugins(
-  pluginsDir: string,
-  opts: { permissionRules?: PermissionRuleStore; discovered?: DiscoveredPlugin[] } = {},
+  pluginsDir = qonePluginsDir(),
+  opts: { permissionRules?: PermissionRuleStore; discovered?: DiscoveredPlugin[]; pluginDataDir?: string } = {},
 ): Promise<LoadedPlugin[]> {
   const out: LoadedPlugin[] = [];
   for (const plugin of opts.discovered ?? await discoverPlugins(pluginsDir)) {
@@ -68,7 +68,7 @@ export async function loadPlugins(
       const hooks: { event: string; handler: (payload: unknown) => void | Promise<void> }[] = [];
       const shutdown: (() => void | Promise<void>)[] = [];
       const listeners = new Map<string, Set<(payload: unknown) => void | Promise<void>>>();
-      const storageDir = path.join(dir, ".storage");
+      const storageDir = path.join(opts.pluginDataDir ?? qonePluginDataDir(), manifest.id);
       const storageFile = path.join(storageDir, "kv.json");
 
       const ctx: PluginContext = {

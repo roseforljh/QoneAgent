@@ -1,7 +1,7 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { promisify } from "node:util";
 import { runOpenCli } from "./browser-sync.js";
@@ -80,7 +80,7 @@ export async function readBilibiliFallback(url: string, signal?: AbortSignal): P
         return result.stdout;
       }, signal);
       if (text) {
-        const directory = await mkdtemp(path.join(tmpdir(), "qone-bili-audio-"));
+        const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-bili-audio-"));
         try {
           await execFileAsync(launch.command, [...launch.prefix, "audio", reference, "--no-split", "-o", directory], {
             ...pythonOptions, signal, maxBuffer: 1024 * 1024,

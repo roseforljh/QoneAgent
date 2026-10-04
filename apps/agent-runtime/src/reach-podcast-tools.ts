@@ -1,7 +1,7 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
-import os from "node:os";
+import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -42,7 +42,7 @@ export async function transcribeAudio(file: string, key: string, ffmpeg?: string
   const extension = path.extname(file).toLowerCase();
   const direct = info.size <= MAX_AUDIO_BYTES && SUPPORTED.has(extension);
   if (!direct && !ffmpeg) throw runtimeError("reach-podcast-tools.audio_requires_segmentation_or_conversion_but_ffmpeg_is_unavailable", {});
-  const folder = direct ? undefined : await mkdtemp(path.join(os.tmpdir(), "qone-audio-parts-"));
+  const folder = direct ? undefined : await mkdtemp(path.join(qoneTemporaryDir(), "qone-audio-parts-"));
   try {
     const files = direct ? [file] : await splitAudio(file, folder!, ffmpeg!);
     const results: string[] = [];
@@ -75,7 +75,7 @@ export function createPodcastTools(apiKey: () => string | undefined): ToolDefini
       const key = apiKey();
       if (!key) throw runtimeError("reach-podcast-tools.configure_a_groq_api_key_in_the_xiaoyuzhou_card", {});
       if (!/^[A-Za-z0-9_-]{8,80}$/.test(episodeId)) throw runtimeError("reach-podcast-tools.invalid_xiaoyuzhou_episode_id_format", {});
-      const folder = await mkdtemp(path.join(os.tmpdir(), "qone-podcast-"));
+      const folder = await mkdtemp(path.join(qoneTemporaryDir(), "qone-podcast-"));
       try {
         const { stdout } = await runOpenCli(["xiaoyuzhou", "download", episodeId, "--output", folder, "--format", "json"], 180_000);
         const parsed = JSON.parse(stdout) as unknown;

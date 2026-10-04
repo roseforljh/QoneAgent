@@ -1,3 +1,4 @@
+import { CONFIG_SCHEMA, MCP_SCHEMA } from "./domain-schema.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import * as schema from "./schema.js";
@@ -39,6 +40,18 @@ export const bunSqliteDriver: SqliteDriver = {
 };
 
 export function openDb(path: string, driver: SqliteDriver = bunSqliteDriver) {
+  return openDatabase(path, driver, migrate);
+}
+
+export function openConfigDb(path: string) {
+  return openDatabase(path, bunSqliteDriver, (sqlite) => sqlite.exec(CONFIG_SCHEMA));
+}
+
+export function openMcpDb(path: string) {
+  return openDatabase(path, bunSqliteDriver, (sqlite) => sqlite.exec(MCP_SCHEMA));
+}
+
+function openDatabase(path: string, driver: SqliteDriver, initialize: (sqlite: Database) => void) {
   const dir = path.replace(/[/\\][^/\\]+$/, "");
   if (dir && dir !== path) {
     const fs = require("node:fs");
@@ -49,7 +62,7 @@ export function openDb(path: string, driver: SqliteDriver = bunSqliteDriver) {
   sqlite.exec("PRAGMA synchronous = NORMAL;");
   sqlite.exec("PRAGMA foreign_keys = ON;");
   sqlite.exec("PRAGMA busy_timeout = 5000;");
-  migrate(sqlite);
+  initialize(sqlite);
   return drizzle(sqlite, { schema });
 }
 
@@ -136,11 +149,7 @@ function migrate(sqlite: Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id);
 
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
+    ${CONFIG_SCHEMA}
 
     CREATE TABLE IF NOT EXISTS turns (
       id TEXT PRIMARY KEY,
@@ -169,37 +178,13 @@ function migrate(sqlite: Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_plugin_permissions_plugin ON plugin_permissions(plugin_id);
 
-    CREATE TABLE IF NOT EXISTS permission_rules (
-      subject_id TEXT NOT NULL,
-      permission TEXT NOT NULL,
-      decision TEXT NOT NULL DEFAULT 'ask',
-      updated_at INTEGER NOT NULL,
-      PRIMARY KEY (subject_id, permission)
-    );
-    CREATE INDEX IF NOT EXISTS idx_permission_rules_subject ON permission_rules(subject_id);
-
-    CREATE TABLE IF NOT EXISTS mcp_servers (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      config TEXT NOT NULL,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      updated_at INTEGER NOT NULL
-    );
+    ${MCP_SCHEMA}
 
     CREATE TABLE IF NOT EXISTS skills (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       path TEXT NOT NULL UNIQUE,
       description TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS model_configs (
-      id TEXT PRIMARY KEY,
-      provider TEXT NOT NULL,
-      model TEXT NOT NULL,
-      config TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       updated_at INTEGER NOT NULL
     );

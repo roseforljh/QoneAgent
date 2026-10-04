@@ -20,7 +20,7 @@ const proc = Bun.spawn(runtimeExecutable ? [runtimeExecutable] : ["bun", "run", 
   stdin: "pipe",
   stdout: "pipe",
   stderr: "inherit",
-  env: { ...process.env, QONE_DB: testDb, QONE_LOG_DIR: path.join(sandbox, "logs"), QONE_PLUGINS_DIR: path.join(sandbox, "plugins") },
+  env: { ...process.env, QONE_DATA_DIR: sandbox, QONE_DB: testDb, QONE_LOG_DIR: path.join(sandbox, "logs"), QONE_PLUGINS_DIR: path.join(sandbox, "plugins") },
 });
 
 const send = (o: object) => proc.stdin.write(JSON.stringify(o) + "\n");

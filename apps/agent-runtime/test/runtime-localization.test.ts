@@ -33,7 +33,7 @@ test("the real NDJSON runtime returns English and Chinese errors with stable cod
   const directory = await mkdtemp(join(tmpdir(), "qone-locale-test-"));
   const entry = resolve(import.meta.dir, "../src/index.ts");
   const child = Bun.spawn([process.execPath, entry], {
-    cwd: directory, env: { ...process.env, APPDATA: directory, QONE_DB: ":memory:" }, stdin: "pipe", stdout: "pipe", stderr: "pipe",
+    cwd: directory, env: { ...process.env, QONE_DATA_DIR: directory, APPDATA: directory, QONE_DB: ":memory:" }, stdin: "pipe", stdout: "pipe", stderr: "pipe",
   });
   const timer = setTimeout(() => child.kill(), 10_000);
   try {

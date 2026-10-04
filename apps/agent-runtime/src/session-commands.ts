@@ -65,6 +65,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
     case "session.side-chat.create": {
       try {
         const session = services.sideConversations.create(cmd);
+        services.projectResources.session(session);
         services.send({ type: "session.side-chat.created", requestId: cmd.requestId, sessionId: cmd.sessionId, queueItemId: cmd.queueItemId, session: session });
         if (cmd.queueItemId) services.sendQueue(cmd.sessionId);
         services.sendMessages(session.id);
@@ -145,10 +146,12 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       const deletedGoalTimer = services.goalContinuationTimers.get(cmd.sessionId);
       if (deletedGoalTimer) { clearTimeout(deletedGoalTimer); services.goalContinuationTimers.delete(cmd.sessionId); }
       const generatedFiles = services.artifactRepo.listBySession(cmd.sessionId);
+      const deletedSession = services.sessionRepo.get(cmd.sessionId);
       services.sessionRepo.delete(cmd.sessionId);
       services.settingsRepo.set(`queue:${cmd.sessionId}`, []);
       services.settingsRepo.set(`side-chat:${cmd.sessionId}`, null);
       await services.generatedArtifacts.removeFiles(generatedFiles);
+      if (deletedSession) services.projectResources.removeSession(deletedSession.workspaceId, cmd.sessionId);
       services.send({ type: "pong", requestId: cmd.requestId });
       return true;
 
@@ -340,13 +343,17 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: `workspace directory does not exist: ${cmd.path}` });
         return true;
       }
-      services.send({ type: "workspace.updated", workspace: services.workspaceRepo.upsert(cmd.name, workspacePath) as WorkspaceInfo });
+      const workspace = services.workspaceRepo.upsert(cmd.name, workspacePath) as WorkspaceInfo;
+      services.projectResources.project(workspace);
+      services.send({ type: "workspace.updated", workspace });
       return true;
     }
 
     case "workspace.rename": {
       try {
-        services.send({ type: "workspace.renamed", workspace: services.workspaceRepo.rename(cmd.workspaceId, cmd.name) as WorkspaceInfo });
+        const workspace = services.workspaceRepo.rename(cmd.workspaceId, cmd.name) as WorkspaceInfo;
+        services.projectResources.project(workspace);
+        services.send({ type: "workspace.renamed", workspace });
       } catch (error) {
         services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
       }
@@ -359,6 +366,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         return true;
       }
       services.workspaceRepo.delete(cmd.workspaceId);
+      services.projectResources.removeProjectMetadata(cmd.workspaceId);
       services.send({ type: "workspace.deleted", workspaceId: cmd.workspaceId });
       return true;
 

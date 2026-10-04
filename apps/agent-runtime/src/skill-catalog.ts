@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/p
 import path from "node:path";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 import { SKILL_CATALOG_TIMEOUT } from "@qone/protocol";
-import { qoneAgentDir, type SkillInfo } from "./skills.js";
+import { qoneSkillsDir, qoneSkillCacheDir } from "@qone/shared";
+import { type SkillInfo } from "./skills.js";
 
 export interface CloudSkill {
   source: string;
@@ -40,7 +41,7 @@ function catalogError(error: unknown): Error {
 
 async function getJson(url: string, fetcher: typeof fetch): Promise<unknown> {
   const canCache = fetcher === fetch;
-  const cachePath = canCache ? path.join(qoneAgentDir(), "skill-catalog", `${createHash("sha256").update(url).digest("hex")}.json`) : undefined;
+  const cachePath = canCache ? path.join(qoneSkillCacheDir(), "catalog", `${createHash("sha256").update(url).digest("hex")}.json`) : undefined;
   const readCache = async () => {
     if (!cachePath) return undefined;
     try {
@@ -150,10 +151,10 @@ export async function installCloudSkill(source: string, skillId: string, fetcher
   if (files.length > MAX_FILES || total > MAX_BYTES || files.some((entry) => !Number.isSafeInteger(entry.size) || entry.size! < 0)) throw runtimeError("skill-catalog.the_skill_file_count_or_size_exceeds_the_limit", {});
   if (!files.some((entry) => entry.path === `${prefix}SKILL.md`)) throw runtimeError("skill-catalog.the_skill_is_missing_skill_md", {});
 
-  const agentDir = qoneAgentDir();
-  const skillDir = path.join(agentDir, "skills");
-  await mkdir(agentDir, { recursive: true });
-  const staging = await mkdtemp(path.join(agentDir, ".skill-install-"));
+  const skillDir = qoneSkillsDir();
+  const cacheDir = qoneSkillCacheDir();
+  await mkdir(cacheDir, { recursive: true });
+  const staging = await mkdtemp(path.join(cacheDir, ".skill-install-"));
   try {
     let downloaded = 0;
     for (let start = 0; start < files.length; start += 6) {

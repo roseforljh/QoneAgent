@@ -13,8 +13,12 @@ type ArtifactRow = ReturnType<ArtifactRepo["listBySession"]>[number];
 export class GeneratedArtifacts {
   private directory: string;
 
-  constructor(private repo: ArtifactRepo, databaseDirectory: string) {
-    this.directory = path.join(databaseDirectory, "artifacts");
+  constructor(
+    private repo: ArtifactRepo,
+    resourceRoot: string,
+    private sessionDirectory?: (sessionId: string) => string,
+  ) {
+    this.directory = path.resolve(resourceRoot, sessionDirectory ? "" : "artifacts");
   }
 
   async save(input: {
@@ -29,8 +33,11 @@ export class GeneratedArtifacts {
     signal.throwIfAborted();
     if (!/^[a-z0-9]{2,8}$/.test(extension)) throw runtimeError("generated-artifacts.invalid_media_file_format", {});
     const id = crypto.randomUUID();
-    const filePath = path.join(this.directory, `${id}.${extension}`);
-    await mkdir(this.directory, { recursive: true });
+    const directory = this.sessionDirectory?.(sessionId);
+    const filePath = directory
+      ? path.join(directory, "artifacts", `${id}.${extension}`)
+      : path.join(this.directory, `${id}.${extension}`);
+    await mkdir(path.dirname(filePath), { recursive: true });
     try {
       if (data instanceof Uint8Array) await writeFile(filePath, data, { flag: "wx", signal });
       else await pipeline(Readable.fromWeb(data as never), createWriteStream(filePath, { flags: "wx" }), { signal });
@@ -55,7 +62,12 @@ export class GeneratedArtifacts {
   }
 
   async removeFiles(rows: readonly ArtifactRow[]): Promise<void> {
-    const owned = rows.filter((row) => path.dirname(path.resolve(row.path)) === path.resolve(this.directory));
+    const owned = rows.filter((row) => {
+      const resolved = path.resolve(row.path);
+      const relative = path.relative(this.directory, resolved);
+      return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+        && path.basename(path.dirname(resolved)) === "artifacts";
+    });
     await Promise.all(owned.map((row) => rm(row.path, { force: true })
       .catch((error) => log.warn("failed to remove generated media", { path: row.path, error: String(error) }))));
   }

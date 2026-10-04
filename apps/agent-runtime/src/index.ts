@@ -5,17 +5,18 @@ import { CompactionPositions } from "./compaction-position.js";
 import { isAssistantMessageActivity } from "./session-activity.js";
 import { SideConversationService } from "./side-conversation.js";
 
-import { createLogger, EventBus, SequencedEventJournal } from "@qone/shared";
+import { createLogger, EventBus, qoneDatabasePath, qoneConfigDatabasePath, qoneMcpDatabasePath, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, SessionSearchResult } from "@qone/protocol";
 import { decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
-import { openDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
+import { openDb, openConfigDb, openMcpDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
 import { mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { GeneratedArtifacts } from "./generated-artifacts.js";
+import { ProjectResources } from "./project-resources.js";
+import { moveDomainData } from "./domain-data.js";
 
 
 
@@ -61,10 +62,13 @@ ensureGlobalInstructions();
 // --- persistence ---
 const dbPath =
   process.env.QONE_DB ??
-  path.join(process.env.APPDATA ?? process.env.HOME ?? process.cwd(), "QoneAgent", "agent.db");
+  qoneDatabasePath();
 const dbDir = path.dirname(dbPath);
 if (dbDir !== ".") mkdirSync(dbDir, { recursive: true });
 const db = openDb(dbPath);
+const configDb = openConfigDb(dbPath === ":memory:" ? ":memory:" : qoneConfigDatabasePath());
+const mcpDb = openMcpDb(dbPath === ":memory:" ? ":memory:" : qoneMcpDatabasePath());
+moveDomainData(db, configDb, mcpDb);
 const sessionRepo = new SessionRepo(db);
 const messageRepo = new MessageRepo(db);
 const runRepo = new RunRepo(db);
@@ -75,25 +79,34 @@ const subagentNotificationRepo = new SubagentNotificationRepo(db);
 const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
 const toolCallRepo = new ToolCallRepo(db);
-const mcpServerRepo = new McpServerRepo(db);
-const modelConfigRepo = new ModelConfigRepo(db);
+const mcpServerRepo = new McpServerRepo(mcpDb);
+const modelConfigRepo = new ModelConfigRepo(configDb);
 const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
+const preferencesRepo = new SettingsRepo(configDb);
 const queueRepo = new QueueRepo(settingsRepo);
 const sideConversations = new SideConversationService(db);
 const compactionPreferences: PiCompactionPreferences = normalizePiCompactionPreferences(
-  settingsRepo.get("compaction.settings") ?? DEFAULT_PI_COMPACTION_PREFERENCES,
+  preferencesRepo.get("compaction.settings") ?? DEFAULT_PI_COMPACTION_PREFERENCES,
 );
-const storedSubagentConfig = settingsRepo.get<SubagentConfigInfo>("subagents.config");
+const storedSubagentConfig = preferencesRepo.get<SubagentConfigInfo>("subagents.config");
 let subagentConfig: SubagentConfigInfo = normalizeSubagentConfig(storedSubagentConfig);
 if (Array.isArray(storedSubagentConfig?.profiles) && storedSubagentConfig.profiles.some((profile) => profile && REMOVED_BUILTIN_SUBAGENT_IDS.includes(profile.id))) {
-  settingsRepo.set("subagents.config", subagentConfig);
+  preferencesRepo.set("subagents.config", subagentConfig);
 }
 const eventRepo = new EventRepo(db);
 const artifactRepo = new ArtifactRepo(db);
-const generatedArtifacts = new GeneratedArtifacts(artifactRepo, dbPath === ":memory:" ? tmpdir() : dbDir);
-const permissionRepo = new PermissionRepo(db);
+const projectResources = new ProjectResources();
+const generatedArtifacts = new GeneratedArtifacts(
+  artifactRepo,
+  projectResources.root,
+  (sessionId) => {
+    const session = sessionRepo.get(sessionId);
+    return projectResources.sessionDirectory(session?.workspaceId, sessionId);
+  },
+);
+const permissionRepo = new PermissionRepo(configDb);
 const skillRepo = new SkillRepo(db);
 const eventJournal = new SequencedEventJournal<AgentEvent>(settingsRepo.get<number>("event.sequence") ?? 0);
 eventJournal.restore(eventRepo.list());
@@ -683,15 +696,22 @@ const toInfo = (s: {
   createdAt: number;
   updatedAt: number;
   lastUserMessageAt: number;
-}): SessionInfo => ({
-  id: s.id,
-  title: s.title,
-  workspaceId: s.workspaceId ?? undefined,
-  createdAt: s.createdAt,
-  updatedAt: s.updatedAt,
-  lastUserMessageAt: s.lastUserMessageAt,
-  sideChat: sideConversations.metadata(s.id),
-});
+}): SessionInfo => {
+  const info: SessionInfo = {
+    id: s.id,
+    title: s.title,
+    workspaceId: s.workspaceId ?? undefined,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+    lastUserMessageAt: s.lastUserMessageAt,
+    sideChat: sideConversations.metadata(s.id),
+  };
+  projectResources.session(info);
+  return info;
+};
+
+for (const workspace of workspaceRepo.list()) projectResources.project(workspace);
+for (const session of sessionRepo.list()) toInfo(session);
 
 function touchSession(sessionId: string, userMessageAt?: number) {
   if (userMessageAt === undefined) sessionRepo.touch(sessionId);
@@ -817,6 +837,7 @@ export function runtimeCommandServices() {
     eventRepo,
     flushEvents,
     generatedArtifacts,
+    projectResources,
     goalContinuationTimers,
     goalRepo,
     initialUserMessageSeen,
@@ -829,6 +850,7 @@ export function runtimeCommandServices() {
     pendingMcpAuthRequests,
     pendingSteers,
     permissionRepo,
+    preferencesRepo,
     persistPartialAssistant,
     persistedAssistantRuns,
     publishGoal,
