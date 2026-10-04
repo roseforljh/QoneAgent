@@ -542,6 +542,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         break;
       case "skills.imported":
       case "skills.created":
+      case "skills.builtin.changed":
         eventStore.setState((state) => ({ skills: [...state.skills.filter((skill) => skill.id !== msg.skill.id), msg.skill] }));
         skillMutationRequests.get(msg.requestId)?.resolve(msg);
         break;

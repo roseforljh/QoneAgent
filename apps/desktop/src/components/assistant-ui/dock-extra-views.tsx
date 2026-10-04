@@ -12,7 +12,6 @@ import {
   PlugIcon,
   RotateCwIcon,
   Trash2Icon,
-  WandSparklesIcon,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -27,6 +26,7 @@ import { useLocale } from "../../localization";
 import { externalBrowserUrl, htmlFromDataUrl, isHtmlDataUrl, sandboxPreviewHtml } from "../../lib/browser-dock";
 import { resolveFileReferencePath } from "../../lib/workspace-file-navigation";
 import { WorkspacePathContextMenu } from "./dock-context-menu";
+import { SkillIcon } from "../skills/SkillIcon";
 
 const rid = () => crypto.randomUUID();
 const BROWSER_HOME = "https://www.bing.com";
@@ -297,7 +297,8 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
 export function DockSkillsView({ workspaceId, refreshNonce }: { workspaceId?: string; refreshNonce: number }) {
   const { t } = useLocale();
   const send = useStore((s) => s.send);
-  const skills = useStore((s) => s.skills);
+  const allSkills = useStore((s) => s.skills);
+  const skills = allSkills.filter((skill) => skill.enabled !== false);
   const workspacePath = useStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.path);
 
   useEffect(() => {
@@ -317,7 +318,7 @@ export function DockSkillsView({ workspaceId, refreshNonce }: { workspaceId?: st
             onClick={open}
             className="text-foreground/80 hover:bg-foreground/[0.05] flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-start transition-colors"
           >
-            <WandSparklesIcon className="size-3.5 shrink-0 text-violet-500/80 dark:text-violet-400/80" />
+            <SkillIcon skill={skill} className="size-4 shrink-0 text-violet-500/80 dark:text-violet-400/80" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm">{skill.name}</span>
               {skill.description && <span className="block truncate text-xs text-foreground/45">{skill.description}</span>}

@@ -253,8 +253,8 @@ const metadataRequests = new Map<string, { resolve: (value: Extract<RuntimeEvent
 type CloudResponse = Extract<RuntimeEvent, { type: "skills.cloud.list" | "skills.cloud.installed" }>;
 type CloudCommand = Extract<RuntimeCommand, { type: "skills.cloud.list" | "skills.cloud.install" }>;
 type CloudInput = CloudCommand extends infer Command ? Command extends CloudCommand ? Omit<Command, "requestId"> : never : never;
-type SkillMutationResponse = Extract<RuntimeEvent, { type: "skills.imported" | "skills.created" }>;
-type SkillMutationCommand = Extract<RuntimeCommand, { type: "skills.import" | "skills.create" }>;
+type SkillMutationResponse = Extract<RuntimeEvent, { type: "skills.imported" | "skills.created" | "skills.builtin.changed" }>;
+type SkillMutationCommand = Extract<RuntimeCommand, { type: "skills.import" | "skills.create" | "skills.builtin.set-enabled" | "skills.builtin.update" }>;
 type SkillMutationInput = SkillMutationCommand extends infer Command ? Command extends SkillMutationCommand ? Omit<Command, "requestId"> : never : never;
 const cloudRequests = new Map<string, { resolve: (response: CloudResponse) => void; reject: (error: Error) => void }>();
 const skillMutationRequests = new Map<string, { resolve: (response: SkillMutationResponse) => void; reject: (error: Error) => void }>();
@@ -309,7 +309,7 @@ export function requestSkillMutation(command: SkillMutationInput): Promise<Skill
   if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
   const requestId = rid();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { skillMutationRequests.delete(requestId); reject(new Error(t("error.skillTimeout"))); }, 20_000);
+    const timer = setTimeout(() => { skillMutationRequests.delete(requestId); reject(new Error(t("error.skillTimeout"))); }, command.type === "skills.builtin.update" ? 120_000 : 20_000);
     skillMutationRequests.set(requestId, {
       resolve: (response) => { clearTimeout(timer); skillMutationRequests.delete(requestId); resolve(response); },
       reject: (error) => { clearTimeout(timer); skillMutationRequests.delete(requestId); reject(error); },

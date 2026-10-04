@@ -1,0 +1,10 @@
+.settings-builtin-skill { cursor: default; flex-wrap: wrap; }
+.settings-builtin-skill.is-disabled > .settings-provider-icon { opacity: .45; }
+.settings-builtin-skill-copy { flex-basis: 180px !important; }
+.settings-builtin-skill-title { display: flex; align-items: center; gap: 8px; }
+.settings-builtin-skill-title > span { padding: 2px 6px; border-radius: 5px; background: var(--q-hover); color: var(--muted-foreground); font-size: var(--q-text-xs); }
+.settings-builtin-skill-copy button { padding: 0; color: inherit; background: none; border: 0; text-align: left; cursor: pointer; }
+.settings-builtin-skill-title > button { font-size: 12px; font-weight: 600; color: var(--foreground); }
+.settings-builtin-skill-copy button:hover { text-decoration: underline; }
+.settings-builtin-skill-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.settings-builtin-skill-status { margin: 5px 11px; color: var(--muted-foreground); font-size: var(--q-text-xs); }

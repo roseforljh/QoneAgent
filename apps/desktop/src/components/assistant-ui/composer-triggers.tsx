@@ -52,7 +52,7 @@ export const ComposerTriggers: FC<{
   ), [canCompact, canUseGoal, t]);
   const compactTool = tools.find((tool) => tool.id === "compact");
   const slashEntries = useMemo<ComposerSlashEntry[]>(() => [
-    ...(connected && workspacePath ? skills.map((skill) => ({ id: `skill:${skill.id}`, label: `/skill:${skill.name}`, description: skill.description, kind: "skill" as const, name: skill.name, icon: SparklesIcon })) : []),
+    ...(connected && workspacePath ? skills.filter((skill) => skill.enabled !== false).map((skill) => ({ id: `skill:${skill.id}`, label: `/skill:${skill.name}`, description: skill.description, kind: "skill" as const, name: skill.name, icon: SparklesIcon })) : []),
     ...(connected && workspacePath ? mcpServers.filter((server) => server.connected && (server.toolCount ?? 0) > 0).map((server) => ({
       id: `mcp:${server.id}`, label: server.name, description: `${server.toolCount} ${t("mcp.tools")}`,
       kind: "mcp" as const, serverId: server.id, icon: PlugZapIcon,
