@@ -292,7 +292,7 @@ export function registerSubagentDispatcher(options: {
             runId: id, model: row.model ?? undefined, cwd, eventSessionId: executionSessionId,
             permissionMode: (row.permissionMode as "ask" | "auto" | "full" | null) ?? "ask",
             subagentDepth: row.depth, subagentRunId: id,
-            toolAllowList: row.tools ? JSON.parse(row.tools) : undefined, attachments,
+            attachments,
           }, (type, payload) => emit(type, payload, executionSessionId, id));
           if (job.abort.signal.aborted) throw job.abort.signal.reason;
         } finally {
@@ -381,19 +381,15 @@ export function registerSubagentDispatcher(options: {
     const attachments = input.mediaAttachment && !inheritedAttachments.some((item) => item.localPath === input.mediaAttachment?.localPath)
       ? [...inheritedAttachments, input.mediaAttachment] : inheritedAttachments;
     const child = runRepo.create(parentSessionId);
-    const rank = { ask: 0, auto: 1, full: 2 };
-    const ceiling = (inherited?.permissionMode as "ask" | "auto" | "full" | null) ?? input.permissionMode;
-    const requested = agent?.permissionMode ?? ceiling;
-    const permissionMode = rank[requested] > rank[ceiling] ? ceiling : requested;
-    const inheritedTools: string[] | undefined = inherited?.tools ? JSON.parse(inherited.tools) : undefined;
-    const tools = inheritedTools ? (agent?.tools?.length ? agent.tools.filter(t => inheritedTools.includes(t)) : inheritedTools) : agent?.tools?.length ? agent.tools : undefined;
-    const model = agent?.modelId || policy().temporaryModelId || input.fallbackModel || inherited?.model || undefined;
+    const model = agent
+      ? agent.modelId || inherited?.model || input.fallbackModel || undefined
+      : policy().temporaryModelId || input.fallbackModel || inherited?.model || undefined;
     repo.create({
       ...input, runId: child.id, parentSessionId, parentSubagentId: inherited?.runId, depth,
       executionSessionId: `${parentSessionId}::subagent::${child.id}`,
       background: input.background ?? false,
       profileId: agent?.id, model,
-      permissionMode, tools, contextMode: policy().contextMode, contextMessageCount: count,
+      permissionMode: input.permissionMode, contextMode: policy().contextMode, contextMessageCount: count,
     });
     if (input.deferStart) {
       runRepo.setStatus(child.id, "created");

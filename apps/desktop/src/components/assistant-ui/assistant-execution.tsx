@@ -25,6 +25,7 @@ interface AssistantExecutionProps {
 interface ExecutionStatusProps {
   run?: RunInfo;
   messageRunning: boolean;
+  waitingSubagents: readonly { runId: string; title: string }[];
   startedAt: number;
   completedAt: number;
   activeToolIndex: number;
@@ -32,7 +33,7 @@ interface ExecutionStatusProps {
   toolCount: number;
 }
 
-const ExecutionStatus: FC<ExecutionStatusProps> = ({ run, messageRunning, startedAt, completedAt, activeToolIndex, reasoningRunning, toolCount }) => {
+const ExecutionStatus: FC<ExecutionStatusProps> = ({ run, messageRunning, waitingSubagents, startedAt, completedAt, activeToolIndex, reasoningRunning, toolCount }) => {
   const { locale, t } = useLocale();
   const working = run ? run.status === "created" || run.status === "running" : messageRunning;
   const [now, setNow] = useState(Date.now);
@@ -46,7 +47,10 @@ const ExecutionStatus: FC<ExecutionStatusProps> = ({ run, messageRunning, starte
   const end = working ? now : completedAt;
   const duration = Number.isFinite(startedAt) && end > startedAt
     ? formatDuration((end - startedAt) / 1000, locale) : undefined;
-  const status = run?.status === "paused" ? t("chat.executionPaused")
+  const waitingForSubagents = waitingSubagents.length > 0;
+  const status = waitingForSubagents
+    ? t("chat.executionWaitingForSubagents", { subagents: waitingSubagents.map((child) => child.title).join("、") })
+    : run?.status === "paused" ? t("chat.executionPaused")
     : run?.status === "waiting_approval" ? t("chat.executionAwaitingApproval")
       : run?.status === "cancelled" || run?.status === "interrupted"
         ? duration ? t("chat.executionStoppedAfter", { duration }) : t("chat.executionStopped")
@@ -70,6 +74,7 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
   const parts = useAuiState((state) => state.message.parts);
   const sessionId = useConversationStore((state) => state.currentSessionId);
   const activeRunId = useConversationStore((state) => state.activeRunId);
+  const waitingSubagents = useConversationStore((state) => state.waitingSubagents);
   const messageRunId = useConversationStore((state) => messageById(state.messages, messageId)?.runId);
 
   const toolParts = useMemo(() => {
@@ -132,7 +137,7 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
   const collapsed = executionCollapsed(override, finalAnswerStarted, activitySettled || !messageRunning, cancelled);
   const visibleOpen = !canCollapse || !collapsed;
   const disclosureRef = useRef<HTMLDivElement>(null);
-  const statusLabel = <ExecutionStatus run={run} messageRunning={messageRunning} startedAt={startedAt} completedAt={completedAt} activeToolIndex={activeToolIndex} reasoningRunning={reasoningRunning} toolCount={toolParts.length} />;
+  const statusLabel = <ExecutionStatus run={run} messageRunning={messageRunning} waitingSubagents={waitingSubagents} startedAt={startedAt} completedAt={completedAt} activeToolIndex={activeToolIndex} reasoningRunning={reasoningRunning} toolCount={toolParts.length} />;
   const statusRow = showStatus && <div className="border-b border-border/50 pb-2">
     {canCollapse ? <CollapsibleTrigger
       aria-label={t("chat.executionToggle")}

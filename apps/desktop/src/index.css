@@ -732,10 +732,12 @@ a { text-decoration: none; }
 .settings-builtin-subagent-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--foreground); font-size: 12px; }
 .settings-builtin-subagent-list { display: grid; gap: 7px; }
 .settings-builtin-subagent-entry { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); }
+.settings-builtin-subagent-entry.is-actionable { cursor: pointer; transition: border-color .16s ease, background-color .16s ease; }
+.settings-builtin-subagent-entry.is-actionable:hover { border-color: color-mix(in oklab, var(--primary) 45%, var(--border)); background: color-mix(in oklab, var(--primary) 4%, var(--card)); }
 .settings-builtin-subagent-entry.is-disabled { opacity: .65; }
 .settings-builtin-subagent-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
 .settings-builtin-subagent-copy strong { overflow: hidden; color: var(--foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.settings-builtin-subagent-entry > .settings-secondary-action { flex: 0 0 auto; }
+.settings-builtin-subagent-copy small { overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .q-subagent-logo { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 11px; }
 .settings-subagent-list .settings-empty-card { grid-column: 1 / -1; }
 .settings-subagent-settings-card { display: flex; width: 100%; min-height: 58px; align-items: center; gap: 11px; margin-top: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--q-surface-muted) 72%, var(--q-surface)); color: var(--foreground); text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease; }

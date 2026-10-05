@@ -483,7 +483,7 @@ export class PiAdapter {
     });
   }
 
-  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, toolAllowList?: string[], goalId?: string, goalEpoch?: number, goalRunId?: string): Promise<AgentSession> {
+  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, goalId?: string, goalEpoch?: number, goalRunId?: string): Promise<AgentSession> {
     const modelKey = modelName ? splitModelName(modelName).join("/") : undefined;
     const apiType = modelKey ? this.modelApiTypes.get(modelKey) : undefined;
     const override = thinkingOverride ? normalizeThinkingLevelForApi(thinkingOverride, apiType) : undefined;
@@ -591,10 +591,7 @@ export class PiAdapter {
           this.push("approval.requested", { approvalId, toolName, args, toolCallId }, eventSessionId, this.activeRunIds.get(sessionId)),
       })
     );
-    const allowed = toolAllowList
-      ? wrapped.filter((tool) => internalToolNames.has(tool.name) || toolAllowList.includes(tool.name) || toolAllowList.includes((tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? ""))
-      : wrapped;
-    assertModelToolNames(allowed.map((tool) => tool.name));
+    assertModelToolNames(wrapped.map((tool) => tool.name));
 
     const toolNameByModelName = new Map(wrapped.map((tool) => [
       tool.name,
@@ -632,8 +629,8 @@ export class PiAdapter {
       sessionManager,
       // Built-ins are supplied as wrapped definitions so every tool goes through
       // the same permission boundary. Bash is intentionally omitted on Windows.
-      tools: [...allowed.map((tool) => tool.name), "codemode"],
-      customTools: allowed,
+      tools: [...wrapped.map((tool) => tool.name), "codemode"],
+      customTools: wrapped,
       resourceLoader,
       modelRuntime,
       settingsManager: sessionSettings,
@@ -799,7 +796,7 @@ export class PiAdapter {
   async run(
     sessionId: string,
     message: string,
-    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; toolAllowList?: string[]; goalId?: string; goalEpoch?: number },
+    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; goalId?: string; goalEpoch?: number },
     runEmit: RunEmitFn
   ): Promise<void> {
     if (this.activeRunIds.has(sessionId) || this.compactingSessions.has(sessionId)) throw new Error(`session ${sessionId} already has an active run or compaction`);
@@ -831,7 +828,7 @@ export class PiAdapter {
         runEmit("agent.prompt_done", { runId });
         return;
       }
-      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.toolAllowList, opts.goalId, opts.goalEpoch, runId);
+      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.goalId, opts.goalEpoch, runId);
       if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
       this.runs.set(runId, session);
       const previousLength = session.messages.length;

@@ -4,7 +4,7 @@ import type { AgentState } from "../store";
 export function emptySessionState() {
   return {
     messages: [], compactions: [], streaming: "", streamingParts: [],
-    activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [],
+    activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], waitingSubagents: [],
     runs: [], subagents: [], subagentNotifications: [], artifacts: [], approvals: [], running: false,
     activeRunId: undefined, modelRequest: undefined, chatRunError: undefined,
     goal: undefined, queueItems: [], queueLoadedSessionId: undefined,

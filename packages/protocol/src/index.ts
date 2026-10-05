@@ -795,7 +795,7 @@ const subagentProfile = z.object({
   instructionsKey: z.string().refine(isRuntimeMessageKey).optional(),
   enabled: z.boolean(), tools: z.array(z.string().regex(/^[a-zA-Z0-9_:-]+$/).max(64)).max(100).optional(),
   permissionMode: z.enum(["ask", "auto", "full"]).optional(), updatedAt: z.number().int().nonnegative(),
-}).refine((profile) => Boolean(profile.modelId) || isBuiltinSubagentId(profile.id), "A custom subagent needs a model");
+});
 const subagentConfig = z.object({
   profiles: z.array(subagentProfile).max(100),
   routing: z.record(z.string(), z.string().max(512)).optional().default({}),

@@ -135,6 +135,7 @@ export interface AgentState {
   streaming: string;
   streamingParts: AssistantMessagePart[];
   activeMessageSequence?: number;
+  waitingSubagents: { runId: string; title: string }[];
   /** Tool calls whose Pi arguments are complete but execution has not started yet. */
   preparedToolCallIds: string[];
   running: boolean;
@@ -364,6 +365,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   streaming: "",
   streamingParts: [],
   activeMessageSequence: undefined,
+  waitingSubagents: [],
   preparedToolCallIds: [],
   running: false,
   runningSessionIds: [],

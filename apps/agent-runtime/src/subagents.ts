@@ -1,5 +1,5 @@
 import { runtimeText } from "./runtime-localization";
-import { isRuntimeMessageKey, builtinSubagentId, builtinSubagentLogo, CAPABILITY_IDS, DEFAULT_SUBAGENT_RUNTIME, isBuiltinSubagentId, REMOVED_BUILTIN_SUBAGENT_IDS, SUBAGENT_LOGO_IDS, type CapabilityId, type CapabilityRouting, type SubagentConfigInfo, type SubagentProfileInfo, type SubagentRuntimeConfig, type RunPermissionMode } from "@qone/protocol";
+import { isRuntimeMessageKey, builtinSubagentId, builtinSubagentLogo, CAPABILITY_IDS, DEFAULT_SUBAGENT_RUNTIME, isBuiltinSubagentId, REMOVED_BUILTIN_SUBAGENT_IDS, SUBAGENT_LOGO_IDS, type CapabilityId, type CapabilityRouting, type SubagentConfigInfo, type SubagentProfileInfo, type SubagentRuntimeConfig } from "@qone/protocol";
 
 export interface ResolvedSubagent {
   id: string;
@@ -8,8 +8,6 @@ export interface ResolvedSubagent {
   modelId?: string;
   route?: string;
   mcpServerId?: string;
-  tools?: string[];
-  permissionMode?: RunPermissionMode;
 }
 
 function routeTarget(routing: CapabilityRouting, capability: CapabilityId): string | undefined {
@@ -33,8 +31,6 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
       nameKey: isRuntimeMessageKey(profile.nameKey) ? profile.nameKey : undefined,
       instructionsKey: isRuntimeMessageKey(profile.instructionsKey) ? profile.instructionsKey : undefined,
       logo: typeof profile.logo === "string" ? profile.logo.trim().slice(0, 64) || undefined : undefined,
-      tools: Array.isArray(profile.tools) ? profile.tools.filter((tool): tool is string => typeof tool === "string").slice(0, 100) : undefined,
-      permissionMode: profile.permissionMode === "auto" || profile.permissionMode === "full" ? profile.permissionMode : "ask",
       enabled: profile.enabled !== false, updatedAt: typeof profile.updatedAt === "number" ? profile.updatedAt : Date.now(),
     } satisfies SubagentProfileInfo];
   }) : [];
@@ -77,8 +73,6 @@ export function normalizeSubagentConfig(value: unknown): SubagentConfigInfo {
       instructionsKey: legacyProfile ? legacyProfile.instructionsKey : routeInstructions ? undefined : `subagent.instructions.${capability}`,
       modelId: legacyProfile?.modelId ?? (legacyRoute?.startsWith("model:") ? legacyRoute.slice("model:".length) : ""),
       logo: builtinSubagentLogo(capability),
-      tools: legacyProfile?.tools,
-      permissionMode: legacyProfile?.permissionMode ?? "ask",
       enabled: Boolean(legacyRoute),
       updatedAt: Date.now(),
     } satisfies SubagentProfileInfo;
@@ -120,12 +114,12 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
 /** The subagent the user configured for a capability, or undefined when nothing is configured. */
 export function resolveSubagent(config: SubagentConfigInfo, capability: CapabilityId): ResolvedSubagent | undefined {
   const builtin = config.profiles.find((item) => item.id === builtinSubagentId(capability) && item.enabled);
-  if (builtin) return { id: builtin.id, name: builtin.nameKey ? runtimeText(builtin.nameKey) : builtin.name, instructions: builtin.instructionsKey ? runtimeText(builtin.instructionsKey) : builtin.instructions, modelId: builtin.modelId || undefined, tools: builtin.tools, permissionMode: builtin.permissionMode, route: "subagent:" + builtin.id };
+  if (builtin) return { id: builtin.id, name: builtin.nameKey ? runtimeText(builtin.nameKey) : builtin.name, instructions: builtin.instructionsKey ? runtimeText(builtin.instructionsKey) : builtin.instructions, modelId: builtin.modelId || undefined, route: "subagent:" + builtin.id };
   const route = routeTarget(config.routing, capability);
   if (!route) return undefined;
   if (route.startsWith("subagent:")) {
     const profile = config.profiles.find((item) => item.id === route.slice("subagent:".length) && item.enabled);
-    return profile && { id: profile.id, name: profile.name, instructions: profile.instructions, modelId: profile.modelId, tools: profile.tools, permissionMode: profile.permissionMode, route };
+    return profile && { id: profile.id, name: profile.name, instructions: profile.instructions, modelId: profile.modelId, route };
   }
   const mcpServerId = route.startsWith("mcp:") ? route.slice("mcp:".length) : undefined;
   return {
@@ -150,10 +144,10 @@ export function subagentCatalog(config: SubagentConfigInfo) {
     },
     capabilities: CAPABILITY_IDS.flatMap((capability) => {
       const agent = resolveSubagent(config, capability);
-      return agent ? [{ capability, selection: { capability }, name: agent.name, description: agent.instructions, model: agent.modelId, route: agent.route }] : [];
+      return agent ? [{ capability, selection: { capability }, name: agent.name, description: agent.instructions, model: agent.modelId || "follow-parent-model", route: agent.route }] : [];
     }),
     unconfiguredCapabilities: CAPABILITY_IDS.filter((capability) => !resolveSubagent(config, capability)),
-    profiles: config.profiles.filter((profile) => profile.enabled).map((profile) => ({ id: profile.id, selection: { subagentId: profile.id, capability: null }, name: profile.nameKey ? runtimeText(profile.nameKey) : profile.name, instructions: (profile.instructionsKey ? runtimeText(profile.instructionsKey) : profile.instructions).slice(0, 500) })),
+    profiles: config.profiles.filter((profile) => profile.enabled).map((profile) => ({ id: profile.id, selection: { subagentId: profile.id, capability: null }, name: profile.nameKey ? runtimeText(profile.nameKey) : profile.name, instructions: (profile.instructionsKey ? runtimeText(profile.instructionsKey) : profile.instructions).slice(0, 500), model: profile.modelId || "follow-parent-model" })),
   };
 }
 

@@ -66,6 +66,17 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
         }
         const p = ev.payload as Record<string, unknown> | undefined;
 
+        if (ev.type === "agent.waiting_subagents" && ev.runId === eventStore.getState().activeRunId) {
+          const children = Array.isArray(p?.subagents) ? p.subagents : [];
+          eventStore.setState({ waitingSubagents: children.flatMap((child) => {
+            if (!child || typeof child !== "object") return [];
+            const item = child as { runId?: unknown; title?: unknown };
+            return typeof item.runId === "string" && typeof item.title === "string"
+              ? [{ runId: item.runId, title: item.title }]
+              : [];
+          }) });
+        }
+
         if (ev.type === "context.usage" && ev.sessionId && typeof p?.model === "string"
           && typeof p.tokens === "number" && Number.isFinite(p.tokens) && p.tokens >= 0
           && typeof p.contextWindow === "number" && Number.isFinite(p.contextWindow) && p.contextWindow > 0) {
@@ -90,7 +101,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
         // Product protocol event; Pi event names never cross into this reducer.
         if (ev.type === "message.started" && ev.runId === eventStore.getState().activeRunId && (p?.message as { role?: unknown } | undefined)?.role === "assistant") {
           clearDelta(ev.sessionId);
-          eventStore.setState({ activeMessageSequence: ev.sequence, streaming: "" });
+          eventStore.setState({ activeMessageSequence: ev.sequence, streaming: "", waitingSubagents: [] });
         }
 
         else if (ev.type === "message.block.started" && ev.runId === eventStore.getState().activeRunId) {
@@ -314,7 +325,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
             eventStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status, completedAt: Date.now() } : run) }));
           }
           if (isActiveRun) {
-            eventStore.setState((st) => ({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], running: false, activeRunId: undefined, approvals: [], runningSessionIds: ev.sessionId ? st.runningSessionIds.filter((id) => id !== ev.sessionId) : st.runningSessionIds }));
+            eventStore.setState((st) => ({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], waitingSubagents: [], running: false, activeRunId: undefined, approvals: [], runningSessionIds: ev.sessionId ? st.runningSessionIds.filter((id) => id !== ev.sessionId) : st.runningSessionIds }));
           }
           if (ev.sessionId) {
             eventStore.setState((st) => ({ completedSessionIds: st.completedSessionIds.includes(ev.sessionId!) ? st.completedSessionIds : [...st.completedSessionIds, ev.sessionId!] }));
