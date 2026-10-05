@@ -19,12 +19,12 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("initialization creates exactly the seven English source modules without overwriting existing content", () => {
+test("initialization creates exactly the eight English source modules without overwriting existing content", () => {
   const directory = qoneSystemPromptsDir();
   ensureSystemPromptModules();
   expect(readdirSync(directory).sort()).toEqual([
-    "01-identity.md", "02-behavior.md", "03-execution.md", "04-coding.md",
-    "05-verification.md", "06-safety.md", "07-communication.md",
+    "01-identity.md", "02-behavior.md", "03-execution.md", "04-web-access.md",
+    "05-coding.md", "06-verification.md", "07-safety.md", "08-communication.md",
   ]);
   for (const module of SYSTEM_PROMPT_MODULES) {
     expect(readFileSync(path.join(directory, module.file), "utf8")).toBe(module.content);

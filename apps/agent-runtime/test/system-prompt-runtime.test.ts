@@ -9,14 +9,16 @@ import { streamSimple as streamResponses } from "@earendil-works/pi-ai/api/opena
 import { PiAdapter } from "../src/pi-adapter";
 import { readSystemPrompt } from "../src/system-prompt";
 
-test("model-facing system text starts with the same seven modules across model/tool/workspace/context changes", async () => {
+test("model-facing system text starts with the same eight modules across model/tool/workspace/context changes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "qone-prompt-runtime-"));
   const originalRoot = process.env.QONE_DATA_DIR;
   process.env.QONE_DATA_DIR = path.join(root, "data");
   const faux = fauxProvider({ provider: "qone-prompt-test", models: [{ id: "first" }, { id: "second" }] });
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
   runtime.registerNativeProvider(faux.provider);
-  const adapter = new PiAdapter(() => {});
+  const adapter = new PiAdapter(() => {}, {
+    webAccessContext: () => "[QONE_WEB_ACCESS_MEMORY]\nexample.com: web_fetch failed (timeout); prefer OpenCLI Browser Bridge\n[/QONE_WEB_ACCESS_MEMORY]",
+  });
   Object.assign(adapter, { modelRuntime: runtime });
   const systemTexts: string[] = [];
   const fixed = readSystemPrompt();
@@ -47,6 +49,7 @@ test("model-facing system text starts with the same seven modules across model/t
         expect(text).toContain(workspace.replace(/\\/g, "/"));
         expect(text).not.toContain("You are an expert coding assistant operating inside pi");
         expect(text).not.toContain("Qone 工作原则");
+        expect(JSON.stringify(payload.input)).toContain("QONE_WEB_ACCESS_MEMORY");
         if (index) expect(text.slice(fixed.length)).toContain("TOOL_CONTEXT_SECOND");
         return fauxAssistantMessage(fauxText("Checked."));
       }]);

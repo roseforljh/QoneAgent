@@ -18,8 +18,13 @@
     "@qone/plugin-sdk": "*",
     "@qone/protocol": "*",
     "@qone/shared": "*",
+    "defuddle": "0.19.3",
     "fast-xml-parser": "^5.2.0",
+    "linkedom": "0.18.12",
+    "proxy-from-env": "2.1.0",
+    "turndown": "7.2.0",
     "typebox": "1.3.27",
+    "undici": "8.11.2",
     "zod": "^4.1.0"
   },
   "devDependencies": {

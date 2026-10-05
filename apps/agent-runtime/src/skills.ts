@@ -111,7 +111,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
     // QoneAgent only loads skills installed in its own data directory.
     noSkills: true,
     noContextFiles: true,
-    // Suppress Pi's SYSTEM.md / APPEND_SYSTEM.md discovery. The seven modules
+    // Suppress Pi's SYSTEM.md / APPEND_SYSTEM.md discovery. The eight modules
     // supply the fixed preamble, before any variable context sections.
     systemPrompt: "",
     systemPromptOverride: () => readSystemPrompt(),

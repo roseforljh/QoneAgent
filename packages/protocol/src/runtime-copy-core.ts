@@ -616,6 +616,10 @@ export const runtimeCopyCore = {
     "en": "Website response is too large",
     "zh-CN": "网站响应过大"
   },
+  "reach-public-tools.unsupported_website_content_type": {
+    "en": "Unsupported website content type: {p0}",
+    "zh-CN": "不支持的网站内容类型：{p0}"
+  },
   "reach-public-tools.too_many_website_redirects": {
     "en": "Too many website redirects",
     "zh-CN": "网站重定向次数过多"
@@ -631,6 +635,10 @@ export const runtimeCopyCore = {
   "reach-public-tools.tool_execution_timed_out": {
     "en": "Tool execution timed out",
     "zh-CN": "工具执行超时"
+  },
+  "reach-public-tools.public_web_fetch_timed_out": {
+    "en": "Direct public web fetch timed out before receiving a response. The site may block this runtime network path; use the browser fallback only if the page content is still required, and do not retry the same URL with shell commands.",
+    "zh-CN": "公共网页直连在收到响应前超时，网站可能阻断了当前运行时网络路径；如果仍需要页面内容，请使用浏览器回退，不要再用 Shell 重复请求同一地址。"
   },
   "reach-public-tools.tool_output_is_too_large": {
     "en": "Tool output is too large",

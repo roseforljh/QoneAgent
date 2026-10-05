@@ -4,20 +4,22 @@ import { qoneSystemPromptsDir } from "@qone/shared";
 import identity from "./system-prompts/01-identity.md" with { type: "text" };
 import behavior from "./system-prompts/02-behavior.md" with { type: "text" };
 import execution from "./system-prompts/03-execution.md" with { type: "text" };
-import coding from "./system-prompts/04-coding.md" with { type: "text" };
-import verification from "./system-prompts/05-verification.md" with { type: "text" };
-import safety from "./system-prompts/06-safety.md" with { type: "text" };
-import communication from "./system-prompts/07-communication.md" with { type: "text" };
+import webAccess from "./system-prompts/04-web-access.md" with { type: "text" };
+import coding from "./system-prompts/05-coding.md" with { type: "text" };
+import verification from "./system-prompts/06-verification.md" with { type: "text" };
+import safety from "./system-prompts/07-safety.md" with { type: "text" };
+import communication from "./system-prompts/08-communication.md" with { type: "text" };
 
 // Explicit order is part of the product contract; directory enumeration is not.
 export const SYSTEM_PROMPT_MODULES = [
   { file: "01-identity.md", content: identity },
   { file: "02-behavior.md", content: behavior },
   { file: "03-execution.md", content: execution },
-  { file: "04-coding.md", content: coding },
-  { file: "05-verification.md", content: verification },
-  { file: "06-safety.md", content: safety },
-  { file: "07-communication.md", content: communication },
+  { file: "04-web-access.md", content: webAccess },
+  { file: "05-coding.md", content: coding },
+  { file: "06-verification.md", content: verification },
+  { file: "07-safety.md", content: safety },
+  { file: "08-communication.md", content: communication },
 ] as const;
 
 /** Bundled Markdown seeds a fresh installation without overwriting its source modules. */

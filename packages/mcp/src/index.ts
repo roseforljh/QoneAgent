@@ -429,11 +429,14 @@ export class McpManager {
     const usedNames = new Set(this.exposedToolNames.values());
     const exposedName = this.exposedToolNames.get(fullName) ?? safeToolName(fullName, usedNames);
     this.exposedToolNames.set(fullName, exposedName);
+    const routing = serverId === "mcp-github"
+      ? "Use this GitHub MCP tool only for authenticated GitHub data, account operations, private repositories, or writes. For public GitHub URLs, READMEs, documentation, and page content, use web_fetch first; use qone_github_public for structured unauthenticated GitHub API data."
+      : undefined;
     return {
       name: exposedName,
       qoneToolName: fullName,
       label: `${serverId} · ${t.name}`,
-      description: t.description ?? `MCP tool ${t.name} from ${serverId}`,
+      description: [routing, t.description ?? `MCP tool ${t.name} from ${serverId}`].filter(Boolean).join(" "),
       // MCP servers validate their own input; preserve the advertised schema so
       // the model receives the real parameter names and constraints.
       parameters: Type.Unsafe(t.inputSchema && typeof t.inputSchema === "object"

@@ -5,6 +5,7 @@ import { lookup } from "node:dns/promises";
 import { XMLParser } from "fast-xml-parser";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createWebFetchTool } from "./web-fetch.js";
 
 const MAX_BYTES = 2_000_000;
 const TEXT_LIMIT = 80_000;
@@ -119,15 +120,7 @@ async function runCli(command: string, args: string[], timeout = 60_000): Promis
 
 export function createReachPublicTools(options: { ytDlp: () => string | undefined; githubToken?: () => string | undefined; xueqiuCookie?: () => string | undefined }): ToolDefinition[] {
   const tools = [
-    {
-      name: "qone_web_read", label: "Web · read", description: "Read a public web page as Markdown through Jina Reader. Use a site-specific OpenCLI adapter when authentication or interaction is required.",
-      parameters: Type.Object({ url: Type.String() }),
-      execute: async (_id, { url }: { url: string }) => {
-        const target = publicUrl(url);
-        // Return whatever the page yielded; the model can tell a verification page from real content itself.
-        return output(await boundedFetch(new URL(`https://r.jina.ai/${target.href}`), { Accept: "text/plain" }));
-      },
-    },
+    createWebFetchTool(),
     {
       name: "qone_rss_read", label: "RSS · read", description: "Read public RSS or Atom feed items without login.",
       parameters: Type.Object({ url: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
@@ -149,7 +142,7 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       },
     },
     {
-      name: "qone_github_public", label: "GitHub · public API", description: "Read public GitHub repositories, issues, users or search repositories without requiring gh login. Use the GitHub MCP connection for authenticated operations.",
+      name: "qone_github_public", label: "GitHub · public API", description: "Read structured public GitHub API data such as repositories, issues, users, or repository search without requiring gh login. For a public GitHub URL, README, documentation page, or article, use web_fetch; use GitHub MCP only for authenticated or account operations.",
       parameters: Type.Object({ kind: Type.Union([Type.Literal("repo"), Type.Literal("issues"), Type.Literal("user"), Type.Literal("search")]), value: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
       execute: async (_id, { kind, value, limit }: { kind: string; value: string; limit?: number }) => {
         const slug = value.trim();

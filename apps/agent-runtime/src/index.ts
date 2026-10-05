@@ -27,6 +27,7 @@ import { createReachPublicTools } from "./reach-public-tools.js";
 import { listReachChannels, ytDlpExecutable } from "./reach-channels.js";
 import { podcastConfigured } from "./reach-podcast.js";
 import { createPodcastTools } from "./reach-podcast-tools.js";
+import { WebAccessMemory } from "./web-access-memory.js";
 
 
 import { normalizeSubagentConfig } from "./subagents.js";
@@ -87,6 +88,7 @@ const modelConfigRepo = new ModelConfigRepo(configDb);
 const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
+const webAccessMemory = new WebAccessMemory(settingsRepo);
 const preferencesRepo = new SettingsRepo(configDb);
 configureBuiltinSkills(preferencesRepo);
 const queueRepo = new QueueRepo(settingsRepo);
@@ -450,6 +452,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   sessionId: event.sessionId,
   runId: event.runId,
 }), {
+  webAccessContext: (sessionId) => webAccessMemory.context(sessionId),
   onAssistantFinal: (_sessionId, runId, content) => {
     if (content.trim()) assistantBuffers.set(runId, content);
   },
@@ -464,12 +467,15 @@ const adapter = new PiAdapter((event) => eventBus.emit({
     if (phase === "start") {
       const row = toolCallRepo.start(runId, name, args, toolCallId);
       if (toolCallId) toolCallIds.set(`${runId}:${toolCallId}`, row.id);
-    } else if (toolCallId) {
-      const id = toolCallIds.get(`${runId}:${toolCallId}`);
-      if (id) {
-        toolCallRepo.finish(id, result && (result as { isError?: boolean }).isError ? "failed" : "success", result);
-        toolCallIds.delete(`${runId}:${toolCallId}`);
+    } else {
+      if (toolCallId) {
+        const id = toolCallIds.get(`${runId}:${toolCallId}`);
+        if (id) {
+          toolCallRepo.finish(id, result && (result as { isError?: boolean }).isError ? "failed" : "success", result);
+          toolCallIds.delete(`${runId}:${toolCallId}`);
+        }
       }
+      webAccessMemory.recordToolResult(sessionId, name, args, result);
     }
   },
   onCustomEntry: (sessionId, entry) => {

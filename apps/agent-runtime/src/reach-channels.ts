@@ -55,7 +55,7 @@ export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
       : "Connect Chrome and sign in to the website to use this channel." },
   });
   const channels: ReachChannelInfo[] = [
-    publicChannel("web", "网页阅读", "通过 Jina Reader 提取公开网页正文", "Jina Reader", ["qone_web_read"]),
+    publicChannel("web", "网页抓取", "通过本地 Runtime 抓取公开网页并提取正文", "本地 web_fetch", ["web_fetch"]),
     publicChannel("rss", "RSS / Atom", "读取公开订阅源", "内置解析器", ["qone_rss_read"]),
     publicChannel("v2ex", "V2EX", "热门、最新、节点与回复", "V2EX 公开 API", ["qone_v2ex"]),
     { ...publicChannel("github", "GitHub", "公开仓库与搜索；账号操作可连接 GitHub MCP", "GitHub 公开 API", ["qone_github_public"], "公开功能可用；私有仓库和写入需配置 GitHub MCP"), action: "github" },
@@ -77,8 +77,8 @@ export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
       english: { ...reachChannelEnglish.exa_search, detail: context.mcpConnected("mcp-reach-exa") ? undefined : "Select this card to connect Exa MCP." },
     },
     {
-      id: "linkedin", name: "LinkedIn", description: "公开页面与账号操作", backend: "OpenCLI / Jina Reader",
-      tools: ["qone_web_read", "qone_opencli_discover", "qone_opencli_run"], state: context.browserConnected ? "unverified" : "needs-connection", detail: "账号功能经 OpenCLI 复用 Chrome 登录态；公开页面可尝试网页阅读", action: "opencli",
+      id: "linkedin", name: "LinkedIn", description: "公开页面与账号操作", backend: "OpenCLI / 本地 web_fetch",
+      tools: ["web_fetch", "qone_opencli_discover", "qone_opencli_run"], state: context.browserConnected ? "unverified" : "needs-connection", detail: "账号功能经 OpenCLI 复用 Chrome 登录态；公开页面使用本地 web_fetch", action: "opencli",
       english: reachChannelEnglish.linkedin,
     },
     {

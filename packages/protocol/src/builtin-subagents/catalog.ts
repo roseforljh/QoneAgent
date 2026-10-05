@@ -21,8 +21,8 @@ const toolMap: Record<string, string> = {
   Bash: "powershell",
   Write: "write",
   Edit: "edit",
-  WebSearch: "qone_web_read",
-  WebFetch: "qone_web_read",
+  WebSearch: "web_fetch",
+  WebFetch: "web_fetch",
 };
 
 export const ECC_BUILTIN_SUBAGENTS = (catalog.agents as BuiltinSubagentCatalogEntry[]).map((agent) => ({

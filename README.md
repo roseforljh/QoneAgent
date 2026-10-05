@@ -24,7 +24,7 @@ bun run apps/agent-runtime/test/smoke.ts
 - `mcp/servers.db`：MCP 服务配置；凭据仍保存在 Windows Credential Manager
 - `runtime/window-state.json`、`runtime/webview/`：窗口状态和 WebView 数据
 - `Qone.md`：全局提示词，直接放在数据根目录
-- `system-prompts/01-identity.md` 至 `07-communication.md`：固定 System Prompt 的七个源码模块
+- `system-prompts/01-identity.md` 至 `08-communication.md`：固定 System Prompt 的八个源码模块
 - `skills/builtin/`、`skills/installed/`、`skills/cache/`：内置 Skill、用户安装的 Skill 和下载缓存
 - `plugins/installed/`、`plugins/cache/`、`plugins/data/`：插件代码、缓存和私有数据
 - `projects/<项目>/project.json`：项目名称与源码位置；源码保留在原目录
@@ -44,7 +44,7 @@ bun run apps/agent-runtime/test/smoke.ts
 
 新的 `Qone.md` 默认包含 Ponytail 全局规则，默认内容维护在 `apps/agent-runtime/src/default-global-instructions.md` 并随运行时打包，后续默认规则可继续追加到该文件。初始化只创建缺失文件，已有文字和主动清空的文件都不会被覆盖，也不会在每次启动时重复追加。Ponytail 小节受内置技能开关约束；关闭时运行时会在全局指导后明确要求忽略该小节，其他全局规则继续适用。技能更新按钮只更新技能文件，不覆盖用户维护的 `Qone.md`。修改全局提示词后重启开发运行时，以刷新已存在的会话。
 
-固定 System Prompt 与 `Qone.md` 分开。运行时按 Identity → Behavior → Execution → Coding → Verification → Safety → Communication 的显式顺序读取七个 Markdown 文件，统一换行并以两个换行拼接，作为 Pi 自定义 System Prompt 的首段；用户指导、项目规则、技能及工具上下文仍由现有机制放在后续部分。安装时从随运行时打包的 Markdown 创建缺失模块，保留已有内容；空白或不可读的模块会报错，额外文件不参与加载。相同版本和模块内容产生相同的固定前缀；完整请求仍会随任务上下文改变，实际缓存命中由模型服务决定。修改模块后重启开发运行时以刷新已存在的会话。
+固定 System Prompt 与 `Qone.md` 分开。运行时按 Identity → Behavior → Execution → Web Access → Coding → Verification → Safety → Communication 的显式顺序读取八个 Markdown 文件，统一换行并以两个换行拼接，作为 Pi 自定义 System Prompt 的首段；用户指导、项目规则、技能及工具上下文仍由现有机制放在后续部分。安装时从随运行时打包的 Markdown 创建缺失模块，保留已有内容；空白或不可读的模块会报错，额外文件不参与加载。相同版本和模块内容产生相同的固定前缀；完整请求仍会随任务上下文改变，实际缓存命中由模型服务决定。修改模块后重启开发运行时以刷新已存在的会话。
 
 ## OpenCLI 当前浏览器
 

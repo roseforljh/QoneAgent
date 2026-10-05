@@ -12,6 +12,13 @@ describe("OpenCLI gateway", () => {
       const tools = service.tools().map((tool) => tool.name);
       expect(tools).toContain("qone_opencli_discover");
       expect(tools).toContain("qone_opencli_run");
+      expect(tools).toContain("qone_browser_screenshot");
+      const open = service.tools().find((tool) => tool.name === "qone_opencli_run");
+      const discover = service.tools().find((tool) => tool.name === "qone_opencli_discover");
+      const screenshot = service.tools().find((tool) => tool.name === "qone_browser_screenshot");
+      expect(open?.description).toContain("use web_fetch first");
+      expect(discover?.description).toContain("Do not use this for ordinary public URL reading");
+      expect(screenshot?.description).toContain("full page");
       expect(toolRefreshes).toBe(1);
       expect(service.status().targetConnected).toBe(false);
     } finally {
