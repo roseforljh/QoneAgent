@@ -27,7 +27,7 @@ import { createReachPublicTools } from "./reach-public-tools.js";
 import { listReachChannels, ytDlpExecutable } from "./reach-channels.js";
 import { podcastConfigured } from "./reach-podcast.js";
 import { createPodcastTools } from "./reach-podcast-tools.js";
-import { WebAccessMemory } from "./web-access-memory.js";
+import { WebAccessMemory, type WebAccessObservation } from "./web-access-memory.js";
 
 
 import { normalizeSubagentConfig } from "./subagents.js";
@@ -452,7 +452,21 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   sessionId: event.sessionId,
   runId: event.runId,
 }), {
-  webAccessContext: (sessionId) => webAccessMemory.context(sessionId),
+  webAccessContext: (sessionId, task) => {
+    const parse = (value: string | null) => {
+      if (!value) return undefined;
+      try { return JSON.parse(value); } catch { return undefined; }
+    };
+    const history: WebAccessObservation[] = toolCallRepo.listBySession(sessionId)
+      .filter((call) => call.status === "success" || call.status === "failed")
+      .map((call) => ({
+        toolName: call.toolName,
+        args: parse(call.arguments),
+        result: parse(call.resultSummary),
+        at: call.completedAt ?? call.startedAt ?? undefined,
+      }));
+    return webAccessMemory.context(sessionId, task, history);
+  },
   onAssistantFinal: (_sessionId, runId, content) => {
     if (content.trim()) assistantBuffers.set(runId, content);
   },

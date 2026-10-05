@@ -19,6 +19,7 @@ describe("OpenCLI gateway", () => {
       expect(open?.description).toContain("use web_fetch first");
       expect(discover?.description).toContain("Do not use this for ordinary public URL reading");
       expect(screenshot?.description).toContain("full page");
+      expect(service.tools().find((tool) => tool.name === "qone_browser_extract")?.description).toContain("automatically capture");
       expect(toolRefreshes).toBe(1);
       expect(service.status().targetConnected).toBe(false);
     } finally {

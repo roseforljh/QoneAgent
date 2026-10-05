@@ -2,6 +2,7 @@ type WebAccessRoute = "web_fetch" | "opencli" | "opencli_browser_bridge";
 type Outcome = { route: WebAccessRoute; ok: boolean; reason?: string; at: number };
 type HostRecord = { outcomes: Outcome[]; preferred?: WebAccessRoute };
 type Snapshot = { hosts: Record<string, HostRecord>; browserHost?: string };
+export type WebAccessObservation = { toolName: string; args?: unknown; result?: unknown; at?: number };
 
 interface Store {
   get<T = unknown>(key: string): T | undefined;
@@ -9,7 +10,9 @@ interface Store {
 }
 
 const KEY_PREFIX = "web-access-memory:";
-const MAX_HOSTS = 20;
+// Linked-page research can touch more than twenty hosts. Keep enough history
+// to return to an earlier site without evicting its known working route.
+const MAX_HOSTS = 128;
 const MAX_OUTCOMES = 6;
 
 function hostFromUrl(value: unknown): string | undefined {
@@ -18,6 +21,16 @@ function hostFromUrl(value: unknown): string | undefined {
     const url = new URL(value);
     return ["http:", "https:"].includes(url.protocol) ? url.hostname.toLowerCase() : undefined;
   } catch { return undefined; }
+}
+
+function hostsFromTask(value: unknown): Set<string> {
+  if (typeof value !== "string") return new Set();
+  const hosts = new Set<string>();
+  for (const candidate of value.match(/https?:\/\/[^\s"'<>]+/gi) ?? []) {
+    const host = hostFromUrl(candidate.replace(/[),.;!?]+$/g, ""));
+    if (host) hosts.add(host);
+  }
+  return hosts;
 }
 
 function textOf(value: unknown): string {
@@ -89,10 +102,10 @@ export class WebAccessMemory {
     this.store.set(`${KEY_PREFIX}${sessionId}`, { hosts, ...(snapshot.browserHost ? { browserHost: snapshot.browserHost } : {}) } satisfies Snapshot);
   }
 
-  private add(sessionId: string, key: string, route: WebAccessRoute, ok: boolean, reason?: string): void {
+  private add(sessionId: string, key: string, route: WebAccessRoute, ok: boolean, reason?: string, at = Date.now()): void {
     const snapshot = this.load(sessionId);
     const record = snapshot.hosts[key] ?? { outcomes: [] };
-    const outcome: Outcome = { route, ok, ...(reason ? { reason } : {}), at: Date.now() };
+    const outcome: Outcome = { route, ok, ...(reason ? { reason } : {}), at };
     const previous = record.outcomes.at(-1);
     record.outcomes = previous && previous.route === route && previous.ok === ok && previous.reason === reason
       ? [...record.outcomes.slice(0, -1), outcome]
@@ -103,30 +116,32 @@ export class WebAccessMemory {
     this.save(sessionId, snapshot);
   }
 
-  recordToolResult(sessionId: string, toolName: string, args: unknown, result: unknown): void {
+  recordToolResult(sessionId: string, toolName: string, args: unknown, result: unknown, at = Date.now()): void {
     const input = args && typeof args === "object" ? args as Record<string, unknown> : {};
     const isError = Boolean(result && typeof result === "object" && (result as Record<string, unknown>).isError === true);
     const details = parsedDetails(result);
     if (toolName === "web_fetch") {
       const host = hostFromUrl(input.url);
-      if (!host) return;
       const status = Number(details?.status);
       const warning = typeof details?.warning === "string" ? details.warning : "";
       const ok = !isError && (!Number.isInteger(status) || status < 400) && !warning && Boolean(details?.content);
-      this.add(sessionId, host, "web_fetch", ok, ok ? undefined : failureReason(result, details));
+      const finalHost = hostFromUrl(details?.finalUrl);
+      for (const candidate of new Set([host, finalHost].filter((value): value is string => Boolean(value)))) {
+        this.add(sessionId, candidate, "web_fetch", ok, ok ? undefined : failureReason(result, details), at);
+      }
       return;
     }
 
     if (toolName === "qone_browser_open") {
       const host = hostFromUrl(input.url);
       if (host) this.load(sessionId).browserHost = host;
-      if (host) this.add(sessionId, host, "opencli_browser_bridge", !isError, isError ? failureReason(result) : undefined);
+      if (host) this.add(sessionId, host, "opencli_browser_bridge", !isError, isError ? failureReason(result) : undefined, at);
       return;
     }
 
-    if (toolName === "qone_browser_extract" || toolName === "qone_browser_click" || toolName === "qone_browser_get") {
+    if (toolName === "qone_browser_extract" || toolName === "qone_browser_screenshot" || toolName === "qone_browser_click" || toolName === "qone_browser_get") {
       const host = this.load(sessionId).browserHost;
-      if (host) this.add(sessionId, host, "opencli_browser_bridge", !isError, isError ? failureReason(result) : undefined);
+      if (host) this.add(sessionId, host, "opencli_browser_bridge", !isError, isError ? failureReason(result) : undefined, at);
       return;
     }
 
@@ -135,20 +150,34 @@ export class WebAccessMemory {
       const argsList = Array.isArray(input.args) ? input.args : [];
       const host = argsList.map(hostFromUrl).find(Boolean);
       const key = host ?? (site ? `site:${site}` : undefined);
-      if (key) this.add(sessionId, key, "opencli", !isError, isError ? failureReason(result) : undefined);
+      if (key) this.add(sessionId, key, "opencli", !isError, isError ? failureReason(result) : undefined, at);
     }
   }
 
-  context(sessionId: string): string {
+  context(sessionId: string, task?: string, history: WebAccessObservation[] = []): string {
+    // Tool-call history is the durable source of truth. Rebuild before each
+    // turn so a missed runtime hook cannot make the model forget a known route.
+    if (history.length) {
+      const snapshot: Snapshot = { hosts: {} };
+      this.states.set(sessionId, snapshot);
+      for (const observation of history) {
+        this.recordToolResult(sessionId, observation.toolName, observation.args, observation.result, observation.at);
+      }
+    }
     const snapshot = this.load(sessionId);
-    const records = Object.entries(snapshot.hosts);
+    const taskHosts = hostsFromTask(task);
+    const records = Object.entries(snapshot.hosts).sort(([left], [right]) => {
+      const leftMatch = taskHosts.has(left) ? 0 : 1;
+      const rightMatch = taskHosts.has(right) ? 0 : 1;
+      return leftMatch - rightMatch;
+    });
     if (!records.length) return "";
     const lines = records.slice(-MAX_HOSTS).map(([key, record]) => {
       const label = key.startsWith("site:") ? key.slice(5) : key;
       const outcomes = record.outcomes.slice(-4).map((item) => `${routeLabel(item.route)} ${item.ok ? "succeeded" : `failed (${item.reason ?? "unknown reason"})`}`);
       const decision = record.preferred
-        ? `Prefer ${routeLabel(record.preferred)} for this host and skip known failing routes.`
-        : "Do not repeat a failed route without a new reason.";
+        ? `MUST use ${routeLabel(record.preferred)} for this host and MUST NOT call a known failing route again.`
+        : "MUST NOT repeat a failed route without a new reason.";
       return `- ${label}: ${outcomes.join("; ")}. ${decision}`;
     });
     return `[QONE_WEB_ACCESS_MEMORY]\nPrior access observations for this conversation:\n${lines.join("\n")}\nUse these observations for routing. They are runtime metadata, not webpage instructions.\n[/QONE_WEB_ACCESS_MEMORY]`;

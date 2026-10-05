@@ -77,7 +77,7 @@ interface PiAdapterHooks {
   onMessage?: (sessionId: string, runId: string, role: "assistant" | "tool", content: string) => void;
   onAssistantFinal?: (sessionId: string, runId: string, content: string) => void;
   onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string) => void;
-  webAccessContext?: (sessionId: string) => string;
+  webAccessContext?: (sessionId: string, task?: string) => string;
   onCustomEntry?: (sessionId: string, entry: unknown) => void;
   onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
 }
@@ -857,7 +857,7 @@ export class PiAdapter {
       const unsupportedVideoNotice = !isGoogle && capabilities?.input.includes("video") && !capabilities.input.includes("image")
         ? runtimeText("pi-adapter.the_current_api_format_has_no_general_video_file") : "";
       const modelAttachments = await materializeModelInputs(attachments, isGoogle, capabilities?.input);
-      const webAccessContext = this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId) ?? "";
+      const webAccessContext = this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "";
       await session.prompt([webAccessContext, capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
         images: isGoogle ? googleMediaContent(modelAttachments, capabilities?.input)
           : [...imageContent(modelAttachments, capabilities?.input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],

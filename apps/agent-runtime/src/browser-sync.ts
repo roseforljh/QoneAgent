@@ -268,7 +268,7 @@ export class BrowserSyncService {
       this.browserCommand("qone_browser_keys", "Press a keyboard key in the user's browser.", Type.Object({ key: Type.String() }), (value) => ["keys", value.key]),
       this.browserCommand("qone_browser_wait", "Wait for a browser condition such as text, selector, time, or network response.", Type.Object({ kind: Type.Union([Type.Literal("selector"), Type.Literal("text"), Type.Literal("time"), Type.Literal("xhr"), Type.Literal("download")]), value: Type.String() }), (value) => ["wait", value.kind, value.value]),
       this.browserCommand("qone_browser_get", "Read a page property such as URL or title from the user's browser.", Type.Object({ property: Type.Union([Type.Literal("url"), Type.Literal("title"), Type.Literal("text")]) }), (value) => ["get", value.property]),
-      this.browserCommand("qone_browser_extract", "Extract the current page as readable Markdown from the user's browser. This returns text only; it does not mean the page's images have been viewed. If relevant images are present, also call qone_browser_screenshot.", Type.Object({}), () => ["extract"]),
+      this.browserExtractTool(),
       this.browserScreenshotTool(),
       this.browserCommand("qone_browser_tabs", "List tabs available in the user's connected Chrome browser.", Type.Object({}), () => ["tab", "list"]),
       this.browserCloseTool(),
@@ -353,6 +353,26 @@ export class BrowserSyncService {
     } as ToolDefinition;
   }
 
+  private browserExtractTool(): ToolDefinition {
+    return {
+      name: "qone_browser_extract",
+      label: "OpenCLI · extract",
+      description: "Extract the current Chrome page as readable Markdown and automatically capture a full-page PNG for visual inspection. Before calling this for a URL, call qone_browser_open with that URL so the current tab is the requested page.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const { extracted, screenshot } = await this.runBrowserExtraction();
+        const text = result(extracted).content;
+        if (!screenshot) return { content: [...text, { type: "text", text: "Page screenshot was unavailable; page images were not inspected." }] } as never;
+        try {
+          const visual = browserScreenshotResult(screenshot.stdout);
+          return { content: [...text, visual.content[1]] } as never;
+        } catch (error) {
+          return { content: [...text, { type: "text", text: `Page screenshot was unavailable; page images were not inspected. ${String(error)}` }] } as never;
+        }
+      },
+    } as ToolDefinition;
+  }
+
   private twitterCommand(name: string, description: string, parameters: ReturnType<typeof Type.Object>, args: (value: any) => string[]): ToolDefinition {
     return {
       name, label: `OpenCLI · ${name.replace("qone_twitter_", "Twitter ")}`, description, parameters,
@@ -427,6 +447,18 @@ export class BrowserSyncService {
     return this.exclusive(async () => {
       if (!this.statusValue.targetConnected) await this.connectInner();
       return runOpenCli(["browser", SESSION, ...args]);
+    });
+  }
+
+  private runBrowserExtraction(): Promise<{ extracted: CommandResult; screenshot?: CommandResult }> {
+    return this.exclusive(async () => {
+      if (!this.statusValue.targetConnected) await this.connectInner();
+      const extracted = await runOpenCli(["browser", SESSION, "extract"]);
+      try {
+        return { extracted, screenshot: await runOpenCli(["browser", SESSION, "screenshot", "--full-page"]) };
+      } catch {
+        return { extracted };
+      }
     });
   }
 
