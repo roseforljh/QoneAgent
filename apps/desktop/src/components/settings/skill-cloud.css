@@ -21,7 +21,7 @@
 .skill-cloud-pagination button { display: grid; min-width: 27px; height: 27px; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted-foreground); font-size: var(--q-text-xs); cursor: pointer; }
 .skill-cloud-pagination button:hover:not(:disabled) { background: var(--q-hover); color: var(--foreground); }
 .skill-cloud-pagination button.is-active { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); }
-.skill-cloud-pagination button:disabled { cursor: wait; opacity: .45; }
+.skill-cloud-pagination button:disabled { cursor: default; opacity: .45; }
 .skill-cloud-pagination .skill-cloud-page-arrow { color: var(--foreground); font-size: 18px; }
 .skill-cloud-pagination > span { margin-left: 5px; color: var(--muted-foreground); font-size: var(--q-text-xs); }
 .skill-cloud-error { color: #e35d6a; font-size: var(--q-text-xs); }

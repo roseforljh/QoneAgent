@@ -627,7 +627,7 @@ a { text-decoration: none; }
 .settings-primary-action { border: 1px solid var(--primary); background: var(--primary); color: var(--primary-foreground); }
 .settings-secondary-action { border: 1px solid var(--border); background: var(--card); color: var(--foreground); }
 .settings-primary-action:hover, .settings-secondary-action:hover { opacity: .78; }
-.settings-primary-action:disabled, .settings-secondary-action:disabled { cursor: wait; opacity: .5; }
+.settings-primary-action:disabled, .settings-secondary-action:disabled { cursor: default; opacity: .5; }
 .settings-danger-action { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; margin-right: auto; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--q-danger) 35%, var(--border)); border-radius: 8px; background: var(--q-danger-bg); color: var(--q-danger); font-size: var(--q-text-xs); cursor: pointer; }
 .settings-danger-action:hover, .settings-danger-icon:hover { opacity: .75; }
 .settings-danger-icon { display: grid; width: 29px; height: 29px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--q-danger); cursor: pointer; }
@@ -798,10 +798,10 @@ a { text-decoration: none; }
 .settings-global-prompt-heading p { margin: 0; color: var(--muted-foreground); font-size: var(--q-text-xs); line-height: 1.5; }
 .settings-global-prompt-link { flex: 0 0 auto; padding: 3px 7px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: var(--q-subtle); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: var(--q-text-xs); cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease; }
 .settings-global-prompt-link:hover:not(:disabled) { border-color: var(--ring); background: var(--q-hover); color: var(--foreground); text-decoration: underline; }
-.settings-global-prompt-link:disabled { cursor: wait; opacity: .6; }
+.settings-global-prompt-link:disabled { cursor: default; opacity: .6; }
 .settings-global-prompt-input { display: block; width: 100%; min-height: 144px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; outline: 0; resize: vertical; background: var(--q-surface-muted); color: var(--foreground); font-size: 13px; line-height: 1.55; transition: border-color .15s ease, background .15s ease; }
 .settings-global-prompt-input:focus { border-color: var(--ring); }
-.settings-global-prompt-input:disabled { cursor: wait; opacity: .6; }
+.settings-global-prompt-input:disabled { cursor: default; opacity: .6; }
 .settings-global-prompt-hint { margin: 7px 0 0; color: var(--q-subtle); font-size: var(--q-text-xs); line-height: 1.5; }
 .settings-memory-section { margin-top: 25px; border-top: 1px solid var(--border); }
 .settings-memory-heading { display: flex; align-items: center; gap: 6px; padding: 18px 0 15px; }

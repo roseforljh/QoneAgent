@@ -61,6 +61,7 @@ const BUILTIN_MCP_NAMES: Record<string, string> = {
 };
 
 const BUILTIN_TOOLS: Record<string, ToolIntegration> = {
+  web_fetch: { id: "web", name: "网页", logo: globeLogo, kind: "source" },
   qone_web_read: { id: "web", name: "网页", logo: globeLogo, kind: "source" },
   qone_github_public: { id: "github", name: "GitHub", logo: githubLogo },
 };

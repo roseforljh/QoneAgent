@@ -220,6 +220,7 @@ function GeneralSection() {
       <div className="settings-preference-row">
         <div><strong>{t("general.updates")}</strong><span>{t("general.updateDescription")}</span></div>
         <button className="settings-secondary-action" type="button" disabled={checking} onClick={checkForUpdates}>
+          {checking && <LoaderCircle size={14} className="settings-spin" />}
           {checking ? t("general.checking") : t("general.checkForUpdates")}
         </button>
       </div>
@@ -410,6 +411,8 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
   const [apiKey, setApiKey] = useState("");
   const [models, setModels] = useState<ProviderModel[]>(initial?.models ?? []);
   const [fetching, setFetching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [status, setStatus] = useState<LocalizedMessage | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<ProviderModel[]>([]);
@@ -417,7 +420,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
   useEffect(() => {
     fetchSequence.current++;
     if (!open) return;
-    setName(initial?.name ?? ""); setApiType(initial?.apiType ?? "openai-compatible"); setBaseUrl(initial?.baseUrl ?? ""); setLogoUrl(initial?.logoUrl ?? ""); setApiKey(""); setModels(initial?.models ?? []); setStatus(null); setSyncOpen(false); setFetchedModels([]); setFetching(false);
+    setName(initial?.name ?? ""); setApiType(initial?.apiType ?? "openai-compatible"); setBaseUrl(initial?.baseUrl ?? ""); setLogoUrl(initial?.logoUrl ?? ""); setApiKey(""); setModels(initial?.models ?? []); setStatus(null); setSyncOpen(false); setFetchedModels([]); setFetching(false); setSaving(false); setRemoving(false);
   }, [open, initial?.id]);
   if (!open) return null;
   const preview = modelsEndpoint(apiType, baseUrl);
@@ -461,21 +464,33 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
   };
 
   const save = async () => {
+    if (saving || removing) return;
     if (!name.trim() || !baseUrl.trim()) { setStatus({ key: "provider.requiredFields" }); return; }
-    const profile: ProviderProfile = { id: initial?.id ?? providerId(name), name: name.trim(), apiType, baseUrl: normalizeBaseUrl(baseUrl), logoUrl: logoUrl.trim() || undefined, models, updatedAt: Date.now() };
-    if (apiKey) {
-      if (hasTauriBridge()) await invoke("secret_set", { key: `model.apiKey:${profile.id}`, value: apiKey });
-      useStore.getState().send({ type: "secret.set", requestId: crypto.randomUUID(), key: `model.apiKey:${profile.id}`, value: apiKey });
+    setSaving(true);
+    try {
+      const profile: ProviderProfile = { id: initial?.id ?? providerId(name), name: name.trim(), apiType, baseUrl: normalizeBaseUrl(baseUrl), logoUrl: logoUrl.trim() || undefined, models, updatedAt: Date.now() };
+      if (apiKey) {
+        if (hasTauriBridge()) await invoke("secret_set", { key: `model.apiKey:${profile.id}`, value: apiKey });
+        useStore.getState().send({ type: "secret.set", requestId: crypto.randomUUID(), key: `model.apiKey:${profile.id}`, value: apiKey });
+      }
+      onSaved(profile); onClose();
+    } finally {
+      setSaving(false);
     }
-    onSaved(profile); onClose();
   };
 
   const remove = async () => {
     if (!initial) return;
-    if (!await confirmDestructiveAction(t("provider.deleteConfirm", { name: initial.name }))) return;
-    if (hasTauriBridge()) await invoke("secret_delete", { key: `model.apiKey:${initial.id}` }).catch(() => undefined);
-    useStore.getState().send({ type: "secret.delete", requestId: crypto.randomUUID(), key: `model.apiKey:${initial.id}` });
-    onDeleted(initial); onClose();
+    if (saving || removing) return;
+    setRemoving(true);
+    try {
+      if (!await confirmDestructiveAction(t("provider.deleteConfirm", { name: initial.name }))) return;
+      if (hasTauriBridge()) await invoke("secret_delete", { key: `model.apiKey:${initial.id}` }).catch(() => undefined);
+      useStore.getState().send({ type: "secret.delete", requestId: crypto.randomUUID(), key: `model.apiKey:${initial.id}` });
+      onDeleted(initial); onClose();
+    } finally {
+      setRemoving(false);
+    }
   };
 
   return (
@@ -489,11 +504,11 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
       }}
     >
       <div className="settings-subdialog provider-dialog" role="dialog" aria-modal="true" aria-label={t("provider.newConfiguration")}>
-        <div className="settings-subdialog-header"><div><span>{t("provider.configuration")}</span><h3>{initial ? t("provider.editConfiguration") : t("provider.newConfiguration")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
+        <div className="settings-subdialog-header"><div><span>{t("provider.configuration")}</span><h3>{initial ? t("provider.editConfiguration") : t("provider.newConfiguration")}</h3></div><button type="button" className="settings-dialog-close" disabled={saving || removing} onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
         <div className="settings-form-grid"><label>{t("provider.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("provider.namePlaceholder")} /></label><label>{t("provider.apiType")}<QoneSelect value={apiType} onChange={(value) => setApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("provider.apiType")} /></label><label className="is-wide">{t("provider.baseUrl")}<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t("provider.baseUrlPlaceholder")} /><small className="settings-url-preview">{t("provider.urlPreview", { url: preview || t("provider.waitingForInput") })}</small></label><label className="is-wide">{t("provider.logoUrl")}<input type="url" value={logoUrl} onChange={(event) => setLogoUrl(event.target.value)} placeholder={t("provider.logoUrlPlaceholder")} /><small className="settings-url-preview">{t("provider.logoUrlHint")}</small></label><label className="is-wide">{t("provider.apiKey")}<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t("provider.apiKeyPlaceholder")} /></label></div>
         <div className="settings-provider-actions"><button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchModels}>{fetching ? <><LoaderCircle size={15} className="settings-spin" />{t("provider.fetching")}</> : <><Globe2 size={15} />{t("provider.fetchModels")}</>}</button><span>{models.length ? t("provider.configuredModels", { count: models.length }) : t("provider.noModels")}</span></div>
         {status && <p className="settings-inline-status" role="status">{t(status.key, status.values)}</p>}
-        <div className="settings-subdialog-footer">{initial && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("provider.delete")}</button>}<button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("provider.saveConfiguration")}</button></div>
+        <div className="settings-subdialog-footer">{initial && <button type="button" className="settings-danger-action" disabled={saving || removing} onClick={() => void remove()}>{removing ? <LoaderCircle size={15} className="settings-spin" /> : <Trash2 size={15} />}{t("provider.delete")}</button>}<button type="button" className="settings-secondary-action" disabled={saving || removing} onClick={onClose}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={saving || removing} onClick={() => void save()}>{saving ? <LoaderCircle size={15} className="settings-spin" /> : <Save size={15} />}{t("provider.saveConfiguration")}</button></div>
         <ModelSyncDialog
           open={syncOpen}
           fetched={fetchedModels}
@@ -1456,14 +1471,14 @@ function McpSection() {
         <div className="settings-subdialog-header"><div><span>GitHub MCP</span><h3>{t("mcp.githubLoginTitle")}</h3></div><button type="button" className="settings-dialog-close" onClick={() => setGithubLoginOpen(false)} aria-label={t("common.close")}><X size={17} /></button></div>
         <p>{configuredGithubClientId ? t("mcp.githubOAuthConfigured") : t("mcp.githubLoginHelp")}</p>
         {!configuredGithubClientId && <div className="settings-form-grid"><label className="is-wide">{t("mcp.githubClientId")}<input value={githubClientId} onChange={(event) => setGithubClientId(event.target.value)} placeholder={t("mcp.required")} /></label></div>}
-        <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={() => setGithubLoginOpen(false)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={githubSaving || !githubClientId.trim()} onClick={() => void connectGitHub()}>{t("mcp.githubSignIn")}</button></div>
+        <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" disabled={githubSaving} onClick={() => setGithubLoginOpen(false)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={githubSaving || !githubClientId.trim()} onClick={() => void connectGitHub()}>{githubSaving && <LoaderCircle size={15} className="settings-spin" />}{t("mcp.githubSignIn")}</button></div>
       </div></div>}
       {keyDialog && (
         <div className="settings-subdialog-layer" onClick={(event) => { if (!keySaving && event.target === event.currentTarget) setKeyDialog(null); }}>
           <div className="settings-subdialog settings-mcp-action-dialog" role="dialog" aria-modal="true" aria-label={presetName(keyDialog.preset)}>
             <div className="settings-subdialog-header"><div><span>MCP</span><h3>{presetName(keyDialog.preset)}</h3></div><button type="button" className="settings-dialog-close" disabled={keySaving} onClick={() => setKeyDialog(null)} aria-label={t("common.close")}><X size={17} /></button></div>
             <div className="settings-form-grid">{keyDialog.fields.map((field, index) => <label key={field.key} className="is-wide">{field.key}<input type="password" autoComplete="off" autoFocus={index === 0} disabled={keySaving} value={field.value} onChange={(event) => setKeyDialog({ ...keyDialog, fields: keyDialog.fields.map((item, i) => i === index ? { ...item, value: event.target.value } : item) })} placeholder={t("mcp.pasteKey")} /></label>)}</div>
-            <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" disabled={keySaving} onClick={() => setKeyDialog(null)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={keySaving || keyDialog.fields.some((field) => !field.value.trim())} onClick={() => void submitKeyDialog()}>{t("mcp.connect")}</button></div>
+            <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" disabled={keySaving} onClick={() => setKeyDialog(null)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={keySaving || keyDialog.fields.some((field) => !field.value.trim())} onClick={() => void submitKeyDialog()}>{keySaving && <LoaderCircle size={15} className="settings-spin" />}{t("mcp.connect")}</button></div>
           </div>
         </div>
       )}

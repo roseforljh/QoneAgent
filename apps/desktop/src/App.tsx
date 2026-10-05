@@ -48,7 +48,6 @@ import { QoneSelect } from "./components/ui/Select";
 import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-preferences";
 import qonePenguinUrl from "./assets/qone-penguin.png";
 import { BrowserIntegration } from "./components/browser/BrowserIntegration";
-import { ReachChannels } from "./components/reach/ReachChannels";
 import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
 import { AppChrome } from "./components/app-chrome/AppChrome";
 import { ResizableSidebar } from "./components/assistant-ui/resizable-sidebar";
@@ -487,7 +486,6 @@ function AppsPanel({ plugins }: { plugins: PluginInfo[] }) {
     <div className="apps-grid">
       <BrowserIntegration />
     </div>
-    <ReachChannels />
     {plugins.length > 0 && <div className="simple-list">{plugins.map((plugin) => <div className="simple-list-row stacked" key={plugin.id}><div><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.loaded ? t("app.pluginLoaded", { tools: plugin.toolCount, skills: plugin.skillCount }) : t("app.pluginUnloaded")}</small></div><span className="status-dot" /></div>)}</div>}
   </>;
 }

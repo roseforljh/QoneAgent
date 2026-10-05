@@ -23,57 +23,83 @@
 .q-selected-text-actions > button:is(:hover, :focus-visible):not(:disabled) { background: var(--accent); }
 .q-selected-text-actions > button:disabled { opacity: .45; cursor: default; }
 .q-selected-text-actions > button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-/* Codex Ewn: rounded pill, px-2/py-1.5, gap-1, max-w-[320px].
-   Neutral surfaces must not use --accent, which follows the user's accent color. */
+/* Match Codex's compact attachment tile: secondary surface plus ghost hover. */
+.q-composer-quote,
+.q-composer-quote-preview {
+  --q-quote-surface-elevated-secondary: #f9f9f9;
+  --q-quote-surface-elevated: #ffffff;
+}
+:root[data-theme="dark"] .q-composer-quote,
+:root[data-theme="dark"] .q-composer-quote-preview {
+  --q-quote-surface-elevated-secondary: #414141;
+  --q-quote-surface-elevated: #303030;
+}
 .q-composer-quote { min-width: 0; max-width: 100%; }
 .q-composer-quote-pill {
+  position: relative;
   display: inline-flex;
   max-width: min(320px, 100%);
   align-items: center;
   gap: 4px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--secondary);
+  background: var(--q-quote-surface-elevated-secondary);
+  padding: 6px 8px;
   color: var(--foreground);
   transition: background-color .15s ease;
 }
-.q-composer-quote-pill:is(:hover, :focus-within) { background: var(--popover); }
+.q-composer-quote-pill:hover { background: var(--q-quote-surface-elevated); }
 .q-composer-quote-trigger {
   display: inline-flex;
   min-width: 0;
   flex: 0 1 auto;
   align-items: center;
-  gap: 4px;
-  padding: 6px 0 6px 8px;
+  gap: 6px;
+  padding: 0;
   border-radius: inherit;
   font-size: var(--q-text-sm);
-  line-height: 20px;
+  line-height: 18px;
   font-weight: var(--q-weight-medium);
   cursor: pointer;
 }
 .q-composer-quote-trigger > [data-slot="codex-icon"] { color: var(--muted-foreground); }
-.q-composer-quote-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Keep the dismiss control in flow, even while hidden: translated labels and
-   narrow side-chat composers must never share its space or an overlay shadow. */
+.q-composer-quote-label { min-width: 0; overflow: hidden; padding-inline-end: 4px; text-overflow: ellipsis; white-space: nowrap; }
 .q-composer-quote-remove {
+  position: absolute;
+  top: 50%;
+  right: 4px;
   display: grid;
-  flex: none;
   width: 20px;
   height: 20px;
-  margin-inline-end: 8px;
   padding: 0;
   place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--popover);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--foreground);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity .15s ease;
 }
-.q-composer-quote-remove:hover { background: var(--q-hover); }
+.q-composer-quote-remove::before {
+  position: absolute;
+  inset-block: 0;
+  left: -32px;
+  right: 0;
+  background: linear-gradient(to right, transparent, var(--q-quote-surface-elevated-secondary) 50%, var(--q-quote-surface-elevated-secondary));
+  content: "";
+  pointer-events: none;
+}
+.q-composer-quote-pill:hover .q-composer-quote-remove::before,
+.q-composer-quote-remove:focus-visible::before {
+  background: linear-gradient(to right, transparent, var(--q-quote-surface-elevated) 50%, var(--q-quote-surface-elevated));
+}
+.q-composer-quote-remove-icon { position: relative; display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--border); border-radius: 999px; background: var(--q-quote-surface-elevated); }
+.q-composer-quote-remove:hover .q-composer-quote-remove-icon { background: color-mix(in srgb, var(--q-quote-surface-elevated) 88%, var(--foreground)); }
 .q-composer-quote-trigger:focus-visible, .q-composer-quote-remove:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-@media (hover: hover) and (pointer: fine) {
-  .q-composer-quote-remove { opacity: 0; pointer-events: none; }
-  .q-composer-quote-pill:is(:hover, :focus-within) .q-composer-quote-remove { opacity: 1; pointer-events: auto; }
-}
+.q-composer-quote-pill:hover .q-composer-quote-remove, .q-composer-quote-remove:focus-visible { opacity: 1; pointer-events: auto; }
 .q-composer-quote-preview {
   z-index: 60;
   width: max-content;
@@ -82,19 +108,27 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 4px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 8px;
-  background: var(--popover);
+  background: var(--q-quote-surface-elevated-secondary);
   color: var(--popover-foreground);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  box-shadow: 0 4px 8px -2px rgb(0 0 0 / 10%);
   font-size: var(--q-text-sm);
   line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   animation: q-selection-in .12s ease-out;
 }
-.q-composer-quote-preview > span::before { content: "“"; }
-.q-composer-quote-preview > span::after { content: "”"; }
+.q-composer-quote-items { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.q-composer-quote-item { position: relative; display: flex; min-width: 0; align-items: flex-start; gap: 8px; padding: 6px 2px; }
+.q-composer-quote-number { flex: none; color: var(--muted-foreground); }
+.q-composer-quote-details { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 8px; text-align: start; user-select: text; }
+.q-composer-quote-heading { color: var(--muted-foreground); font-size: var(--q-text-xs); font-weight: var(--q-weight-medium); line-height: 16px; }
+.q-composer-quote-text { display: block; overflow-wrap: anywhere; white-space: pre-wrap; }
+.q-composer-quote-actions { display: flex; flex: none; align-items: center; gap: 2px; }
+.q-composer-quote-action { display: grid; width: 24px; height: 24px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.q-composer-quote-action:hover { background: color-mix(in srgb, var(--foreground) 8%, transparent); color: var(--foreground); }
+.q-composer-quote-action:focus-visible { outline: 2px solid var(--ring); outline-offset: -1px; }
+.q-composer-quote-editor { width: 100%; min-height: 40px; max-height: 120px; margin: -2px 0 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; outline: 0; background: var(--q-surface-muted); color: var(--foreground); font: inherit; line-height: 1.5; resize: vertical; }
+.q-composer-quote-editor:focus { border-color: var(--ring); }
 .q-message-annotation { display: inline-flex; max-width: 100%; align-items: center; border: 1px solid var(--border); border-radius: 999px; background: var(--secondary); color: var(--foreground); transition: background-color .15s ease; }
 .q-message-annotation:is(:hover, :focus-within) { background: var(--popover); }
 .q-message-annotation-trigger { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: inherit; color: var(--muted-foreground); font-size: var(--q-text-sm); line-height: 18px; font-weight: var(--q-weight-medium); cursor: pointer; }
@@ -106,5 +140,5 @@
 @keyframes q-selection-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .q-selected-text-actions, .q-composer-quote-preview { animation: none; }
-  .q-selected-text-actions > button, .q-composer-quote-pill, .q-message-annotation { transition: none; }
+  .q-selected-text-actions > button, .q-composer-quote-pill, .q-composer-quote-trigger, .q-composer-quote-remove, .q-message-annotation { transition: none; }
 }

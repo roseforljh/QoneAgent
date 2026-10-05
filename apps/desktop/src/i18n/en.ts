@@ -639,6 +639,8 @@ export const en: Messages = {
   "chat.selectedTextAttachment": "1 selection",
   "chat.annotationLabel": "1 annotation",
   "chat.removeSelectedText": "Remove selected text",
+  "chat.editSelectedText": "Edit selected text",
+  "chat.saveSelectedText": "Save selected text",
   "chat.newSideChat": "New side chat",
   "chat.sideChatBoundary": "Reference history from the main conversation above",
   "chat.sideChatCloseConfirm": "Close this temporary side chat? Its messages will be deleted and its active run will stop.",

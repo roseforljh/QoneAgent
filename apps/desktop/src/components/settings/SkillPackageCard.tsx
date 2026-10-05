@@ -59,7 +59,7 @@ export function SkillPackageCard({ group }: { group: SkillGroup }) {
             {busy === "update" && <LoaderCircle className="settings-spin" size={14} />}
             {t(busy === "update" ? "skills.builtin.updating" : "skills.builtin.update")}
           </button>
-          <Switch.Root checked={enabled} disabled={busy !== null} aria-label={t("skills.package.enabled", { name: group.name })} className={cn("settings-switch", enabled && "is-on")} onCheckedChange={(checked) => void change("toggle", checked)}><Switch.Thumb /></Switch.Root>
+          <Switch.Root checked={enabled} disabled={busy !== null} aria-busy={busy !== null} aria-label={t("skills.package.enabled", { name: group.name })} className={cn("settings-switch", enabled && "is-on")} onCheckedChange={(checked) => void change("toggle", checked)}>{busy === "toggle" ? <LoaderCircle className="settings-spin" size={13} /> : <Switch.Thumb />}</Switch.Root>
         </span>
       </article>
       {status && <p className="settings-builtin-skill-status" role="status">{status}</p>}

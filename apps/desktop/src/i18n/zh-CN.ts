@@ -637,6 +637,8 @@ export const zh = {
   "chat.selectedTextAttachment": "1 处选区",
   "chat.annotationLabel": "1条注释",
   "chat.removeSelectedText": "移除所选文本",
+  "chat.editSelectedText": "编辑所选文本",
+  "chat.saveSelectedText": "保存所选文本",
   "chat.newSideChat": "新建侧边聊天",
   "chat.sideChatBoundary": "以上为主会话的参考历史",
   "chat.sideChatCloseConfirm": "关闭这个临时侧边聊天？聊天内容将被删除，正在进行的运行会停止。",

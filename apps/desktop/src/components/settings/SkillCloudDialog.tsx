@@ -19,6 +19,7 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
   const [total, setTotal] = useState(0);
   const [pageSize, setPageSize] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadingPage, setLoadingPage] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<CloudSkillInfo | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -29,6 +30,7 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadingPage(null);
     setItems([]);
     setPage(1);
     setTotal(0);
@@ -52,6 +54,7 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
   const loadPage = async (nextPage: number) => {
     if (loading) return;
     setLoading(true);
+    setLoadingPage(nextPage);
     setError("");
     try {
       const response = await requestSkillCloud({ type: "skills.cloud.list", collection, page: nextPage, query: query.trim() });
@@ -64,6 +67,7 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
       setError(formatCloudError(cause, t));
     } finally {
       setLoading(false);
+      setLoadingPage(null);
     }
   };
 
@@ -118,9 +122,9 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
         </div>
         {error && items.length > 0 && <p className="skill-cloud-error" role="alert">{error}</p>}
         {!query.trim() && maxPage > 1 && <nav className="skill-cloud-pagination" aria-label={t("skills.cloud.pagination")}>
-          <button type="button" className="skill-cloud-page-arrow" disabled={loading || page <= 1} onClick={() => void loadPage(page - 1)} aria-label={t("skills.cloud.previousPage")}>‹</button>
-          {pageNumbers.map((number) => <button key={number} type="button" className={number === page ? "is-active" : ""} disabled={loading} onClick={() => void loadPage(number)} aria-current={number === page ? "page" : undefined}>{number}</button>)}
-          <button type="button" className="skill-cloud-page-arrow" disabled={loading || page >= maxPage} onClick={() => void loadPage(page + 1)} aria-label={t("skills.cloud.nextPage")}>›</button>
+          <button type="button" className="skill-cloud-page-arrow" disabled={loading || page <= 1} onClick={() => void loadPage(page - 1)} aria-label={t("skills.cloud.previousPage")}>{loadingPage === page - 1 ? <LoaderCircle className="settings-spin" size={14} /> : "‹"}</button>
+          {pageNumbers.map((number) => <button key={number} type="button" className={number === page ? "is-active" : ""} disabled={loading} onClick={() => void loadPage(number)} aria-current={number === page ? "page" : undefined}>{loadingPage === number ? <LoaderCircle className="settings-spin" size={14} /> : number}</button>)}
+          <button type="button" className="skill-cloud-page-arrow" disabled={loading || page >= maxPage} onClick={() => void loadPage(page + 1)} aria-label={t("skills.cloud.nextPage")}>{loadingPage === page + 1 ? <LoaderCircle className="settings-spin" size={14} /> : "›"}</button>
           <span>{page} / {maxPage}</span>
         </nav>}
         {selected && <div className="skill-cloud-confirm" role="dialog" aria-modal="true" aria-label={t("skills.cloud.import")}>

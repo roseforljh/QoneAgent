@@ -5,7 +5,7 @@ export type ToolActivityCategory = "file-change" | "exploration" | "command" | "
 const FILE_CHANGE_TOOLS = new Set(["edit", "write", "apply_patch"]);
 const EXPLORATION_TOOLS = new Set(["read", "grep", "find", "glob", "ls"]);
 const COMMAND_TOOLS = new Set(["bash", "powershell", "shell", "sh", "exec", "run", "run_command", "codemode"]);
-const BUILTIN_INTEGRATION_TOOLS = new Set(["qone_web_read", "qone_github_public"]);
+const BUILTIN_INTEGRATION_TOOLS = new Set(["web_fetch", "qone_web_read", "qone_github_public"]);
 
 export function isCommandTool(part: { toolName: string }): boolean {
   return COMMAND_TOOLS.has(part.toolName.toLowerCase());

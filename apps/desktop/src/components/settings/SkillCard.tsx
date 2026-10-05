@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Switch } from "@base-ui/react/switch";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, LoaderCircle } from "lucide-react";
 import type { SkillInfo } from "@qone/protocol";
 import { requestSkillMutation } from "../../store";
 import { localizeError } from "../../lib/error-localization";
@@ -42,7 +42,7 @@ export function SkillCard({ skill, disabled = false }: { skill: SkillInfo; disab
         <small><button type="button" onClick={() => void openUrl(`https://github.com/${skill.source}`).catch((cause) => setError(localizeError(cause)))}>{skill.source}</button> · <code title={skill.revision}>{skill.revision?.slice(0, 7)}</code></small>
       </div>
       <span className="settings-builtin-skill-actions">
-        <Switch.Root checked={skill.enabled !== false} disabled={busy || disabled} aria-label={t("skills.builtin.enabled", { name: skill.name })} className={cn("settings-switch", skill.enabled !== false && "is-on")} onCheckedChange={(enabled) => void change(enabled)}><Switch.Thumb /></Switch.Root>
+        <Switch.Root checked={skill.enabled !== false} disabled={busy || disabled} aria-busy={busy} aria-label={t("skills.builtin.enabled", { name: skill.name })} className={cn("settings-switch", skill.enabled !== false && "is-on")} onCheckedChange={(enabled) => void change(enabled)}>{busy ? <LoaderCircle className="settings-spin" size={13} /> : <Switch.Thumb />}</Switch.Root>
       </span>
     </article> : <button type="button" className="settings-skill-card" onClick={() => void open()}><span className="settings-provider-icon"><SkillIcon skill={skill} className="size-4" /></span><div><strong>{skill.name}</strong><small>{skill.path}</small></div><ChevronRight size={15} /></button>}
     {error && <p className="settings-skill-error" role="alert">{error}</p>}
