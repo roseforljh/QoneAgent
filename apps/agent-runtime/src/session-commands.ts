@@ -6,6 +6,7 @@ import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } fr
 import { readFilePreview } from "./file-preview.js";
 import { subagentInfo } from "./subagent-runner.js";
 import { generatedSessionTitle, provisionalSessionTitle } from "./session-title.js";
+import { syncPonytailProject } from "./builtin-skills/manager.js";
 import type { runtimeCommandServices } from "./index.js";
 
 export async function handleSessionCommand(cmd: RuntimeCommand, services: ReturnType<typeof runtimeCommandServices>): Promise<boolean> {
@@ -344,6 +345,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         return true;
       }
       const workspace = services.workspaceRepo.upsert(cmd.name, workspacePath) as WorkspaceInfo;
+      await syncPonytailProject(workspacePath);
       services.projectResources.project(workspace);
       services.send({ type: "workspace.updated", workspace });
       return true;

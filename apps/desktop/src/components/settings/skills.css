@@ -9,6 +9,13 @@
 .settings-builtin-skill-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .settings-builtin-skill-status { margin: 5px 11px; color: var(--muted-foreground); font-size: var(--q-text-xs); }
 .settings-skill-package-badge { margin-left: 6px; padding: 2px 6px; border-radius: 5px; background: var(--q-hover); color: var(--muted-foreground); font-size: var(--q-text-xs); font-weight: 400; }
+.settings-skill-package { flex-wrap: wrap; cursor: default; }
+.settings-skill-package-main { display: flex; min-width: 180px; flex: 1; align-items: center; gap: 10px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; border-radius: 5px; }
+.settings-skill-package-main:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.settings-skill-package-main > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.settings-skill-package-main > svg { flex: none; color: var(--q-subtle); }
+.settings-skill-package.is-disabled .settings-provider-icon { opacity: .45; }
+.settings-skill-package-error { white-space: pre-line; }
 .settings-skill-package-overlay { position: fixed; inset: 0; z-index: 120; background: rgb(0 0 0 / 54%); animation: skill-package-overlay-in .14s ease-out; }
 .settings-skill-package-dialog { position: fixed; z-index: 121; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; box-sizing: border-box; flex-direction: column; width: 640px; max-width: calc(100vw - 48px); height: min(560px, calc(100dvh - 48px)); overflow: hidden; padding: 22px; border: 1px solid var(--border); border-radius: 20px; background: var(--popover); color: var(--foreground); box-shadow: 0 24px 80px rgb(0 0 0 / 25%); animation: skill-package-dialog-in .16s ease-out; }
 .settings-skill-package-header { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; }

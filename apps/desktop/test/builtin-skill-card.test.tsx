@@ -30,6 +30,8 @@ mock.module("@tauri-apps/api/core", () => ({ ...originalCore, invoke: async (nam
 mock.module("@tauri-apps/api/event", () => ({ listen: async (_name: string, callback: typeof onRuntimeEvent) => { onRuntimeEvent = callback; return () => {}; } }));
 const { initBridge, useStore } = await import("../src/store");
 const { SkillCard } = await import("../src/components/settings/SkillCard");
+const { SkillPackageCard } = await import("../src/components/settings/SkillPackageCard");
+const { groupSkills } = await import("../src/lib/skill-groups");
 const { ComposerSlashRow, ComposerToolChip } = await import("../src/components/assistant-ui/composer-tools");
 const { SkillsSection } = await import("../src/components/settings/SkillsSection");
 const { BuiltinSubagentSettings } = await import("../src/components/settings/BuiltinSubagentDialog");
@@ -58,11 +60,11 @@ afterAll(() => {
   }
 });
 
-test("built-in cards expose the switch, update and protection label without a delete action or nested buttons", () => {
+test("member cards expose only the switch and protection label without update, delete or nested buttons", () => {
   const markup = renderToStaticMarkup(<SkillCard skill={skill} />);
   expect(markup).toContain('role="switch"');
   expect(markup).toContain('aria-checked="true"');
-  expect(markup).toContain(t("skills.builtin.update"));
+  expect(markup).not.toContain(t("skills.builtin.update"));
   expect(markup).toContain(t("skills.builtin.protected"));
   expect(markup).toContain("aaaaaaa");
   const wrapper = dom.window.document.createElement("div");
@@ -74,45 +76,105 @@ test("built-in cards expose the switch, update and protection label without a de
   expect(renderToStaticMarkup(<SkillCard skill={{ ...skill, builtin: false }} />)).not.toContain('role="switch"');
 });
 
-test("built-in subagent settings expose the complete ECC catalog and enable actions", () => {
+test("built-in subagent settings expose the complete ECC catalog with switches", () => {
   const markup = renderToStaticMarkup(<BuiltinSubagentSettings profiles={[]} onToggle={() => {}} />);
   expect(ECC_BUILTIN_SUBAGENTS).toHaveLength(68);
   expect(markup).toContain("a11y-architect");
   expect(markup).toContain("typescript-reviewer");
-  expect((markup.match(/>启用</g) ?? []).length).toBe(68);
+  expect(markup.match(/role="switch"/g)?.length).toBe(68);
+  expect(markup.match(/aria-checked="false"/g)?.length).toBe(68);
+  expect(markup).not.toContain(">启用<");
   expect(markup).not.toContain("settings-subdialog");
   expect(markup).not.toContain("<h3");
   expect(markup).not.toContain("aria-modal");
 });
 
-test("updates correlate responses, show progress/latest/errors and synchronize skill state; toggles use the same bridge", async () => {
-  useStore.setState({ connected: true, skills: [skill] });
+test("package updates wait for all members, report failures and bulk switches do not open the dialog", async () => {
+  useStore.setState({ connected: true, skills: collection });
   const host = dom.window.document.createElement("div");
   dom.window.document.body.append(host);
   const root = createRoot(host);
   try {
-    await act(async () => root.render(<SkillCard skill={skill} />));
+    function Package() {
+      const skills = useStore((state) => state.skills);
+      return <SkillPackageCard group={groupSkills(skills)[0]!} />;
+    }
+    await act(async () => root.render(<Package />));
     const update = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === t("skills.builtin.update"))!;
+    const before = sent.length;
     await act(async () => update.click());
-    const command = sent.findLast((item) => item.type === "skills.builtin.update")!;
-    expect(command).toMatchObject({ skillId: "ponytail" });
+    const commands = sent.slice(before).filter((item) => item.type === "skills.builtin.update");
+    expect(commands.map((item) => item.skillId)).toEqual(collection.map((item) => item.id));
     expect(update.disabled).toBe(true);
     expect(host.textContent).toContain(t("skills.builtin.updating"));
-    await act(async () => emit({ type: "skills.builtin.changed", requestId: command.requestId, skill, updated: false }));
+    for (const command of commands.slice(0, -1)) {
+      await act(async () => emit({ type: "skills.builtin.changed", requestId: command.requestId, skill: collection.find((item) => item.id === command.skillId)!, updated: false }));
+    }
+    expect(update.disabled).toBe(true);
+    const last = commands.at(-1)!;
+    await act(async () => emit({ type: "skills.builtin.changed", requestId: last.requestId, skill: collection.at(-1)!, updated: false }));
     expect(host.querySelector('[role="status"]')?.textContent).toBe(t("skills.builtin.current"));
     expect(update.disabled).toBe(false);
+    const retryStart = sent.length;
     await act(async () => update.click());
-    const second = sent.findLast((item) => item.type === "skills.builtin.update")!;
-    await act(async () => emit({ type: "error", requestId: second.requestId, message: "Network unavailable" }));
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Network unavailable");
+    const retries = sent.slice(retryStart).filter((item) => item.type === "skills.builtin.update");
+    await act(async () => emit({ type: "error", requestId: retries[0]!.requestId, message: "Network unavailable" }));
+    expect(update.disabled).toBe(true);
+    for (const command of retries.slice(1)) {
+      await act(async () => emit({ type: "skills.builtin.changed", requestId: command.requestId, skill: collection.find((item) => item.id === command.skillId)!, updated: true }));
+    }
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("ponytail: Network unavailable");
+    expect(host.querySelector('[role="status"]')).toBeNull();
     expect(useStore.getState().skills[0]?.revision).toBe(skill.revision);
+    for (const enabled of [false, true]) {
+      const toggleStart = sent.length;
+      await act(async () => (host.querySelector('[role="switch"]') as HTMLButtonElement).click());
+      const toggles = sent.slice(toggleStart).filter((item) => item.type === "skills.builtin.set-enabled");
+      expect(toggles).toHaveLength(collection.length);
+      expect(toggles.every((item) => item.enabled === enabled)).toBe(true);
+      expect(dom.window.document.querySelector('[role="dialog"]')).toBeNull();
+      for (const command of toggles) {
+        await act(async () => emit({ type: "skills.builtin.changed", requestId: command.requestId, skill: { ...collection.find((item) => item.id === command.skillId)!, enabled } }));
+      }
+      expect(host.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe(String(enabled));
+    }
+    await act(async () => useStore.setState({ skills: collection.map((item, index) => ({ ...item, enabled: index === 0 })) }));
+    expect(host.textContent).toContain(t("skills.package.partial"));
+    expect(host.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
+test("member toggles change only that skill and surface correlated errors", async () => {
+  useStore.setState({ connected: true, skills: collection });
+  const host = dom.window.document.createElement("div");
+  dom.window.document.body.append(host);
+  const root = createRoot(host);
+  try {
+    function Member() {
+      const skills = useStore((state) => state.skills);
+      return <SkillCard skill={skills[0]!} />;
+    }
+    await act(async () => root.render(<Member />));
+    const before = sent.length;
     await act(async () => (host.querySelector('[role="switch"]') as HTMLButtonElement).click());
-    const toggle = sent.findLast((item) => item.type === "skills.builtin.set-enabled")!;
-    expect(toggle).toMatchObject({ skillId: "ponytail", enabled: false });
-    await act(async () => emit({ type: "skills.builtin.changed", requestId: toggle.requestId, skill: { ...skill, enabled: false } }));
-    expect(useStore.getState().skills[0]?.enabled).toBe(false);
-    await act(async () => root.render(<SkillCard skill={useStore.getState().skills[0]!} />));
+    expect(sent.slice(before)).toHaveLength(1);
+    const command = sent.at(-1)!;
+    expect(command).toMatchObject({ type: "skills.builtin.set-enabled", skillId: "ponytail", enabled: false });
+    await act(async () => emit({ type: "error", requestId: command.requestId, message: "Permission denied" }));
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Permission denied");
+    expect(host.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => (host.querySelector('[role="switch"]') as HTMLButtonElement).click());
+    const retry = sent.at(-1)!;
+    await act(async () => {
+      emit({ type: "skills.builtin.changed", requestId: retry.requestId, skill: { ...skill, enabled: false } });
+      useStore.setState({ skills: [{ ...skill, enabled: false }, ...collection.slice(1)] });
+    });
+    await act(async () => root.render(<Member />));
     expect(host.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
+    expect(useStore.getState().skills.slice(1).every((item) => item.enabled)).toBe(true);
   } finally {
     await act(async () => root.unmount());
     host.remove();
@@ -161,11 +223,15 @@ test("settings show one package whose click opens all six independently managed 
     const packages = host.querySelectorAll<HTMLButtonElement>("[data-skill-package]");
     expect(packages).toHaveLength(1);
     expect(packages[0]!.textContent).toContain(t("skills.package.count", { count: 6 }));
+    expect(host.querySelectorAll('[role="switch"]')).toHaveLength(1);
+    expect(host.textContent).toContain(t("skills.builtin.update"));
+    expect(host.querySelector("button button")).toBeNull();
     expect(dom.window.document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => packages[0]!.click());
     const dialog = dom.window.document.querySelector('[role="dialog"]')!;
     expect(dialog).not.toBeNull();
     expect(dialog.querySelectorAll('[role="switch"]')).toHaveLength(6);
+    expect(dialog.textContent).not.toContain(t("skills.builtin.update"));
     for (const item of collection) expect(dialog.textContent).toContain(item.name);
     await act(async () => useStore.setState({ skills: collection.map((item) => item.id === "ponytail-review" ? { ...item, enabled: false } : item) }));
     expect(dialog.querySelector(`[aria-label="${t("skills.builtin.enabled", { name: "ponytail-review" })}"]`)?.getAttribute("aria-checked")).toBe("false");

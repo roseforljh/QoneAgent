@@ -6,6 +6,7 @@ import type { SkillInfo } from "@qone/protocol";
 import { qoneBuiltinSkillsDir, qoneSkillCacheDir } from "@qone/shared";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 import { downloadGithubSkill } from "../skill-catalog.js";
+import { syncPonytailProjectInstructions } from "../project-instructions.js";
 import { builtinSkillBundles } from "./identity.js";
 import { runtimeError } from "../runtime-localization.js";
 
@@ -102,6 +103,11 @@ export function setBuiltinSkillEnabled(id: string, enabled: boolean): Promise<Sk
     preferences.set(`skills.builtin.${id}`, { enabled, revision: skill.revision! });
     return { ...skill, enabled };
   });
+}
+
+export async function syncPonytailProject(cwd: string, enabled: boolean = stateFor("ponytail").enabled): Promise<void> {
+  const skill = await ensureSkill("ponytail");
+  await syncPonytailProjectInstructions(cwd, enabled, skill.path);
 }
 
 export function updateBuiltinSkill(id: string, fetcher: typeof fetch = fetch): Promise<{ skill: SkillInfo; updated: boolean }> {

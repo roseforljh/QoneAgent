@@ -43,8 +43,10 @@ test("loads only QoneAgent skills, excluding workspace and Pi skills", async () 
   expect(skills.filter((skill) => !skill.builtin)).toEqual([{ id: "own", name: "own", description: "own skill", path: ownSkill }]);
   expect(skills.find((skill) => skill.id === "ponytail")).toMatchObject({ builtin: true, enabled: true });
   expect(loader.getSkills().skills.map((skill) => skill.name)).toEqual([...builtinSkillBundles.map((skill) => skill.id), "own"]);
-  expect(loader.getAgentsFiles().agentsFiles).toEqual([]);
   const projectFile = path.join(cwd, "AGENTS.md");
+  expect(loader.getAgentsFiles().agentsFiles).toHaveLength(1);
+  expect(loader.getAgentsFiles().agentsFiles[0]?.path).toBe(projectFile);
+  expect(loader.getAgentsFiles().agentsFiles[0]?.content).toContain("QoneAgent managed: ponytail:start");
   writeFileSync(projectFile, "Workspace guidance.");
   await loader.reload();
   expect(loader.getAgentsFiles().agentsFiles).toEqual([{ path: projectFile, content: "Workspace guidance." }]);

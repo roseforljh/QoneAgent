@@ -82,7 +82,8 @@ test("the ResourceLoader uses modules as its preamble and keeps user/project/run
   expect(loader.getAppendSystemPrompt().join("\n\n")).toContain("USER_GUIDANCE");
   expect(loader.getAppendSystemPrompt().join("\n\n")).toContain("SESSION_GUIDANCE");
   expect(loader.getAppendSystemPrompt().join("\n\n")).not.toContain("UNREQUESTED_APPEND");
-  expect(loader.getAgentsFiles().agentsFiles[0]?.content).toBe("PROJECT_GUIDANCE");
+  expect(loader.getAgentsFiles().agentsFiles[0]?.content).toContain("PROJECT_GUIDANCE");
+  expect(loader.getAgentsFiles().agentsFiles[0]?.content).toContain("QoneAgent managed: ponytail:start");
   writeFileSync(path.join(qoneSystemPromptsDir(), "01-identity.md"), "# Identity\n\nChanged product identity.");
   await loader.reload();
   expect(loader.getSystemPrompt()).toBe(readSystemPrompt());
