@@ -10,17 +10,15 @@ import { File } from "./elements/file";
 import { UserImageThumbnail } from "./elements/user-image-thumbnail";
 import { UserMessageActions } from "./message-actions";
 import { UserMessageEditComposer } from "./user-message-edit";
+import { MarkdownText } from "./markdown-text";
 
 function UserMessageText({ paired = false }: { paired?: boolean }) {
-  const hasText = useAuiState((state) => state.message.parts.some(
-    (part) => part.type === "text" && part.text.length > 0,
-  ));
-  if (!hasText) return null;
+  const parts = useAuiState((state) => state.message.parts);
+  const textPartIndexes = parts.flatMap((part, index) => part.type === "text" && part.text.length > 0 ? [index] : []);
+  if (textPartIndexes.length === 0) return null;
   return (
     <div data-aui-quote-selectable="true" className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-[70%]" : "max-w-[70%]")}>
-      <MessagePrimitive.Parts>
-        {({ part }) => part.type === "text" ? <span className="whitespace-pre-wrap">{part.text}</span> : null}
-      </MessagePrimitive.Parts>
+      {textPartIndexes.map((index) => <MessagePrimitive.PartByIndex key={index} index={index} components={{ Text: MarkdownText }} />)}
     </div>
   );
 }

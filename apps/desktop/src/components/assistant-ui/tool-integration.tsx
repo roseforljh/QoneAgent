@@ -17,6 +17,7 @@ import qqmailLogo from "../../assets/qqmail-logo.svg";
 import neteaseMailLogo from "../../assets/netease-mail-logo.svg";
 import globeLogo from "../../assets/codex-icons/globe-light-16.svg";
 import { CodexMcpIcon, type ExecutionIcon } from "./execution-icons";
+import { CodexIcon } from "../ui/CodexIcon";
 import { translate, type Locale } from "../../localization";
 
 export interface ToolIntegration {
@@ -95,6 +96,9 @@ export function toolIntegration(
 export function integrationIcon(integration: ToolIntegration | undefined): ExecutionIcon {
   if (!integration || integration.logo === mcpLogo) return CodexMcpIcon;
   return function IntegrationGlyph({ size, style, ...props }: HTMLAttributes<HTMLSpanElement> & { size?: number }) {
+    if (integration.logo === globeLogo) {
+      return <CodexIcon src={integration.logo} {...props} style={{ ...(size ? { width: size, height: size } : {}), ...style }} />;
+    }
     return <span
       {...props}
       aria-hidden="true"

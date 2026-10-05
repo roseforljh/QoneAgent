@@ -88,6 +88,14 @@ body {
 .aui-thread-root .q-user-message-bubble-paired {
   max-width: 70%;
 }
+.aui-thread-root .q-user-message-bubble > .aui-md {
+  line-height: inherit;
+}
+.aui-thread-root .q-user-message-bubble > .aui-md > .aui-md-p {
+  margin-block: 0;
+  color: inherit;
+  line-height: inherit;
+}
 .aui-thread-root .aui-md {
   font-size: var(--q-text-base);
   line-height: 1.625;

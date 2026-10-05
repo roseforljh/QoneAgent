@@ -1,12 +1,30 @@
 @import "./inline-mention.css";
 
-.q-markdown-web-link { white-space: nowrap; }
+.q-markdown-web-link-mention {
+  display: inline;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  padding-inline: 0;
+  white-space: nowrap;
+}
 .q-markdown-web-link-label { white-space: normal; }
-.q-markdown-web-link[data-breakable-url] {
+.q-markdown-web-link-mention[data-breakable-url] {
   direction: ltr;
   unicode-bidi: isolate;
 }
-.q-markdown-web-link[data-breakable-url] .q-markdown-web-link-label { word-break: break-all; }
+.q-markdown-web-link-mention[data-breakable-url] .q-markdown-web-link-label { word-break: break-all; }
+.q-markdown-web-link[data-inline-mention-interactive] { cursor: pointer; }
+.q-markdown-web-link[data-inline-mention-interactive]:hover { text-decoration: none; }
+@media (hover: hover) {
+  .q-markdown-web-link[data-inline-mention-interactive]:hover .q-markdown-web-link-mention[data-underline-on-hover] {
+    text-decoration-line: underline;
+    text-decoration-style: dashed;
+    text-decoration-color: currentColor;
+    text-decoration-thickness: 0.5px;
+    text-underline-offset: 2px;
+  }
+}
 .q-markdown-web-link-icon {
   display: inline-block;
   position: relative;

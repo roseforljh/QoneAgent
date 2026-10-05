@@ -29,15 +29,17 @@ export function MarkdownWebLink({ className, href, title, children, onClick, ...
   const website = href != null && /^(?:https?:)?\/\//i.test(href);
   const bareUrl = website && typeof children === "string" && children.trim() === href;
   const link = <a {...props} href={href} title={title ?? href} className={cn("aui-md-a q-markdown-web-link", className)}
-    data-breakable-url={bareUrl ? "" : undefined}
+    data-inline-mention-interactive=""
     onClick={(event) => {
       onClick?.(event);
       if (event.defaultPrevented || !website || !href) return;
       event.preventDefault();
       openBrowserInDock(href.startsWith("//") ? `https:${href}` : href, useStore.getState().currentSessionId);
     }}>
-    {website && <WebsiteIcon href={href} />}
-    <span className="q-markdown-web-link-label">{children}</span>
+    <span className="q-markdown-web-link-mention" data-layout="inline-flow" data-underline-on-hover="" data-breakable-url={bareUrl ? "" : undefined}>
+      {website && <WebsiteIcon href={href} />}
+      <span className="q-markdown-web-link-label">{children}</span>
+    </span>
   </a>;
   return website && href ? <WebLinkContextMenu href={href}>{link}</WebLinkContextMenu> : link;
 }
