@@ -1,16 +1,17 @@
-import { douyinContentId } from "@qone/protocol";
+import { douyinContentId, siteHostRegexSource } from "@qone/protocol";
 
 /** A video's matching detail metadata is the authority for its creator. */
 export function douyinOwnerScript(url: string): string {
-  return OWNER_SCRIPT.replace("/* expectedId */ null", JSON.stringify(douyinContentId(url) ?? null));
+  return OWNER_SCRIPT.replace("/* expectedId */ null", JSON.stringify(douyinContentId(url) ?? null)).replace("/* hostPattern */ null", JSON.stringify(siteHostRegexSource("douyin")));
 }
 
 const OWNER_SCRIPT = String.raw`(() => {
   const expectedId = /* expectedId */ null;
+  const hostPattern = /* hostPattern */ null;
   const page = new URL(location.href);
   const contentId = /^\/(?:share\/)?video\/(\d+)(?:\/|$)/.exec(page.pathname)?.[1]
     || /^\d+$/.exec(page.searchParams.get("modal_id") || "")?.[0];
-  if (!/^https?:$/.test(page.protocol) || !/(?:^|\.)(?:douyin|iesdouyin)\.com$/i.test(page.hostname)
+  if (!/^https?:$/.test(page.protocol) || !new RegExp(hostPattern, "i").test(page.hostname)
     || !contentId || expectedId && contentId !== expectedId) return null;
   const observed = window.__qoneDouyinAuthor?.owner;
   if (observed?.contentId === contentId) return JSON.stringify({ ...observed, videoPageUrl: location.href });

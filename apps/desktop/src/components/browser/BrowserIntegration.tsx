@@ -6,6 +6,7 @@ import opencliLogo from "../../assets/app-icons/opencli.png";
 import { useStore } from "../../store";
 import { Button } from "../ui/Button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { AppStatusIndicator } from "../apps/AppStatusIndicator";
 
 const EXTENSION_URL = "https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk";
 
@@ -33,6 +34,8 @@ export function BrowserIntegration() {
 
   const statusError = status?.errorCode === "npx-unavailable"
     ? t("browser.nodeRequired") : status?.lastError;
+  const indicatorStatus = working ? "loading" : status?.phase === "error" || statusError ? "error" : status?.targetConnected ? "success" : "pending";
+  const indicatorLabel = working ? t("browser.connecting") : indicatorStatus === "success" ? t("browser.connected") : indicatorStatus === "error" ? t("browser.connectFailed") : t("browser.disconnected");
   const summary = working ? t("browser.connecting")
     : status?.targetConnected ? t("browser.connected")
     : t("browser.disconnected");
@@ -53,13 +56,11 @@ export function BrowserIntegration() {
         }
       }}
     >
+      <AppStatusIndicator status={indicatorStatus} label={indicatorLabel} />
       <div className="browser-opencli-mark" aria-hidden="true"><img src={opencliLogo} alt="" /></div>
       <strong>{t("browser.title")}</strong>
-      <small className="apps-app-status" role="status">
-        {working && <LoaderCircle size={12} className="settings-spin" aria-hidden="true" />}{summary}
-      </small>
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="browser-integration-dialog">
+        <DialogContent className="browser-integration-dialog" onClick={(event) => event.stopPropagation()}>
           <DialogHeader>
             <DialogTitle>{t("browser.title")}</DialogTitle>
             <DialogDescription>{t("browser.description")}</DialogDescription>
@@ -79,7 +80,7 @@ export function BrowserIntegration() {
         </DialogContent>
       </Dialog>
       <Dialog open={installPromptOpen} onOpenChange={setInstallPromptOpen}>
-        <DialogContent className="browser-install-dialog">
+        <DialogContent className="browser-install-dialog" onClick={(event) => event.stopPropagation()}>
           <DialogHeader>
             <div className="browser-install-dialog-icon" aria-hidden="true"><Puzzle size={18} /></div>
             <DialogTitle>{t("browser.extensionRequired")}</DialogTitle>

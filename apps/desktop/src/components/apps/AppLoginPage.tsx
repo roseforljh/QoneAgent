@@ -8,8 +8,9 @@ import { useTheme } from "../../lib/appearance";
 import { clipBrowserBounds, createDockBrowserSession } from "../../lib/dock-browser-session";
 import { Button } from "../ui/Button";
 import qonePenguinUrl from "../../assets/qone-penguin.png";
-import { appCookieKey, findDownloadApp } from "./app-catalog";
+import { appCookieKey, findDownloadApp, TELEGRAM_API_HASH_KEY, TELEGRAM_API_ID_KEY } from "./app-catalog";
 import type { AuthCookie } from "./auth-types";
+import type { RuntimeCommand } from "@qone/protocol";
 import { DOUYIN_BROWSER_ID } from "../../lib/douyin-page-bridge";
 import "./app-login.css";
 
@@ -104,6 +105,8 @@ export function AppLoginPage({ appId }: AppLoginPageProps) {
     return <div className="app-login-missing"><p>找不到这个应用。</p><Link to="/plugins">返回应用</Link></div>;
   }
 
+  if (app.id === "telegram") return <TelegramSetup appName={app.name} connected={connected} send={send} onClose={() => void navigate({ to: "/plugins" })} />;
+
   const captureCookies = async () => {
     setBusy(true);
     setError(undefined);
@@ -162,7 +165,6 @@ export function AppLoginPage({ appId }: AppLoginPageProps) {
       <button type="button" className="app-login-theme" onClick={toggleTheme} aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"}>
         {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
       </button>
-      <Button variant="outline" size="sm" onClick={() => void navigate({ to: "/plugins" })}><X size={14} />{locale === "en" ? "Close browser" : "关闭浏览器"}</Button>
     </header>
     <section className="app-login-body">
       <div className="app-login-browser-toolbar">
@@ -172,7 +174,7 @@ export function AppLoginPage({ appId }: AppLoginPageProps) {
           <button type="button" onClick={() => browserCommand("location.reload()")} disabled={!browserReady} aria-label="刷新"><RefreshCw size={14} /></button>
         </div>
         <span className="app-login-address">{new URL(app.loginUrl).hostname}</span>
-        <span className={`app-login-browser-state ${browserReady ? "is-ready" : ""}`}><span />{browserError ? (locale === "en" ? "Failed to open" : "打开失败") : browserReady ? (locale === "en" ? "Ready" : "页面已打开") : (locale === "en" ? "Opening" : "正在打开")}</span>
+        <button type="button" className="app-login-browser-close" aria-label={locale === "en" ? "Close browser" : "关闭浏览器"} title={locale === "en" ? "Close browser" : "关闭浏览器"} onClick={() => void navigate({ to: "/plugins" })}><X size={15} /></button>
       </div>
       <div className="app-login-browser-frame">
         <EmbeddedLoginBrowser key={browserGeneration} browserId={browserId} url={app.loginUrl} onReady={() => setBrowserReady(true)} onError={(reason) => { setBrowserReady(false); setBrowserError(errorMessage(reason)); }} />
@@ -190,4 +192,31 @@ export function AppLoginPage({ appId }: AppLoginPageProps) {
       </footer>
     </section>
   </main>;
+}
+
+function TelegramSetup({ appName, connected, send, onClose }: { appName: string; connected: boolean; send: (command: RuntimeCommand) => Promise<boolean>; onClose: () => void }) {
+  const { locale } = useLocale();
+  const [apiId, setApiId] = useState("");
+  const [apiHash, setApiHash] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (!hasTauriBridge()) return;
+    void Promise.all([invoke<string | null>("secret_get", { key: TELEGRAM_API_ID_KEY }), invoke<string | null>("secret_get", { key: TELEGRAM_API_HASH_KEY })])
+      .then(([id, hash]) => { setApiId(id ?? ""); setApiHash(hash ?? ""); setSaved(Boolean(id && hash)); }).catch((reason) => setError(errorMessage(reason)));
+  }, []);
+  const save = async () => {
+    if (!/^\d+$/.test(apiId.trim()) || !/^[a-fA-F0-9]{16,128}$/.test(apiHash.trim())) { setError(locale === "en" ? "Enter a numeric api_id and the api_hash from my.telegram.org." : "请输入数字 api_id，以及从 my.telegram.org 获取的 api_hash。"); return; }
+    setBusy(true); setError(undefined);
+    try {
+      for (const [key, value] of [[TELEGRAM_API_ID_KEY, apiId.trim()], [TELEGRAM_API_HASH_KEY, apiHash.trim()]] as const) {
+        await invoke("secret_set", { key, value });
+        if (connected && !await send({ type: "secret.set", requestId: crypto.randomUUID(), key, value })) throw new Error("Telegram 凭据同步失败");
+      }
+      setSaved(true);
+    } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+  };
+  const clear = async () => { setBusy(true); try { for (const key of [TELEGRAM_API_ID_KEY, TELEGRAM_API_HASH_KEY]) { await invoke("secret_delete", { key }); if (connected) await send({ type: "secret.delete", requestId: crypto.randomUUID(), key }); } setApiId(""); setApiHash(""); setSaved(false); } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); } };
+  return <main className="app-login-page"><header className="app-login-header"><Link className="app-login-brand" to="/plugins"><img src={qonePenguinUrl} alt="" /><span>Qone</span></Link><div className="app-login-heading"><strong>{appName}</strong><span>Telegram TDLib</span></div><Button variant="outline" size="sm" onClick={onClose}><X size={14} />关闭</Button></header><section className="app-login-body"><div className="app-login-telegram-card"><h2>配置 Telegram API</h2><p>原项目使用 Telegram 官方 TDLib。先在 my.telegram.org 的 API development tools 创建应用，再把 api_id 和 api_hash 填在这里。</p><label>api_id<input value={apiId} onChange={(event) => setApiId(event.target.value)} inputMode="numeric" /></label><label>api_hash<input value={apiHash} onChange={(event) => setApiHash(event.target.value)} /></label>{error && <p className="app-login-error" role="alert">{error}</p>}<div className="app-login-actions"><Button variant="outline" onClick={onClose}>返回应用</Button>{saved && <Button variant="outline" disabled={busy} onClick={() => void clear()}>清除配置</Button>}<Button disabled={busy} onClick={() => void save()}>{saved ? "更新配置" : "保存配置"}</Button></div><small>{saved ? "API 凭据已保存到 Windows 凭据管理器；还需要完成 Telegram 账号授权。" : "不要把 api_hash 发到聊天中。"}</small></div></section></main>;
 }

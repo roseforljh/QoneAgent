@@ -254,15 +254,11 @@ test("preparing an MCP call uses the integration name instead of its protocol id
   expect(html).not.toMatch(/title="[^"]*mcp:/);
 });
 
-test("registered web search and fetch rows describe their actual actions", () => {
+test("registered web search rows describe their actual actions", () => {
   const search = renderToStaticMarkup(<ToolRowsFixture content={[
     { type: "tool-call", toolName: "web_search", toolCallId: "web-search", args: { query: "assistant-ui" }, result: "found" },
   ]} />);
   expect(search).toMatch(/title="(?:已搜索网页|Searched the web) assistant-ui"/);
-  const fetch = renderToStaticMarkup(<ToolRowsFixture content={[
-    { type: "tool-call", toolName: "web_fetch", toolCallId: "web-fetch", args: { url: "https://example.com" }, result: "page" },
-  ]} />);
-  expect(fetch).toMatch(/title="(?:已读取网页|Read a web page) https:\/\/example.com"/);
 });
 
 function HeaderFixture() {

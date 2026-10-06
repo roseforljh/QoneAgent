@@ -57,7 +57,6 @@ const TOOL_META: Record<string, ToolMeta> = {
   shell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
   exec: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
   web_search: { verb: { zh: "搜索网页", en: "Search the web" }, icon: SearchIcon },
-  web_fetch: { verb: { zh: "读取网页", en: "Read a web page" }, icon: FileSearchIcon },
 };
 
 function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undefined, servers: readonly McpServerInfo[]): SessionTimelineStep {

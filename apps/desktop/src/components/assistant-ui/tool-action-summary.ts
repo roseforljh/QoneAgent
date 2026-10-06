@@ -45,7 +45,6 @@ const OPERATION_LABELS = new Map<string, readonly [MessageKey, MessageKey]>([
   ["edit", ["chat.toolEditing", "chat.toolEdited"]],
   ["apply_patch", ["chat.toolPatching", "chat.toolPatched"]],
   ["web_search", ["chat.toolSearchingWeb", "chat.toolSearchedWeb"]],
-  ["web_fetch", ["chat.toolReadingWeb", "chat.toolReadWeb"]],
 ]);
 const QUERY_TOOLS = new Set(["grep", "find", "glob", "search", "web_search"]);
 

@@ -5,11 +5,12 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+use tauri::webview::NewWindowResponse;
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewBuilder,
-    WebviewUrl, Wry,
+    WebviewUrl, WebviewWindowBuilder, Wry,
 };
 #[cfg(target_os = "windows")]
 use webview2_com::Microsoft::Web::WebView2::Win32::{
@@ -27,6 +28,7 @@ static BROWSERS: LazyLock<Mutex<HashMap<String, Webview<Wry>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static PREVIEW_FILES: LazyLock<Mutex<Vec<PathBuf>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 static PREVIEW_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static AUTH_POPUP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn open_preview_external(app: &AppHandle, html: &str) -> Result<(), String> {
     let directory = app
@@ -120,6 +122,24 @@ fn place(webview: &Webview<Wry>, x: f64, y: f64, w: f64, h: f64) -> Result<(), S
         .map_err(|e| e.to_string())
 }
 
+fn same_auth_host(actual: Option<&str>, expected: Option<&str>) -> bool {
+    let Some(actual) = actual else { return false };
+    let Some(expected) = expected else {
+        return false;
+    };
+    actual == expected
+        || actual.strip_prefix("www.") == Some(expected)
+        || expected.strip_prefix("www.") == Some(actual)
+}
+
+fn close_auth_popups(app: &AppHandle) {
+    for window in app.webview_windows().into_values() {
+        if window.label().starts_with("qone-auth-popup-") {
+            let _ = window.close();
+        }
+    }
+}
+
 pub fn open(
     app: &AppHandle,
     browser_id: &str,
@@ -147,6 +167,9 @@ pub fn open(
     let app2 = app.clone();
     let navigation_id = browser_id.to_owned();
     let label = format!("dock-browser-{browser_id}");
+    let auth_popup = browser_id.starts_with("auth-page-");
+    let auth_host = target.host_str().map(str::to_owned);
+    let popup_data_directory = crate::data_paths::webview()?;
     let mut builder = WebviewBuilder::new(label, WebviewUrl::External(target))
         .data_directory(crate::data_paths::webview()?)
         .devtools(false)
@@ -157,6 +180,46 @@ pub fn open(
             );
             true
         });
+    if auth_popup {
+        let popup_app = app.clone();
+        let popup_auth_host = auth_host.clone();
+        builder = builder.on_new_window(move |url, features| {
+            if !matches!(url.scheme(), "http" | "https") {
+                return NewWindowResponse::Deny;
+            }
+            let sequence = AUTH_POPUP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let label = format!("qone-auth-popup-{sequence}");
+            let provider_seen = Arc::new(AtomicBool::new(false));
+            let navigation_app = popup_app.clone();
+            let navigation_label = label.clone();
+            let navigation_auth_host = popup_auth_host.clone();
+            let navigation_provider_seen = provider_seen.clone();
+            let popup = WebviewWindowBuilder::new(&popup_app, label, WebviewUrl::External(url))
+                .title("Qone 登录")
+                .window_features(features)
+                .data_directory(popup_data_directory.clone())
+                .on_navigation(move |next| {
+                    if same_auth_host(next.host_str(), navigation_auth_host.as_deref()) {
+                        if navigation_provider_seen.swap(false, Ordering::SeqCst) {
+                            if let Some(window) =
+                                navigation_app.get_webview_window(&navigation_label)
+                            {
+                                let _ = window.close();
+                            }
+                        }
+                    } else {
+                        navigation_provider_seen.store(true, Ordering::SeqCst);
+                    }
+                    true
+                })
+                .on_new_window(|_, _| NewWindowResponse::Deny)
+                .build();
+            match popup {
+                Ok(window) => NewWindowResponse::Create { window },
+                Err(_) => NewWindowResponse::Deny,
+            }
+        });
+    }
     if let Some(script) = initialization_script {
         builder = builder.initialization_script(script);
     }
@@ -435,7 +498,7 @@ pub fn cookies(
     Err("cookie capture only supported on Windows WebView2".into())
 }
 
-pub fn close(browser_id: &str) -> Result<(), String> {
+pub fn close(app: &AppHandle, browser_id: &str) -> Result<(), String> {
     #[cfg(all(target_os = "windows", debug_assertions))]
     crate::dev_network::log("Browser close: requested");
     let webview = BROWSERS
@@ -450,6 +513,9 @@ pub fn close(browser_id: &str) -> Result<(), String> {
         let _ = webview.set_position(LogicalPosition::new(-32000.0, -32000.0));
         let _ = webview.hide();
         webview.close().map_err(|e| e.to_string())?;
+    }
+    if browser_id.starts_with("auth-page-") {
+        close_auth_popups(app);
     }
     #[cfg(all(target_os = "windows", debug_assertions))]
     crate::dev_network::log("Browser close: dispatched");

@@ -25,6 +25,7 @@ import { runtimeEvents } from "./lib/runtime-event-payload";
 import { resolveDouyinPage } from "./lib/douyin-page-bridge";
 import { resolveDouyinAuthorPage } from "./lib/douyin-author-page";
 import { DouyinPageError } from "./lib/douyin-video-page";
+import { BACKGROUND_BROWSER_BOUNDS } from "./lib/background-browser";
 
 function subagentChange(state: AgentState, subagents: AgentState["subagents"]): Partial<AgentState> {
   return subagents === state.subagents ? state : { subagents };
@@ -37,6 +38,7 @@ const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 const CAPABILITY_ROUTING_STORAGE_KEY = "qone-capability-routing";
 const SUBAGENT_RUNTIME_STORAGE_KEY = "qone-subagent-runtime";
 const douyinRequests = new Map<string, AbortController>();
+const appOpenCliRequests = new Map<string, string>();
 
 async function serveDouyinBridgeRequest(
   request: Extract<RuntimeEvent, { type: "douyin.bridge.request" }>,
@@ -54,6 +56,24 @@ async function serveDouyinBridgeRequest(
       message: error instanceof Error ? error.message : String(error) });
   } finally {
     douyinRequests.delete(request.requestId);
+  }
+}
+
+async function serveAppOpenCliRequest(
+  request: Extract<RuntimeEvent, { type: "apps.opencli.request" }>,
+  send: (command: Extract<import("@qone/protocol").RuntimeCommand, { type: "apps.opencli.response" }>) => Promise<boolean>,
+): Promise<void> {
+  if (appOpenCliRequests.has(request.requestId)) return;
+  const browserId = `opencli-${request.site}-${request.requestId}`;
+  try {
+    await invoke("browser_open", { browserId, url: request.url, ...BACKGROUND_BROWSER_BOUNDS });
+    appOpenCliRequests.set(request.requestId, browserId);
+    const endpoint = await invoke<string>("opencli_cdp_endpoint");
+    await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint });
+  } catch (error) {
+    appOpenCliRequests.delete(request.requestId);
+    await invoke("browser_close", { browserId }).catch(() => undefined);
+    await send({ type: "apps.opencli.response", requestId: request.requestId, ok: false, message: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -78,6 +98,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     for (const raw of runtimeEvents(payload)) {
       if (raw.type === "runtime.exited") {
       for (const controller of douyinRequests.values()) controller.abort();
+      for (const browserId of appOpenCliRequests.values()) void invoke("browser_close", { browserId }).catch(() => undefined);
+      appOpenCliRequests.clear();
       lastRunSequences.clear();
       for (const sessionId of deltas.keys()) clearDelta(sessionId);
       setMetadataLookupSupported(false);
@@ -133,6 +155,16 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     }
     if (raw.type === "douyin.bridge.cancel") {
       douyinRequests.get(raw.requestId)?.abort();
+      continue;
+    }
+    if (raw.type === "apps.opencli.release") {
+      const browserId = appOpenCliRequests.get(raw.requestId);
+      appOpenCliRequests.delete(raw.requestId);
+      if (browserId) void invoke("browser_close", { browserId }).catch(() => undefined);
+      continue;
+    }
+    if (raw.type === "apps.opencli.request") {
+      void serveAppOpenCliRequest(raw, (command) => useStore.getState().send(command)).catch(() => undefined);
       continue;
     }
     if (raw.type === "douyin.bridge.request") {

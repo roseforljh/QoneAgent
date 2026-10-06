@@ -182,7 +182,6 @@ test("custom tool names do not inherit a search schema from a substring", () => 
 
 test("web searches and page reads retain their own semantic actions", () => {
   expect(toolOperationLabels({ toolName: "web_search" }, "搜索网页", "zh-CN")).toEqual({ active: "正在搜索网页", completed: "已搜索网页" });
-  expect(toolOperationLabels({ toolName: "web_fetch" }, "Read a web page", "en")).toEqual({ active: "Reading a web page", completed: "Read a web page" });
   expect(toolActivityCategory("web_search")).toBe("web-search");
   expect(toolGroupSummary([
     { verb: "Search the web", category: "web-search" },

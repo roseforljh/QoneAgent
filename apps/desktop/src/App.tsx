@@ -461,18 +461,17 @@ function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme
   return <ChatPageRuntime pendingRun={pendingRun} theme={theme} onToggleTheme={onToggleTheme} initialSettingsOpen={initialSettingsOpen} />;
 }
 
-function PageLayout({ title, theme, onToggleTheme, children }: { title: string; theme: Theme; onToggleTheme: () => void; children: ReactNode }) {
+function PageLayout({ title, theme, onToggleTheme, children, minimalHeader = false }: { title: string; theme: Theme; onToggleTheme: () => void; children: ReactNode; minimalHeader?: boolean }) {
   const { t } = useLocale();
   return (
     <div className="page-shell">
-      <header className="page-topbar">
-        <Link className="brand-link" to="/"><img className="qone-logo brand-mark" src={qonePenguinUrl} alt="" aria-hidden="true" /><span>Qone</span></Link>
+      <header className={cn("page-topbar", minimalHeader && "page-topbar-minimal")}>
+        {!minimalHeader && <Link className="brand-link" to="/"><img className="qone-logo brand-mark" src={qonePenguinUrl} alt="" aria-hidden="true" /><span>Qone</span></Link>}
         <div className="page-topbar-actions">
-          <Link to="/" className="page-back-link">
+          <Link to="/" className={cn("page-back-link", minimalHeader && "page-back-link-icon")} aria-label={t("app.backHome")} title={t("app.backHome")}>
             <ArrowLeft size={16} aria-hidden="true" />
-            <span>{t("app.backHome")}</span>
           </Link>
-          <span className="page-title">{title}</span>
+          {!minimalHeader && <span className="page-title">{title}</span>}
           <ThemeButton theme={theme} onToggle={onToggleTheme} />
         </div>
       </header>
@@ -500,7 +499,7 @@ function ManagementPanel({ kind }: { kind: "skills" | "plugins" | "permissions" 
     if (kind === "permissions") send({ type: "permission.list", requestId: crypto.randomUUID() });
   }, [kind, send, workspaces, currentWorkspaceId]);
   const titles = { skills: t("nav.skills"), plugins: t("app.apps"), permissions: t("composer.permissions") };
-  return <PageLayout title={titles[kind]} theme={theme} onToggleTheme={toggleTheme}>
+  return <PageLayout title={titles[kind]} theme={theme} onToggleTheme={toggleTheme} minimalHeader={kind === "plugins"}>
     {lastError && <p className="error-banner" role="alert">{lastError}</p>}
     {kind === "plugins" ? <AppsPanel /> : <div className="settings-panel">
       {kind === "skills" && <div className="simple-list">{skills.length === 0 ? <p className="muted-copy">{t("app.noSkills")}</p> : skills.map((skill) => <div className="simple-list-row stacked" key={skill.id}><strong>{skill.name}</strong><small>{skill.description}</small><code>{skill.path}</code></div>)}</div>}

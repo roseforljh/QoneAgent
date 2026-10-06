@@ -18,6 +18,7 @@ import gitlab from "../../assets/website-icons/gitlab.svg";
 import stackoverflow from "../../assets/website-icons/stackoverflow.svg";
 import wikipedia from "../../assets/website-icons/wikipedia.svg";
 import telegram from "../../assets/website-icons/telegram.svg";
+import { siteHosts } from "@qone/protocol";
 
 type ComposerLinkSite = {
   id: string;
@@ -29,15 +30,15 @@ type ComposerLinkSite = {
 /** Qone's additional website mappings; these are separate from the Codex registry. */
 export const additionalComposerLinkSites: readonly ComposerLinkSite[] = [
   { id: "cloudflare", hosts: ["cloudflare.com"], src: cloudflare, multicolor: true },
-  { id: "reddit", hosts: ["reddit.com", "redd.it"], src: reddit },
-  { id: "x", hosts: ["x.com", "twitter.com", "t.co"], src: x },
-  { id: "youtube", hosts: ["youtube.com", "youtu.be"], src: youtube },
+  { id: "reddit", hosts: siteHosts("reddit"), src: reddit },
+  { id: "x", hosts: siteHosts("x"), src: x },
+  { id: "youtube", hosts: siteHosts("youtube"), src: youtube },
   { id: "discord", hosts: ["discord.com", "discord.gg", "discordapp.com"], src: discord },
-  { id: "bilibili", hosts: ["bilibili.com", "b23.tv"], src: bilibili, multicolor: true },
+  { id: "bilibili", hosts: siteHosts("bilibili"), src: bilibili, multicolor: true },
   { id: "gitlab", hosts: ["gitlab.com"], src: gitlab },
   { id: "stackoverflow", hosts: ["stackoverflow.com"], src: stackoverflow },
   { id: "wikipedia", hosts: ["wikipedia.org"], src: wikipedia },
-  { id: "telegram", hosts: ["telegram.org", "t.me"], src: telegram },
+  { id: "telegram", hosts: siteHosts("telegram"), src: telegram },
   { id: "huggingface", hosts: ["huggingface.co"], src: huggingface, multicolor: true },
   { id: "vercel", hosts: ["vercel.com"], src: vercel },
   // Specific products precede the parent brand's domain.
@@ -46,8 +47,8 @@ export const additionalComposerLinkSites: readonly ComposerLinkSite[] = [
   { id: "claude", hosts: ["claude.ai"], src: claude, multicolor: true },
   { id: "deepseek", hosts: ["deepseek.com"], src: deepseek, multicolor: true },
   { id: "google", hosts: ["google.com"], src: google, multicolor: true },
-  { id: "facebook", hosts: ["facebook.com", "fb.com", "fb.watch"], src: facebook },
-  { id: "instagram", hosts: ["instagram.com"], src: instagram },
-  { id: "linkedin", hosts: ["linkedin.com", "lnkd.in"], src: linkedin },
-  { id: "tiktok", hosts: ["tiktok.com"], src: tiktok },
+  { id: "facebook", hosts: siteHosts("facebook"), src: facebook },
+  { id: "instagram", hosts: siteHosts("instagram"), src: instagram },
+  { id: "linkedin", hosts: siteHosts("linkedin"), src: linkedin },
+  { id: "tiktok", hosts: siteHosts("tiktok"), src: tiktok },
 ];

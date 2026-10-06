@@ -522,8 +522,11 @@ a { text-decoration: none; }
 /* ---- Secondary pages (settings / mcp / skills / plugins / permissions) ---- */
 .page-shell { height: 100%; overflow: auto; scrollbar-gutter: stable; background: var(--background); }
 .page-topbar { display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 0 28px; border-bottom: 1px solid var(--border); }
+.page-topbar-minimal { justify-content: stretch; }
+.page-topbar-minimal .page-topbar-actions { width: 100%; justify-content: space-between; }
 .page-topbar-actions { display: flex; align-items: center; gap: 22px; }
 .page-back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; transition: color .15s ease, background .15s ease; }
+.page-back-link-icon { width: 28px; height: 28px; align-items: center; justify-content: center; }
 .page-back-link:hover { color: var(--foreground); }
 .page-title { color: var(--muted-foreground); font-size: 13px; }
 .page-content { width: min(100% - 56px, 940px); margin: 0 auto; padding: 38px 0 80px; }
@@ -914,14 +917,17 @@ a { text-decoration: none; }
 .downloader-apps-heading h2 { margin: 0 0 5px; font-size: 18px; font-weight: 600; }
 .downloader-apps-heading p, .downloader-apps-heading > span { margin: 0; color: color-mix(in srgb, var(--foreground) 64%, var(--card)); font-size: var(--q-text-xs); line-height: 1.5; }
 .downloader-app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
-.downloader-app-card { display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 18px 16px; border: 1px solid color-mix(in srgb, var(--foreground) 14%, var(--border)); border-radius: 14px; background: var(--card); color: var(--foreground); cursor: pointer; text-align: center; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.downloader-app-card { position: relative; display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 18px 16px; border: 1px solid color-mix(in srgb, var(--foreground) 14%, var(--border)); border-radius: 14px; background: var(--card); color: var(--foreground); cursor: pointer; text-align: center; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
 .downloader-app-card:hover { border-color: color-mix(in srgb, var(--foreground) 28%, var(--border)); box-shadow: 0 8px 22px rgb(0 0 0 / 8%); transform: translateY(-2px); }
 .downloader-app-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .downloader-app-card strong { font-size: 14px; }
-.downloader-app-card small { color: color-mix(in srgb, var(--foreground) 68%, var(--card)); font-size: var(--q-text-xs); }
-.downloader-app-card small.is-configured { color: #2b9a63; }
-.downloader-app-card > span:not(.downloader-app-mark) { min-height: 38px; color: var(--q-subtle); font-size: var(--q-text-xs); line-height: 1.45; }
-.downloader-app-card em { max-width: 100%; overflow: hidden; color: var(--q-subtle); font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.downloader-app-status-indicator { position: absolute; top: 13px; right: 13px; display: grid; width: 14px; height: 14px; place-items: center; }
+.downloader-app-status-indicator > span { width: 8px; height: 8px; border-radius: 999px; }
+.downloader-app-status-indicator.is-loading { color: var(--q-accent); }
+.downloader-app-status-indicator.is-loading svg { animation: settings-spin .9s linear infinite; }
+.downloader-app-status-indicator.is-success > span { background: #22c55e; box-shadow: 0 0 0 3px rgb(34 197 94 / 14%); }
+.downloader-app-status-indicator.is-error > span { background: #ef4444; box-shadow: 0 0 0 3px rgb(239 68 68 / 14%); }
+.downloader-app-status-indicator.is-pending > span { background: #f59e0b; box-shadow: 0 0 0 3px rgb(245 158 11 / 14%); }
 .downloader-app-mark { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 13px; }
 .downloader-app-mark img { width: 27px; height: 27px; object-fit: contain; filter: none; }
 .downloader-app-mark.is-rose img { width: 35px; height: 35px; mix-blend-mode: multiply; filter: contrast(1.25); }
@@ -931,8 +937,18 @@ a { text-decoration: none; }
 .downloader-app-mark.is-blue { background: #dbeafe; color: #2563eb; }
 .downloader-app-mark.is-slate { background: #e2e8f0; color: #334155; }
 .downloader-app-mark.is-orange { background: #ffedd5; color: #ea580c; }
+.downloader-app-dialog { width: min(440px, calc(100% - 2rem)); max-width: calc(100% - 2rem); }
+.downloader-app-dialog-heading { display: flex; align-items: center; gap: 12px; padding-right: 22px; }
+.downloader-app-dialog-heading > div { display: grid; min-width: 0; gap: 6px; }
+.downloader-app-dialog-heading [data-slot="dialog-title"] { overflow-wrap: anywhere; }
+.downloader-app-dialog-heading [data-slot="dialog-description"] { overflow-wrap: anywhere; line-height: 1.45; }
+.downloader-app-dialog-body { color: var(--muted-foreground); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .browser-integration-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.browser-integration-dialog { width: min(440px, calc(100% - 2rem)); }
+.browser-integration-dialog { width: min(40rem, calc(100% - 2rem)); max-width: calc(100% - 2rem); }
+.browser-integration-dialog, .browser-install-dialog { grid-template-columns: minmax(0, 1fr); }
+.browser-integration-dialog [data-slot="dialog-header"] { padding-right: 22px; overflow-wrap: anywhere; }
+.browser-integration-dialog [data-slot="dialog-footer"], .browser-install-dialog [data-slot="dialog-footer"] { min-width: 0; flex-wrap: wrap; }
+.browser-integration-dialog [data-slot="dialog-footer"] button, .browser-install-dialog [data-slot="dialog-footer"] button { min-width: 0; max-width: 100%; height: auto; min-height: 36px; white-space: normal; overflow-wrap: anywhere; }
 .browser-integration-dialog-body { display: grid; gap: 10px; font-size: 12px; line-height: 1.5; }
 .browser-integration-dialog-body p { margin: 0; overflow-wrap: anywhere; }
 .browser-token-editor { display: flex; width: 100%; flex-direction: column; align-items: center; gap: 7px; }

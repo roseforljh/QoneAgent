@@ -1,12 +1,14 @@
-import { douyinContentId, isDouyinOwnerResult, isDouyinUrl } from "@qone/protocol";
+import { douyinContentId, isDouyinOwnerResult, isDouyinUrl, siteHostRegexSource } from "@qone/protocol";
 import { douyinOwnerObserver } from "./douyin-author-page";
 import { douyinOwnerScript } from "./douyin-owner-page";
 import { DOUYIN_PLAYBACK_HELPERS, DouyinPageError, isDouyinBridgeResult, takeDouyinPlayback } from "./douyin-video-page";
+import { BACKGROUND_BROWSER_BOUNDS, BROWSER_POLL_INTERVAL_MS, DOUYIN_VIDEO_TIMEOUT_MS } from "./background-browser";
 export { isDouyinBridgeResult } from "./douyin-video-page";
 export const DOUYIN_BROWSER_ID = "auth-page-douyin";
+const DOUYIN_HOST_PATTERN = JSON.stringify(siteHostRegexSource("douyin"));
 
 export function douyinVideoUrlScript(url: string): string {
-  return DOUYIN_VIDEO_URL_SCRIPT.replace("/* expectedId */ null", JSON.stringify(douyinContentId(url) ?? null));
+  return DOUYIN_VIDEO_URL_SCRIPT.replace("/* expectedId */ null", JSON.stringify(douyinContentId(url) ?? null)).replace("/* hostPattern */ null", DOUYIN_HOST_PATTERN);
 }
 
 /** Uncached requests own a hidden page sharing the persistent login profile. */
@@ -25,9 +27,9 @@ export async function resolveDouyinPage(
   const browserId = `douyin-${owner ? "owner" : "video"}-${request.requestId}`;
   try {
     signal.throwIfAborted();
-    await invoke("browser_open", { browserId, url: request.url, x: -32000, y: -32000, w: 1280, h: 720,
+    await invoke("browser_open", { browserId, url: request.url, ...BACKGROUND_BROWSER_BOUNDS,
       initializationScript: douyinOwnerObserver(request.url) });
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + DOUYIN_VIDEO_TIMEOUT_MS;
     const script = owner ? douyinOwnerScript(request.url) : douyinVideoUrlScript(request.url);
     while (Date.now() < deadline) {
       signal.throwIfAborted();
@@ -41,7 +43,7 @@ export async function resolveDouyinPage(
         if (payload.failure === "work_unavailable") throw new DouyinPageError("work_unavailable", "目标作品详情未提供可下载视频地址，可能为图集或不可用作品");
         if (payload.failure === "page_unavailable") throw new DouyinPageError("page_unavailable", "目标详情接口未返回有效数据，页面可能需要验证；已停止批量解析");
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      await new Promise<void>((resolve) => setTimeout(resolve, BROWSER_POLL_INTERVAL_MS));
     }
     throw new DouyinPageError("metadata_timeout", owner ? "页面未返回匹配作品的博主详情，不能确认登录是否失效"
       : "页面未返回匹配作品的播放数据，已停止批量解析；仅凭此错误不能判断 Cookie 无效");
@@ -63,7 +65,8 @@ export const DOUYIN_VIDEO_URL_SCRIPT = String.raw`(() => {
   const page = new URL(location.href);
   const contentId = /^\/(?:share\/)?(?:video|note|gallery|slides)\/(\d+)(?:\/|$)/i.exec(page.pathname)?.[1]
     || /^\d+$/.exec(page.searchParams.get("modal_id") || "")?.[0];
-  if (!/^(?:http|https):$/.test(page.protocol) || !/(?:^|\.)(?:douyin|iesdouyin)\.com$/i.test(page.hostname)
+  const hostPattern = /* hostPattern */ null;
+  if (!/^(?:http|https):$/.test(page.protocol) || !new RegExp(hostPattern, "i").test(page.hostname)
     || !contentId || expectedId && expectedId !== contentId) return JSON.stringify({ pageUrl: location.href });
   const state = window.__qoneDouyinAuthor;
   if (state?.playback?.contentId === contentId) return JSON.stringify(state.playback);

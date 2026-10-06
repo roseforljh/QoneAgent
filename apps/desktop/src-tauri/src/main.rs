@@ -612,7 +612,16 @@ async fn browser_open(
     #[cfg(desktop)]
     // WebView2 creation must not run in the synchronous IPC/main-thread handler.
     return tauri::async_runtime::spawn_blocking(move || {
-        browser::open(&app, &browser_id, &url, x, y, w, h, initialization_script.as_deref())
+        browser::open(
+            &app,
+            &browser_id,
+            &url,
+            x,
+            y,
+            w,
+            h,
+            initialization_script.as_deref(),
+        )
     })
     .await
     .map_err(|error| error.to_string())?;
@@ -677,9 +686,11 @@ async fn browser_eval(browser_id: String, script: String) -> Result<(), String> 
 #[tauri::command]
 async fn browser_eval_result(browser_id: String, script: String) -> Result<String, String> {
     #[cfg(desktop)]
-    return tauri::async_runtime::spawn_blocking(move || browser::eval_result(&browser_id, &script))
-        .await
-        .map_err(|error| error.to_string())?;
+    return tauri::async_runtime::spawn_blocking(move || {
+        browser::eval_result(&browser_id, &script)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("browser only supported on desktop".into())
 }
@@ -698,11 +709,22 @@ async fn browser_get_cookies(
 }
 
 #[tauri::command]
-async fn browser_close(browser_id: String) -> Result<(), String> {
+async fn browser_close(app: AppHandle, browser_id: String) -> Result<(), String> {
     #[cfg(desktop)]
-    return browser::close(&browser_id);
+    return browser::close(&app, &browser_id);
     #[allow(unreachable_code)]
     Ok(())
+}
+
+#[tauri::command]
+fn opencli_cdp_endpoint() -> String {
+    if let Ok(endpoint) = std::env::var("QONE_OPENCLI_CDP_ENDPOINT") {
+        if !endpoint.trim().is_empty() {
+            return endpoint;
+        }
+    }
+    let port = std::env::var("QONE_WEBVIEW_CDP_PORT").unwrap_or_else(|_| "9223".into());
+    format!("http://127.0.0.1:{port}")
 }
 
 #[tauri::command]
@@ -716,6 +738,20 @@ fn frontend_diagnostic(message: String) {
 }
 
 fn main() {
+    #[cfg(windows)]
+    {
+        let port = std::env::var("QONE_WEBVIEW_CDP_PORT").unwrap_or_else(|_| "9223".into());
+        let extra = format!("--remote-debugging-port={port} --remote-allow-origins=*");
+        let current = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        if !current.contains("--remote-debugging-port=") {
+            let merged = if current.trim().is_empty() {
+                extra
+            } else {
+                format!("{current} {extra}")
+            };
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", merged);
+        }
+    }
     tauri::Builder::default()
         .plugin(webview_policy::init())
         .on_page_load(|_webview, payload| {
@@ -847,6 +883,7 @@ fn main() {
             browser_eval_result,
             browser_get_cookies,
             browser_close,
+            opencli_cdp_endpoint,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

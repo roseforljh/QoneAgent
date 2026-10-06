@@ -1,5 +1,6 @@
-import { douyinAuthorId, douyinContentId, isDouyinAuthorResult, type DouyinAuthorResult } from "@qone/protocol";
+import { douyinAuthorId, douyinContentId, isDouyinAuthorResult, siteHostRegexSource, type DouyinAuthorResult } from "@qone/protocol";
 import { DOUYIN_PLAYBACK_HELPERS, rememberDouyinPlaybacks } from "./douyin-video-page";
+import { BACKGROUND_BROWSER_BOUNDS, BROWSER_POLL_INTERVAL_MS, DOUYIN_AUTHOR_TIMEOUT_MS, DOUYIN_STALL_TIMEOUT_MS } from "./background-browser";
 
 /** Observe the same post responses as upstream collect_user_post_ids_via_browser.
  * Install before document scripts so the first signed page request is included.
@@ -113,7 +114,7 @@ export const DOUYIN_AUTHOR_SNAPSHOT = String.raw`(() => {
   const state = window.__qoneDouyinAuthor;
   const page = new URL(location.href);
   const id = /^\/user\/([^/]+)(?:\/|$)/.exec(page.pathname)?.[1];
-  if (!state || id !== state.authorId || !/(?:^|\.)(?:douyin|iesdouyin)\.com$/i.test(page.hostname)) return null;
+  if (!state || id !== state.authorId || !new RegExp(${JSON.stringify(siteHostRegexSource("douyin"))}, "i").test(page.hostname)) return null;
   const videos = [], seen = new Set(), cursors = new Set();
   let cursor = "0", exhausted = false, stalled = false;
   // Walk cursor order, not response completion order. Deduplicate across pages.
@@ -162,9 +163,9 @@ export async function resolveDouyinAuthorPage(
   };
   try {
     signal.throwIfAborted();
-    await invoke("browser_open", { browserId, url: request.url, x: -32000, y: -32000, w: 1280, h: 720,
+    await invoke("browser_open", { browserId, url: request.url, ...BACKGROUND_BROWSER_BOUNDS,
       initializationScript: douyinAuthorObserver(authorId, limit) });
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + DOUYIN_AUTHOR_TIMEOUT_MS;
     while (Date.now() < deadline) {
       signal.throwIfAborted();
       const raw = await invoke<string>("browser_eval_result", { browserId, script: DOUYIN_AUTHOR_SNAPSHOT });
@@ -177,9 +178,9 @@ export async function resolveDouyinAuthorPage(
         last = snapshot;
         if (Date.now() >= deadline) break;
         if (snapshot.completion === "limit" || snapshot.completion === "exhausted" || snapshot.completion === "stalled") return finish(snapshot);
-        if (pages && Date.now() - lastProgressAt > 15_000) return finish({ ...snapshot, completion: snapshot.completion === "blocked" ? "blocked" : "stalled" });
+        if (pages && Date.now() - lastProgressAt > DOUYIN_STALL_TIMEOUT_MS) return finish({ ...snapshot, completion: snapshot.completion === "blocked" ? "blocked" : "stalled" });
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      await new Promise<void>((resolve) => setTimeout(resolve, BROWSER_POLL_INTERVAL_MS));
     }
     if (last) return finish({ ...last, completion: last.completion === "blocked" ? "blocked" : "timeout" });
     throw new Error("未获取到该博主的作品列表，请在抖音登录页确认登录和验证状态");
