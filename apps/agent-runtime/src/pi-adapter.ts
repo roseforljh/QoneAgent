@@ -41,6 +41,9 @@ import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
 import { canProcessMediaAttachment, configuredCapabilities } from "./media-capabilities.js";
 import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
 import { createAttachmentAudioTool, createAttachmentFrameTool, createVideoDownloadTool, createVideoFallbackTools } from "./media-tool.js";
+import { downloadDouyinVideo } from "./video-download.js";
+import type { DouyinBridge } from "./douyin-bridge.js";
+import { createDouyinTools, DOUYIN_ROUTING_GUIDANCE } from "./douyin-tools.js";
 import { extractTextContent, splitModelName } from "./pi-message-utils.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
 
@@ -171,6 +174,7 @@ export class PiAdapter {
     private permissionRules?: PermissionRuleStore,
     private restoreMessages?: (sessionId: string, currentRunId?: string) => PersistedPiMessage[],
     compactionPreferences: PiCompactionPreferences = DEFAULT_PI_COMPACTION_PREFERENCES,
+    private douyinBridge?: DouyinBridge,
   ) {
     this.emit = emit;
     this.hooks = hooks;
@@ -559,8 +563,12 @@ export class PiAdapter {
         const relative = path.relative(directory, filePath);
         return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
       }),
+      douyinDownload: this.douyinBridge
+        ? (url: string, signal?: AbortSignal) => downloadDouyinVideo(url, (target, requestSignal) => this.douyinBridge!.request(target, requestSignal), signal)
+        : undefined,
     };
-    const mediaTools = [createVideoDownloadTool(mediaToolOptions), createAttachmentAudioTool(mediaToolOptions), createAttachmentFrameTool(mediaToolOptions), ...createVideoFallbackTools(mediaToolOptions)];
+    const mediaTools = [createVideoDownloadTool(mediaToolOptions), createAttachmentAudioTool(mediaToolOptions), createAttachmentFrameTool(mediaToolOptions), ...createVideoFallbackTools(mediaToolOptions),
+      ...(this.douyinBridge ? createDouyinTools(this.douyinBridge, workspacePath) : [])];
     const goalTools: ToolDefinition[] = goalId && goalEpoch !== undefined && goalRunId && this.goalBridge ? [{
       name: "get_goal", label: "Get goal", description: "Read the current goal and its execution state.",
       parameters: Type.Object({}),
@@ -858,7 +866,7 @@ export class PiAdapter {
         ? runtimeText("pi-adapter.the_current_api_format_has_no_general_video_file") : "";
       const modelAttachments = await materializeModelInputs(attachments, isGoogle, capabilities?.input);
       const webAccessContext = this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "";
-      await session.prompt([webAccessContext, capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
+      await session.prompt([webAccessContext, this.douyinBridge ? DOUYIN_ROUTING_GUIDANCE : "", capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
         images: isGoogle ? googleMediaContent(modelAttachments, capabilities?.input)
           : [...imageContent(modelAttachments, capabilities?.input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
       });

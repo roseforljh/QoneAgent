@@ -17,6 +17,7 @@ export const qoneConfigDir = () => path.join(qoneDataDir(), "config");
 export const qoneSystemPromptsDir = () => path.join(qoneDataDir(), "system-prompts");
 export const qoneConfigDatabasePath = () => path.join(qoneConfigDir(), "settings.db");
 export const qoneRuntimeDir = () => path.join(qoneDataDir(), "runtime");
+export const qoneAuthDir = () => path.join(qoneDataDir(), "auth");
 export const qoneDatabasePath = () => path.join(qoneRuntimeDir(), "qone.db");
 export const qoneWebviewDir = () => path.join(qoneRuntimeDir(), "webview");
 export const qonePiStateDir = () => path.join(qoneRuntimeDir(), "pi");
@@ -42,7 +43,7 @@ export function qoneTemporaryDir(): string {
 /** Create the stable top-level layout without creating any user content. */
 export function ensureQoneLayout(): string {
   const directories = [
-    qoneConfigDir(), qoneRuntimeDir(), qoneWebviewDir(), qoneSkillsDir(), qoneSkillCacheDir(),
+    qoneConfigDir(), qoneRuntimeDir(), qoneWebviewDir(), qoneAuthDir(), qoneSkillsDir(), qoneSkillCacheDir(),
     qonePluginsDir(), qonePluginCacheDir(), qonePluginDataDir(), qoneMcpDir(), qoneProjectsDir(), qoneLogsDir(), qoneCacheDir(),
   ];
   for (const directory of directories) mkdirSync(directory, { recursive: true });

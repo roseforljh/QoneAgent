@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createReachPublicTools, parseFeed } from "../src/reach-public-tools";
 import { listReachChannels } from "../src/reach-channels";
+import { reachCookieSecretKey } from "@qone/protocol";
 import { fetchWebContent } from "../src/web-fetch";
 import { browserScreenshotResult } from "../src/web-image";
 
@@ -133,6 +134,11 @@ describe("Agent Reach channels", () => {
     expect(channels.find((channel) => channel.id === "web")?.state).toBe("available");
     expect(channels.find((channel) => channel.id === "boss")?.state).toBe("needs-connection");
     expect(channels.find((channel) => channel.id === "twitter")?.state).toBe("needs-connection");
+    const twitter = listReachChannels({ browserConnected: false, mcpConnected: () => false, cookieSites: ["twitter"] })
+      .find((channel) => channel.id === "twitter");
+    expect(twitter).toMatchObject({ cookieConfigured: true, loginUrl: "https://x.com/i/flow/login" });
+    expect(reachCookieSecretKey("twitter")).toBe("reach.cookie:twitter");
+    expect(reachCookieSecretKey("github")).toBeUndefined();
     expect(createReachPublicTools({ ytDlp: () => undefined }).some((tool) => tool.name === "qone_youtube")).toBe(false);
   });
 

@@ -1,5 +1,5 @@
 import { runtimeText, runtimeErrorInfo } from "./runtime-localization";
-import { repeatedUserMessageId } from "@qone/protocol";
+import { repeatedUserMessageId, REACH_COOKIE_CHANNEL_IDS, reachCookieSecretKey } from "@qone/protocol";
 import type { RuntimeCommand, PermissionDecision, MessageAttachmentInfo } from "@qone/protocol";
 import { thinkingLevelsForApi, parseMcpCommand } from "@qone/protocol";
 import path from "node:path";
@@ -147,6 +147,28 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         // the same error a second time in the page-wide banner.
         services.send({ type: "browser.status", requestId: cmd.requestId, status: services.browserSync!.status() });
       }
+      return true;
+
+    case "browser.open":
+      try {
+        await services.browserSync!.openUrl(cmd.url);
+        services.send({ type: "pong", requestId: cmd.requestId });
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      }
+      return true;
+
+    case "browser.current-url":
+      try {
+        const url = await services.browserSync!.currentUrl();
+        services.send({ type: "browser.current-url", requestId: cmd.requestId, url });
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      }
+      return true;
+
+    case "douyin.bridge.response":
+      services.douyinBridge.handleResponse(cmd);
       return true;
 
     case "mcp.list":
@@ -370,7 +392,8 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     }
 
     case "secret.set": {
-      if (cmd.key === "reach.xueqiu.cookie" || cmd.key === "reach.groq.apiKey") {
+      const isReachCookie = REACH_COOKIE_CHANNEL_IDS.some((id) => reachCookieSecretKey(id) === cmd.key);
+      if (isReachCookie || cmd.key === "reach.groq.apiKey") {
         services.runtimeSecrets.set(cmd.key, cmd.value);
         services.send({ type: "secret.saved", requestId: cmd.requestId });
         services.sendReachChannels();
@@ -429,7 +452,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       services.runtimeSecrets.delete(cmd.key);
       await services.adapter.deleteSecret(cmd.key);
       services.send({ type: "pong", requestId: cmd.requestId });
-      if (cmd.key === "reach.xueqiu.cookie" || cmd.key === "reach.groq.apiKey") services.sendReachChannels();
+      if (REACH_COOKIE_CHANNEL_IDS.some((id) => reachCookieSecretKey(id) === cmd.key) || cmd.key === "reach.groq.apiKey") services.sendReachChannels();
       return true;
 
     case "agent.run": {

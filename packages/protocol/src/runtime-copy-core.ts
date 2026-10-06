@@ -48,9 +48,65 @@ export const runtimeCopyCore = {
     "en": "Could not retrieve the full Bilibili video, subtitles, audio, or summary. {p0}",
     "zh-CN": "无法取得 B 站完整视频、字幕、音频或摘要。{p0}"
   },
+  "douyin-bridge.unsupported_url": {
+    "en": "Douyin downloads support douyin.com and iesdouyin.com URLs only",
+    "zh-CN": "抖音下载只支持 douyin.com 或 iesdouyin.com 链接"
+  },
+  "douyin-bridge.page_bridge_timed_out": {
+    "en": "The Douyin page bridge timed out without matching work metadata. The batch was stopped; this does not establish that cookies are invalid.",
+    "zh-CN": "抖音页面桥接超时，未收到匹配作品的数据。批次已停止；不能据此判断 Cookie 无效。"
+  },
+  "douyin-bridge.download_cancelled": {
+    "en": "Douyin download was cancelled",
+    "zh-CN": "抖音下载已取消"
+  },
+  "douyin-bridge.no_video_address": {
+    "en": "The Douyin page did not return a downloadable video URL",
+    "zh-CN": "抖音页面没有返回可下载视频地址"
+  },
+  "douyin-bridge.page_bridge_failed": {
+    "en": "The Douyin page bridge failed: {p0}",
+    "zh-CN": "抖音页面桥接失败：{p0}"
+  },
+  "douyin-bridge.invalid_video_url": {
+    "en": "The page returned an invalid video URL",
+    "zh-CN": "页面返回的视频地址无效"
+  },
+  "douyin-bridge.content_mismatch": {
+    "en": "The Douyin page does not match the requested work",
+    "zh-CN": "抖音页面与请求的目标作品不匹配"
+  },
+  "douyin-bridge.invalid_author_url": {
+    "en": "Use the creator's complete Douyin /user/ homepage URL, not a nickname, video URL or /user/self alias",
+    "zh-CN": "请使用博主完整的抖音 /user/ 主页链接，不能使用昵称、视频链接或 /user/self 别名"
+  },
+  "douyin-bridge.invalid_limit": {
+    "en": "The requested Douyin video count must be an integer from 1 to 100",
+    "zh-CN": "抖音视频数量须为 1–100 的整数"
+  },
+  "douyin-bridge.invalid_author_result": {
+    "en": "The creator list contains invalid data or works from a different author",
+    "zh-CN": "博主作品列表数据无效，或包含其他作者的作品"
+  },
+  "douyin-tools.invalid_destination": {
+    "en": "The download destination must be a valid directory path",
+    "zh-CN": "下载目标须为有效的目录路径"
+  },
+  "douyin-tools.invalid_video_link": {
+    "en": "Use complete Douyin /video/ links or modal_id URLs from the creator list, not a profile URL, image post or unresolved short link",
+    "zh-CN": "请使用作品列表返回的完整 /video/ 或 modal_id 链接，不能使用主页、图集或未解析的短链接"
+  },
+  "douyin-tools.download_failed": {
+    "en": "Download failed ({p0})",
+    "zh-CN": "下载失败（{p0}）"
+  },
   "browser-sync.opencli_operation_timed_out": {
     "en": "OpenCLI operation timed out",
     "zh-CN": "OpenCLI 操作超时"
+  },
+  "browser-sync.douyin_embedded_route_required": {
+    "en": "Douyin uses Qone's embedded browser. Use qone_douyin_resolve_author for a share/video URL, qone_douyin_list_videos for a creator and qone_douyin_download to save files. Do not open Chrome or extract cookies.",
+    "zh-CN": "抖音使用 Qone 内置浏览器。视频或分享链接调用 qone_douyin_resolve_author，博主列表调用 qone_douyin_list_videos，保存文件调用 qone_douyin_download；无需打开 Chrome 或提取 Cookie。"
   },
   "browser-sync.opencli_exit_code": {
     "en": "OpenCLI exit code {p0}",
@@ -247,6 +303,10 @@ export const runtimeCopyCore = {
   "media-tool.video_retrieved_through_local_file_choose_timestamps_as_needed": {
     "en": "Video retrieved through {p0}. Local file: {p1}. {p2}. Choose timestamps as needed, then call qone_video_use_file with path and timestamps (seconds) to read frames; use mode=audio on the same path to read audio. No frames or audio have been read yet.",
     "zh-CN": "已通过 {p0} 获取视频。本地文件：{p1}。{p2}。按任务需要选择时间点，再调用 qone_video_use_file，传 path 和 timestamps（秒）读取画面；需要声音时对相同路径设置 mode=audio。当前尚未读取画面或声音。"
+  },
+  "media-tool.douyin_page_bridge_not_connected": {
+    "en": "The Douyin page bridge is not connected; sign in to Douyin in the app first",
+    "zh-CN": "抖音页面桥接尚未连接，请先在应用中登录抖音"
   },
   "media-tool.video_duration_unknown": {
     "en": "Video duration unknown",
@@ -883,6 +943,30 @@ export const runtimeCopyCore = {
   "video-download.ffmpeg_did_not_create_an_audio_file": {
     "en": "FFmpeg did not create an audio file",
     "zh-CN": "FFmpeg 未生成音频文件"
+  },
+  "video-download.douyin_stream_http": {
+    "en": "Douyin video stream request failed (HTTP {p0})",
+    "zh-CN": "抖音视频流请求失败（HTTP {p0}）"
+  },
+  "video-download.douyin_download_cancelled": {
+    "en": "Douyin video download was cancelled",
+    "zh-CN": "抖音视频下载已取消"
+  },
+  "video-download.douyin_empty_file": {
+    "en": "The Douyin page returned an empty video file",
+    "zh-CN": "抖音页面返回了空视频文件"
+  },
+  "video-download.douyin_partial_stream": {
+    "en": "Douyin returned an incomplete video range without a valid Content-Range",
+    "zh-CN": "抖音返回了不完整的视频分片，且缺少有效的 Content-Range"
+  },
+  "video-download.douyin_incomplete_stream": {
+    "en": "Douyin video stream is incomplete: expected {p0} bytes, received {p1}",
+    "zh-CN": "抖音视频流不完整：应接收 {p0} 字节，实际收到 {p1} 字节"
+  },
+  "video-download.douyin_non_video_response": {
+    "en": "Douyin returned a non-video response ({p0})",
+    "zh-CN": "抖音返回的不是视频内容（{p0}）"
   },
   "video-frames.the_video_file_no_longer_exists_cannot_read_frames": {
     "en": "The video file no longer exists; cannot read frames",

@@ -1,4 +1,7 @@
 import { z } from "zod";
+export { isDouyinUrl, douyinContentId, douyinAuthorId, isDouyinAuthorResult, isDouyinOwnerResult } from "./douyin";
+export type { DouyinAuthorResult, DouyinAuthorVideo, DouyinOwnerResult, DouyinBridgeFailure } from "./douyin";
+import type { DouyinBridgeFailure } from "./douyin";
 import type { ModelMetadata, ProviderApiType } from "./model-metadata";
 import type { AssistantMessagePart } from "./assistant-parts";
 export { ACTIVITY_TITLE_TOOL, ACTIVITY_TITLE_MAX_LENGTH, activityTitleFromArgs } from "./activity-title";
@@ -117,6 +120,9 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "plugins.list"; requestId: string }
   | { type: "browser.status"; requestId: string }
   | { type: "browser.connect"; requestId: string }
+  | { type: "browser.open"; requestId: string; url: string }
+  | { type: "browser.current-url"; requestId: string }
+  | { type: "douyin.bridge.response"; requestId: string; ok: boolean; result?: string; message?: string; failure?: DouyinBridgeFailure }
   | { type: "reach.channels"; requestId: string }
   | { type: "reach.podcast.configure"; requestId: string; accessToken: string; refreshToken: string }
   | { type: "subagent.list"; requestId: string }
@@ -245,6 +251,9 @@ export type RuntimeEvent =
   | { type: "skills.builtin.changed"; requestId: string; skill: SkillInfo; updated?: boolean }
   | { type: "plugins.list"; plugins: PluginInfo[] }
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
+  | { type: "browser.current-url"; requestId: string; url: string }
+  | { type: "douyin.bridge.request"; requestId: string; url: string; operation?: "video" | "author" | "owner"; limit?: number }
+  | { type: "douyin.bridge.cancel"; requestId: string }
   | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
   | { type: "subagent.list"; requestId?: string; config: SubagentConfigInfo }
   | { type: "subagent.query"; requestId: string; subagent: SubagentRunInfo }
@@ -663,9 +672,25 @@ export interface ReachChannelInfo {
   tools: string[];
   state: "available" | "unverified" | "needs-connection" | "unavailable";
   detail?: string;
+  /** Login entry point for channels that can reuse a browser session. */
+  loginUrl?: string;
+  /** Whether a site-scoped Cookie is stored in the local credential store. */
+  cookieConfigured?: boolean;
   /** Built-in display copy travels with the channel so language changes need no refetch. */
   english?: { name: string; description: string; backend: string; detail?: string };
   action?: "opencli" | "exa" | "youtube" | "linkedin" | "podcast" | "xueqiu" | "github" | "bilibili";
+}
+
+/** Site channels whose browser session can also be saved as a local Cookie header. */
+export const REACH_COOKIE_CHANNEL_IDS = [
+  "bilibili", "twitter", "reddit", "facebook", "instagram", "xiaohongshu",
+  "boss", "youtube", "xueqiu", "linkedin",
+] as const;
+export type ReachCookieChannelId = typeof REACH_COOKIE_CHANNEL_IDS[number];
+
+export function reachCookieSecretKey(channelId: string): string | undefined {
+  if (!REACH_COOKIE_CHANNEL_IDS.includes(channelId as ReachCookieChannelId)) return undefined;
+  return channelId === "xueqiu" ? "reach.xueqiu.cookie" : `reach.cookie:${channelId}`;
 }
 
 export interface McpOAuthInfo {
@@ -854,6 +879,9 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "plugins.list": z.object({ type: z.literal("plugins.list"), ...request }),
   "browser.status": z.object({ type: z.literal("browser.status"), ...request }),
   "browser.connect": z.object({ type: z.literal("browser.connect"), ...request }),
+  "browser.open": z.object({ type: z.literal("browser.open"), ...request, url: secureUrl }),
+  "browser.current-url": z.object({ type: z.literal("browser.current-url"), ...request }),
+  "douyin.bridge.response": z.object({ type: z.literal("douyin.bridge.response"), ...request, ok: z.boolean(), result: z.string().max(1_048_576).optional(), message: z.string().max(2_000).optional(), failure: z.enum(["metadata_timeout", "page_unavailable", "work_unavailable"]).optional() }),
   "reach.channels": z.object({ type: z.literal("reach.channels"), ...request }),
   "reach.podcast.configure": z.object({ type: z.literal("reach.podcast.configure"), ...request, accessToken: z.string().min(8).max(8192), refreshToken: z.string().min(8).max(8192) }),
   "subagent.list": z.object({ type: z.literal("subagent.list"), ...request }),

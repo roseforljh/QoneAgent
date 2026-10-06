@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { ReachChannelInfo } from "@qone/protocol";
+import { REACH_COOKIE_CHANNEL_IDS, type ReachChannelInfo } from "@qone/protocol";
 import { reachChannelEnglish, type ReachChannelId } from "./reach-channel-copy.js";
 
 const OPENCLI_SITES = ["twitter", "reddit", "facebook", "instagram", "xiaohongshu"] as const;
@@ -40,7 +40,24 @@ export function biliLaunch(): { command: string; prefix: string[] } | undefined 
   return uvx ? { command: uvx, prefix: ["--quiet", "--from", "bilibili-cli[audio]==0.6.2", "bili"] } : undefined;
 }
 
-interface ChannelContext { browserConnected: boolean; mcpConnected: (id: string) => boolean; hasXueqiuCookie?: boolean; podcastConfigured?: boolean; hasGroqKey?: boolean }
+interface ChannelContext { browserConnected: boolean; mcpConnected: (id: string) => boolean; hasXueqiuCookie?: boolean; podcastConfigured?: boolean; hasGroqKey?: boolean; cookieSites?: readonly string[] }
+
+const SITE_LOGIN_URLS: Record<string, string> = {
+  bilibili: "https://passport.bilibili.com/pc/passport/login",
+  twitter: "https://x.com/i/flow/login",
+  reddit: "https://www.reddit.com/login/",
+  facebook: "https://www.facebook.com/login/",
+  instagram: "https://www.instagram.com/accounts/login/",
+  xiaohongshu: "https://www.xiaohongshu.com/",
+  boss: "https://www.zhipin.com/web/user/",
+  youtube: "https://www.youtube.com/",
+  xueqiu: "https://xueqiu.com/",
+  linkedin: "https://www.linkedin.com/login",
+};
+
+function cookieConfigured(context: ChannelContext, id: string): boolean {
+  return context.cookieSites?.includes(id) ?? false;
+}
 
 export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
   const publicChannel = (id: ReachChannelId, name: string, description: string, backend: string, tools: string[], detail?: string): ReachChannelInfo =>
@@ -48,23 +65,30 @@ export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
   const openCliChannel = (id: ReachChannelId, name: string, description: string, detail?: string): ReachChannelInfo => ({
     id, name, description, backend: "OpenCLI", tools: ["qone_opencli_discover", "qone_opencli_run"],
     state: context.browserConnected ? "unverified" : "needs-connection",
-    detail: context.browserConnected ? "浏览器桥接已连接；网站登录态和命令需执行时验证" : detail ?? "连接 Chrome 并在网站登录后使用",
+    detail: cookieConfigured(context, id)
+      ? "Cookie 已保存，实际有效性在调用时验证"
+      : context.browserConnected ? "浏览器桥接已连接；网站登录态和命令需执行时验证" : detail ?? "连接 Chrome 并在网站登录后使用",
     action: "opencli",
-    english: { ...reachChannelEnglish[id], detail: context.browserConnected
-      ? "Browser bridge connected; website sessions and commands will be verified when used."
-      : "Connect Chrome and sign in to the website to use this channel." },
+    loginUrl: SITE_LOGIN_URLS[id],
+    cookieConfigured: REACH_COOKIE_CHANNEL_IDS.includes(id as (typeof REACH_COOKIE_CHANNEL_IDS)[number])
+      ? cookieConfigured(context, id) : undefined,
+    english: { ...reachChannelEnglish[id], detail: cookieConfigured(context, id)
+      ? "Cookie saved; validity will be verified when the channel is used."
+      : context.browserConnected
+        ? "Browser bridge connected; website sessions and commands will be verified when used."
+        : "Connect Chrome and sign in to the website to use this channel." },
   });
   const channels: ReachChannelInfo[] = [
     publicChannel("web", "网页抓取", "通过本地 Runtime 抓取公开网页并提取正文", "本地 web_fetch", ["web_fetch"]),
     publicChannel("rss", "RSS / Atom", "读取公开订阅源", "内置解析器", ["qone_rss_read"]),
     publicChannel("v2ex", "V2EX", "热门、最新、节点与回复", "V2EX 公开 API", ["qone_v2ex"]),
     { ...publicChannel("github", "GitHub", "公开仓库与搜索；账号操作可连接 GitHub MCP", "GitHub 公开 API", ["qone_github_public"], "公开功能可用；私有仓库和写入需配置 GitHub MCP"), action: "github" },
-    { ...publicChannel("bilibili", "哔哩哔哩", "公开视频搜索；字幕和账号操作使用 OpenCLI", "B站公开 API", ["qone_bilibili_search", "qone_opencli_run"], "公开视频搜索可用；字幕和账号功能需连接 Chrome"), action: "bilibili" },
+    { ...publicChannel("bilibili", "哔哩哔哩", "公开视频搜索；字幕和账号操作使用 OpenCLI", "B站公开 API", ["qone_bilibili_search", "qone_opencli_run"], "公开视频搜索可用；字幕和账号功能需连接 Chrome"), action: "bilibili", loginUrl: SITE_LOGIN_URLS.bilibili, cookieConfigured: cookieConfigured(context, "bilibili") },
     ...OPENCLI_SITES.map((id) => openCliChannel(id, ({ twitter: "X / Twitter", reddit: "Reddit", facebook: "Facebook", instagram: "Instagram", xiaohongshu: "小红书" } as Record<string, string>)[id]!, "通过网站适配器读取或操作账号")),
-    { id: "xueqiu", name: "雪球", description: "股票行情、搜索与热门股票", backend: "OpenCLI / 雪球 API", tools: ["qone_opencli_discover", "qone_opencli_run", "qone_xueqiu"], state: context.hasXueqiuCookie || context.browserConnected ? "unverified" : "needs-connection", detail: context.hasXueqiuCookie ? "Cookie 已配置，实际有效性需请求时验证" : "可连接 Chrome 复用登录态，也可粘贴 Cookie 用雪球 API", action: "xueqiu", english: { ...reachChannelEnglish.xueqiu, detail: context.hasXueqiuCookie ? "Cookie configured; its validity will be verified on request." : "Connect Chrome to reuse your session, or paste a cookie to use the Xueqiu API." } },
+    { id: "xueqiu", name: "雪球", description: "股票行情、搜索与热门股票", backend: "OpenCLI / 雪球 API", tools: ["qone_opencli_discover", "qone_opencli_run", "qone_xueqiu"], state: context.hasXueqiuCookie || context.browserConnected ? "unverified" : "needs-connection", detail: context.hasXueqiuCookie ? "Cookie 已配置，实际有效性需请求时验证" : "可连接 Chrome 复用登录态，也可粘贴 Cookie 用雪球 API", action: "xueqiu", loginUrl: SITE_LOGIN_URLS.xueqiu, cookieConfigured: context.hasXueqiuCookie || cookieConfigured(context, "xueqiu"), english: { ...reachChannelEnglish.xueqiu, detail: context.hasXueqiuCookie ? "Cookie configured; its validity will be verified on request." : "Connect Chrome to reuse your session, or paste a cookie to use the Xueqiu API." } },
     openCliChannel("boss", "Boss 直聘", "职位搜索、岗位详情与招聘操作"),
     {
-      id: "youtube", name: "YouTube", description: "搜索视频与读取视频元数据", backend: "yt-dlp",
+      id: "youtube", name: "YouTube", description: "搜索视频与读取视频元数据", backend: "yt-dlp", loginUrl: SITE_LOGIN_URLS.youtube, cookieConfigured: cookieConfigured(context, "youtube"),
       tools: ytDlpExecutable() ? ["qone_youtube", "qone_opencli_run"] : ["qone_opencli_discover", "qone_opencli_run"], state: ytDlpExecutable() ? "available" : "unverified",
       detail: ytDlpExecutable() ? "yt-dlp 可用；字幕失败时可尝试 OpenCLI" : "yt-dlp 未找到；可尝试 OpenCLI 的 YouTube 适配器", action: "youtube",
       english: { ...reachChannelEnglish.youtube, detail: ytDlpExecutable() ? "yt-dlp is available; try OpenCLI if subtitles fail." : "yt-dlp was not found; try the OpenCLI YouTube adapter." },
@@ -77,7 +101,7 @@ export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
       english: { ...reachChannelEnglish.exa_search, detail: context.mcpConnected("mcp-reach-exa") ? undefined : "Select this card to connect Exa MCP." },
     },
     {
-      id: "linkedin", name: "LinkedIn", description: "公开页面与账号操作", backend: "OpenCLI / 本地 web_fetch",
+      id: "linkedin", name: "LinkedIn", description: "公开页面与账号操作", backend: "OpenCLI / 本地 web_fetch", loginUrl: SITE_LOGIN_URLS.linkedin, cookieConfigured: cookieConfigured(context, "linkedin"),
       tools: ["web_fetch", "qone_opencli_discover", "qone_opencli_run"], state: context.browserConnected ? "unverified" : "needs-connection", detail: "账号功能经 OpenCLI 复用 Chrome 登录态；公开页面使用本地 web_fetch", action: "opencli",
       english: reachChannelEnglish.linkedin,
     },

@@ -11,6 +11,16 @@ function store() {
 }
 
 describe("WebAccessMemory", () => {
+  test("old Douyin Chrome successes cannot force the obsolete backend", () => {
+    const memory = new WebAccessMemory(store());
+    const context = memory.context("session-douyin", "下载抖音视频", [
+      { toolName: "qone_browser_open", args: { url: "https://v.douyin.com/share/" }, result: { content: [] }, at: 1 },
+      { toolName: "qone_opencli_run", args: { site: "douyin", command: "search" }, result: { content: [] }, at: 2 },
+    ]);
+    expect(context).toContain("MUST use Qone embedded Douyin bridge");
+    expect(context).not.toContain("MUST use OpenCLI");
+    expect(context).toContain("qone_douyin_resolve_author");
+  });
   test("remembers a failed direct route and a successful browser route per session", () => {
     const memory = new WebAccessMemory(store());
     memory.recordToolResult("session-a", "web_fetch", { url: "https://www.nodeseek.com/post-1" }, {

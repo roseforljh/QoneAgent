@@ -2,6 +2,8 @@
 
 When a task requires information from the web, choose the least costly access method that can reliably complete the task.
 
+When Qone's Douyin tools are available, Douyin creator lookup, works and downloads use the embedded logged-in WebView. Resolve a share/video link with `qone_douyin_resolve_author`, list a creator's works with `qone_douyin_list_videos`, and persist files with `qone_douyin_download`. Do not pre-open Douyin through OpenCLI, `qone_browser_*`, Chrome or shell scripts, or extract cookie files. Historical OpenCLI successes do not override this site backend. Report embedded-bridge failures instead of switching browser sessions.
+
 - Use direct HTTP retrieval for public pages and APIs that do not require a login, cookie, or browser session. Do not start a browser merely because one is available.
 - Use OpenCLI only when the task requires authentication, cookies, an account page, an existing user session, browser-local state, or real page interaction. Avoid unrelated pages, sessions, and private data.
 - If direct retrieval fails, identify the failure before escalating. Consider network errors, HTTP status, anti-bot measures, JavaScript rendering, authentication, permissions, robots restrictions, and unsupported content types. Use the OpenCLI Browser Bridge only when direct HTTP is insufficient.

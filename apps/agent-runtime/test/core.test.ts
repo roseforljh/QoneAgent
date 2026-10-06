@@ -333,6 +333,12 @@ describe("runtime persistence and permissions", () => {
     expect(decodeCommand(JSON.stringify({ ...command, thinking: "extreme" }))).toBeNull();
   });
 
+  test("allows browser login navigation only to secure URLs", () => {
+    expect(decodeCommand(JSON.stringify({ type: "browser.open", requestId: "r", url: "https://x.com/i/flow/login" })))
+      .toMatchObject({ type: "browser.open", url: "https://x.com/i/flow/login" });
+    expect(decodeCommand(JSON.stringify({ type: "browser.open", requestId: "r", url: "http://example.com/login" }))).toBeNull();
+  });
+
   test("accepts the subagent notification snapshot command", () => {
     expect(decodeCommand(JSON.stringify({ type: "session.subagentNotifications", requestId: "r", sessionId: "s" })))
       .toMatchObject({ type: "session.subagentNotifications", sessionId: "s" });

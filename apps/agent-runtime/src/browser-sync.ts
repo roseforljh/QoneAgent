@@ -2,7 +2,7 @@ import { runtimeText, runtimeError } from "./runtime-localization";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
-import type { BrowserSyncStatus } from "@qone/protocol";
+import { isDouyinUrl, isSecureServiceUrl, type BrowserSyncStatus } from "@qone/protocol";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Db } from "@qone/database";
@@ -52,7 +52,16 @@ type OpenCliFormat = "json" | "yaml" | "table" | "plain" | "md" | "csv";
 const OPENCLI_CATALOG_TTL = 5 * 60_000;
 const MAX_TOOL_OUTPUT = 80_000;
 
+/** Enforce the selected site backend before any process or Chrome session starts. */
+export function assertOpenCliRoute(args: readonly string[]): void {
+  if (args[0]?.trim().toLowerCase() === "douyin" || args.some((arg) =>
+    (arg.match(/https?:\/\/[^\s"'<>]+/gi) ?? []).some(isDouyinUrl))) {
+    throw runtimeError("browser-sync.douyin_embedded_route_required", {});
+  }
+}
+
 export function runOpenCli(args: string[], timeout = COMMAND_TIMEOUT, signal?: AbortSignal): Promise<CommandResult> {
+  assertOpenCliRoute(args);
   const launch = bundledOpenCli(args) ?? resolveStdioLaunch("npx", ["--yes", OPENCLI_PACKAGE, ...args]);
   const toolDirectories = [...new Set([ytDlpExecutable(), ffmpegExecutable()].filter((value): value is string => Boolean(value)).map((value) => path.dirname(value)))];
   return new Promise((resolve, reject) => {
@@ -261,7 +270,7 @@ export class BrowserSyncService {
       this.openCliDiscoverTool(),
       this.openCliRunTool(),
       this.browserCommand("qone_browser_state", "Read the current page state from the user's Chrome browser. If Chrome is closed, Qone starts the user's default Chrome profile first.", Type.Object({}), () => ["state"]),
-      this.browserCommand("qone_browser_open", "Open a URL for a real browser interaction in the user's Chrome tab. Use only after web_fetch is insufficient or when the task explicitly requires browser state, authentication, JavaScript interaction, or a visible page. Do not use this for ordinary public page reading. If Chrome is closed, Qone starts the user's default Chrome profile first.", Type.Object({ url: Type.String() }), (value) => ["open", value.url]),
+      this.browserCommand("qone_browser_open", "Open a URL in external Chrome through OpenCLI; this cannot operate Qone's embedded browser. Douyin URLs are rejected: use qone_douyin_resolve_author, qone_douyin_list_videos or qone_douyin_download instead. Use only after web_fetch is insufficient or when the task explicitly requires browser state, authentication, JavaScript interaction, or a visible page. Do not use this for ordinary public page reading. If Chrome is closed, Qone starts the user's default Chrome profile first.", Type.Object({ url: Type.String() }), (value) => ["open", value.url]),
       this.browserCommand("qone_browser_click", "Click a visible element in the user's browser. Use the target from qone_browser_state.", Type.Object({ target: Type.String() }), (value) => ["click", value.target]),
       this.browserCommand("qone_browser_fill", "Replace the value of an input in the user's browser.", Type.Object({ target: Type.String(), text: Type.String() }), (value) => ["fill", value.target, value.text]),
       this.browserCommand("qone_browser_type", "Type text into an element in the user's browser.", Type.Object({ target: Type.String(), text: Type.String() }), (value) => ["type", value.target, value.text]),
@@ -293,6 +302,7 @@ export class BrowserSyncService {
         refresh: Type.Optional(Type.Boolean()),
       }),
       execute: async (_id: string, value: { site?: string; query?: string; limit?: number; refresh?: boolean }) => {
+        if (value.site?.trim().toLowerCase() === "douyin") assertOpenCliRoute([value.site]);
         const commands = await this.loadOpenCliCatalog(Boolean(value.refresh));
         return result({ stdout: JSON.stringify(compactOpenCliCatalog(commands, value.site, value.query, value.limit), null, 2), stderr: "" }) as never;
       },
@@ -326,7 +336,7 @@ export class BrowserSyncService {
     if (!force && this.openCliCatalog && now - this.openCliCatalog.loadedAt < OPENCLI_CATALOG_TTL) return this.openCliCatalog.commands;
     if (!force && this.openCliCatalogPromise) return this.openCliCatalogPromise;
     const load = runOpenCli(["list", "--format", "json"]).then(({ stdout }) => {
-      const commands = parseOpenCliCatalog(stdout);
+      const commands = parseOpenCliCatalog(stdout).filter((command) => command.site.toLowerCase() !== "douyin");
       if (!commands.length) throw runtimeError("browser-sync.opencli_returned_no_available_adapter_commands", {});
       this.openCliCatalog = { loadedAt: Date.now(), commands };
       return commands;
@@ -407,6 +417,18 @@ export class BrowserSyncService {
     return this.exclusive(() => this.connectInner());
   }
 
+  async openUrl(url: string): Promise<void> {
+    if (!isSecureServiceUrl(url)) throw new Error("Browser navigation requires an HTTPS URL");
+    await this.runBrowserCommand(["open", url]);
+  }
+
+  async currentUrl(): Promise<string> {
+    const result = await this.runBrowserCommand(["get", "url"]);
+    const url = result.stdout.trim();
+    if (!url) throw new Error("Browser returned an empty URL");
+    return url;
+  }
+
   async release(): Promise<void> {
     await this.exclusive(async () => {
       const closeOwnedBrowser = this.startedBrowser;
@@ -444,6 +466,7 @@ export class BrowserSyncService {
   }
 
   private runBrowserCommand(args: string[]): Promise<CommandResult> {
+    assertOpenCliRoute(args);
     return this.exclusive(async () => {
       if (!this.statusValue.targetConnected) await this.connectInner();
       return runOpenCli(["browser", SESSION, ...args]);

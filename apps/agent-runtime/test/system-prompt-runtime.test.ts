@@ -8,6 +8,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi
 import { streamSimple as streamResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { PiAdapter } from "../src/pi-adapter";
 import { readSystemPrompt } from "../src/system-prompt";
+import { DouyinBridge } from "../src/douyin-bridge";
 
 test("model-facing system text starts with the same eight modules across model/tool/workspace/context changes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "qone-prompt-runtime-"));
@@ -64,6 +65,46 @@ test("model-facing system text starts with the same eight modules across model/t
     if (originalRoot === undefined) delete process.env.QONE_DATA_DIR;
     else process.env.QONE_DATA_DIR = originalRoot;
     if (path.dirname(path.resolve(root)) !== path.resolve(tmpdir())) throw new Error("Unsafe test cleanup");
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 15000);
+
+test("existing custom prompts still receive embedded Douyin routing and all three tools", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "qone-douyin-routing-"));
+  const originalRoot = process.env.QONE_DATA_DIR;
+  process.env.QONE_DATA_DIR = path.join(root, "data");
+  const faux = fauxProvider({ provider: "qone-douyin-routing", models: [{ id: "text-model" }] });
+  const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
+  runtime.registerNativeProvider(faux.provider);
+  const adapter = new PiAdapter(() => {}, {}, undefined, undefined, undefined, new DouyinBridge(() => {
+    throw new Error("This test must not request a browser");
+  }));
+  Object.assign(adapter, { modelRuntime: runtime });
+  let requests = 0;
+  try {
+    readSystemPrompt();
+    writeFileSync(path.join(process.env.QONE_DATA_DIR, "system-prompts", "04-web-access.md"), "# Custom web policy\n\nUse the available session tools.");
+    faux.setResponses([async (context) => {
+      requests++;
+      const session = (adapter as unknown as { sessions: Map<string, { getCallableToolNames: () => string[] }> }).sessions.get("route-check");
+      const names = session!.getCallableToolNames();
+      expect(names).toContain("qone_douyin_resolve_author");
+      expect(names).toContain("qone_douyin_list_videos");
+      expect(names).toContain("qone_douyin_download");
+      // Provider contexts normalize system text/tool declarations into messages.
+      expect(JSON.stringify(context.messages)).toContain("Custom web policy");
+      expect(JSON.stringify(context.messages)).toContain("QONE_DOUYIN_ROUTING");
+      expect(JSON.stringify(context.messages)).toContain("Do not pre-open Douyin");
+      return fauxAssistantMessage(fauxText("Route checked."));
+    }]);
+    await adapter.run("route-check", "下载这个分享视频所属博主前10个视频：https://v.douyin.com/share/", {
+      cwd: root, model: `${faux.provider.id}/text-model`, permissionMode: "full",
+    }, () => {});
+    expect(requests).toBe(1);
+  } finally {
+    await adapter.disposeSession("route-check");
+    if (originalRoot === undefined) delete process.env.QONE_DATA_DIR;
+    else process.env.QONE_DATA_DIR = originalRoot;
     rmSync(root, { recursive: true, force: true });
   }
 }, 15000);

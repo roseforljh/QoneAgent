@@ -8,7 +8,7 @@ import { SideConversationService } from "./side-conversation.js";
 
 import { createLogger, EventBus, qoneDatabasePath, qoneConfigDatabasePath, qoneMcpDatabasePath, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, SessionSearchResult } from "@qone/protocol";
-import { decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
+import { decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, REMOVED_BUILTIN_SUBAGENT_IDS, REACH_COOKIE_CHANNEL_IDS } from "@qone/protocol";
 import { openDb, openConfigDb, openMcpDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
@@ -41,6 +41,7 @@ import { ensureGlobalInstructions } from "./global-instructions.js";
 import { ensureSystemPromptModules } from "./system-prompt.js";
 import { updateLiveAssistant, type LiveAssistantState } from "./live-assistant.js";
 import { createRuntimeOutput } from "./runtime-output.js";
+import { DouyinBridge } from "./douyin-bridge.js";
 
 const log = createLogger("runtime");
 
@@ -58,6 +59,7 @@ const eventBus = new EventBus<RuntimeBusEvent>();
 // stderr is reserved for logs.
 const output = createRuntimeOutput({ write: (line) => { process.stdout.write(line); }, intervalMs: 8, maxEvents: 32 });
 const send = output.send;
+const douyinBridge = new DouyinBridge((event) => send(event));
 
 // Keep the user file and its directory available before the settings UI opens.
 ensureGlobalInstructions();
@@ -520,7 +522,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   const customEntries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
   history.push(...customEntries.map((rawMessage) => ({ id: crypto.randomUUID(), role: "custom", content: "", attachments: undefined, createdAt: Date.now(), rawMessage })));
   return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
-}, compactionPreferences);
+}, compactionPreferences, douyinBridge);
 adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
 subagentNotificationCoordinator = new SubagentNotificationCoordinator(
   subagentNotificationRepo,
@@ -692,6 +694,7 @@ function sendReachChannels(requestId?: string) {
     browserConnected: browserSync?.status().targetConnected ?? false,
     mcpConnected: (id) => mcp.isConnected(id),
     hasXueqiuCookie: Boolean(runtimeSecrets.get("reach.xueqiu.cookie")),
+    cookieSites: REACH_COOKIE_CHANNEL_IDS.filter((id) => runtimeSecrets.has(id === "xueqiu" ? "reach.xueqiu.cookie" : `reach.cookie:${id}`)),
     podcastConfigured: podcastConfigured(),
     hasGroqKey: Boolean(runtimeSecrets.get("reach.groq.apiKey")),
   }) });
@@ -854,6 +857,7 @@ export function runtimeCommandServices() {
     authorizeCommand,
     get browserSync() { return browserSync; },
     set browserSync(value: typeof browserSync) { browserSync = value; },
+    douyinBridge,
     cancelledRuns,
     commandApprovals,
     emit,

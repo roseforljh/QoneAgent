@@ -105,11 +105,12 @@ function insideWorkspace(target: string, workspacePath: string): boolean {
   return resolved === ws || resolved.startsWith(`${ws}${path.sep}`);
 }
 
-const MUTATING_FILE_TOOLS = new Set(["write", "edit"]);
+const MUTATING_FILE_TOOLS = new Set(["write", "edit", "qone_douyin_download"]);
 
 function pathArgument(ctx: ToolContext): string | undefined {
   const args = ctx.args as Record<string, unknown> | undefined;
-  const candidate = args?.path ?? args?.file ?? (ctx.toolName === "powershell" || ctx.toolName === "bash" ? args?.cwd : undefined);
+  const candidate = args?.path ?? args?.file ?? (ctx.toolName === "qone_douyin_download" ? path.join("downloads", "douyin")
+    : ctx.toolName === "powershell" || ctx.toolName === "bash" ? args?.cwd : undefined);
   return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
 }
 
@@ -206,6 +207,8 @@ export function permissionNames(toolName: string): string[] {
   if (["inspect_subagent", "wait_subagent", "list_subagents"].includes(toolName)) return ["agent.inspect"];
   if (toolName === "read" || toolName === "grep" || toolName === "find" || toolName === "ls") return ["filesystem.read"];
   if (toolName === "write" || toolName === "edit") return ["filesystem.write"];
+  if (toolName === "qone_douyin_download") return ["filesystem.write", "network.access"];
+  if (toolName === "qone_douyin_list_videos" || toolName === "qone_douyin_resolve_author") return ["network.access"];
   if (toolName === "bash" || toolName === "powershell") return ["shell.execute"];
   if (toolName.startsWith("mcp:")) return ["mcp.execute"];
   return ["tool.execute"];
