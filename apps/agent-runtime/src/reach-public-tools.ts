@@ -5,11 +5,13 @@ import { lookup } from "node:dns/promises";
 import { XMLParser } from "fast-xml-parser";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createWebFetchTool } from "./web-fetch.js";
+import { siteForAppId } from "@qone/protocol";
 
 const MAX_BYTES = 2_000_000;
 const TEXT_LIMIT = 80_000;
 const USER_AGENT = "QoneAgent/0.1 (public web reader)";
+const BILIBILI_HOME_URL = siteForAppId("bilibili")!.homeUrl;
+const XUEQIU_HOME_URL = siteForAppId("xueqiu")!.homeUrl;
 
 function publicUrl(input: string): URL {
   const url = new URL(input);
@@ -120,7 +122,6 @@ async function runCli(command: string, args: string[], timeout = 60_000): Promis
 
 export function createReachPublicTools(options: { ytDlp: () => string | undefined; githubToken?: () => string | undefined; xueqiuCookie?: () => string | undefined }): ToolDefinition[] {
   const tools = [
-    createWebFetchTool(),
     {
       name: "qone_rss_read", label: "RSS · read", description: "Read public RSS or Atom feed items without login.",
       parameters: Type.Object({ url: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
@@ -142,7 +143,7 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       },
     },
     {
-      name: "qone_github_public", label: "GitHub · public API", description: "Read structured public GitHub API data such as repositories, issues, users, or repository search without requiring gh login. For a public GitHub URL, README, documentation page, or article, use web_fetch; use GitHub MCP only for authenticated or account operations.",
+      name: "qone_github_public", label: "GitHub · public API", description: "Read structured public GitHub API data such as repositories, issues, users, or repository search without requiring gh login. Use GitHub MCP only for authenticated or account operations.",
       parameters: Type.Object({ kind: Type.Union([Type.Literal("repo"), Type.Literal("issues"), Type.Literal("user"), Type.Literal("search")]), value: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
       execute: async (_id, { kind, value, limit }: { kind: string; value: string; limit?: number }) => {
         const slug = value.trim();
@@ -160,12 +161,12 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       },
     },
     {
-      name: "qone_bilibili_search", label: "Bilibili · search", description: "Search public Bilibili videos directly using the public search API; use OpenCLI for subtitles and authenticated actions.",
+      name: "qone_bilibili_search", label: "Bilibili · search", description: "Search public Bilibili videos using the built-in public search API. For account pages, posts, comments, or other site operations use qone_opencli_discover followed by qone_opencli_run. For a result's metadata use qone_app_inspect; for subtitles, video parsing, or summaries use qone_video_download and qone_video_use_file.",
       parameters: Type.Object({ query: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }),
       execute: async (_id, { query, limit }: { query: string; limit?: number }) => {
         const url = new URL("https://api.bilibili.com/x/web-interface/search/all/v2");
         url.searchParams.set("keyword", query); url.searchParams.set("page", "1");
-        const data = JSON.parse(await boundedFetch(url, { Referer: "https://www.bilibili.com/" })) as { code?: number; message?: string; data?: { result?: { data?: unknown[] }[] } };
+        const data = JSON.parse(await boundedFetch(url, { Referer: BILIBILI_HOME_URL })) as { code?: number; message?: string; data?: { result?: { data?: unknown[] }[] } };
         if (data.code !== 0) throw runtimeError("reach-public-tools.bilibili_search_failed", { p0: data.message ?? data.code });
         return output((data.data?.result ?? []).flatMap((group) => group.data ?? []).slice(0, limit ?? 10));
       },
@@ -181,28 +182,22 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
         const route = kind === "quote"
           ? `https://stock.xueqiu.com/v5/stock/quote.json?symbol=${encodeURIComponent(value!)}&extend=detail`
           : kind === "search"
-            ? `https://xueqiu.com/stock/search.json?code=${encodeURIComponent(value!)}&size=${limit ?? 10}`
+            ? `${XUEQIU_HOME_URL}stock/search.json?code=${encodeURIComponent(value!)}&size=${limit ?? 10}`
             : `https://stock.xueqiu.com/v5/stock/hot_stock/list.json?size=${limit ?? 10}&type=10`;
-        const data = JSON.parse(await boundedFetch(new URL(route), { Cookie: cookie, Referer: "https://xueqiu.com/" })) as unknown;
+        const data = JSON.parse(await boundedFetch(new URL(route), { Cookie: cookie, Referer: XUEQIU_HOME_URL })) as unknown;
         return output(data);
       },
     },
     {
-      name: "qone_youtube", label: "YouTube · yt-dlp", description: "Search YouTube or read video metadata with yt-dlp when it is available. Never use this tool for Bilibili.",
-      parameters: Type.Object({ kind: Type.Union([Type.Literal("search"), Type.Literal("video")]), value: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }),
-      execute: async (_id, { kind, value, limit }: { kind: string; value: string; limit?: number }) => {
+      name: "qone_youtube_search", label: "YouTube · search", description: "Search YouTube by keyword only. For a known video URL, use qone_app_inspect; for downloading, use qone_app_download.",
+      parameters: Type.Object({ query: Type.String({ minLength: 1 }), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }),
+      execute: async (_id, { query, limit }: { query: string; limit?: number }) => {
         const executable = options.ytDlp();
         if (!executable) throw runtimeError("reach-public-tools.yt_dlp_is_unavailable_check_the_youtube_backend_status", {});
-        let target = `ytsearch${limit ?? 5}:${value}`;
-        if (kind === "video") {
-          const url = publicUrl(value);
-          const host = url.hostname.toLowerCase();
-          if (!["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"].includes(host)) throw runtimeError("reach-public-tools.the_youtube_tool_only_accepts_youtube_video_urls", {});
-          target = url.href;
-        }
-        return output(await runCli(executable, ["--no-playlist", "--dump-json", "--skip-download", target], 90_000));
+        const target = `ytsearch${limit ?? 5}:${query.trim()}`;
+        return output(await runCli(executable, ["--flat-playlist", "--dump-single-json", "--skip-download", target], 90_000));
       },
     },
   ] as ToolDefinition[];
-  return options.ytDlp() ? tools : tools.filter((tool) => tool.name !== "qone_youtube");
+  return options.ytDlp() ? tools : tools.filter((tool) => tool.name !== "qone_youtube_search");
 }

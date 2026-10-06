@@ -46,9 +46,25 @@ import type { DouyinBridge } from "./douyin-bridge.js";
 import { createDouyinTools, DOUYIN_ROUTING_GUIDANCE } from "./douyin-tools.js";
 import { extractTextContent, splitModelName } from "./pi-message-utils.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
+import type { AppMediaService } from "./app-media-service.js";
+import { APP_MEDIA_ROUTING_GUIDANCE, createAppMediaTools } from "./app-media-tools.js";
 
 const log = createLogger("pi-adapter");
 const MODEL_TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
+/** Keep a stalled provider from holding a user task for several minutes. */
+export const PI_REQUEST_LIMITS = {
+  httpIdleTimeoutMs: 90_000,
+  retry: {
+    maxRetries: 1,
+    baseDelayMs: 1_000,
+    maxAgentDelayMs: 5_000,
+    provider: {
+      timeoutMs: 90_000,
+      maxRetries: 0,
+      maxRetryDelayMs: 1_000,
+    },
+  },
+} as const;
 export { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences } from "./pi-compaction.js";
 export type { PiCompactionPreferences } from "./pi-compaction.js";
 
@@ -175,6 +191,7 @@ export class PiAdapter {
     private restoreMessages?: (sessionId: string, currentRunId?: string) => PersistedPiMessage[],
     compactionPreferences: PiCompactionPreferences = DEFAULT_PI_COMPACTION_PREFERENCES,
     private douyinBridge?: DouyinBridge,
+    private appMediaService?: AppMediaService,
   ) {
     this.emit = emit;
     this.hooks = hooks;
@@ -525,7 +542,15 @@ export class PiAdapter {
     }
     const builtinTools = [
       createReadTool(workspacePath),
-      createPowerShellTool(workspacePath),
+      createPowerShellTool(workspacePath, {
+        // PowerShell 7 can emit ANSI color codes for formatted objects. The
+        // tool output is sent to the chat as plain text, so those codes would
+        // become visible as garbled characters instead of colors.
+        spawnHook: ({ command, ...context }) => ({
+          ...context,
+          command: "try { $PSStyle.OutputRendering = 'PlainText' } catch {}\n" + command,
+        }),
+      }),
       ...createFileChangeTools(workspacePath),
       createGrepTool(workspacePath),
       createFindTool(workspacePath),
@@ -566,9 +591,19 @@ export class PiAdapter {
       douyinDownload: this.douyinBridge
         ? (url: string, signal?: AbortSignal) => downloadDouyinVideo(url, (target, requestSignal) => this.douyinBridge!.request(target, requestSignal), signal)
         : undefined,
+      bilibiliDownload: this.appMediaService
+        ? async (url: string, mode: "video" | "audio", signal?: AbortSignal) => {
+          const result = await this.appMediaService!.download("bilibili", url, mode, undefined, signal);
+          const file = result.files[0];
+          if (!file) throw runtimeError("app-media.no_output", {});
+          return file;
+        }
+        : undefined,
     };
     const mediaTools = [createVideoDownloadTool(mediaToolOptions), createAttachmentAudioTool(mediaToolOptions), createAttachmentFrameTool(mediaToolOptions), ...createVideoFallbackTools(mediaToolOptions),
-      ...(this.douyinBridge ? createDouyinTools(this.douyinBridge, workspacePath) : [])];
+      ...(this.douyinBridge ? createDouyinTools(this.douyinBridge, workspacePath) : []),
+      ...(this.appMediaService ? createAppMediaTools(this.appMediaService, workspacePath) : []),
+    ];
     const goalTools: ToolDefinition[] = goalId && goalEpoch !== undefined && goalRunId && this.goalBridge ? [{
       name: "get_goal", label: "Get goal", description: "Read the current goal and its execution state.",
       parameters: Type.Object({}),
@@ -633,6 +668,7 @@ export class PiAdapter {
     const sessionSettings = SettingsManager.inMemory();
     sessionSettings.applyOverrides(this.compactionOverrides());
     sessionSettings.applyOverrides({ defaultTools: ["+codemode"] });
+    sessionSettings.applyOverrides(PI_REQUEST_LIMITS);
     const { session } = await createAgentSession({
       cwd: workspacePath,
       sessionManager,
@@ -866,7 +902,7 @@ export class PiAdapter {
         ? runtimeText("pi-adapter.the_current_api_format_has_no_general_video_file") : "";
       const modelAttachments = await materializeModelInputs(attachments, isGoogle, capabilities?.input);
       const webAccessContext = this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "";
-      await session.prompt([webAccessContext, this.douyinBridge ? DOUYIN_ROUTING_GUIDANCE : "", capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
+      await session.prompt([webAccessContext, this.douyinBridge ? DOUYIN_ROUTING_GUIDANCE : "", this.appMediaService ? APP_MEDIA_ROUTING_GUIDANCE : "", capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
         images: isGoogle ? googleMediaContent(modelAttachments, capabilities?.input)
           : [...imageContent(modelAttachments, capabilities?.input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
       });

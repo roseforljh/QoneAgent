@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { MEDIA_APP_IDS } from "./app-media";
+import type { MediaAppId } from "./app-media";
+export { MEDIA_APP_IDS, mediaAppFromUrl, mediaAppHostIsAlias, mediaAppContentId, mediaAppProfile, isAppMediaList } from "./app-media";
+export type { MediaAppId, MediaAppMode, AppMediaItem, AppMediaList } from "./app-media";
+export { SITE_CONFIG, findSite, siteAppId, siteForAppId, siteHosts, siteMatchesHost, siteHostIsAlias, siteHostRegexSource } from "./site-config";
+export type { SiteConfig } from "./site-config";
 export { isDouyinUrl, douyinContentId, douyinAuthorId, isDouyinAuthorResult, isDouyinOwnerResult } from "./douyin";
 export type { DouyinAuthorResult, DouyinAuthorVideo, DouyinOwnerResult, DouyinBridgeFailure } from "./douyin";
 import type { DouyinBridgeFailure } from "./douyin";
@@ -123,6 +129,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "browser.open"; requestId: string; url: string }
   | { type: "browser.current-url"; requestId: string }
   | { type: "douyin.bridge.response"; requestId: string; ok: boolean; result?: string; message?: string; failure?: DouyinBridgeFailure }
+  | { type: "apps.opencli.response"; requestId: string; ok: boolean; endpoint?: string; message?: string }
   | { type: "reach.channels"; requestId: string }
   | { type: "reach.podcast.configure"; requestId: string; accessToken: string; refreshToken: string }
   | { type: "subagent.list"; requestId: string }
@@ -253,6 +260,8 @@ export type RuntimeEvent =
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
   | { type: "browser.current-url"; requestId: string; url: string }
   | { type: "douyin.bridge.request"; requestId: string; url: string; operation?: "video" | "author" | "owner"; limit?: number }
+  | { type: "apps.opencli.request"; requestId: string; site: string; url: string }
+  | { type: "apps.opencli.release"; requestId: string }
   | { type: "douyin.bridge.cancel"; requestId: string }
   | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
   | { type: "subagent.list"; requestId?: string; config: SubagentConfigInfo }
@@ -683,7 +692,7 @@ export interface ReachChannelInfo {
 
 /** Site channels whose browser session can also be saved as a local Cookie header. */
 export const REACH_COOKIE_CHANNEL_IDS = [
-  "bilibili", "twitter", "reddit", "facebook", "instagram", "xiaohongshu",
+  "tiktok", "bilibili", "twitter", "reddit", "facebook", "instagram", "xiaohongshu",
   "boss", "youtube", "xueqiu", "linkedin",
 ] as const;
 export type ReachCookieChannelId = typeof REACH_COOKIE_CHANNEL_IDS[number];
@@ -882,6 +891,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "browser.open": z.object({ type: z.literal("browser.open"), ...request, url: secureUrl }),
   "browser.current-url": z.object({ type: z.literal("browser.current-url"), ...request }),
   "douyin.bridge.response": z.object({ type: z.literal("douyin.bridge.response"), ...request, ok: z.boolean(), result: z.string().max(1_048_576).optional(), message: z.string().max(2_000).optional(), failure: z.enum(["metadata_timeout", "page_unavailable", "work_unavailable"]).optional() }),
+  "apps.opencli.response": z.object({ type: z.literal("apps.opencli.response"), ...request, ok: z.boolean(), endpoint: z.string().max(256).optional(), message: z.string().max(2_000).optional() }),
   "reach.channels": z.object({ type: z.literal("reach.channels"), ...request }),
   "reach.podcast.configure": z.object({ type: z.literal("reach.podcast.configure"), ...request, accessToken: z.string().min(8).max(8192), refreshToken: z.string().min(8).max(8192) }),
   "subagent.list": z.object({ type: z.literal("subagent.list"), ...request }),

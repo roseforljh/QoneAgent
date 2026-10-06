@@ -2,11 +2,12 @@ import { runtimeText, runtimeError } from "./runtime-localization";
 import { execFile } from "node:child_process";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { qoneTemporaryDir } from "@qone/shared";
+import { mediaAppContentId, siteMatchesHost } from "@qone/protocol";
 import path from "node:path";
 import { promisify } from "node:util";
 import { runOpenCli } from "./browser-sync.js";
 import { biliLaunch } from "./reach-channels.js";
-import { mediaMimeType } from "./video-download.js";
+import { mediaMimeType, type DownloadedVideo } from "./video-download.js";
 
 const execFileAsync = promisify(execFile);
 const pythonOptions = { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } };
@@ -30,7 +31,7 @@ export function bilibiliCliResultText(stdout: string): string {
 export function isBilibiliUrl(value: string): boolean {
   try {
     const host = new URL(value).hostname.toLowerCase();
-    return host === "bilibili.com" || host.endsWith(".bilibili.com") || host === "b23.tv";
+    return siteMatchesHost("bilibili", host);
   } catch { return false; }
 }
 
@@ -62,6 +63,51 @@ export interface BilibiliFallbackResult {
   source: "bilibili-cli" | "OpenCLI";
   text: string;
   audio?: { path: string; mimeType: string; directory: string };
+}
+
+export interface BilibiliOpenCliDownloadResult {
+  id?: string;
+  files: DownloadedVideo[];
+  directory: string;
+}
+
+async function mediaFiles(directory: string): Promise<DownloadedVideo[]> {
+  const pending = [directory];
+  const files: DownloadedVideo[] = [];
+  for (const current of pending) {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const filePath = path.join(current, entry.name);
+      if (entry.isDirectory()) { pending.push(filePath); continue; }
+      if (!entry.isFile()) continue;
+      const mimeType = mediaMimeType(filePath);
+      if (mimeType?.startsWith("video/")) files.push({ path: filePath, mimeType, directory });
+    }
+  }
+  return files;
+}
+
+/** Run only after the embedded yt-dlp route failed. The caller owns the returned directory. */
+export async function downloadBilibiliOpenCli(url: string, signal?: AbortSignal): Promise<BilibiliOpenCliDownloadResult> {
+  if (!isBilibiliUrl(url)) throw runtimeError("bilibili-fallback.this_is_not_a_bilibili_video_url", {});
+  const reference = /\bBV[A-Za-z0-9]+\b/i.exec(url)?.[0] ?? url;
+  const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-bili-opencli-"));
+  try {
+    const result = await runOpenCli(["bilibili", "download", reference, "--output", directory, "--format", "json"], 300_000, signal);
+    const files = await mediaFiles(directory);
+    if (!files.length) throw runtimeError("bilibili-fallback.opencli_download_returned_no_file", {});
+    let id = mediaAppContentId("bilibili", url);
+    try {
+      const value: unknown = JSON.parse(result.stdout);
+      const records = Array.isArray(value) ? value : [value];
+      const bvid = records.find((item) => item && typeof item === "object" && typeof (item as Record<string, unknown>).bvid === "string") as Record<string, unknown> | undefined;
+      if (typeof bvid?.bvid === "string" && /^BV[A-Za-z0-9]+$/i.test(bvid.bvid)) id = bvid.bvid;
+    } catch { /* The file itself is the source of truth; metadata is optional. */ }
+    return { id, files, directory };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** These sources provide partial evidence only; the caller must label the result as degraded. */

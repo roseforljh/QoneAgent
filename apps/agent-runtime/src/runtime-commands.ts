@@ -171,6 +171,10 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       services.douyinBridge.handleResponse(cmd);
       return true;
 
+    case "apps.opencli.response":
+      services.appOpenCliBridge.handleResponse(cmd);
+      return true;
+
     case "mcp.list":
       services.send({ type: "mcp.list", servers: services.mcpServerRepo.list().map((server) => ({ ...server, connected: services.mcp.isConnected(server.id), toolCount: services.mcp.toolCount(server.id) })) });
       return true;

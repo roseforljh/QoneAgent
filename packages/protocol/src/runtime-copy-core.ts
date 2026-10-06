@@ -20,6 +20,19 @@ export const runtimeCopyCore = {
     "en": "{p0} login credentials have expired. Sign in again to authorize access.",
     "zh-CN": "{p0} 登录凭据已失效，请重新登录授权。"
   },
+  "app-media.session_invalid": { "en": "Saved {p0} session is invalid", "zh-CN": "已保存的 {p0} 登录态无效" },
+  "app-media.operation_failed": { "en": "{p0} {p1} failed ({p2})", "zh-CN": "{p0} {p1} 失败（{p2}）" },
+  "app-media.invalid_url": { "en": "This is not a valid {p0} URL", "zh-CN": "这不是有效的 {p0} 链接" },
+  "app-media.telegram_setup_required": { "en": "Telegram requires API credentials and a separate account session", "zh-CN": "Telegram 需要 API 凭据并单独建立账号会话" },
+  "app-media.extractor_missing": { "en": "yt-dlp is unavailable", "zh-CN": "找不到 yt-dlp" },
+  "app-media.work_link_required": { "en": "Provide a single media work URL", "zh-CN": "请提供单个作品链接" },
+  "app-media.content_mismatch": { "en": "The returned content does not match the requested URL", "zh-CN": "返回内容与请求链接不匹配" },
+  "app-media.profile_link_required": { "en": "Provide a valid profile or channel URL and a limit from 1 to 100", "zh-CN": "请提供有效的主页或频道链接，以及 1 到 100 的数量" },
+  "app-media.list_bridge_unavailable": { "en": "The signed page list bridge is unavailable", "zh-CN": "网页列表桥接不可用" },
+  "app-media.invalid_mode": { "en": "Unsupported media mode", "zh-CN": "不支持的媒体模式" },
+  "app-media.subtitle_languages_required": { "en": "YouTube subtitle languages are required", "zh-CN": "YouTube 字幕必须指定语言" },
+  "app-media.invalid_output": { "en": "The extractor returned an invalid output file", "zh-CN": "下载器返回了无效输出文件" },
+  "app-media.no_output": { "en": "The extractor returned no output file", "zh-CN": "下载器没有返回输出文件" },
   "bilibili-fallback.bilibili_cli_returned_no_data": {
     "en": "bilibili-cli returned no data",
     "zh-CN": "bilibili-cli 未返回资料"
@@ -44,13 +57,17 @@ export const runtimeCopyCore = {
     "en": "bilibili-cli is not installed",
     "zh-CN": "bilibili-cli 未安装"
   },
+  "bilibili-fallback.opencli_download_returned_no_file": {
+    "en": "OpenCLI Bilibili download completed without a readable media file",
+    "zh-CN": "OpenCLI B站下载完成，但没有生成可读取的媒体文件"
+  },
   "bilibili-fallback.could_not_retrieve_the_full_bilibili_video_subtitles_audio": {
     "en": "Could not retrieve the full Bilibili video, subtitles, audio, or summary. {p0}",
     "zh-CN": "无法取得 B 站完整视频、字幕、音频或摘要。{p0}"
   },
   "douyin-bridge.unsupported_url": {
-    "en": "Douyin downloads support douyin.com and iesdouyin.com URLs only",
-    "zh-CN": "抖音下载只支持 douyin.com 或 iesdouyin.com 链接"
+    "en": "Douyin downloads support douyin.com, iesdouyin.com and v.douyin.com URLs only",
+    "zh-CN": "抖音下载只支持 douyin.com、iesdouyin.com 或 v.douyin.com 链接"
   },
   "douyin-bridge.page_bridge_timed_out": {
     "en": "The Douyin page bridge timed out without matching work metadata. The batch was stopped; this does not establish that cookies are invalid.",
@@ -127,6 +144,14 @@ export const runtimeCopyCore = {
   "browser-sync.opencli_site_and_command_may_only_contain_letters_numbers": {
     "en": "OpenCLI site and command may only contain letters, numbers, underscores, or hyphens",
     "zh-CN": "OpenCLI 的 site 和 command 只能包含字母、数字、下划线或短横线"
+  },
+  "browser-sync.bilibili_download_must_use_qone_app_download": {
+    "en": "Bilibili downloads must use qone_app_download first; OpenCLI is available only as an automatic fallback",
+    "zh-CN": "B站下载必须先使用 qone_app_download；OpenCLI 仅作为自动兜底"
+  },
+  "browser-sync.bilibili_embedded_route_required": {
+    "en": "Bilibili content reading must use Qone's embedded route: use qone_bilibili_search for search, qone_app_inspect for metadata, and qone_video_download followed by qone_video_use_file for subtitles, parsing, or summaries. OpenCLI is only an internal fallback after an embedded download failure.",
+    "zh-CN": "B站内容读取必须使用 Qone 内置链路：搜索用 qone_bilibili_search，元数据用 qone_app_inspect，字幕、解析和总结用 qone_video_download 后接 qone_video_use_file。OpenCLI 只能在内置下载确实失败后由 Qone 内部自动兜底。"
   },
   "browser-sync.google_chrome_was_not_found_unable_to_launch_the": {
     "en": "Google Chrome was not found; unable to launch the current browser profile",
@@ -695,10 +720,6 @@ export const runtimeCopyCore = {
   "reach-public-tools.tool_execution_timed_out": {
     "en": "Tool execution timed out",
     "zh-CN": "工具执行超时"
-  },
-  "reach-public-tools.public_web_fetch_timed_out": {
-    "en": "Direct public web fetch timed out before receiving a response. The site may block this runtime network path; use the browser fallback only if the page content is still required, and do not retry the same URL with shell commands.",
-    "zh-CN": "公共网页直连在收到响应前超时，网站可能阻断了当前运行时网络路径；如果仍需要页面内容，请使用浏览器回退，不要再用 Shell 重复请求同一地址。"
   },
   "reach-public-tools.tool_output_is_too_large": {
     "en": "Tool output is too large",

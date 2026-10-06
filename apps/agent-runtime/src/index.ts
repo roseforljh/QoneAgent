@@ -42,6 +42,8 @@ import { ensureSystemPromptModules } from "./system-prompt.js";
 import { updateLiveAssistant, type LiveAssistantState } from "./live-assistant.js";
 import { createRuntimeOutput } from "./runtime-output.js";
 import { DouyinBridge } from "./douyin-bridge.js";
+import { AppMediaService } from "./app-media-service.js";
+import { AppOpenCliBridge } from "./app-opencli-bridge.js";
 
 const log = createLogger("runtime");
 
@@ -60,6 +62,8 @@ const eventBus = new EventBus<RuntimeBusEvent>();
 const output = createRuntimeOutput({ write: (line) => { process.stdout.write(line); }, intervalMs: 8, maxEvents: 32 });
 const send = output.send;
 const douyinBridge = new DouyinBridge((event) => send(event));
+const appOpenCliBridge = new AppOpenCliBridge((event) => send(event));
+const appMediaService = new AppMediaService();
 
 // Keep the user file and its directory available before the settings UI opens.
 ensureGlobalInstructions();
@@ -522,7 +526,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   const customEntries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
   history.push(...customEntries.map((rawMessage) => ({ id: crypto.randomUUID(), role: "custom", content: "", attachments: undefined, createdAt: Date.now(), rawMessage })));
   return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
-}, compactionPreferences, douyinBridge);
+}, compactionPreferences, douyinBridge, appMediaService);
 adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
 subagentNotificationCoordinator = new SubagentNotificationCoordinator(
   subagentNotificationRepo,
@@ -672,7 +676,7 @@ browserSync = new BrowserSyncService(db, dbPath,
   (status) => {
     send({ type: "browser.status", status });
     sendReachChannels();
-  }, refreshCustomTools);
+  }, refreshCustomTools, appOpenCliBridge);
 await browserSync.initialize();
 
 async function releaseBrowserSession() {
@@ -858,6 +862,8 @@ export function runtimeCommandServices() {
     get browserSync() { return browserSync; },
     set browserSync(value: typeof browserSync) { browserSync = value; },
     douyinBridge,
+    appOpenCliBridge,
+    appMediaService,
     cancelledRuns,
     commandApprovals,
     emit,

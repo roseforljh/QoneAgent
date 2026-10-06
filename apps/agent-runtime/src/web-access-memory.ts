@@ -1,6 +1,6 @@
 import { isDouyinUrl } from "@qone/protocol";
 
-type WebAccessRoute = "web_fetch" | "opencli" | "opencli_browser_bridge" | "douyin_embedded_bridge";
+type WebAccessRoute = "opencli" | "opencli_browser_bridge" | "douyin_embedded_bridge";
 type Outcome = { route: WebAccessRoute; ok: boolean; reason?: string; at: number };
 type HostRecord = { outcomes: Outcome[]; preferred?: WebAccessRoute };
 type Snapshot = { hosts: Record<string, HostRecord>; browserHost?: string };
@@ -69,7 +69,6 @@ function parsedDetails(result: unknown): Record<string, unknown> | undefined {
 
 function routeLabel(route: WebAccessRoute): string {
   if (route === "douyin_embedded_bridge") return "Qone embedded Douyin bridge";
-  if (route === "web_fetch") return "web_fetch";
   if (route === "opencli") return "OpenCLI adapter";
   return "OpenCLI Browser Bridge";
 }
@@ -131,18 +130,6 @@ export class WebAccessMemory {
       }
       return;
     }
-    if (toolName === "web_fetch") {
-      const host = hostFromUrl(input.url);
-      const status = Number(details?.status);
-      const warning = typeof details?.warning === "string" ? details.warning : "";
-      const ok = !isError && (!Number.isInteger(status) || status < 400) && !warning && Boolean(details?.content);
-      const finalHost = hostFromUrl(details?.finalUrl);
-      for (const candidate of new Set([host, finalHost].filter((value): value is string => Boolean(value)))) {
-        this.add(sessionId, candidate, "web_fetch", ok, ok ? undefined : failureReason(result, details), at);
-      }
-      return;
-    }
-
     if (toolName === "qone_browser_open") {
       const host = hostFromUrl(input.url);
       if (host) this.load(sessionId).browserHost = host;

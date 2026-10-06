@@ -1,8 +1,10 @@
+import { siteMatchesHost } from "./site-config";
+
 export function isDouyinUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return ["http:", "https:"].includes(url.protocol)
-      && /(?:^|\.)(?:douyin|iesdouyin)\.com$/i.test(url.hostname);
+      && siteMatchesHost("douyin", url.hostname);
   } catch { return false; }
 }
 

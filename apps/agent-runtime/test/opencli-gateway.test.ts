@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openDb, closeDb } from "@qone/database";
-import { BrowserSyncService, assertOpenCliRoute, buildOpenCliCommandArgs, compactOpenCliCatalog, parseOpenCliCatalog, runOpenCli } from "../src/browser-sync";
+import { BrowserSyncService, assertOpenCliRoute, buildOpenCliCommandArgs, compactOpenCliCatalog, normalizeBrowserWaitValue, parseOpenCliCatalog, runOpenCli } from "../src/browser-sync";
 
 describe("OpenCLI gateway", () => {
   test("Douyin is rejected before launching Chrome or an OpenCLI process", async () => {
@@ -32,10 +32,10 @@ describe("OpenCLI gateway", () => {
       const open = service.tools().find((tool) => tool.name === "qone_opencli_run");
       const discover = service.tools().find((tool) => tool.name === "qone_opencli_discover");
       const screenshot = service.tools().find((tool) => tool.name === "qone_browser_screenshot");
-      expect(open?.description).toContain("use web_fetch first");
-      expect(discover?.description).toContain("Do not use this for ordinary public URL reading");
+      expect(open?.description).toContain("use this route directly");
+      expect(discover?.description).toContain("even when the URL is public");
       expect(screenshot?.description).toContain("full page");
-      expect(service.tools().find((tool) => tool.name === "qone_browser_extract")?.description).toContain("automatically capture");
+      expect(service.tools().find((tool) => tool.name === "qone_browser_extract")?.description).toContain("readable Markdown");
       expect(toolRefreshes).toBe(1);
       expect(service.status().targetConnected).toBe(false);
     } finally {
@@ -67,8 +67,26 @@ describe("OpenCLI gateway", () => {
     ]);
   });
 
+  test("caps browser time waits so a model cannot block for minutes", () => {
+    expect(normalizeBrowserWaitValue("time", "3000")).toBe("60");
+    expect(normalizeBrowserWaitValue("selector", "3000")).toBe("3000");
+    expect(() => normalizeBrowserWaitValue("time", "forever")).toThrow();
+  });
+
   test("rejects shell-like site and command names while allowing raw option values", () => {
     expect(() => buildOpenCliCommandArgs({ site: "example;whoami", command: "search" })).toThrow();
     expect(buildOpenCliCommandArgs({ site: "example", command: "search", args: ["--query", "a;whoami"] })).toContain("a;whoami");
+  });
+
+  test("exposes Bilibili discovery and adapter tools", async () => {
+    const db = openDb(":memory:");
+    try {
+      const service = new BrowserSyncService(db, ":memory:", () => {}, async () => {});
+      const discover = service.tools().find((item) => item.name === "qone_opencli_discover")!;
+      const run = service.tools().find((item) => item.name === "qone_opencli_run")!;
+      expect(discover.description).toContain("embedded page");
+      expect(run.description).toContain("external browser bridge");
+      expect(service.status().targetConnected).toBe(false);
+    } finally { closeDb(db); }
   });
 });

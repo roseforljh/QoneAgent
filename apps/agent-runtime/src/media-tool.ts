@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { mkdtemp, stat } from "node:fs/promises";
 import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
-import { isBilibiliUrl, readBilibiliFallback } from "./bilibili-fallback.js";
+import { downloadBilibiliOpenCli, isBilibiliUrl, readBilibiliFallback } from "./bilibili-fallback.js";
 import { localMediaMarker, youtubeUrlsFromText } from "./google-media.js";
 import { configuredCapabilities } from "./media-capabilities.js";
 import { videoAttachmentsAsAudio } from "./media-attachments.js";
@@ -21,6 +21,7 @@ export interface MediaToolOptions {
   isTemporary?: (runId: string, filePath: string) => boolean;
   hasMedia?: (runId: string, filePath: string) => boolean;
   douyinDownload?: (url: string, signal?: AbortSignal) => Promise<Awaited<ReturnType<typeof downloadVideo>>>;
+  bilibiliDownload?: (url: string, mode: "video" | "audio", signal?: AbortSignal) => Promise<Awaited<ReturnType<typeof downloadVideo>>>;
   attachment?: (runId: string, attachmentId: string) => MessageAttachmentInfo | undefined;
 }
 
@@ -110,8 +111,8 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
   return {
     name: "qone_video_download",
     label: "Video · download for recognition",
-    description: "Get an online video or its audio for this agent's own recognition. Set mode=audio when only sound is needed. Non-Gemini visual input returns the local path and duration; call qone_video_use_file with relevant timestamps to read still frames. Douyin uses Qone's signed in-page bridge; other sites use yt-dlp. If Bilibili fails, falls back to clearly labeled subtitles/audio/metadata from bilibili-cli and then OpenCLI data adapters; it does not claim to have read the full video. For other sites, use qone_video_staging_dir, a site-specific OpenCLI or web download, and qone_video_use_file. Gemini reads YouTube URLs directly when video input is configured. Never download before delegating to another agent.",
-    promptSnippet: "When you are configured to read video or audio and need to inspect an online video URL yourself, call qone_video_download; set mode=audio if the task needs only sound. Douyin downloads use the signed in-page bridge automatically. Gemini with video input can read YouTube links directly. Bilibili failure returns clearly labeled bilibili-cli or OpenCLI data and does not prove full video recognition. If another site's download fails, use OpenCLI or the website to save into a qone_video_staging_dir, then qone_video_use_file. If your model lacks the needed capability, delegate the original URL instead.",
+    description: "Get an online video or its audio for this agent's own recognition. Set mode=audio when only sound is needed. Non-Gemini visual input returns the local path and duration; call qone_video_use_file with relevant timestamps to read still frames. Try Qone's embedded session or page route first: Douyin uses the signed in-page bridge, Bilibili uses its saved Qone session, and other sites use yt-dlp. If the embedded route fails, use the site's OpenCLI or web download as a labeled fallback. Gemini reads YouTube URLs directly when video input is configured. Never download before delegating to another agent.",
+    promptSnippet: "When you are configured to read video or audio and need to inspect an online video URL yourself, call qone_video_download; set mode=audio if the task needs only sound. Always try Qone's embedded route first. Douyin downloads use the signed in-page bridge; Bilibili downloads use Qone's saved Bilibili session and yt-dlp. Only after that route fails, use the site's OpenCLI or website to save into a qone_video_staging_dir, then qone_video_use_file. Gemini with video input can read YouTube links directly. If your model lacks the needed capability, delegate the original URL instead.",
     parameters: Type.Object({ url: Type.String({ minLength: 1 }), mode: Type.Optional(Type.Union([Type.Literal("video"), Type.Literal("audio")])) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
@@ -135,29 +136,40 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
         downloaded = await options.douyinDownload(url, signal);
         source = "抖音页面桥接";
       } else try {
-        if (mode === "audio") {
-          try {
-            downloaded = await downloadAudio(url, signal);
-          } catch (audioError) {
-            if (signal?.aborted) throw audioError;
-            downloaded = await downloadVideo(url, signal).catch((videoError) => {
-              throw runtimeError("media-tool.audio_download_failed_full_video_download_failed", { p0: String(audioError), p1: String(videoError) });
-            });
-          }
-        } else downloaded = await downloadVideo(url, signal);
+        if (isBilibiliUrl(url) && options.bilibiliDownload) {
+          downloaded = await options.bilibiliDownload(url, mode, signal);
+          source = "哔哩哔哩 yt-dlp";
+        } else {
+          if (mode === "audio") {
+            try {
+              downloaded = await downloadAudio(url, signal);
+            } catch (audioError) {
+              if (signal?.aborted) throw audioError;
+              downloaded = await downloadVideo(url, signal).catch((videoError) => {
+                throw runtimeError("media-tool.audio_download_failed_full_video_download_failed", { p0: String(audioError), p1: String(videoError) });
+              });
+            }
+          } else downloaded = await downloadVideo(url, signal);
+        }
       } catch (error) {
         if (signal?.aborted || !isBilibiliUrl(url)) throw error;
-        const fallback = await readBilibiliFallback(url, signal).catch((fallbackError) => {
-          throw runtimeError("media-tool.video_retrieval_failed_yt_dlp_bilibili_cli_opencli_fallback", { p0: String(error), p1: String(fallbackError) });
-        });
-        const parts = [runtimeText("media-tool.fallback_analysis_the_full_video_was_not_retrieved_do", { p0: fallback.source }), fallback.text];
-        if (fallback.audio) {
-          options.registerMedia(runId, fallback.audio.path, fallback.audio.mimeType, fallback.audio.directory);
-          parts.push(runtimeText("media-tool.available_audio_path", { p0: fallback.audio.path }));
-          if (supportsAudioInput(model, capability.input)) parts.push(runtimeText("media-tool.audio_input", { p0: localMediaMarker(fallback.audio.path, fallback.audio.mimeType, true) }));
-          else parts.push(runtimeText("media-tool.the_current_model_has_no_audio_input_configured_delegate_details_0"));
-        } else parts.push(runtimeText("media-tool.no_readable_audio_file_was_retrieved"));
-        return { content: [{ type: "text", text: parts.join("\n\n") }], details: { source: fallback.source, degraded: true, hasAudio: Boolean(fallback.audio) } };
+        try {
+          const fallbackVideo = await downloadBilibiliOpenCli(url, signal);
+          downloaded = fallbackVideo.files[0]!;
+          source = "哔哩哔哩 OpenCLI 兜底";
+        } catch (downloadFallbackError) {
+          const fallback = await readBilibiliFallback(url, signal).catch((fallbackError) => {
+            throw runtimeError("media-tool.video_retrieval_failed_yt_dlp_bilibili_cli_opencli_fallback", { p0: String(error), p1: `${String(downloadFallbackError)}; ${String(fallbackError)}` });
+          });
+          const parts = [runtimeText("media-tool.fallback_analysis_the_full_video_was_not_retrieved_do", { p0: fallback.source }), fallback.text];
+          if (fallback.audio) {
+            options.registerMedia(runId, fallback.audio.path, fallback.audio.mimeType, fallback.audio.directory);
+            parts.push(runtimeText("media-tool.available_audio_path", { p0: fallback.audio.path }));
+            if (supportsAudioInput(model, capability.input)) parts.push(runtimeText("media-tool.audio_input", { p0: localMediaMarker(fallback.audio.path, fallback.audio.mimeType, true) }));
+            else parts.push(runtimeText("media-tool.the_current_model_has_no_audio_input_configured_delegate_details_0"));
+          } else parts.push(runtimeText("media-tool.no_readable_audio_file_was_retrieved"));
+          return { content: [{ type: "text", text: parts.join("\n\n") }], details: { source: fallback.source, degraded: true, hasAudio: Boolean(fallback.audio) } };
+        }
       }
       options.registerMedia(runId, downloaded.path, downloaded.mimeType, downloaded.directory);
       if (mode === "video" && supportsFrameVideo(model, capability.input)) return frameResult(downloaded.path, source, options, runId, undefined, signal);

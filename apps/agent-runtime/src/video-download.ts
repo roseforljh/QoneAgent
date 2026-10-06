@@ -42,7 +42,7 @@ async function downloadMedia(url: string, audioOnly: boolean, signal?: AbortSign
     if (audioOnly) {
       if (!ffmpeg) throw runtimeError("video-download.audio_download_requires_ffmpeg_to_create_a_standard_mp3", {});
       args.push("--format", "bestaudio", "--extract-audio", "--audio-format", "mp3");
-    }
+    } else args.push("--format", ffmpeg ? "bv*+ba/b" : "best");
     args.push(url);
     const { stdout } = await execFileAsync(executable, args, { signal, windowsHide: true, maxBuffer: 1024 * 1024 });
     const filePath = stdout.trim().split(/\r?\n/).at(-1)?.trim();

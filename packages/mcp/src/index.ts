@@ -430,7 +430,7 @@ export class McpManager {
     const exposedName = this.exposedToolNames.get(fullName) ?? safeToolName(fullName, usedNames);
     this.exposedToolNames.set(fullName, exposedName);
     const routing = serverId === "mcp-github"
-      ? "Use this GitHub MCP tool only for authenticated GitHub data, account operations, private repositories, or writes. For public GitHub URLs, READMEs, documentation, and page content, use web_fetch first; use qone_github_public for structured unauthenticated GitHub API data."
+      ? "Use this GitHub MCP tool only for authenticated GitHub data, account operations, private repositories, or writes. Use qone_github_public for structured unauthenticated GitHub API data."
       : undefined;
     return {
       name: exposedName,

@@ -25,6 +25,20 @@ function setup(input: string[], selected = model): { options: MediaToolOptions; 
   } };
 }
 
+test("Bilibili recognition uses the embedded app route before fallback adapters", async () => {
+  const { options, dirs } = setup(["text", "video"]);
+  const directory = await mkdtemp(path.join(tmpdir(), "qone-bilibili-route-test-"));
+  const filePath = path.join(directory, "video.mp4");
+  await writeFile(filePath, Buffer.from([0, 1, 2]));
+  options.bilibiliDownload = async () => ({ path: filePath, mimeType: "video/mp4", directory });
+  try {
+    const result = await createVideoDownloadTool(options).execute("call", { url: "https://www.bilibili.com/video/BV1xx411c7mD" }, new AbortController().signal);
+    expect((result.details as { source: string }).source).toBe("哔哩哔哩 yt-dlp");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("media staging refuses a model without audio or video input", async () => {
   const { options, dirs } = setup(["text"]);
   const [staging] = createVideoFallbackTools(options);

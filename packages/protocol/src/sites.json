@@ -1,0 +1,15 @@
+[
+  { "id": "douyin", "appId": "douyin", "host": "douyin.com", "hostAliases": ["iesdouyin.com", "v.douyin.com"], "homeUrl": "https://www.douyin.com/", "loginUrl": "https://www.douyin.com/" },
+  { "id": "twitter", "appId": "x", "host": "x.com", "hostAliases": ["twitter.com", "t.co"], "homeUrl": "https://x.com/", "loginUrl": "https://x.com/i/flow/login", "aliases": ["x"], "reachMode": "opencli", "reachName": "X / Twitter", "reachDescription": "搜索帖子、读取帖子与用户主页" },
+  { "id": "reddit", "appId": "reddit", "host": "reddit.com", "hostAliases": ["redd.it"], "homeUrl": "https://www.reddit.com/", "loginUrl": "https://www.reddit.com/login/", "reachMode": "opencli", "reachName": "Reddit", "reachDescription": "搜索帖子、读取帖子评论与用户或版块主页" },
+  { "id": "tiktok", "appId": "tiktok", "host": "tiktok.com", "hostAliases": ["vm.tiktok.com", "vt.tiktok.com"], "homeUrl": "https://www.tiktok.com/", "loginUrl": "https://www.tiktok.com/login", "reachMode": "media" },
+  { "id": "bilibili", "appId": "bilibili", "host": "bilibili.com", "hostAliases": ["b23.tv"], "homeUrl": "https://www.bilibili.com/", "loginUrl": "https://www.bilibili.com/", "reachMode": "media" },
+  { "id": "youtube", "appId": "youtube", "host": "youtube.com", "hostAliases": ["youtu.be"], "homeUrl": "https://www.youtube.com/", "loginUrl": "https://www.youtube.com/", "reachMode": "media" },
+  { "id": "telegram", "appId": "telegram", "host": "telegram.org", "hostAliases": ["web.telegram.org", "t.me"], "homeUrl": "https://web.telegram.org/", "loginUrl": "https://web.telegram.org/" },
+  { "id": "facebook", "appId": "facebook", "host": "facebook.com", "hostAliases": ["fb.com", "fb.watch"], "homeUrl": "https://www.facebook.com/", "loginUrl": "https://www.facebook.com/login/", "reachMode": "opencli", "reachName": "Facebook", "reachDescription": "通过网站适配器读取或操作账号" },
+  { "id": "instagram", "appId": "instagram", "host": "instagram.com", "homeUrl": "https://www.instagram.com/", "loginUrl": "https://www.instagram.com/accounts/login/", "reachMode": "opencli", "reachName": "Instagram", "reachDescription": "通过网站适配器读取或操作账号" },
+  { "id": "xiaohongshu", "appId": "xiaohongshu", "host": "xiaohongshu.com", "homeUrl": "https://www.xiaohongshu.com/", "loginUrl": "https://www.xiaohongshu.com/", "reachMode": "opencli", "reachName": "小红书", "reachDescription": "通过网站适配器读取或操作账号" },
+  { "id": "boss", "appId": "boss", "host": "zhipin.com", "homeUrl": "https://www.zhipin.com/", "loginUrl": "https://www.zhipin.com/web/user/", "reachMode": "opencli", "reachName": "Boss 直聘", "reachDescription": "职位搜索、岗位详情与招聘操作" },
+  { "id": "xueqiu", "appId": "xueqiu", "host": "xueqiu.com", "homeUrl": "https://xueqiu.com/", "loginUrl": "https://xueqiu.com/" },
+  { "id": "linkedin", "appId": "linkedin", "host": "linkedin.com", "hostAliases": ["lnkd.in"], "homeUrl": "https://www.linkedin.com/", "loginUrl": "https://www.linkedin.com/login", "reachMode": "opencli", "reachName": "LinkedIn", "reachDescription": "公开页面与账号操作" }
+]
