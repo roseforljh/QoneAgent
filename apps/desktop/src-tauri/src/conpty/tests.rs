@@ -8,12 +8,24 @@ fn blocked_input_does_not_hold_the_terminal_registry() {
     let id = "test-blocked-input";
     let mut read_handle = HANDLE::default();
     let mut write_handle = HANDLE::default();
-    unsafe { CreatePipe(&mut read_handle, &mut write_handle, None, 4096).unwrap(); }
+    unsafe {
+        CreatePipe(&mut read_handle, &mut write_handle, None, 4096).unwrap();
+    }
     let mut reader = HandleGuard::new(read_handle);
-    let input = Arc::new(InputPipe { handle: write_handle.0 as usize, writer: Mutex::new(()) });
-    PTYS.lock().unwrap().insert(id.to_owned(), Pty {
-        hpc: HPCON::default(), input: input.clone(), process: 0, cols: 80, rows: 24,
+    let input = Arc::new(InputPipe {
+        handle: write_handle.0 as usize,
+        writer: Mutex::new(()),
     });
+    PTYS.lock().unwrap().insert(
+        id.to_owned(),
+        Pty {
+            hpc: HPCON::default(),
+            input: input.clone(),
+            process: 0,
+            cols: 80,
+            rows: 24,
+        },
+    );
     let writer = std::thread::spawn(move || write(id, &"x".repeat(1024 * 1024)));
     let deadline = Instant::now() + Duration::from_secs(2);
     while Arc::strong_count(&input) < 3 && Instant::now() < deadline {
@@ -26,8 +38,14 @@ fn blocked_input_does_not_hold_the_terminal_registry() {
     let result = writer.join().unwrap();
     PTYS.lock().unwrap().remove(id);
     assert!(acquired, "writer never acquired its own pipe reference");
-    assert!(registry_available, "blocking WriteFile held the global registry");
-    assert!(result.is_err(), "a closed reader must stop the pending write");
+    assert!(
+        registry_available,
+        "blocking WriteFile held the global registry"
+    );
+    assert!(
+        result.is_err(),
+        "a closed reader must stop the pending write"
+    );
     assert_eq!(Arc::strong_count(&input), 1);
 }
 

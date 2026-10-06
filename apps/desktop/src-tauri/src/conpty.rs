@@ -407,7 +407,10 @@ fn spawn_with_events(
 
     let pty = Pty {
         hpc: created.hpc,
-        input: Arc::new(InputPipe { handle: created.in_write.0 as usize, writer: Mutex::new(()) }),
+        input: Arc::new(InputPipe {
+            handle: created.in_write.0 as usize,
+            writer: Mutex::new(()),
+        }),
         process: created.process.0 as usize,
         cols,
         rows,

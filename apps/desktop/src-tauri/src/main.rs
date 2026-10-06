@@ -1,29 +1,30 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::io::{BufRead, BufReader, Write};
-use std::time::Duration;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
+use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_notification::NotificationExt;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 mod native_error;
 use native_error::NativeError;
+mod auth_files;
+mod credential_bridge;
+mod data_paths;
 mod native_copy;
+mod runtime_transport;
 mod webview_policy;
 mod window_state;
-mod data_paths;
-mod runtime_transport;
-mod credential_bridge;
 use credential_bridge::persist_runtime_secret;
-use runtime_transport::{RuntimeBatch, RuntimeTransport, runtime_subscribe};
-use native_copy::{NativeCopy, NativeCopyState, set_native_copy};
+use native_copy::{set_native_copy, NativeCopy, NativeCopyState};
+use runtime_transport::{runtime_subscribe, RuntimeBatch, RuntimeTransport};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -33,7 +34,6 @@ mod conpty;
 
 #[cfg(desktop)]
 mod browser;
-
 
 #[cfg(all(windows, debug_assertions))]
 mod dev_network;
@@ -196,47 +196,71 @@ fn spawn_sidecar(
         let (lines_tx, lines_rx) = std::sync::mpsc::sync_channel::<String>(256);
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break; };
-                if lines_tx.send(line).is_err() { break; }
+                let Ok(line) = line else {
+                    break;
+                };
+                if lines_tx.send(line).is_err() {
+                    break;
+                }
             }
         });
         let mut batch = RuntimeBatch::new(16, Duration::from_millis(8));
         let flush = |batch: &mut RuntimeBatch| {
             let payload = batch.drain();
-            if payload.is_empty() { return; }
+            if payload.is_empty() {
+                return;
+            }
             transport.send(&app_handle, payload);
         };
         loop {
-            if generation.load(Ordering::SeqCst) != generation_id { break; }
+            if generation.load(Ordering::SeqCst) != generation_id {
+                break;
+            }
             let timeout = batch.timeout(std::time::Instant::now());
             match lines_rx.recv_timeout(timeout) {
                 Ok(line) if !line.trim().is_empty() => {
                     let event_type = runtime_event_type(&line);
-                    if event_type.as_deref() == Some("agent.event") && is_completed_agent_event(&line) {
+                    if event_type.as_deref() == Some("agent.event")
+                        && is_completed_agent_event(&line)
+                    {
                         let _ = app_handle
                             .notification()
                             .builder()
                             .title("QoneAgent")
-                            .body(app_handle.state::<NativeCopyState>().copy.lock()
-                                .map(|copy| copy.completed.clone())
-                                .unwrap_or_else(|_| "Agent run completed".into()))
+                            .body(
+                                app_handle
+                                    .state::<NativeCopyState>()
+                                    .copy
+                                    .lock()
+                                    .map(|copy| copy.completed.clone())
+                                    .unwrap_or_else(|_| "Agent run completed".into()),
+                            )
                             .show();
                     }
                     let emitted = match event_type.as_deref() {
-                        Some("mcp.oauth.token") | Some("mcp.oauth.credential") | Some("mcp.oauth.invalidated") => persist_runtime_secret(&line),
+                        Some("mcp.oauth.token")
+                        | Some("mcp.oauth.credential")
+                        | Some("mcp.oauth.invalidated") => persist_runtime_secret(&line),
                         _ => line,
                     };
                     if let Ok(raw) = serde_json::value::RawValue::from_string(emitted) {
-                        if batch.push(raw, std::time::Instant::now()) { flush(&mut batch); }
+                        if batch.push(raw, std::time::Instant::now()) {
+                            flush(&mut batch);
+                        }
                     }
                 }
                 Ok(_) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => flush(&mut batch),
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => { flush(&mut batch); break; }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    flush(&mut batch);
+                    break;
+                }
             }
         }
         if generation.load(Ordering::SeqCst) == generation_id {
-            if let Ok(raw) = serde_json::value::RawValue::from_string("{\"type\":\"runtime.exited\"}".to_string()) {
+            if let Ok(raw) = serde_json::value::RawValue::from_string(
+                "{\"type\":\"runtime.exited\"}".to_string(),
+            ) {
                 transport.send(&app_handle, vec![raw]);
             }
         }
@@ -272,7 +296,8 @@ fn pick_workspace(title: String) -> Option<String> {
 }
 
 fn attachment_path_info(path: &std::path::Path) -> Result<AttachmentFileInfo, NativeError> {
-    let metadata = std::fs::metadata(path).map_err(|error| NativeError::detail("native.attachmentRead", error))?;
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| NativeError::detail("native.attachmentRead", error))?;
     if !metadata.is_file() && !metadata.is_dir() {
         return Err(NativeError::new("native.attachmentType"));
     }
@@ -285,7 +310,11 @@ fn attachment_path_info(path: &std::path::Path) -> Result<AttachmentFileInfo, Na
     Ok(AttachmentFileInfo {
         name,
         path: path.to_string_lossy().into_owned(),
-        size: if metadata.is_file() { metadata.len() } else { 0 },
+        size: if metadata.is_file() {
+            metadata.len()
+        } else {
+            0
+        },
         is_directory: metadata.is_dir(),
     })
 }
@@ -309,7 +338,10 @@ fn pick_attachment_files(title: String) -> Result<Vec<AttachmentFileInfo>, Nativ
     let Some(paths) = rfd::FileDialog::new().set_title(title).pick_files() else {
         return Ok(Vec::new());
     };
-    paths.into_iter().map(|path| attachment_path_info(&path)).collect()
+    paths
+        .into_iter()
+        .map(|path| attachment_path_info(&path))
+        .collect()
 }
 
 #[tauri::command]
@@ -324,31 +356,50 @@ fn pick_attachment_folder(title: String) -> Result<Option<AttachmentFileInfo>, N
 #[tauri::command]
 fn authorize_attachment_preview(app: AppHandle, path: String) -> Result<(), NativeError> {
     let file = std::path::Path::new(&path);
-    let extension = file.extension().and_then(|value| value.to_str()).unwrap_or("");
-    if !file.is_absolute() || !["png", "jpg", "jpeg", "webp", "gif"].iter().any(|allowed| extension.eq_ignore_ascii_case(allowed)) {
+    let extension = file
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    if !file.is_absolute()
+        || !["png", "jpg", "jpeg", "webp", "gif"]
+            .iter()
+            .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+    {
         return Err(NativeError::new("native.previewPath"));
     }
     if attachment_path_info(file)?.is_directory {
         return Err(NativeError::new("native.previewFolder"));
     }
-    app.asset_protocol_scope().allow_file(file).map_err(|error| NativeError::detail("native.previewFailed", error))
+    app.asset_protocol_scope()
+        .allow_file(file)
+        .map_err(|error| NativeError::detail("native.previewFailed", error))
 }
 
 #[tauri::command]
-fn authorize_file_preview(app: AppHandle, path: String, allowed_root: String) -> Result<String, NativeError> {
+fn authorize_file_preview(
+    app: AppHandle,
+    path: String,
+    allowed_root: String,
+) -> Result<String, NativeError> {
     let file = std::path::Path::new(&path);
     if !file.is_absolute() {
         return Err(NativeError::new("native.filePreviewPath"));
     }
-    let canonical = file.canonicalize().map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
+    let canonical = file
+        .canonicalize()
+        .map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
     if !canonical.is_file() {
         return Err(NativeError::new("native.filePreviewType"));
     }
-    let root = std::path::Path::new(&allowed_root).canonicalize().map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
+    let root = std::path::Path::new(&allowed_root)
+        .canonicalize()
+        .map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
     if !canonical.starts_with(&root) {
         return Err(NativeError::new("native.filePreviewScope"));
     }
-    app.asset_protocol_scope().allow_file(&canonical).map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
+    app.asset_protocol_scope()
+        .allow_file(&canonical)
+        .map_err(|error| NativeError::detail("native.filePreviewFailed", error))?;
     Ok(canonical.to_string_lossy().into_owned())
 }
 
@@ -373,7 +424,8 @@ async fn save_image_as(filename: String, data: String, title: String) -> Result<
         if bytes.is_empty() {
             return Err(NativeError::new("native.imageEmpty"));
         }
-        std::fs::write(path, bytes).map_err(|error| NativeError::detail("native.imageSave", error))?;
+        std::fs::write(path, bytes)
+            .map_err(|error| NativeError::detail("native.imageSave", error))?;
         Ok(true)
     })
     .await
@@ -405,12 +457,19 @@ struct RuntimeAgentEnvelope<'a> {
 }
 
 fn runtime_event_type(line: &str) -> Option<std::borrow::Cow<'_, str>> {
-    Some(serde_json::from_str::<RuntimeEventType<'_>>(line).ok()?.r#type)
+    Some(
+        serde_json::from_str::<RuntimeEventType<'_>>(line)
+            .ok()?
+            .r#type,
+    )
 }
 
 fn is_completed_agent_event(line: &str) -> bool {
-    let Ok(envelope) = serde_json::from_str::<RuntimeAgentEnvelope<'_>>(line) else { return false; };
-    envelope.r#type == Some("agent.event") && envelope.event.and_then(|event| event.r#type) == Some("agent.completed")
+    let Ok(envelope) = serde_json::from_str::<RuntimeAgentEnvelope<'_>>(line) else {
+        return false;
+    };
+    envelope.r#type == Some("agent.event")
+        && envelope.event.and_then(|event| event.r#type) == Some("agent.completed")
 }
 
 fn validate_secret_key(key: &str) -> Result<(), String> {
@@ -461,6 +520,24 @@ fn secret_delete(key: String) -> Result<(), String> {
     Err("secrets only supported on Windows".into())
 }
 
+#[tauri::command]
+fn auth_file_save(
+    app_id: String,
+    cookies: Vec<auth_files::AuthCookie>,
+) -> Result<auth_files::AuthFile, String> {
+    auth_files::save(app_id, cookies)
+}
+
+#[tauri::command]
+fn auth_file_get(app_id: String) -> Result<Option<auth_files::AuthFile>, String> {
+    auth_files::get(app_id)
+}
+
+#[tauri::command]
+fn auth_file_delete(app_id: String) -> Result<(), String> {
+    auth_files::delete(app_id)
+}
+
 // --- PTY commands ---
 
 #[tauri::command]
@@ -482,7 +559,9 @@ async fn terminal_spawn(
             rows.unwrap_or(30),
             &app,
         )
-    }).await.map_err(|error| error.to_string())?;
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("pty only supported on Windows".into())
 }
@@ -491,7 +570,8 @@ async fn terminal_spawn(
 async fn terminal_write(terminal_id: String, data: String) -> Result<(), String> {
     #[cfg(windows)]
     return tauri::async_runtime::spawn_blocking(move || conpty::write(&terminal_id, &data))
-        .await.map_err(|error| error.to_string())?;
+        .await
+        .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("pty only supported on Windows".into())
 }
@@ -500,7 +580,8 @@ async fn terminal_write(terminal_id: String, data: String) -> Result<(), String>
 async fn terminal_resize(terminal_id: String, cols: i16, rows: i16) -> Result<(), String> {
     #[cfg(windows)]
     return tauri::async_runtime::spawn_blocking(move || conpty::resize(&terminal_id, cols, rows))
-        .await.map_err(|error| error.to_string())?;
+        .await
+        .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("pty only supported on Windows".into())
 }
@@ -509,7 +590,8 @@ async fn terminal_resize(terminal_id: String, cols: i16, rows: i16) -> Result<()
 async fn terminal_kill(terminal_id: String) -> Result<(), String> {
     #[cfg(windows)]
     return tauri::async_runtime::spawn_blocking(move || conpty::kill(&terminal_id))
-        .await.map_err(|error| error.to_string())?;
+        .await
+        .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Ok(())
 }
@@ -517,12 +599,23 @@ async fn terminal_kill(terminal_id: String) -> Result<(), String> {
 // --- embedded browser commands ---
 
 #[tauri::command]
-async fn browser_open(app: AppHandle, browser_id: String, url: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+async fn browser_open(
+    app: AppHandle,
+    browser_id: String,
+    url: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    initialization_script: Option<String>,
+) -> Result<(), String> {
     #[cfg(desktop)]
     // WebView2 creation must not run in the synchronous IPC/main-thread handler.
-    return tauri::async_runtime::spawn_blocking(move || browser::open(&app, &browser_id, &url, x, y, w, h))
-        .await
-        .map_err(|error| error.to_string())?;
+    return tauri::async_runtime::spawn_blocking(move || {
+        browser::open(&app, &browser_id, &url, x, y, w, h, initialization_script.as_deref())
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("browser only supported on desktop".into())
 }
@@ -548,9 +641,11 @@ async fn browser_preview(browser_id: String, html: String) -> Result<(), String>
 #[tauri::command]
 async fn browser_open_preview_external(app: AppHandle, html: String) -> Result<(), String> {
     #[cfg(desktop)]
-    return tauri::async_runtime::spawn_blocking(move || browser::open_preview_external(&app, &html))
-        .await
-        .map_err(|error| error.to_string())?;
+    return tauri::async_runtime::spawn_blocking(move || {
+        browser::open_preview_external(&app, &html)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("browser only supported on desktop".into())
 }
@@ -575,6 +670,29 @@ async fn browser_visible(browser_id: String, visible: bool) -> Result<(), String
 async fn browser_eval(browser_id: String, script: String) -> Result<(), String> {
     #[cfg(desktop)]
     return browser::eval(&browser_id, &script);
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
+async fn browser_eval_result(browser_id: String, script: String) -> Result<String, String> {
+    #[cfg(desktop)]
+    return tauri::async_runtime::spawn_blocking(move || browser::eval_result(&browser_id, &script))
+        .await
+        .map_err(|error| error.to_string())?;
+    #[allow(unreachable_code)]
+    Err("browser only supported on desktop".into())
+}
+
+#[tauri::command]
+async fn browser_get_cookies(
+    browser_id: String,
+    url: String,
+) -> Result<Vec<auth_files::AuthCookie>, String> {
+    #[cfg(desktop)]
+    return tauri::async_runtime::spawn_blocking(move || browser::cookies(&browser_id, &url))
+        .await
+        .map_err(|error| error.to_string())?;
     #[allow(unreachable_code)]
     Err("browser only supported on desktop".into())
 }
@@ -609,7 +727,11 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             data_paths::ensure_global_instructions().map_err(std::io::Error::other)?;
-            let config = app.config().app.windows.iter()
+            let config = app
+                .config()
+                .app
+                .windows
+                .iter()
                 .find(|config| config.label == "main")
                 .ok_or("Missing main window configuration")?;
             tauri::WebviewWindowBuilder::from_config(app, config)?
@@ -621,7 +743,11 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
             app.manage(NativeCopyState {
-                copy: Mutex::new(NativeCopy { show: "Show Qone".into(), quit: "Quit".into(), completed: "Agent run completed".into() }),
+                copy: Mutex::new(NativeCopy {
+                    show: "Show Qone".into(),
+                    quit: "Quit".into(),
+                    completed: "Agent run completed".into(),
+                }),
                 show,
                 quit,
             });
@@ -675,7 +801,10 @@ fn main() {
                 {
                     // Let `tauri dev` exit normally so the debug executable is
                     // released before the next Cargo rebuild.
-                    eprintln!("[qone:lifecycle] window close requested: {}", window.label());
+                    eprintln!(
+                        "[qone:lifecycle] window close requested: {}",
+                        window.label()
+                    );
                     let _ = (window, api);
                 }
                 #[cfg(not(debug_assertions))]
@@ -701,6 +830,9 @@ fn main() {
             secret_set,
             secret_get,
             secret_delete,
+            auth_file_save,
+            auth_file_get,
+            auth_file_delete,
             terminal_spawn,
             terminal_write,
             terminal_resize,
@@ -712,6 +844,8 @@ fn main() {
             browser_bounds,
             browser_visible,
             browser_eval,
+            browser_eval_result,
+            browser_get_cookies,
             browser_close,
         ])
         .build(tauri::generate_context!())

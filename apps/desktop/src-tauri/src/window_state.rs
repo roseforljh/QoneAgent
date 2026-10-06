@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow, Window, WindowEvent};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow, Window, WindowEvent,
+};
 
 const STATE_FILE: &str = "window-state.json";
 
@@ -28,7 +30,9 @@ fn state_path<R: Runtime>(_app: &AppHandle<R>) -> Result<PathBuf, String> {
 }
 
 fn intersects_monitor<R: Runtime>(window: &tauri::WebviewWindow<R>, state: &WindowState) -> bool {
-    let Ok(monitors) = window.available_monitors() else { return true; };
+    let Ok(monitors) = window.available_monitors() else {
+        return true;
+    };
     monitors.into_iter().any(|monitor| {
         let position = monitor.position();
         let size = monitor.size();
@@ -42,18 +46,37 @@ fn intersects_monitor<R: Runtime>(window: &tauri::WebviewWindow<R>, state: &Wind
 }
 
 pub fn restore<R: Runtime>(app: &AppHandle<R>) {
-    let Some(window) = app.get_webview_window("main") else { return; };
-    let Ok(path) = state_path(app) else { return; };
-    let Ok(content) = std::fs::read_to_string(path) else { return; };
-    let Ok(state) = serde_json::from_str::<WindowState>(&content) else { return; };
-    if state.width == 0 || state.height == 0 || !intersects_monitor(&window, &state) { return; }
-
-    if let Ok(mut saved) = last_normal_state().lock() {
-        *saved = Some(WindowState { maximized: false, ..state.clone() });
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(path) = state_path(app) else {
+        return;
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(state) = serde_json::from_str::<WindowState>(&content) else {
+        return;
+    };
+    if state.width == 0 || state.height == 0 || !intersects_monitor(&window, &state) {
+        return;
     }
 
-    let _ = window.set_size(PhysicalSize { width: state.width, height: state.height });
-    let _ = window.set_position(PhysicalPosition { x: state.x, y: state.y });
+    if let Ok(mut saved) = last_normal_state().lock() {
+        *saved = Some(WindowState {
+            maximized: false,
+            ..state.clone()
+        });
+    }
+
+    let _ = window.set_size(PhysicalSize {
+        width: state.width,
+        height: state.height,
+    });
+    let _ = window.set_position(PhysicalPosition {
+        x: state.x,
+        y: state.y,
+    });
     if state.maximized {
         let _ = window.maximize();
     }
@@ -66,29 +89,56 @@ pub fn observe<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
     {
         return;
     }
-    let Ok(size) = window.inner_size() else { return; };
-    let Ok(position) = window.outer_position() else { return; };
-    let mut state = WindowState { width: size.width, height: size.height, x: position.x, y: position.y, maximized: false };
+    let Ok(size) = window.inner_size() else {
+        return;
+    };
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let mut state = WindowState {
+        width: size.width,
+        height: size.height,
+        x: position.x,
+        y: position.y,
+        maximized: false,
+    };
     match event {
-        WindowEvent::Moved(position) => { state.x = position.x; state.y = position.y; }
-        WindowEvent::Resized(size) => { state.width = size.width; state.height = size.height; }
+        WindowEvent::Moved(position) => {
+            state.x = position.x;
+            state.y = position.y;
+        }
+        WindowEvent::Resized(size) => {
+            state.width = size.width;
+            state.height = size.height;
+        }
         _ => return,
     }
-    if let Ok(mut saved) = last_normal_state().lock() { *saved = Some(state); }
+    if let Ok(mut saved) = last_normal_state().lock() {
+        *saved = Some(state);
+    }
 }
 
 pub fn save<R: Runtime>(app: &AppHandle<R>) {
-    let Some(window) = app.get_webview_window("main") else { return; };
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
     let maximized = window.is_maximized().unwrap_or(false);
     let state = if maximized {
-        last_normal_state().lock().ok().and_then(|saved| saved.clone())
+        last_normal_state()
+            .lock()
+            .ok()
+            .and_then(|saved| saved.clone())
             .or_else(|| current_state(&window))
     } else {
         current_state(&window)
     };
-    let Some(mut state) = state else { return; };
+    let Some(mut state) = state else {
+        return;
+    };
     state.maximized = maximized;
-    let Ok(path) = state_path(app) else { return; };
+    let Ok(path) = state_path(app) else {
+        return;
+    };
     if let Ok(content) = serde_json::to_vec_pretty(&state) {
         if let Err(error) = std::fs::write(path, content) {
             eprintln!("[qone:window-state] failed to save: {error}");
@@ -99,5 +149,11 @@ pub fn save<R: Runtime>(app: &AppHandle<R>) {
 fn current_state<R: Runtime>(window: &WebviewWindow<R>) -> Option<WindowState> {
     let size = window.inner_size().ok()?;
     let position = window.outer_position().ok()?;
-    Some(WindowState { width: size.width, height: size.height, x: position.x, y: position.y, maximized: false })
+    Some(WindowState {
+        width: size.width,
+        height: size.height,
+        x: position.x,
+        y: position.y,
+        maximized: false,
+    })
 }

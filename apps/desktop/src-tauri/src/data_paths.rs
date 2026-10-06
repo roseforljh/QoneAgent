@@ -9,7 +9,9 @@ pub fn root() -> Result<PathBuf, String> {
             return if path.is_absolute() {
                 Ok(path)
             } else {
-                std::env::current_dir().map(|cwd| cwd.join(path)).map_err(|error| error.to_string())
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(path))
+                    .map_err(|error| error.to_string())
             };
         }
     }
@@ -23,6 +25,12 @@ pub fn runtime() -> Result<PathBuf, String> {
     Ok(root()?.join("runtime"))
 }
 
+pub fn auth() -> Result<PathBuf, String> {
+    let directory = root()?.join("auth");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory)
+}
+
 pub fn webview() -> Result<PathBuf, String> {
     let directory = runtime()?.join("webview");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
@@ -32,7 +40,12 @@ pub fn webview() -> Result<PathBuf, String> {
 pub fn ensure_global_instructions() -> Result<(), String> {
     let directory = root()?;
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    match std::fs::OpenOptions::new().write(true).create_new(true).open(directory.join("Qone.md")) {
+    auth()?;
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(directory.join("Qone.md"))
+    {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(format!("Failed to create Qone.md: {error}")),

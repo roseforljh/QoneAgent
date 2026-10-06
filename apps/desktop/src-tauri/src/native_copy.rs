@@ -15,9 +15,18 @@ pub struct NativeCopyState {
 }
 
 #[tauri::command]
-pub fn set_native_copy(copy: NativeCopy, state: tauri::State<'_, NativeCopyState>) -> Result<(), String> {
-    state.show.set_text(&copy.show).map_err(|error| error.to_string())?;
-    state.quit.set_text(&copy.quit).map_err(|error| error.to_string())?;
+pub fn set_native_copy(
+    copy: NativeCopy,
+    state: tauri::State<'_, NativeCopyState>,
+) -> Result<(), String> {
+    state
+        .show
+        .set_text(&copy.show)
+        .map_err(|error| error.to_string())?;
+    state
+        .quit
+        .set_text(&copy.quit)
+        .map_err(|error| error.to_string())?;
     *state.copy.lock().map_err(|error| error.to_string())? = copy;
     Ok(())
 }

@@ -1,7 +1,7 @@
-use std::sync::{Arc, Mutex};
 use serde_json::value::RawValue;
-use tauri::{ipc::Channel, AppHandle, Emitter, State};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tauri::{ipc::Channel, AppHandle, Emitter, State};
 
 pub struct RuntimeBatch {
     events: Vec<Box<RawValue>>,
@@ -12,17 +12,26 @@ pub struct RuntimeBatch {
 
 impl RuntimeBatch {
     pub fn new(limit: usize, interval: Duration) -> Self {
-        Self { events: Vec::with_capacity(limit), deadline: None, interval, limit }
+        Self {
+            events: Vec::with_capacity(limit),
+            deadline: None,
+            interval,
+            limit,
+        }
     }
 
     pub fn push(&mut self, event: Box<RawValue>, now: Instant) -> bool {
-        if self.events.is_empty() { self.deadline = Some(now + self.interval); }
+        if self.events.is_empty() {
+            self.deadline = Some(now + self.interval);
+        }
         self.events.push(event);
         self.events.len() >= self.limit
     }
 
     pub fn timeout(&self, now: Instant) -> Duration {
-        self.deadline.map(|deadline| deadline.saturating_duration_since(now)).unwrap_or(self.interval)
+        self.deadline
+            .map(|deadline| deadline.saturating_duration_since(now))
+            .unwrap_or(self.interval)
     }
 
     pub fn drain(&mut self) -> Vec<Box<RawValue>> {
@@ -46,13 +55,19 @@ pub struct RuntimeTransport(Arc<Mutex<Option<Channel<RuntimePayload>>>>);
 impl RuntimeTransport {
     pub fn send(&self, app: &AppHandle, batch: Vec<Box<RawValue>>) {
         let payload = RuntimePayload(Arc::new(batch));
-        self.deliver(payload, |payload| { let _ = app.emit("runtime-event", payload); });
+        self.deliver(payload, |payload| {
+            let _ = app.emit("runtime-event", payload);
+        });
     }
 
     fn deliver(&self, payload: RuntimePayload, fallback: impl FnOnce(RuntimePayload)) {
-        let Ok(mut channel) = self.0.lock() else { return; };
+        let Ok(mut channel) = self.0.lock() else {
+            return;
+        };
         if let Some(channel) = channel.as_ref() {
-            if channel.send(payload.clone()).is_ok() { return; }
+            if channel.send(payload.clone()).is_ok() {
+                return;
+            }
         }
         *channel = None;
         fallback(payload);
@@ -62,16 +77,27 @@ impl RuntimeTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn event(text: &str) -> Box<RawValue> { RawValue::from_string(text.to_owned()).unwrap() }
+    fn event(text: &str) -> Box<RawValue> {
+        RawValue::from_string(text.to_owned()).unwrap()
+    }
 
     #[test]
     fn continuous_input_does_not_move_the_first_event_deadline() {
         let now = Instant::now();
         let mut batch = RuntimeBatch::new(16, Duration::from_millis(8));
         assert!(!batch.push(event(r#"{"type":"first"}"#), now));
-        assert!(!batch.push(event(r#"{"type":"second"}"#), now + Duration::from_millis(7)));
-        assert_eq!(batch.timeout(now + Duration::from_millis(7)), Duration::from_millis(1));
-        assert_eq!(batch.timeout(now + Duration::from_millis(9)), Duration::ZERO);
+        assert!(!batch.push(
+            event(r#"{"type":"second"}"#),
+            now + Duration::from_millis(7)
+        ));
+        assert_eq!(
+            batch.timeout(now + Duration::from_millis(7)),
+            Duration::from_millis(1)
+        );
+        assert_eq!(
+            batch.timeout(now + Duration::from_millis(9)),
+            Duration::ZERO
+        );
     }
 
     #[test]
@@ -80,11 +106,24 @@ mod tests {
         let mut batch = RuntimeBatch::new(2, Duration::from_millis(8));
         assert!(!batch.push(event(r#"{"type":"first"}"#), now));
         assert!(batch.push(event(r#"{"type":"second"}"#), now));
-        assert_eq!(batch.drain().iter().map(|value| value.get()).collect::<Vec<_>>(), vec![r#"{"type":"first"}"#, r#"{"type":"second"}"#]);
+        assert_eq!(
+            batch
+                .drain()
+                .iter()
+                .map(|value| value.get())
+                .collect::<Vec<_>>(),
+            vec![r#"{"type":"first"}"#, r#"{"type":"second"}"#]
+        );
         assert!(batch.drain().is_empty());
-        assert_eq!(batch.timeout(now + Duration::from_secs(1)), Duration::from_millis(8));
+        assert_eq!(
+            batch.timeout(now + Duration::from_secs(1)),
+            Duration::from_millis(8)
+        );
         batch.push(event(r#"{"type":"next"}"#), now + Duration::from_secs(1));
-        assert_eq!(batch.timeout(now + Duration::from_secs(1)), Duration::from_millis(8));
+        assert_eq!(
+            batch.timeout(now + Duration::from_secs(1)),
+            Duration::from_millis(8)
+        );
     }
 
     #[test]
@@ -109,28 +148,45 @@ mod tests {
         let failures = failed.clone();
         *transport.0.lock().unwrap() = Some(Channel::new(move |_| {
             *failures.lock().unwrap() += 1;
-            Err(tauri::Error::Io(std::io::Error::other("renderer disconnected")))
+            Err(tauri::Error::Io(std::io::Error::other(
+                "renderer disconnected",
+            )))
         }));
         let payload = RuntimePayload(Arc::new(vec![event(r#"{"type":"first"}"#)]));
         let mut fallback = Vec::new();
-        transport.deliver(payload.clone(), |value| fallback.push(serde_json::to_string(&value).unwrap()));
+        transport.deliver(payload.clone(), |value| {
+            fallback.push(serde_json::to_string(&value).unwrap())
+        });
         assert!(transport.0.lock().unwrap().is_none());
-        transport.deliver(payload, |value| fallback.push(serde_json::to_string(&value).unwrap()));
+        transport.deliver(payload, |value| {
+            fallback.push(serde_json::to_string(&value).unwrap())
+        });
         assert_eq!(*failed.lock().unwrap(), 1);
-        assert_eq!(fallback, vec![r#"[{"type":"first"}]"#, r#"[{"type":"first"}]"#]);
+        assert_eq!(
+            fallback,
+            vec![r#"[{"type":"first"}]"#, r#"[{"type":"first"}]"#]
+        );
         let received = Arc::new(Mutex::new(Vec::new()));
         let captured = received.clone();
         *transport.0.lock().unwrap() = Some(Channel::new(move |body| {
-            if let tauri::ipc::InvokeResponseBody::Json(value) = body { captured.lock().unwrap().push(value); }
+            if let tauri::ipc::InvokeResponseBody::Json(value) = body {
+                captured.lock().unwrap().push(value);
+            }
             Ok(())
         }));
-        transport.deliver(RuntimePayload(Arc::new(vec![event(r#"{"type":"next"}"#)])), |_| panic!("working channel must not fall back"));
+        transport.deliver(
+            RuntimePayload(Arc::new(vec![event(r#"{"type":"next"}"#)])),
+            |_| panic!("working channel must not fall back"),
+        );
         assert_eq!(*received.lock().unwrap(), vec![r#"[{"type":"next"}]"#]);
     }
 }
 
 #[tauri::command]
-pub fn runtime_subscribe(channel: Channel<RuntimePayload>, transport: State<'_, RuntimeTransport>) -> Result<(), String> {
+pub fn runtime_subscribe(
+    channel: Channel<RuntimePayload>,
+    transport: State<'_, RuntimeTransport>,
+) -> Result<(), String> {
     *transport.0.lock().map_err(|error| error.to_string())? = Some(channel);
     Ok(())
 }

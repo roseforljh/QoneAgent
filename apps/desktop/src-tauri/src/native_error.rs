@@ -6,10 +6,16 @@ pub struct NativeError {
 
 impl NativeError {
     pub fn new(code: &'static str) -> Self {
-        Self { code, values: Default::default() }
+        Self {
+            code,
+            values: Default::default(),
+        }
     }
 
     pub fn detail(code: &'static str, error: impl std::fmt::Display) -> Self {
-        Self { code, values: [("error", error.to_string())].into() }
+        Self {
+            code,
+            values: [("error", error.to_string())].into(),
+        }
     }
 }
