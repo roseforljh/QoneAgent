@@ -420,7 +420,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
   };
 
   const steerNow = (localId: string) => {
-    adapter.move(localId, { lane: "steer", insertAfter: null });
+    adapter.move(localId, { lane: callbacks.isRunning() ? "steer" : "queue", insertAfter: null });
   };
 
   const beginEdit = (localId: string) => {

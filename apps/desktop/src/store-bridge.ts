@@ -22,6 +22,9 @@ import { handleSideConversationEvent, retrySideConversationTransfers } from "./l
 import { applySubagentPatch, applySubagentStreaming, mergeSubagentSnapshots, updateSubagent } from "./lib/subagent-state";
 import type { AgentState } from "./store";
 import { runtimeEvents } from "./lib/runtime-event-payload";
+import { resolveDouyinPage } from "./lib/douyin-page-bridge";
+import { resolveDouyinAuthorPage } from "./lib/douyin-author-page";
+import { DouyinPageError } from "./lib/douyin-video-page";
 
 function subagentChange(state: AgentState, subagents: AgentState["subagents"]): Partial<AgentState> {
   return subagents === state.subagents ? state : { subagents };
@@ -33,6 +36,26 @@ const Channel = (TauriCore as typeof TauriCore & { Channel?: typeof TauriCore.Ch
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 const CAPABILITY_ROUTING_STORAGE_KEY = "qone-capability-routing";
 const SUBAGENT_RUNTIME_STORAGE_KEY = "qone-subagent-runtime";
+const douyinRequests = new Map<string, AbortController>();
+
+async function serveDouyinBridgeRequest(
+  request: Extract<RuntimeEvent, { type: "douyin.bridge.request" }>,
+  send: (command: Extract<import("@qone/protocol").RuntimeCommand, { type: "douyin.bridge.response" }>) => Promise<boolean>,
+): Promise<void> {
+  if (douyinRequests.has(request.requestId)) return;
+  const controller = new AbortController();
+  douyinRequests.set(request.requestId, controller);
+  try {
+    const result = await (request.operation === "author" ? resolveDouyinAuthorPage : resolveDouyinPage)(invoke, request, controller.signal);
+    if (!controller.signal.aborted) await send({ type: "douyin.bridge.response", requestId: request.requestId, ok: true, result });
+  } catch (error) {
+    if (!controller.signal.aborted) await send({ type: "douyin.bridge.response", requestId: request.requestId, ok: false,
+      failure: error instanceof DouyinPageError ? error.failure : "page_unavailable",
+      message: error instanceof Error ? error.message : String(error) });
+  } finally {
+    douyinRequests.delete(request.requestId);
+  }
+}
 
 function mergeSessionActivity(previous: SessionInfo, next: SessionInfo): SessionInfo {
   const lastUserMessageAt = Math.max(previous.lastUserMessageAt ?? 0, next.lastUserMessageAt ?? 0);
@@ -46,7 +69,7 @@ let wired = false;
 let lastSequence = -1;
 const lastRunSequences = new Map<string, number>();
 export function initRuntimeBridge(dependencies: ReturnType<typeof import("./store").bridgeDependencies>) {
-  const { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
+  const { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
   if (wired) return;
   if (!hasTauriBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
@@ -54,6 +77,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
   const receive = (payload: RuntimeEvent | RuntimeEvent[] | string) => {
     for (const raw of runtimeEvents(payload)) {
       if (raw.type === "runtime.exited") {
+      for (const controller of douyinRequests.values()) controller.abort();
       lastRunSequences.clear();
       for (const sessionId of deltas.keys()) clearDelta(sessionId);
       setMetadataLookupSupported(false);
@@ -62,6 +86,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       stopRequests.clear();
       pendingTitleRequests.clear();
       pendingSessionMessageRequests.clear();
+      for (const request of browserUrlRequests.values()) request.reject(new Error(t("error.runtimeExited")));
+      browserUrlRequests.clear();
       latestSessionMessageRequest.clear();
       mcpConnectRequests.clear();
       restoredMcpSecrets.clear();
@@ -103,6 +129,14 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       invoke("runtime_restart")
         .then(() => useStore.getState().send({ type: "ping", requestId: rid() }))
         .catch((error) => console.error("runtime restart failed", error));
+      continue;
+    }
+    if (raw.type === "douyin.bridge.cancel") {
+      douyinRequests.get(raw.requestId)?.abort();
+      continue;
+    }
+    if (raw.type === "douyin.bridge.request") {
+      void serveDouyinBridgeRequest(raw, (command) => useStore.getState().send(command)).catch(() => undefined);
       continue;
     }
     const msg = raw;
@@ -553,6 +587,9 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (msg.status.targetConnected) rememberBrowserConnection();
         eventStore.setState({ browserStatus: msg.status });
         break;
+      case "browser.current-url":
+        browserUrlRequests.get(msg.requestId)?.resolve(msg.url);
+        break;
       case "reach.channels":
         eventStore.setState({ reachChannels: msg.channels });
         break;
@@ -688,6 +725,10 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         if (msg.requestId && cloudRequests.has(msg.requestId)) {
           cloudRequests.get(msg.requestId)?.reject(new Error(msg.message));
+          break;
+        }
+        if (msg.requestId && browserUrlRequests.has(msg.requestId)) {
+          browserUrlRequests.get(msg.requestId)?.reject(new Error(msg.message));
           break;
         }
         if (msg.requestId) {

@@ -97,3 +97,62 @@ test("a delayed enqueue echo cannot restore a sent input or overwrite the next w
     useStore.setState(previous, true);
   }
 });
+
+test("consecutive stops allow new sends and a rejected in-flight steer returns to the queue", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession();
+    const queue = createQoneMessageQueue({
+      sessionId: session.id,
+      isRunning: () => useStore.getState().running,
+      getActiveRunId: () => useStore.getState().activeRunId,
+      send: (message, id, attachments) => useStore.getState().runAgent(
+        message.content[0]?.type === "text" ? message.content[0].text : "", undefined, attachments, id,
+      ),
+      steer: (message, queueItemId, attachments, runId) => useStore.getState().steerAgent({
+        sessionId: session.id, runId, queueItemId, attachments,
+        message: message.content[0]?.type === "text" ? message.content[0].text : "",
+      }),
+      sync: () => {},
+    });
+    hydrateSessionQueue(queue, []);
+    bindSessionQueue(session.id, queue);
+    let sequence = 0;
+    const event = (type: "agent.started" | "agent.cancelled", runId: string) => emit({
+      type: "agent.event", event: { eventId: crypto.randomUUID(), sessionId: session.id,
+        runId, type, sequence: ++sequence, timestamp: Date.now(), payload: {} },
+    });
+    for (const [index, text] of ["download", "where are you stuck?"].entries()) {
+      queue.adapter.enqueue(input(text));
+      await tick();
+      expect(commands.filter((command) => command.type === "agent.run")).toHaveLength(index + 1);
+      event("agent.started", `run-${index}`);
+      useStore.getState().stopAgent();
+      event("agent.cancelled", `run-${index}`);
+      await tick();
+      expect(useStore.getState().running).toBe(false);
+      expect(useStore.getState().activeRunId).toBeUndefined();
+    }
+    queue.adapter.enqueue(input("stop downloading and answer"));
+    await tick();
+    expect(commands.filter((command) => command.type === "agent.run")).toHaveLength(3);
+    expect(queue.adapter.items).toHaveLength(0);
+    event("agent.started", "run-2");
+    queue.adapter.enqueue(input("clarification"));
+    await tick();
+    queue.steerNow(queue.adapter.items[0]!.id);
+    await tick();
+    const steer = commands.find((command) => command.type === "agent.steer")!;
+    event("agent.cancelled", "run-2");
+    emit({ type: "error", requestId: steer.requestId, message: "Agent is no longer running" });
+    await tick();
+    expect(commands.filter((command) => command.type === "agent.run").map((command) => command.message))
+      .toEqual(["download", "where are you stuck?", "stop downloading and answer", "clarification"]);
+    expect(queue.adapter.steerItems).toHaveLength(0);
+    expect(queue.adapter.items).toHaveLength(0);
+    expect(useStore.getState().lastError).toBeUndefined();
+  } finally {
+    useStore.setState({ connected: false });
+    useStore.setState(previous, true);
+  }
+});

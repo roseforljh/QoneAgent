@@ -881,13 +881,14 @@ a { text-decoration: none; }
 .apps-app-status { display: flex; min-height: 16px; align-items: center; gap: 4px; color: var(--q-subtle); font-size: var(--q-text-xs); }
 .apps-app-actions { display: flex; gap: 7px; margin-top: 4px; }
 .apps-app-actions .settings-secondary-action { min-height: 28px; padding: 0 12px; }
-.browser-integration-card { grid-column: span 2; min-width: 0; text-align: center; }
-.browser-opencli-mark { width: 42px; height: 42px; display: grid; place-items: center; margin: 0 auto 6px; border: 1px solid var(--q-border); border-radius: 12px; color: var(--q-accent); font-size: 25px; font-weight: 700; }
-.browser-integration-card > p { max-width: 330px; margin: 2px 0 0; color: var(--q-subtle); font-size: var(--q-text-xs); line-height: 1.5; }
+.browser-integration-card { grid-column: span 1; min-width: 0; text-align: center; }
+.browser-opencli-mark { display: grid; width: 42px; height: 42px; place-items: center; margin: 0; overflow: hidden; border: 0; border-radius: 13px; background: transparent; color: var(--q-accent); font-size: 25px; font-weight: 700; }
+.browser-opencli-mark img { width: 42px; height: 42px; object-fit: cover; }
+.browser-integration-card > p { min-height: 38px; max-width: 330px; margin: 0; color: var(--q-subtle); font-size: var(--q-text-xs); line-height: 1.45; }
 .browser-integration-card .apps-app-status { max-width: 100%; text-align: center; }
 .browser-integration-card .apps-app-actions { flex-wrap: wrap; justify-content: center; }
 .browser-extension-link { border: 0; background: transparent; color: var(--primary); font-size: var(--q-text-xs); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
-.browser-import-note { color: var(--q-subtle); font-size: var(--q-text-xs); line-height: 1.4; }
+.browser-import-note { max-width: 100%; overflow: hidden; color: var(--q-subtle); font-size: var(--q-text-xs); line-height: 1.4; text-align: center; text-overflow: ellipsis; }
 .browser-integration-error { color: var(--q-danger); font-size: var(--q-text-xs); line-height: 1.4; overflow-wrap: anywhere; }
 .reach-section { margin-top: 22px; }
 .reach-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin: 0 0 14px; }
@@ -908,6 +909,32 @@ a { text-decoration: none; }
 .reach-dialog-body p { margin: 0; overflow-wrap: anywhere; }
 .reach-secret-field { display: grid; gap: 6px; color: var(--q-subtle); font-size: var(--q-text-xs); }
 .reach-secret-field input { min-height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--foreground); }
+.downloader-apps { margin-top: 4px; }
+.downloader-apps-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.downloader-apps-heading h2 { margin: 0 0 5px; font-size: 18px; font-weight: 600; }
+.downloader-apps-heading p, .downloader-apps-heading > span { margin: 0; color: color-mix(in srgb, var(--foreground) 64%, var(--card)); font-size: var(--q-text-xs); line-height: 1.5; }
+.downloader-app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.downloader-app-card { display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 18px 16px; border: 1px solid color-mix(in srgb, var(--foreground) 14%, var(--border)); border-radius: 14px; background: var(--card); color: var(--foreground); cursor: pointer; text-align: center; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.downloader-app-card:hover { border-color: color-mix(in srgb, var(--foreground) 28%, var(--border)); box-shadow: 0 8px 22px rgb(0 0 0 / 8%); transform: translateY(-2px); }
+.downloader-app-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.downloader-app-card strong { font-size: 14px; }
+.downloader-app-card small { color: color-mix(in srgb, var(--foreground) 68%, var(--card)); font-size: var(--q-text-xs); }
+.downloader-app-card small.is-configured { color: #2b9a63; }
+.downloader-app-card > span:not(.downloader-app-mark) { min-height: 38px; color: var(--q-subtle); font-size: var(--q-text-xs); line-height: 1.45; }
+.downloader-app-card em { max-width: 100%; overflow: hidden; color: var(--q-subtle); font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.downloader-app-mark { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 13px; }
+.downloader-app-mark img { width: 27px; height: 27px; object-fit: contain; filter: none; }
+.downloader-app-mark.is-rose img { width: 35px; height: 35px; mix-blend-mode: multiply; filter: contrast(1.25); }
+.downloader-app-mark.is-rose { background: #fce7f3; color: #be185d; }
+.downloader-app-mark.is-cyan { background: #cffafe; color: #0e7490; }
+.downloader-app-mark.is-red { background: #fee2e2; color: #dc2626; }
+.downloader-app-mark.is-blue { background: #dbeafe; color: #2563eb; }
+.downloader-app-mark.is-slate { background: #e2e8f0; color: #334155; }
+.downloader-app-mark.is-orange { background: #ffedd5; color: #ea580c; }
+.browser-integration-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.browser-integration-dialog { width: min(440px, calc(100% - 2rem)); }
+.browser-integration-dialog-body { display: grid; gap: 10px; font-size: 12px; line-height: 1.5; }
+.browser-integration-dialog-body p { margin: 0; overflow-wrap: anywhere; }
 .browser-token-editor { display: flex; width: 100%; flex-direction: column; align-items: center; gap: 7px; }
 .browser-token-editor > p { margin: 0; color: var(--q-subtle); font-size: var(--q-text-xs); line-height: 1.5; }
 .browser-token-editor > input { width: 100%; min-height: 30px; border: 1px solid var(--border); border-radius: 7px; padding: 0 9px; background: var(--background); color: var(--foreground); font-size: var(--q-text-xs); }

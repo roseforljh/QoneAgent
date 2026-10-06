@@ -27,7 +27,7 @@ function fixture(steer: Parameters<typeof createQoneMessageQueue>[0]["steer"] = 
     send: (message, id, attachments) => { sent.push({ message, id, attachments }); running = true; },
     sync: (items) => { snapshot = items; }, onError: (error) => errors.push(error),
   });
-  return { queue, sent, errors, snapshot: () => snapshot, idle: () => { running = false; queue.controller.notifyIdle(); } };
+  return { queue, sent, errors, snapshot: () => snapshot, setRunning: (value: boolean) => { running = value; }, idle: () => { running = false; queue.controller.notifyIdle(); } };
 }
 const prompts = (f: ReturnType<typeof fixture>) => f.queue.adapter.items.map((item) => item.prompt);
 const slowFile = (text: string, read: Promise<ArrayBuffer>) => {
@@ -207,6 +207,20 @@ test("steerNow submits directly to the active run instead of the FIFO lane", asy
   expect(requests).toEqual(["direct"]);
   expect(f.queue.adapter.items).toEqual([]);
   expect(f.queue.adapter.steerItems.map((item) => item.prompt)).toEqual(["direct"]);
+});
+
+test("steerNow falls back to FIFO after the active run becomes terminal", async () => {
+  const f = fixture();
+  f.queue.adapter.enqueue(message("after stop"));
+  await tick();
+  const localId = f.queue.adapter.items[0]!.id;
+  f.setRunning(false);
+  f.queue.steerNow(localId);
+  expect(f.queue.adapter.steerItems).toHaveLength(0);
+  expect(f.queue.adapter.items.map((item) => item.prompt)).toEqual(["after stop"]);
+  f.queue.controller.notifyIdle();
+  await tick();
+  expect(f.sent.map((item) => item.message.content[0])).toEqual([{ type: "text", text: "after stop" }]);
 });
 
 test("confirmed delivery before request acknowledgement cannot be undone by a late rejection", async () => {

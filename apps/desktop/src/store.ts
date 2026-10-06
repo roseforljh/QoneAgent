@@ -259,6 +259,7 @@ type SkillMutationCommand = Extract<RuntimeCommand, { type: "skills.import" | "s
 type SkillMutationInput = SkillMutationCommand extends infer Command ? Command extends SkillMutationCommand ? Omit<Command, "requestId"> : never : never;
 const cloudRequests = new Map<string, { resolve: (response: CloudResponse) => void; reject: (error: Error) => void }>();
 const skillMutationRequests = new Map<string, { resolve: (response: SkillMutationResponse) => void; reject: (error: Error) => void }>();
+const browserUrlRequests = new Map<string, { resolve: (url: string) => void; reject: (error: Error) => void }>();
 const cloudInFlight = new Map<string, Promise<CloudResponse>>();
 const workspaceRequests = new Map<string, RuntimeCommand["type"]>();
 const mcpConnectRequests = new Map<string, string>();
@@ -317,6 +318,21 @@ export function requestSkillMutation(command: SkillMutationInput): Promise<Skill
     });
     useStore.getState().send({ ...command, requestId } as SkillMutationCommand).then((sent) => {
       if (!sent) skillMutationRequests.get(requestId)?.reject(new Error(t("error.skillSendFailed")));
+    });
+  });
+}
+
+export function requestBrowserUrl(): Promise<string> {
+  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
+  const requestId = rid();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { browserUrlRequests.delete(requestId); reject(new Error("BROWSER_URL_TIMEOUT")); }, 5_000);
+    browserUrlRequests.set(requestId, {
+      resolve: (url) => { clearTimeout(timer); browserUrlRequests.delete(requestId); resolve(url); },
+      reject: (error) => { clearTimeout(timer); browserUrlRequests.delete(requestId); reject(error); },
+    });
+    useStore.getState().send({ type: "browser.current-url", requestId }).then((sent) => {
+      if (!sent) browserUrlRequests.get(requestId)?.reject(new Error(t("error.runtimeUnavailable")));
     });
   });
 }
@@ -895,7 +911,12 @@ function clearSessionMessageRequests(sessionId: string) {
 }
 
 export function bridgeDependencies() {
-  return { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
+  return { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
 }
 
 export function initBridge() { initRuntimeBridge(bridgeDependencies()); }
+
+// IPC listeners, request maps and conversation queues share this store's
+// lifetime. React refresh alone leaves them holding the previous module.
+// Reconnect the renderer to the existing runtime when this state graph changes.
+if (import.meta.hot) import.meta.hot.accept(() => window.location.reload());

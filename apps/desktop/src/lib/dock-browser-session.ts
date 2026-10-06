@@ -23,6 +23,7 @@ export function createDockBrowserSession(
   url: string,
   onError: (error: unknown) => void,
   initialHtml?: string,
+  onOpen?: () => void,
 ) {
   let disposed = false;
   let opened = false;
@@ -32,6 +33,7 @@ export function createDockBrowserSession(
   let desired: { bounds: BrowserBounds; visible: boolean } | undefined;
   let appliedBounds = "";
   let visible = false;
+  let readyNotified = false;
 
   const report = (error: unknown) => {
     if (!disposed && typeof onError === "function") {
@@ -45,8 +47,8 @@ export function createDockBrowserSession(
 
   const closeChild = async () => {
     if (closed) return;
+    await invoke("browser_close", { browserId });
     closed = true;
-    await invoke("browser_close", { browserId }).catch(() => undefined);
   };
 
   const sync = async () => {
@@ -122,6 +124,10 @@ export function createDockBrowserSession(
           desired.visible === visible &&
           (!desired.visible || JSON.stringify(desired.bounds) === appliedBounds)
         ) {
+          if (visible && !readyNotified) {
+            readyNotified = true;
+            onOpen?.();
+          }
           break;
         }
       }
@@ -156,7 +162,7 @@ export function createDockBrowserSession(
     dispose() {
       if (disposed) return;
       disposed = true;
-      void enqueue(closeChild).catch(() => undefined);
+      void enqueue(closeChild).catch((error) => console.error("Failed to close native browser", browserId, error));
     },
   };
 }

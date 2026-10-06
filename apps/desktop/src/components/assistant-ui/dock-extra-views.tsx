@@ -12,6 +12,7 @@ import {
   PlugIcon,
   RotateCwIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -44,7 +45,7 @@ function toUrl(input: string): string | undefined {
 
 // The page area is a real WebView2 child of the main window (src-tauri
 // browser.rs); this view only owns the toolbar and reports its rect.
-export function DockBrowserView({ browserId, active, initialUrl, previewHtml, previewId }: { browserId: string; active: boolean; initialUrl: string; previewHtml?: string; previewId?: string }) {
+export function DockBrowserView({ browserId, active, initialUrl, previewHtml, previewId, onClose }: { browserId: string; active: boolean; initialUrl: string; previewHtml?: string; previewId?: string; onClose?: () => void }) {
   const { t } = useLocale();
   const hostRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
@@ -176,6 +177,9 @@ export function DockBrowserView({ browserId, active, initialUrl, previewHtml, pr
         </form>
         <TooltipIconButton tooltip={t("dock.browserOpenExternal")} onClick={() => void openExternally()} disabled={!currentPageUrl && !currentPreviewHtml && !currentDataUrl} className="size-7 shrink-0">
           <ExternalLinkIcon className="size-3.5" />
+        </TooltipIconButton>
+        <TooltipIconButton tooltip={t("dock.closePanel")} onClick={onClose} className="size-7 shrink-0">
+          <XIcon className="size-3.5" />
         </TooltipIconButton>
       </div>
       {externalOpenError && <p role="alert" title={externalOpenError} className="shrink-0 truncate px-3 py-1 text-xs text-destructive">{t("dock.browserOpenExternalFailed")}: {externalOpenError}</p>}
