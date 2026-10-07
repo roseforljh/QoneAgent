@@ -168,6 +168,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
       queueItemId?: string;
       mcpServerId?: string;
     }
+  | { type: "agent.permission-mode.set"; requestId: string; sessionId: string; permissionMode: RunPermissionMode }
   | { type: "agent.steer"; requestId: string; sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }
   | { type: "queue.upsert"; requestId: string; sessionId: string; item: QueueItemInfo }
   | { type: "queue.edit"; requestId: string; sessionId: string; item: QueueItemInfo }
@@ -574,9 +575,6 @@ export interface CloudSkillInfo {
 export interface BrowserSyncStatus {
   phase: "connecting" | "syncing" | "ready" | "error";
   targetConnected: boolean;
-  bookmarkCount?: number;
-  historyCount?: number;
-  libraryError?: string;
   lastError?: string;
   /** Machine-readable cause of the last connection failure; lastError stays human-readable. */
   errorCode?: "bridge-unavailable" | "npx-unavailable";
@@ -683,23 +681,9 @@ export interface ReachChannelInfo {
   detail?: string;
   /** Login entry point for channels that can reuse a browser session. */
   loginUrl?: string;
-  /** Whether a site-scoped Cookie is stored in the local credential store. */
-  cookieConfigured?: boolean;
   /** Built-in display copy travels with the channel so language changes need no refetch. */
   english?: { name: string; description: string; backend: string; detail?: string };
   action?: "opencli" | "exa" | "youtube" | "linkedin" | "podcast" | "xueqiu" | "github" | "bilibili";
-}
-
-/** Site channels whose browser session can also be saved as a local Cookie header. */
-export const REACH_COOKIE_CHANNEL_IDS = [
-  "tiktok", "bilibili", "twitter", "reddit", "facebook", "instagram", "xiaohongshu",
-  "boss", "youtube", "xueqiu", "linkedin",
-] as const;
-export type ReachCookieChannelId = typeof REACH_COOKIE_CHANNEL_IDS[number];
-
-export function reachCookieSecretKey(channelId: string): string | undefined {
-  if (!REACH_COOKIE_CHANNEL_IDS.includes(channelId as ReachCookieChannelId)) return undefined;
-  return channelId === "xueqiu" ? "reach.xueqiu.cookie" : `reach.cookie:${channelId}`;
 }
 
 export interface McpOAuthInfo {
@@ -909,6 +893,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
   "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "medium", "high", "xhigh", "max"]).optional(), queueItemId: id.optional(), mcpServerId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && nonMediaAttachmentBytes(run.attachments) <= 140_000_000, "Message or valid attachments required"),
+  "agent.permission-mode.set": z.object({ type: z.literal("agent.permission-mode.set"), ...request, sessionId: id, permissionMode: z.enum(["ask", "auto", "full"]) }),
   "global-prompt.get": z.object({ type: z.literal("global-prompt.get"), ...request }),
   "global-prompt.set": z.object({ type: z.literal("global-prompt.set"), ...request, content: z.string().max(200_000) }),
   "agent.steer": z.object({ type: z.literal("agent.steer"), ...request, sessionId: id, runId: id, queueItemId: id, message: z.string(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length), "Message or valid attachments required"),

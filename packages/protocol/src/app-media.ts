@@ -1,6 +1,6 @@
 import { siteHostIsAlias, siteHosts } from "./site-config";
 
-export const MEDIA_APP_IDS = ["tiktok", "bilibili", "youtube", "x", "reddit", "telegram"] as const;
+export const MEDIA_APP_IDS = ["tiktok", "bilibili", "youtube", "x", "reddit"] as const;
 export type MediaAppId = (typeof MEDIA_APP_IDS)[number];
 export type MediaAppMode = "video" | "audio" | "subtitles";
 
@@ -38,10 +38,6 @@ export function mediaAppContentId(app: MediaAppId, value: string): string | unde
     case "x": return /^\/(?:[^/]+\/status|i\/status|i\/web\/status)\/(\d+)(?:\/|$)/.exec(url.pathname)?.[1];
     case "reddit": return url.hostname === "redd.it" ? /^\/([a-z0-9]+)\/?$/i.exec(url.pathname)?.[1]
       : /\/comments\/([a-z0-9]+)(?:\/|\.json|$)/i.exec(url.pathname)?.[1];
-    case "telegram": {
-      const match = /^\/(?:s\/)?([a-zA-Z0-9_]+|c\/\d+)\/(\d+)\/?$/.exec(url.pathname);
-      return match ? `${match[1].replace("/", "-")}-${match[2]}` : undefined;
-    }
   }
 }
 
@@ -57,7 +53,6 @@ export function mediaAppProfile(app: MediaAppId, value: string): string | undefi
     return name && !["home", "explore", "notifications", "messages", "settings", "search", "i", "compose"].includes(name.toLowerCase()) ? name : undefined;
   }
   if (app === "reddit") return /^\/(?:r|u|user)\/([a-zA-Z0-9_-]+)(?:\/(?:new|hot|top|submitted))?\/?$/.exec(url.pathname)?.[1];
-  if (app === "telegram") return /^\/(?:s\/)?([a-zA-Z0-9_]+)\/?$/.exec(url.pathname)?.[1];
 }
 
 export interface AppMediaItem {

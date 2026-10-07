@@ -46,13 +46,13 @@ bun run apps/agent-runtime/test/smoke.ts
 
 固定 System Prompt 与 `Qone.md` 分开。运行时按 Identity → Behavior → Execution → Web Access → Coding → Verification → Safety → Communication 的显式顺序读取八个 Markdown 文件，统一换行并以两个换行拼接，作为 Pi 自定义 System Prompt 的首段；用户指导、项目规则、技能及工具上下文仍由现有机制放在后续部分。安装时从随运行时打包的 Markdown 创建缺失模块，保留已有内容；空白或不可读的模块会报错，额外文件不参与加载。相同版本和模块内容产生相同的固定前缀；完整请求仍会随任务上下文改变，实际缓存命中由模型服务决定。修改模块后重启开发运行时以刷新已存在的会话。
 
-## OpenCLI 当前浏览器
+## Qone 内置浏览器与 OpenCLI
 
-应用页的“OpenCLI 当前浏览器”通过 OpenCLI Browser Bridge 直接连接用户的 Chrome。AI 直接读取页面并执行导航、点击、输入、等待和提取操作，复用 Chrome 当前登录态，不复制 Cookies，也不创建 Qone 独立浏览器。程序启动不会自动连接；点击连接按钮或 AI 首次调用浏览器工具时才建立连接。
+应用页的“浏览器”是 Qone 自己的 WebView2，数据目录位于 `.qone/runtime/webview/`。用户在这里登录后，登录态由 WebView2 持久保存；OpenCLI 和浏览器自动化共用这一浏览器数据目录。
 
-首次使用需要安装 Node.js 20.18.1 或更高版本和 OpenCLI Browser Bridge 扩展。Chrome 已打开时，Qone 绑定现有标签页；Chrome 未打开时，只有需要登录态或页面操作的适配器才会按 OpenCLI 的规则启动浏览器上下文。支持公共 API 的适配器直接发 HTTP 请求，不打开浏览器。任务结束时只关闭 Qone 自己启动的标签页，用户原本打开的 Chrome 不会被关闭。
+OpenCLI 的站点适配器通过 Qone 注入的 CDP 目标运行。Qone 不会让 OpenCLI 自动连接或启动用户本机的 Chrome、Edge 或其他外置浏览器；如果内置 CDP 目标不可用，任务直接失败并报告原因。`qone_opencli_discover` 的站点列表只读取适配器注册表，不需要启动浏览器。
 
-Qone 接入 OpenCLI 的完整站点适配器入口。AI 可先按站点按需发现命令，再通过通用入口执行 Twitter/X、Bilibili、小红书、GitHub 等 OpenCLI 适配器；OpenCLI 自己决定使用公共 HTTP、Cookie 请求、网络拦截还是页面操作。完整命令注册表只在运行时缓存，不会全部注入模型上下文。Chrome、Edge、Brave 和 Firefox 的书签、浏览历史仍从本机配置读取并保存到 Qone 数据库，AI 可搜索这些记录。
+用户主动点击浏览器页面的“在外置浏览器中打开”按钮时，才会调用系统默认浏览器；这与 OpenCLI 的自动执行链路分开。完整命令注册表只在运行时缓存，不会全部注入模型上下文。
 
 ## 外部发布配置
 

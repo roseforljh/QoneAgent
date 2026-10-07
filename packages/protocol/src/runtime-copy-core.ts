@@ -20,10 +20,8 @@ export const runtimeCopyCore = {
     "en": "{p0} login credentials have expired. Sign in again to authorize access.",
     "zh-CN": "{p0} 登录凭据已失效，请重新登录授权。"
   },
-  "app-media.session_invalid": { "en": "Saved {p0} session is invalid", "zh-CN": "已保存的 {p0} 登录态无效" },
   "app-media.operation_failed": { "en": "{p0} {p1} failed ({p2})", "zh-CN": "{p0} {p1} 失败（{p2}）" },
   "app-media.invalid_url": { "en": "This is not a valid {p0} URL", "zh-CN": "这不是有效的 {p0} 链接" },
-  "app-media.telegram_setup_required": { "en": "Telegram requires API credentials and a separate account session", "zh-CN": "Telegram 需要 API 凭据并单独建立账号会话" },
   "app-media.extractor_missing": { "en": "yt-dlp is unavailable", "zh-CN": "找不到 yt-dlp" },
   "app-media.work_link_required": { "en": "Provide a single media work URL", "zh-CN": "请提供单个作品链接" },
   "app-media.content_mismatch": { "en": "The returned content does not match the requested URL", "zh-CN": "返回内容与请求链接不匹配" },
@@ -122,8 +120,8 @@ export const runtimeCopyCore = {
     "zh-CN": "OpenCLI 操作超时"
   },
   "browser-sync.douyin_embedded_route_required": {
-    "en": "Douyin uses Qone's embedded browser. Use qone_douyin_resolve_author for a share/video URL, qone_douyin_list_videos for a creator and qone_douyin_download to save files. Do not open Chrome or extract cookies.",
-    "zh-CN": "抖音使用 Qone 内置浏览器。视频或分享链接调用 qone_douyin_resolve_author，博主列表调用 qone_douyin_list_videos，保存文件调用 qone_douyin_download；无需打开 Chrome 或提取 Cookie。"
+    "en": "Douyin uses Qone's embedded browser. Use qone_douyin_resolve_author for a share/video URL, qone_douyin_list_videos for a creator and qone_douyin_download to save files. Do not switch browser routes or extract cookies.",
+    "zh-CN": "抖音使用 Qone 内置浏览器。视频或分享链接调用 qone_douyin_resolve_author，博主列表调用 qone_douyin_list_videos，保存文件调用 qone_douyin_download；无需切换浏览器链路或提取 Cookie。"
   },
   "browser-sync.opencli_exit_code": {
     "en": "OpenCLI exit code {p0}",
@@ -153,17 +151,13 @@ export const runtimeCopyCore = {
     "en": "Bilibili content reading must use Qone's embedded route: use qone_bilibili_search for search, qone_app_inspect for metadata, and qone_video_download followed by qone_video_use_file for subtitles, parsing, or summaries. OpenCLI is only an internal fallback after an embedded download failure.",
     "zh-CN": "B站内容读取必须使用 Qone 内置链路：搜索用 qone_bilibili_search，元数据用 qone_app_inspect，字幕、解析和总结用 qone_video_download 后接 qone_video_use_file。OpenCLI 只能在内置下载确实失败后由 Qone 内部自动兜底。"
   },
-  "browser-sync.google_chrome_was_not_found_unable_to_launch_the": {
-    "en": "Google Chrome was not found; unable to launch the current browser profile",
-    "zh-CN": "未找到 Google Chrome，无法启动当前浏览器配置"
-  },
   "browser-sync.opencli_returned_no_available_adapter_commands": {
     "en": "OpenCLI returned no available adapter commands",
     "zh-CN": "OpenCLI 没有返回可用适配器命令"
   },
-  "browser-sync.browser_connection_released_only_the_browser_started_by_qone": {
-    "en": "Browser connection released; only the browser started by Qone was closed.",
-    "zh-CN": "浏览器连接已释放；仅关闭了 Qone 自己启动的浏览器。"
+  "browser-sync.built_in_browser_page_closed": {
+    "en": "The Qone built-in browser page was closed.",
+    "zh-CN": "Qone 内置浏览器页面已关闭。"
   },
   "generated-artifacts.invalid_media_file_format": {
     "en": "Invalid media file format",
@@ -744,22 +738,6 @@ export const runtimeCopyCore = {
   "reach-public-tools.bilibili_search_failed": {
     "en": "Bilibili search failed: {p0}",
     "zh-CN": "B站搜索失败：{p0}"
-  },
-  "reach-public-tools.xueqiu_api": {
-    "en": "Xueqiu · API",
-    "zh-CN": "雪球 · API"
-  },
-  "reach-public-tools.configure_a_cookie_in_the_xueqiu_card_on_the": {
-    "en": "Configure a cookie in the Xueqiu card on the Apps page first",
-    "zh-CN": "请先在应用页的雪球卡片配置 Cookie"
-  },
-  "reach-public-tools.enter_a_stock_symbol_or_search_term": {
-    "en": "Enter a stock symbol or search term",
-    "zh-CN": "请输入股票代码或搜索词"
-  },
-  "reach-public-tools.invalid_stock_symbol_format": {
-    "en": "Invalid stock symbol format",
-    "zh-CN": "股票代码格式无效"
   },
   "reach-public-tools.yt_dlp_is_unavailable_check_the_youtube_backend_status": {
     "en": "yt-dlp is unavailable; check the YouTube backend status on the Apps page",
