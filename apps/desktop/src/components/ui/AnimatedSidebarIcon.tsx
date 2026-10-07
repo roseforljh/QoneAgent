@@ -4,12 +4,14 @@ import { CodexIcon } from "./CodexIcon";
 import newChatIcon from "../../assets/codex-icons/square-and-pencil-light-16.svg";
 import pluginsIcon from "../../assets/codex-icons/plugin-light-16.svg";
 import searchIcon from "../../assets/codex-icons/magnifying-glass-lg-light-16.svg";
+import browserIcon from "../../assets/codex-icons/web-browser-light-16.svg";
 
-export type SidebarIconKind = "new-chat" | "plugins" | "search";
+export type SidebarIconKind = "new-chat" | "plugins" | "browser" | "search";
 
 const iconSources: Record<SidebarIconKind, string> = {
   "new-chat": newChatIcon,
   plugins: pluginsIcon,
+  browser: browserIcon,
   search: searchIcon,
 };
 

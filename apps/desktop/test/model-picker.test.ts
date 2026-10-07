@@ -84,3 +84,11 @@ test("recovers a provider profile from durable runtime model configs", () => {
     ],
   }]);
 });
+
+test("durable runtime models remain available without picker storage", () => {
+  const configs = [config("acme")];
+  const recovered = providerProfilesFromModelConfigs(configs)[0];
+  expect(getPickerModels(recovered, configs)).toEqual([
+    { id: "acme/shared", modelName: "shared", label: "shared", detail: "acme" },
+  ]);
+});

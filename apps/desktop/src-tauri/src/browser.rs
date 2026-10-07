@@ -13,16 +13,9 @@ use tauri::{
     WebviewUrl, WebviewWindowBuilder, Wry,
 };
 #[cfg(target_os = "windows")]
-use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_COOKIE_SAME_SITE_KIND_LAX, COREWEBVIEW2_COOKIE_SAME_SITE_KIND_NONE,
-    COREWEBVIEW2_COOKIE_SAME_SITE_KIND_STRICT,
-};
+use webview2_com::CoTaskMemPWSTR;
 #[cfg(target_os = "windows")]
-use webview2_com::{
-    take_pwstr, CoTaskMemPWSTR, ExecuteScriptCompletedHandler, GetCookiesCompletedHandler,
-};
-#[cfg(target_os = "windows")]
-use windows_core::{Interface, BOOL, PCWSTR, PWSTR};
+use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, ExecuteScriptCompletedHandler};
 
 static BROWSERS: LazyLock<Mutex<HashMap<String, Webview<Wry>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -122,6 +115,14 @@ fn place(webview: &Webview<Wry>, x: f64, y: f64, w: f64, h: f64) -> Result<(), S
         .map_err(|e| e.to_string())
 }
 
+fn park(webview: &Webview<Wry>) -> Result<(), String> {
+    // A hidden child can keep its old hit-test rectangle on Windows until the
+    // native dispatcher finishes processing the hide request. Keep every newly
+    // created/reused child at a tiny offscreen rectangle until the frontend
+    // explicitly supplies visible bounds.
+    place(webview, -32000.0, -32000.0, 1.0, 1.0)
+}
+
 fn same_auth_host(actual: Option<&str>, expected: Option<&str>) -> bool {
     let Some(actual) = actual else { return false };
     let Some(expected) = expected else {
@@ -144,10 +145,10 @@ pub fn open(
     app: &AppHandle,
     browser_id: &str,
     url: &str,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
+    _x: f64,
+    _y: f64,
+    _w: f64,
+    _h: f64,
     initialization_script: Option<&str>,
 ) -> Result<(), String> {
     let target = Url::parse(url).map_err(|e| e.to_string())?;
@@ -160,7 +161,7 @@ pub fn open(
         if let Some(webview) = existing {
             webview.navigate(target).map_err(|e| e.to_string())?;
             webview.hide().map_err(|e| e.to_string())?;
-            return place(&webview, x, y, w, h);
+            return park(&webview);
         }
     }
     let window = app.get_window("main").ok_or("no main window")?;
@@ -237,8 +238,7 @@ pub fn open(
         .map_err(|e| e.to_string())?
         .insert(browser_id.to_owned(), webview.clone());
     webview.hide().map_err(|e| e.to_string())?;
-    place(&webview, x, y, w, h)?;
-    Ok(())
+    park(&webview)
 }
 
 pub fn navigate(browser_id: &str, url: &str) -> Result<(), String> {
@@ -333,169 +333,65 @@ pub fn eval_result(browser_id: &str, script: &str) -> Result<String, String> {
     })
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn eval_result(_browser_id: &str, _script: &str) -> Result<String, String> {
-    Err("browser script results are only supported on Windows WebView2".into())
-}
-
 #[cfg(target_os = "windows")]
-fn read_cookie(
-    cookie: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Cookie,
-) -> Result<crate::auth_files::AuthCookie, String> {
-    unsafe {
-        let mut name = PWSTR::null();
-        cookie.Name(&mut name).map_err(|e| e.to_string())?;
-        let mut value = PWSTR::null();
-        cookie.Value(&mut value).map_err(|e| e.to_string())?;
-        let mut domain = PWSTR::null();
-        cookie.Domain(&mut domain).map_err(|e| e.to_string())?;
-        let mut path = PWSTR::null();
-        cookie.Path(&mut path).map_err(|e| e.to_string())?;
-        let mut expires = 0.0;
-        cookie.Expires(&mut expires).map_err(|e| e.to_string())?;
-        let mut http_only = BOOL::default();
-        cookie
-            .IsHttpOnly(&mut http_only)
-            .map_err(|e| e.to_string())?;
-        let mut secure = BOOL::default();
-        cookie.IsSecure(&mut secure).map_err(|e| e.to_string())?;
-        let mut session = BOOL::default();
-        cookie.IsSession(&mut session).map_err(|e| e.to_string())?;
-        let mut same_site = COREWEBVIEW2_COOKIE_SAME_SITE_KIND_LAX;
-        cookie.SameSite(&mut same_site).map_err(|e| e.to_string())?;
-        let same_site = match same_site {
-            COREWEBVIEW2_COOKIE_SAME_SITE_KIND_STRICT => "strict",
-            COREWEBVIEW2_COOKIE_SAME_SITE_KIND_NONE => "none",
-            _ => "lax",
-        };
-
-        Ok(crate::auth_files::AuthCookie {
-            name: take_pwstr(name),
-            value: take_pwstr(value),
-            domain: take_pwstr(domain),
-            path: take_pwstr(path),
-            expires: (expires >= 0.0).then_some(expires),
-            http_only: http_only.as_bool(),
-            secure: secure.as_bool(),
-            same_site: same_site.into(),
-            session: session.as_bool(),
-        })
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn cookie_domain_matches(cookie_domain: &str, target_host: &str) -> bool {
-    let cookie_domain = cookie_domain
-        .trim()
-        .trim_start_matches('.')
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    let target_host = target_host
-        .trim()
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-
-    !cookie_domain.is_empty()
-        && !target_host.is_empty()
-        && (target_host == cookie_domain || target_host.ends_with(&format!(".{cookie_domain}")))
-}
-
-#[cfg(target_os = "windows")]
-pub fn cookies(browser_id: &str, url: &str) -> Result<Vec<crate::auth_files::AuthCookie>, String> {
-    #[cfg(debug_assertions)]
-    crate::dev_network::log("Cookie capture: dispatching to UI thread");
-    let result = with_browser(&BROWSERS, browser_id, |webview| {
+pub fn target_id(browser_id: &str) -> Result<String, String> {
+    with_browser(&BROWSERS, browser_id, |webview| {
         let (sender, receiver) = std::sync::mpsc::channel();
-        let target_host = Url::parse(url)
-            .map_err(|error| error.to_string())?
-            .host_str()
-            .ok_or_else(|| "cookie capture URL has no host".to_string())?
-            .to_owned();
         webview
             .with_webview(move |platform| {
-                #[cfg(debug_assertions)]
-                crate::dev_network::log("Cookie capture: requesting WebView2 cookies");
                 let error_sender = sender.clone();
                 let result = (|| -> Result<(), String> {
                     let core = unsafe { platform.controller().CoreWebView2() }
-                        .map_err(|e| e.to_string())?
-                        .cast::<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_2>()
-                        .map_err(|e| e.to_string())?;
-                    let manager = unsafe { core.CookieManager() }.map_err(|e| e.to_string())?;
-                    let target_host = target_host.clone();
-                    let handler =
-                        GetCookiesCompletedHandler::create(Box::new(move |error_code, list| {
-                            let result =
-                                (|| -> Result<Vec<crate::auth_files::AuthCookie>, String> {
-                                    error_code.map_err(|e| e.to_string())?;
-                                    let list =
-                                        list.ok_or_else(|| "cookie list unavailable".to_string())?;
-                                    let mut count = 0;
-                                    unsafe { list.Count(&mut count) }.map_err(|e| e.to_string())?;
-                                    let mut cookies = Vec::with_capacity(count as usize);
-                                    let mut skipped = 0;
-                                    for index in 0..count {
-                                        let cookie = unsafe { list.GetValueAtIndex(index) }
-                                            .map_err(|e| e.to_string())?;
-                                        let mut cookie = read_cookie(&cookie)?;
-                                        // Nameless entries cannot be sent in a Cookie header.
-                                        // WebView2 may also expose an empty default path.
-                                        if cookie.name.is_empty()
-                                            || cookie.domain.is_empty()
-                                            || cookie.name.len() > 256
-                                            || cookie.value.len() > 65_536
-                                            || cookie.domain.len() > 512
-                                        {
-                                            skipped += 1;
-                                            continue;
-                                        }
-                                        if cookie.path.is_empty() {
-                                            cookie.path = "/".into();
-                                        }
-                                        if cookie.path.len() > 4096 {
-                                            skipped += 1;
-                                            continue;
-                                        }
-                                        if cookie_domain_matches(&cookie.domain, &target_host) {
-                                            cookies.push(cookie);
-                                        }
-                                    }
-                                    #[cfg(debug_assertions)]
-                                    crate::dev_network::log(&format!(
-                                        "Cookie capture: host={target_host} total={count} matched={} skipped={skipped}",
-                                        cookies.len()
-                                    ));
-                                    Ok(cookies)
-                                })();
-                            let _ = sender.send(result);
+                        .map_err(|error| error.to_string())?;
+                    let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                        move |error_code, result| {
+                            let value = error_code
+                                .map(|_| result.to_string())
+                                .map_err(|error| error.to_string());
+                            let _ = sender.send(value);
                             Ok(())
-                        }));
-                    // Export cookies for the target host across all paths; discard other domains.
-                    unsafe { manager.GetCookies(PCWSTR::null(), &handler) }
-                        .map_err(|e| e.to_string())
+                        },
+                    ));
+                    let method = CoTaskMemPWSTR::from("Target.getTargetInfo");
+                    let params = CoTaskMemPWSTR::from("{}");
+                    unsafe {
+                        core.CallDevToolsProtocolMethod(
+                            *method.as_ref().as_pcwstr(),
+                            *params.as_ref().as_pcwstr(),
+                            &handler,
+                        )
+                    }
+                    .map_err(|error| error.to_string())
                 })();
                 if let Err(error) = result {
                     let _ = error_sender.send(Err(error));
                 }
             })
-            .map_err(|e| e.to_string())?;
-        wait_for_callback(receiver, CALLBACK_TIMEOUT)
-    });
-    #[cfg(debug_assertions)]
-    crate::dev_network::log(if result.is_ok() {
-        "Cookie capture: completed"
-    } else {
-        "Cookie capture: failed or timed out"
-    });
-    result
+            .map_err(|error| error.to_string())?;
+        let raw = wait_for_callback(receiver, CALLBACK_TIMEOUT)?;
+        serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("targetInfo")
+                    .and_then(|info| info.get("targetId"))
+                    .or_else(|| value.get("targetId"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "WebView2 did not return a CDP target id".to_string())
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn cookies(
-    _browser_id: &str,
-    _url: &str,
-) -> Result<Vec<crate::auth_files::AuthCookie>, String> {
-    Err("cookie capture only supported on Windows WebView2".into())
+pub fn target_id(_browser_id: &str) -> Result<String, String> {
+    Err("OpenCLI's embedded CDP target is only supported on Windows WebView2".into())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn eval_result(_browser_id: &str, _script: &str) -> Result<String, String> {
+    Err("browser script results are only supported on Windows WebView2".into())
 }
 
 pub fn close(app: &AppHandle, browser_id: &str) -> Result<(), String> {
@@ -524,7 +420,7 @@ pub fn close(app: &AppHandle, browser_id: &str) -> Result<(), String> {
 
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
-    use super::{cookie_domain_matches, wait_for_callback, with_browser};
+    use super::{wait_for_callback, with_browser};
     use std::{
         collections::HashMap,
         sync::{mpsc, Arc, Mutex},
@@ -569,22 +465,5 @@ mod tests {
         assert!(wait_for_callback(receiver, Duration::ZERO)
             .unwrap_err()
             .contains("closed"));
-    }
-
-    #[test]
-    fn matches_parent_and_exact_cookie_domains() {
-        assert!(cookie_domain_matches(".douyin.com", "www.douyin.com"));
-        assert!(cookie_domain_matches("douyin.com", "douyin.com"));
-        assert!(cookie_domain_matches(".WWW.DOUYIN.COM", "www.douyin.com"));
-    }
-
-    #[test]
-    fn rejects_unrelated_or_suffix_spoofed_domains() {
-        assert!(!cookie_domain_matches(
-            ".douyin.com",
-            "www.douyin.com.evil.test"
-        ));
-        assert!(!cookie_domain_matches(".other.test", "www.douyin.com"));
-        assert!(!cookie_domain_matches("", "www.douyin.com"));
     }
 }

@@ -95,7 +95,7 @@ pub fn install(app: &tauri::AppHandle) {
                                         if value["type"] == "Script" {
                                             if let Some(url) =
                                                 value["request"]["url"].as_str().filter(|url| {
-                                                    url.starts_with("http://127.0.0.1:1420/")
+                                                        url.starts_with("http://127.0.0.1:")
                                                 })
                                             {
                                                 requests.borrow_mut().insert(id.into(), url.into());
@@ -130,7 +130,7 @@ pub fn install(app: &tauri::AppHandle) {
                                             if entry["text"].as_str().is_some_and(|text| {
                                                 text.contains("net::ERR_CACHE_READ_FAILURE")
                                             }) && entry["url"].as_str().is_some_and(|url| {
-                                                url.starts_with("http://127.0.0.1:1420/")
+                                                url.starts_with("http://127.0.0.1:")
                                             }) {
                                                 recover_cache(&recovery_core, &recovering);
                                             }

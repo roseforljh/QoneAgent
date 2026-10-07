@@ -279,6 +279,11 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
           }));
         }
 
+        else if (ev.type === "approval.resolved") {
+          const approvalId = String(p?.approvalId ?? "");
+          if (approvalId) eventStore.setState((st) => ({ approvals: st.approvals.filter((approval) => approval.id !== approvalId) }));
+        }
+
         else if (
           ev.type === "agent.completed" ||
           ev.type === "agent.cancelled" ||

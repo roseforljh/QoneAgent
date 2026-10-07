@@ -27,7 +27,6 @@ test("common video, community, development and AI websites use the expected bran
     ["https://gitlab.com/group/repository", "gitlab"],
     ["https://stackoverflow.com/questions/123", "stackoverflow"],
     ["https://zh.wikipedia.org/wiki/HTTP", "wikipedia"],
-    ["https://t.me/example", "telegram"],
     ["https://huggingface.co/datasets", "huggingface"],
     ["https://vercel.com/dashboard", "vercel"],
     ["https://chatgpt.com/c/123", "chatgpt"],

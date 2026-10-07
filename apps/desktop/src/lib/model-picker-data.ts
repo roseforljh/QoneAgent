@@ -88,6 +88,21 @@ export function readCurrentProvider(): PickerProvider | undefined {
   } catch { return; }
 }
 
+/** Recreate origin-scoped picker data from the durable runtime model records. */
+export function restoreProviderProfilesFromModelConfigs(configs: ModelConfigInfo[]): PickerProvider | undefined {
+  const current = readCurrentProvider();
+  if (current) return current;
+  const profiles = providerProfilesFromModelConfigs(configs);
+  const first = profiles[0];
+  if (!first) return undefined;
+  try {
+    window.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify(profiles));
+    window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, first.id);
+    window.dispatchEvent(new Event(MODEL_CONFIG_CHANGE_EVENT));
+  } catch { /* Restricted previews may not expose persistent storage. */ }
+  return { id: first.id, name: first.name, models: first.models.map((model) => ({ id: model.id, label: model.label })) };
+}
+
 export function getPickerModels(provider: PickerProvider | undefined, configs: ModelConfigInfo[]): PickerModel[] {
   // The saved profile is authoritative, including an intentionally empty list.
   // Never fall back to another provider when the current one has no models.

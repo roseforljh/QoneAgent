@@ -47,8 +47,7 @@ import { useLocale } from "./localization";
 import { QoneSelect } from "./components/ui/Select";
 import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-preferences";
 import qonePenguinUrl from "./assets/qone-penguin.png";
-import { DownloaderApps } from "./components/apps/DownloaderApps";
-import { AppLoginPage } from "./components/apps/AppLoginPage";
+import { BrowserPage } from "./components/browser/BrowserPage";
 import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
 import { AppChrome } from "./components/app-chrome/AppChrome";
 import { ResizableSidebar } from "./components/assistant-ui/resizable-sidebar";
@@ -397,16 +396,16 @@ function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pe
                 labelClassName="overflow-hidden whitespace-nowrap"
               />
               <Link
-                to="/plugins"
-                aria-label={t("app.apps")}
+                to="/browser"
+                aria-label={t("browser.title")}
                 data-slot="q-sidebar-app-link"
                 className={cn(
                   "group hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
                   "w-full",
                 )}
               >
-                <AnimatedSidebarIcon kind="plugins" />
-                <span className="overflow-hidden whitespace-nowrap">{t("app.apps")}</span>
+                <AnimatedSidebarIcon kind="browser" />
+                <span className="overflow-hidden whitespace-nowrap">{t("browser.title")}</span>
               </Link>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-2">
@@ -480,11 +479,7 @@ function PageLayout({ title, theme, onToggleTheme, children, minimalHeader = fal
   );
 }
 
-function AppsPanel() {
-  return <DownloaderApps />;
-}
-
-function ManagementPanel({ kind }: { kind: "skills" | "plugins" | "permissions" }) {
+function ManagementPanel({ kind }: { kind: "skills" | "permissions" }) {
   const { t } = useLocale();
   const send = useStore((state) => state.send);
   const skills = useStore((state) => state.skills);
@@ -498,13 +493,13 @@ function ManagementPanel({ kind }: { kind: "skills" | "plugins" | "permissions" 
     if (kind === "skills") send({ type: "skills.list", requestId: crypto.randomUUID(), cwd: workspaces.find((w) => w.id === currentWorkspaceId)?.path });
     if (kind === "permissions") send({ type: "permission.list", requestId: crypto.randomUUID() });
   }, [kind, send, workspaces, currentWorkspaceId]);
-  const titles = { skills: t("nav.skills"), plugins: t("app.apps"), permissions: t("composer.permissions") };
-  return <PageLayout title={titles[kind]} theme={theme} onToggleTheme={toggleTheme} minimalHeader={kind === "plugins"}>
+  const titles = { skills: t("nav.skills"), permissions: t("composer.permissions") };
+  return <PageLayout title={titles[kind]} theme={theme} onToggleTheme={toggleTheme}>
     {lastError && <p className="error-banner" role="alert">{lastError}</p>}
-    {kind === "plugins" ? <AppsPanel /> : <div className="settings-panel">
+    <div className="settings-panel">
       {kind === "skills" && <div className="simple-list">{skills.length === 0 ? <p className="muted-copy">{t("app.noSkills")}</p> : skills.map((skill) => <div className="simple-list-row stacked" key={skill.id}><strong>{skill.name}</strong><small>{skill.description}</small><code>{skill.path}</code></div>)}</div>}
       {kind === "permissions" && <div className="simple-list">{permissionRules.length === 0 ? <p className="muted-copy">{t("app.noPermissions")}</p> : permissionRules.map((rule) => <div className="simple-list-row" key={`${rule.subjectId}:${rule.permission}`}><div><strong>{rule.subjectId}</strong><small>{rule.permission}</small></div><QoneSelect value={rule.decision} onChange={(value) => setPermission({ subjectId: rule.subjectId, permission: rule.permission, decision: value as "allow" | "ask" | "deny" })} options={[{ value: "allow", label: t("app.allow") }, { value: "ask", label: t("app.ask") }, { value: "deny", label: t("app.deny") }]} ariaLabel={t("app.subjectPermissions", { subject: rule.subjectId })} triggerClassName="qone-select-trigger-compact" /></div>)}</div>}
-    </div>}
+    </div>
   </PageLayout>;
 }
 
@@ -529,10 +524,10 @@ export default function App() {
   }, [pathname, sessions, workspaces, currentSessionId, currentWorkspaceId, selectSession, selectWorkspace]);
 
   return <AppChrome path={pathname}>
-    {pathname.startsWith("/apps/")
-      ? <AppLoginPage key={pathname} appId={pathname.slice("/apps/".length)} />
-      : ["/skills", "/plugins", "/permissions"].includes(pathname)
-      ? <ManagementPanel kind={pathname.slice(1) as "skills" | "plugins" | "permissions"} />
+    {pathname === "/browser"
+      ? <BrowserPage />
+      : ["/skills", "/permissions"].includes(pathname)
+      ? <ManagementPanel kind={pathname.slice(1) as "skills" | "permissions"} />
       : <ChatPage theme={theme} onToggleTheme={toggleTheme} initialSettingsOpen={pathname === "/settings"} />}
   </AppChrome>;
 }

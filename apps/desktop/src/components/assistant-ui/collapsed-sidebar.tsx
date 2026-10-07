@@ -31,8 +31,8 @@ export function CollapsedSidebar({ collapsed, onOpenSidebar, onOpenSettings }: {
       <nav className="flex flex-col items-center gap-0.5">
         <ThreadListNew className="q-sidebar-rail-action" labelClassName="sr-only"
           title={t("sidebar.newChat")} aria-label={t("sidebar.newChat")} />
-        <Link to="/plugins" className="q-sidebar-rail-action" title={t("app.apps")} aria-label={t("app.apps")}>
-          <AnimatedSidebarIcon kind="plugins" />
+        <Link to="/browser" className="q-sidebar-rail-action" title={t("browser.title")} aria-label={t("browser.title")}>
+          <AnimatedSidebarIcon kind="browser" />
         </Link>
         {collapsed && <SidebarProjectsPopover />}
       </nav>

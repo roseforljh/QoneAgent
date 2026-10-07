@@ -17,7 +17,6 @@ import tiktok from "../../assets/website-icons/tiktok.svg";
 import gitlab from "../../assets/website-icons/gitlab.svg";
 import stackoverflow from "../../assets/website-icons/stackoverflow.svg";
 import wikipedia from "../../assets/website-icons/wikipedia.svg";
-import telegram from "../../assets/website-icons/telegram.svg";
 import { siteHosts } from "@qone/protocol";
 
 type ComposerLinkSite = {
@@ -38,7 +37,6 @@ export const additionalComposerLinkSites: readonly ComposerLinkSite[] = [
   { id: "gitlab", hosts: ["gitlab.com"], src: gitlab },
   { id: "stackoverflow", hosts: ["stackoverflow.com"], src: stackoverflow },
   { id: "wikipedia", hosts: ["wikipedia.org"], src: wikipedia },
-  { id: "telegram", hosts: siteHosts("telegram"), src: telegram },
   { id: "huggingface", hosts: ["huggingface.co"], src: huggingface, multicolor: true },
   { id: "vercel", hosts: ["vercel.com"], src: vercel },
   // Specific products precede the parent brand's domain.

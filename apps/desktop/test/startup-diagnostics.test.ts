@@ -46,14 +46,14 @@ test("module import failure replaces the existing loading placeholder and reache
 
 test("failure of the bootstrap itself is visible before any module executes", () => {
   const app = boot();
-  app.emit("error", { target: new app.Script("http://127.0.0.1:1420/src/main.tsx") });
+  app.emit("error", { target: new app.Script("http://127.0.0.1:1480/src/main.tsx") });
   expect(app.root.children[1].textContent).toContain("/src/main.tsx");
   expect(app.reports).toHaveLength(1);
 });
 
 test("a CSP failure names the blocked resource and directive", () => {
   const app = boot();
-  app.emit("securitypolicyviolation", { effectiveDirective: "script-src-elem", blockedURI: "http://127.0.0.1:1420/blocked.js" });
+  app.emit("securitypolicyviolation", { effectiveDirective: "script-src-elem", blockedURI: "http://127.0.0.1:1480/blocked.js" });
   expect(app.reports[0]).toContain("script-src-elem");
   expect(app.root.children[1].textContent).toContain("blocked.js");
 });
@@ -68,7 +68,7 @@ test("startup diagnostics never replace an already mounted application", () => {
 
 test("startup failures follow the saved English setting before modules execute", () => {
   const app = boot(false, "en");
-  app.emit("error", { target: new app.Script("http://127.0.0.1:1420/src/main.tsx") });
+  app.emit("error", { target: new app.Script("http://127.0.0.1:1480/src/main.tsx") });
   expect(app.root.children[0].textContent).toBe("Qone failed to start");
   expect(app.root.children[1].textContent).toContain("Script failed to load");
   expect(app.root.children[1].textContent).not.toMatch(/\p{Script=Han}/u);

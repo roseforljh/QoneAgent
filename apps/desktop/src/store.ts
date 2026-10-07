@@ -800,6 +800,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     if (!sid) return { draftRunOptions: { ...state.draftRunOptions, permissionMode: mode } };
     const runOptionsBySession = { ...state.runOptionsBySession, [sid]: { ...state.runOptionsBySession[sid], permissionMode: mode } };
     saveRunOptions(runOptionsBySession);
+    void get().send({ type: "agent.permission-mode.set", requestId: rid(), sessionId: sid, permissionMode: mode });
     return { runOptionsBySession };
   }),
   setDefaultPermissionMode: (mode) => {

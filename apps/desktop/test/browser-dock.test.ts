@@ -11,7 +11,7 @@ import {
 
 test("external browser accepts only navigable web pages", () => {
   expect(externalBrowserUrl("https://cn.bing.com/search?q=test")).toBe("https://cn.bing.com/search?q=test");
-  expect(externalBrowserUrl("http://localhost:1420/")).toBe("http://localhost:1420/");
+  expect(externalBrowserUrl("http://localhost:1480/")).toBe("http://localhost:1480/");
   for (const url of ["about:blank", "data:text/html,hello", "file:///C:/test.html", "javascript:alert(1)", "not a URL"]) {
     expect(externalBrowserUrl(url)).toBeUndefined();
   }

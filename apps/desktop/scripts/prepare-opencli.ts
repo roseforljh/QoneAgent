@@ -10,6 +10,7 @@ const binaries = path.resolve(import.meta.dir, "../src-tauri/binaries");
 const nodeExecutable = path.join(binaries, "node.exe");
 const opencliDir = path.join(binaries, "opencli");
 const opencliEntry = path.join(opencliDir, "node_modules", "@jackwener", "opencli", "dist", "src", "main.js");
+const qoneEntry = path.join(opencliDir, "qone-entry.mjs");
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 await mkdir(binaries, { recursive: true });
@@ -45,3 +46,4 @@ if (!validOpenCli) {
   if (await install.exited !== 0 || !existsSync(opencliEntry)) throw new Error("OpenCLI 发布依赖安装失败");
   console.log(`已准备 OpenCLI ${OPENCLI_VERSION}`);
 }
+await writeFile(qoneEntry, await readFile(path.join(import.meta.dir, "opencli-qone-entry.mjs")));

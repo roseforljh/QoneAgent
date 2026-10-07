@@ -26,6 +26,7 @@ import { resolveDouyinPage } from "./lib/douyin-page-bridge";
 import { resolveDouyinAuthorPage } from "./lib/douyin-author-page";
 import { DouyinPageError } from "./lib/douyin-video-page";
 import { BACKGROUND_BROWSER_BOUNDS } from "./lib/background-browser";
+import { restoreProviderProfilesFromModelConfigs } from "./lib/model-picker-data";
 
 function subagentChange(state: AgentState, subagents: AgentState["subagents"]): Partial<AgentState> {
   return subagents === state.subagents ? state : { subagents };
@@ -65,15 +66,23 @@ async function serveAppOpenCliRequest(
 ): Promise<void> {
   if (appOpenCliRequests.has(request.requestId)) return;
   const browserId = `opencli-${request.site}-${request.requestId}`;
+  appOpenCliRequests.set(request.requestId, browserId);
   try {
     await invoke("browser_open", { browserId, url: request.url, ...BACKGROUND_BROWSER_BOUNDS });
-    appOpenCliRequests.set(request.requestId, browserId);
-    const endpoint = await invoke<string>("opencli_cdp_endpoint");
+    // A release can arrive while browser_open is still preparing WebView2.
+    // Do not publish a target after that release; close the late-created child
+    // immediately instead of leaving an orphaned hidden browser behind.
+    if (appOpenCliRequests.get(request.requestId) !== browserId) {
+      await invoke("browser_close", { browserId }).catch(() => undefined);
+      return;
+    }
+    const endpoint = await invoke<string>("opencli_cdp_endpoint", { browserId });
     await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint });
   } catch (error) {
-    appOpenCliRequests.delete(request.requestId);
+    const ownsRequest = appOpenCliRequests.get(request.requestId) === browserId;
+    if (ownsRequest) appOpenCliRequests.delete(request.requestId);
     await invoke("browser_close", { browserId }).catch(() => undefined);
-    await send({ type: "apps.opencli.response", requestId: request.requestId, ok: false, message: error instanceof Error ? error.message : String(error) });
+    if (ownsRequest) await send({ type: "apps.opencli.response", requestId: request.requestId, ok: false, message: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -296,7 +305,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           currentSessionId: selected?.id,
           currentWorkspaceId: selected?.workspaceId ?? state.currentWorkspaceId,
           ...(selected?.workspaceId && selected.workspaceId !== state.currentWorkspaceId ? { workspaceLoadingId: selected.workspaceId } : {}),
-          selectedModelId: storedModelId,
+          selectedModelId: storedModelId ?? (state.modelConfigs.some((config) => config.id === state.selectedModelId) ? state.selectedModelId : undefined),
           ...(selectionChanged ? {
             messages: [],
             compactions: [],
@@ -578,10 +587,18 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         break;
       }
       case "model.list":
-        eventStore.setState((st) => ({
-          modelConfigs: msg.configs,
-          selectedModelId: st.selectedModelId ?? (st.currentSessionId ? st.runOptionsBySession[st.currentSessionId]?.modelId : st.draftRunOptions.modelId) ?? msg.configs[0]?.id,
-        }));
+        restoreProviderProfilesFromModelConfigs(msg.configs);
+        eventStore.setState((st) => {
+          const available = msg.configs.filter((config) => config.enabled);
+          const preferred = st.currentSessionId
+            ? st.runOptionsBySession[st.currentSessionId]?.modelId
+            : st.draftRunOptions.modelId;
+          const candidate = preferred ?? st.selectedModelId;
+          const selectedModelId = available.some((config) => config.id === candidate)
+            ? candidate
+            : available[0]?.id;
+          return { modelConfigs: msg.configs, selectedModelId };
+        });
         for (const config of msg.configs) {
           invoke<string | null>("secret_get", { key: `model.apiKey:${config.provider}` })
             .then((value) => {

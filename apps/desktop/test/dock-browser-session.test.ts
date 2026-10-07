@@ -158,8 +158,9 @@ test("WebView2 commands cannot block the synchronous IPC handler", async () => {
   for (const command of ["open", "navigate", "preview", "bounds", "visible", "eval", "close"]) {
     expect(source).toMatch(new RegExp(`async fn browser_${command}\\(`));
   }
-  expect(source).toContain("spawn_blocking(move || browser::open");
-  expect(source).toContain("spawn_blocking(move || browser::preview");
+  expect(source).toContain("spawn_blocking(move || {");
+  expect(source).toContain("browser::open(");
+  expect(source).toContain("browser::preview(");
 });
 
 test("code preview loads after native creation and before the child becomes visible", async () => {

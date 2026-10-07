@@ -15,7 +15,6 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 mod native_error;
 use native_error::NativeError;
-mod auth_files;
 mod credential_bridge;
 mod data_paths;
 mod native_copy;
@@ -520,24 +519,6 @@ fn secret_delete(key: String) -> Result<(), String> {
     Err("secrets only supported on Windows".into())
 }
 
-#[tauri::command]
-fn auth_file_save(
-    app_id: String,
-    cookies: Vec<auth_files::AuthCookie>,
-) -> Result<auth_files::AuthFile, String> {
-    auth_files::save(app_id, cookies)
-}
-
-#[tauri::command]
-fn auth_file_get(app_id: String) -> Result<Option<auth_files::AuthFile>, String> {
-    auth_files::get(app_id)
-}
-
-#[tauri::command]
-fn auth_file_delete(app_id: String) -> Result<(), String> {
-    auth_files::delete(app_id)
-}
-
 // --- PTY commands ---
 
 #[tauri::command]
@@ -696,19 +677,6 @@ async fn browser_eval_result(browser_id: String, script: String) -> Result<Strin
 }
 
 #[tauri::command]
-async fn browser_get_cookies(
-    browser_id: String,
-    url: String,
-) -> Result<Vec<auth_files::AuthCookie>, String> {
-    #[cfg(desktop)]
-    return tauri::async_runtime::spawn_blocking(move || browser::cookies(&browser_id, &url))
-        .await
-        .map_err(|error| error.to_string())?;
-    #[allow(unreachable_code)]
-    Err("browser only supported on desktop".into())
-}
-
-#[tauri::command]
 async fn browser_close(app: AppHandle, browser_id: String) -> Result<(), String> {
     #[cfg(desktop)]
     return browser::close(&app, &browser_id);
@@ -716,15 +684,45 @@ async fn browser_close(app: AppHandle, browser_id: String) -> Result<(), String>
     Ok(())
 }
 
-#[tauri::command]
-fn opencli_cdp_endpoint() -> String {
-    if let Ok(endpoint) = std::env::var("QONE_OPENCLI_CDP_ENDPOINT") {
-        if !endpoint.trim().is_empty() {
-            return endpoint;
+fn configured_cdp_port() -> String {
+    if let Ok(port) = std::env::var("QONE_WEBVIEW_CDP_PORT") {
+        if port.trim().parse::<u16>().is_ok_and(|value| value > 0) {
+            return port.trim().to_owned();
         }
     }
-    let port = std::env::var("QONE_WEBVIEW_CDP_PORT").unwrap_or_else(|_| "9223".into());
-    format!("http://127.0.0.1:{port}")
+    let current = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+    if let Some(port) = current
+        .split_whitespace()
+        .find_map(|arg| {
+            arg.strip_prefix("--remote-debugging-port=")
+                .filter(|port| port.parse::<u16>().is_ok_and(|value| value > 0))
+        })
+        .map(str::to_owned)
+    {
+        return port;
+    }
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port().to_string())
+        .unwrap_or_else(|error| panic!("unable to reserve a WebView2 CDP port: {error}"))
+}
+
+#[tauri::command]
+async fn opencli_cdp_endpoint(browser_id: String) -> Result<String, String> {
+    #[cfg(desktop)]
+    {
+        // The CDP callback runs on the UI thread; never block that thread waiting for it.
+        let target_id = tauri::async_runtime::spawn_blocking(move || browser::target_id(&browser_id))
+            .await
+            .map_err(|error| error.to_string())??;
+        return Ok(format!(
+            "ws://127.0.0.1:{}/devtools/page/{}",
+            configured_cdp_port(),
+            target_id
+        ));
+    }
+    #[allow(unreachable_code)]
+    Err("OpenCLI's embedded browser target is only supported on desktop".into())
 }
 
 #[tauri::command]
@@ -740,15 +738,23 @@ fn frontend_diagnostic(message: String) {
 fn main() {
     #[cfg(windows)]
     {
-        let port = std::env::var("QONE_WEBVIEW_CDP_PORT").unwrap_or_else(|_| "9223".into());
-        let extra = format!("--remote-debugging-port={port} --remote-allow-origins=*");
+        let port = configured_cdp_port();
+        std::env::set_var("QONE_WEBVIEW_CDP_PORT", &port);
         let current = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        let mut merged = current.clone();
         if !current.contains("--remote-debugging-port=") {
-            let merged = if current.trim().is_empty() {
-                extra
-            } else {
-                format!("{current} {extra}")
-            };
+            if !merged.trim().is_empty() {
+                merged.push(' ');
+            }
+            merged.push_str(&format!("--remote-debugging-port={port}"));
+        }
+        if !current.contains("--remote-allow-origins=") {
+            if !merged.trim().is_empty() {
+                merged.push(' ');
+            }
+            merged.push_str("--remote-allow-origins=*");
+        }
+        if merged != current {
             std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", merged);
         }
     }
@@ -866,9 +872,6 @@ fn main() {
             secret_set,
             secret_get,
             secret_delete,
-            auth_file_save,
-            auth_file_get,
-            auth_file_delete,
             terminal_spawn,
             terminal_write,
             terminal_resize,
@@ -881,7 +884,6 @@ fn main() {
             browser_visible,
             browser_eval,
             browser_eval_result,
-            browser_get_cookies,
             browser_close,
             opencli_cdp_endpoint,
         ])

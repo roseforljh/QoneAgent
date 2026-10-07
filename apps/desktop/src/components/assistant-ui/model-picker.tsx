@@ -7,7 +7,7 @@ import { Popover } from "radix-ui";
 import type { ProviderApiType } from "@qone/protocol";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
-import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, filterPickerModels, readCurrentProvider, getPickerModels } from "../../lib/model-picker-data";
+import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, filterPickerModels, readCurrentProvider, getPickerModels, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
 import { normalizeThinkingLevel, thinkingLevelOptionsForApi, type ThinkingLevel } from "../../lib/model-settings";
 import { ModelLogo } from "./model-logo";
 import { ThinkingWave } from "./run-options-popover";
@@ -46,7 +46,7 @@ export const ModelPicker: FC = () => {
     };
   }, []);
 
-  const models = useMemo(() => getPickerModels(providerSnapshot, modelConfigs), [providerSnapshot, modelConfigs]);
+  const models = useMemo(() => getPickerModels(providerSnapshot ?? providerProfilesFromModelConfigs(modelConfigs)[0], modelConfigs), [providerSnapshot, modelConfigs]);
   const visibleModels = useMemo(() => filterPickerModels(models, search), [models, search]);
   const selected = models.find((model) => model.id === selectedModelId);
   const activeModel = selected ?? models[0];

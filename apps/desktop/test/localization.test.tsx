@@ -178,7 +178,7 @@ test("representative UI defaults and adapter errors follow both languages at cal
 test("all built-in channel states have English display copy without changing commands or original names", () => {
   for (let flags = 0; flags < 32; flags++) {
     const channels = listReachChannels({
-      browserConnected: Boolean(flags & 1), hasXueqiuCookie: Boolean(flags & 2), podcastConfigured: Boolean(flags & 4),
+      browserConnected: Boolean(flags & 1), podcastConfigured: Boolean(flags & 4),
       hasGroqKey: Boolean(flags & 8), mcpConnected: () => Boolean(flags & 16),
     });
     expect(channels).toHaveLength(16);
