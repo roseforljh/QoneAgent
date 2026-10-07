@@ -33,8 +33,8 @@ describe("WebAccessMemory", () => {
     const context = memory.context("session-a");
     expect(context).toContain("www.nodeseek.com");
     expect(context).toContain("OpenCLI adapter failed");
-    expect(context).toContain("OpenCLI Browser Bridge succeeded");
-    expect(context).toContain("MUST use OpenCLI Browser Bridge");
+    expect(context).toContain("Qone built-in browser succeeded");
+    expect(context).toContain("MUST use Qone built-in browser");
   });
 
   test("does not leak access memory between sessions and survives reload", () => {
@@ -58,7 +58,7 @@ describe("WebAccessMemory", () => {
     }
     const context = memory.context("session-a");
     expect(context).toContain("a.example.com");
-    expect(context).toContain("MUST use OpenCLI Browser Bridge");
+    expect(context).toContain("MUST use Qone built-in browser");
   });
 
   test("puts the current task host first and makes the remembered route mandatory", () => {
@@ -69,7 +69,7 @@ describe("WebAccessMemory", () => {
     memory.recordToolResult("session-a", "qone_opencli_run", { site: "example", args: ["get", "https://b.example.com/post"] }, { isError: true, content: [{ type: "text", text: "blocked" }] });
     const context = memory.context("session-a", "继续读取 https://a.example.com/post 中的信息");
     expect(context.indexOf("a.example.com")).toBeLessThan(context.indexOf("b.example.com"));
-    expect(context).toContain("MUST use OpenCLI Browser Bridge");
+    expect(context).toContain("MUST use Qone built-in browser");
     expect(context).toContain("MUST NOT call a known failing route again");
   });
 
@@ -86,7 +86,7 @@ describe("WebAccessMemory", () => {
       { toolName: "qone_browser_extract", args: {}, result: { content: [{ type: "text", text: "article" }] }, at: 3 },
     ]);
     expect(context).toContain("a.example.com");
-    expect(context).toContain("MUST use OpenCLI Browser Bridge");
+    expect(context).toContain("MUST use Qone built-in browser");
     expect(context).toContain("OpenCLI adapter failed (timeout)");
   });
 });

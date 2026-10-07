@@ -1,21 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { openDb, closeDb } from "@qone/database";
-import { BrowserSyncService, assertOpenCliRoute, buildOpenCliCommandArgs, compactOpenCliCatalog, normalizeBrowserWaitValue, parseOpenCliCatalog, runOpenCli } from "../src/browser-sync";
+import { BrowserSyncService, assertOpenCliRoute, buildOpenCliCommandArgs, compactOpenCliCatalog, loginRequiredResult, normalizeBrowserWaitValue, OpenCliError, parseOpenCliCatalog, runOpenCli } from "../src/browser-sync";
 
 describe("OpenCLI gateway", () => {
-  test("Douyin is rejected before launching Chrome or an OpenCLI process", async () => {
+  test("site adapters reject Douyin while built-in browser navigation can open it", async () => {
     const db = openDb(":memory:");
     try {
-      const service = new BrowserSyncService(db, ":memory:", () => {}, async () => {});
-      const tool = service.tools().find((item) => item.name === "qone_browser_open")!;
-      await expect(tool.execute("wrong-route", { url: "https://v.douyin.com/share/" }, new AbortController().signal, undefined, undefined as never))
-        .rejects.toMatchObject({ code: "browser-sync.douyin_embedded_route_required" });
-      expect(service.status().phase).not.toBe("connecting");
-      expect(service.status().targetConnected).toBe(false);
+      const service = new BrowserSyncService(() => {}, async () => {});
       expect(() => runOpenCli(["douyin", "search", "creator"])).toThrow();
-      expect(() => assertOpenCliRoute(["browser", "qone", "open", "https://www.douyin.com/user/author"])).toThrow();
+      expect(() => runOpenCli(["twitter", "search", "qone"])).toThrow("built-in browser target");
       expect(() => assertOpenCliRoute(["example", "get", "--url=https://www.iesdouyin.com/share/video/123"])).toThrow();
       expect(() => assertOpenCliRoute(["twitter", "search", "douyin.com"])).not.toThrow();
+      expect(() => assertOpenCliRoute(["browser", "qone", "open", "https://www.douyin.com/user/author"])).toThrow();
       expect(() => assertOpenCliRoute(["browser", "qone", "open", "https://github.com"])).not.toThrow();
     } finally { closeDb(db); }
   });
@@ -23,7 +19,7 @@ describe("OpenCLI gateway", () => {
     const db = openDb(":memory:");
     let toolRefreshes = 0;
     try {
-      const service = new BrowserSyncService(db, ":memory:", () => {}, async () => { toolRefreshes += 1; });
+      const service = new BrowserSyncService(() => {}, async () => { toolRefreshes += 1; });
       await service.initialize();
       const tools = service.tools().map((tool) => tool.name);
       expect(tools).toContain("qone_opencli_discover");
@@ -73,6 +69,13 @@ describe("OpenCLI gateway", () => {
     expect(() => normalizeBrowserWaitValue("time", "forever")).toThrow();
   });
 
+  test("turns OpenCLI auth failures into a structured login result", () => {
+    const result = loginRequiredResult(new OpenCliError("Not logged in to example.com", 77), "example");
+    expect(result).toBeDefined();
+    expect(JSON.parse(result!.content[0].text)).toMatchObject({ status: "login_required", site: "example" });
+    expect(loginRequiredResult(new OpenCliError("failed", 1), "example")).toBeUndefined();
+  });
+
   test("rejects shell-like site and command names while allowing raw option values", () => {
     expect(() => buildOpenCliCommandArgs({ site: "example;whoami", command: "search" })).toThrow();
     expect(buildOpenCliCommandArgs({ site: "example", command: "search", args: ["--query", "a;whoami"] })).toContain("a;whoami");
@@ -81,11 +84,11 @@ describe("OpenCLI gateway", () => {
   test("exposes Bilibili discovery and adapter tools", async () => {
     const db = openDb(":memory:");
     try {
-      const service = new BrowserSyncService(db, ":memory:", () => {}, async () => {});
+      const service = new BrowserSyncService(() => {}, async () => {});
       const discover = service.tools().find((item) => item.name === "qone_opencli_discover")!;
       const run = service.tools().find((item) => item.name === "qone_opencli_run")!;
-      expect(discover.description).toContain("embedded page");
-      expect(run.description).toContain("external browser bridge");
+      expect(discover.description).toContain("built-in browser profile");
+      expect(run.description).toContain("There is no external browser fallback");
       expect(service.status().targetConnected).toBe(false);
     } finally { closeDb(db); }
   });

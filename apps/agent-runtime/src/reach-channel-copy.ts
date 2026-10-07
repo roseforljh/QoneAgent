@@ -11,7 +11,7 @@ export const reachChannelEnglish = {
   facebook: { name: "Facebook", description: "Read or operate your account through the website adapter", backend: "OpenCLI" },
   instagram: { name: "Instagram", description: "Read or operate your account through the website adapter", backend: "OpenCLI" },
   xiaohongshu: { name: "Xiaohongshu", description: "Read or operate your account through the website adapter", backend: "OpenCLI" },
-  xueqiu: { name: "Xueqiu", description: "Stock quotes, search and trending stocks", backend: "OpenCLI / Xueqiu API" },
+  xueqiu: { name: "Xueqiu", description: "Stock quotes, search and trending stocks", backend: "OpenCLI" },
   boss: { name: "BOSS Zhipin", description: "Job search, job details and recruitment operations", backend: "OpenCLI" },
   youtube: { name: "YouTube", description: "Search, inspect and download videos", backend: "OpenCLI / Qone media tools" },
   exa_search: { name: "Exa Search", description: "Semantic web search", backend: "Exa MCP" },

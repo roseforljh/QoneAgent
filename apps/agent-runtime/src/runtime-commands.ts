@@ -1,5 +1,5 @@
 import { runtimeText, runtimeErrorInfo } from "./runtime-localization";
-import { repeatedUserMessageId, REACH_COOKIE_CHANNEL_IDS, reachCookieSecretKey } from "@qone/protocol";
+import { repeatedUserMessageId } from "@qone/protocol";
 import type { RuntimeCommand, PermissionDecision, MessageAttachmentInfo } from "@qone/protocol";
 import { thinkingLevelsForApi, parseMcpCommand } from "@qone/protocol";
 import path from "node:path";
@@ -92,6 +92,12 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     case "plugins.list":
       services.send({ type: "plugins.list", plugins: [] });
       return true;
+
+    case "agent.permission-mode.set": {
+      services.adapter.setPermissionMode(cmd.sessionId, cmd.permissionMode);
+      services.send({ type: "pong", requestId: cmd.requestId });
+      return true;
+    }
 
     case "browser.status":
       services.send({ type: "browser.status", requestId: cmd.requestId, status: services.browserSync!.status() });
@@ -396,8 +402,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     }
 
     case "secret.set": {
-      const isReachCookie = REACH_COOKIE_CHANNEL_IDS.some((id) => reachCookieSecretKey(id) === cmd.key);
-      if (isReachCookie || cmd.key === "reach.groq.apiKey") {
+      if (cmd.key === "reach.groq.apiKey") {
         services.runtimeSecrets.set(cmd.key, cmd.value);
         services.send({ type: "secret.saved", requestId: cmd.requestId });
         services.sendReachChannels();
@@ -456,7 +461,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       services.runtimeSecrets.delete(cmd.key);
       await services.adapter.deleteSecret(cmd.key);
       services.send({ type: "pong", requestId: cmd.requestId });
-      if (REACH_COOKIE_CHANNEL_IDS.some((id) => reachCookieSecretKey(id) === cmd.key) || cmd.key === "reach.groq.apiKey") services.sendReachChannels();
+      if (cmd.key === "reach.groq.apiKey") services.sendReachChannels();
       return true;
 
     case "agent.run": {

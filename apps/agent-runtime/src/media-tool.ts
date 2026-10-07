@@ -12,6 +12,7 @@ import { videoAttachmentsAsAudio } from "./media-attachments.js";
 import { extractVideoFrames, videoAttachmentFrames, videoDuration } from "./video-frames.js";
 import { downloadAudio, downloadVideo, extractVideoAudio, mediaMimeType } from "./video-download.js";
 import { isDouyinUrl } from "./douyin-bridge.js";
+import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 
 export interface MediaToolOptions {
   active: () => { runId: string; model: { provider: string; id: string; api: string } } | undefined;
@@ -22,6 +23,7 @@ export interface MediaToolOptions {
   hasMedia?: (runId: string, filePath: string) => boolean;
   douyinDownload?: (url: string, signal?: AbortSignal) => Promise<Awaited<ReturnType<typeof downloadVideo>>>;
   bilibiliDownload?: (url: string, mode: "video" | "audio", signal?: AbortSignal) => Promise<Awaited<ReturnType<typeof downloadVideo>>>;
+  openCli?: EmbeddedOpenCliRunner;
   attachment?: (runId: string, attachmentId: string) => MessageAttachmentInfo | undefined;
 }
 
@@ -154,11 +156,13 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
       } catch (error) {
         if (signal?.aborted || !isBilibiliUrl(url)) throw error;
         try {
-          const fallbackVideo = await downloadBilibiliOpenCli(url, signal);
+          if (!options.openCli) throw new Error("Built-in OpenCLI browser is unavailable");
+          const fallbackVideo = await downloadBilibiliOpenCli(url, signal, options.openCli);
           downloaded = fallbackVideo.files[0]!;
           source = "哔哩哔哩 OpenCLI 兜底";
         } catch (downloadFallbackError) {
-          const fallback = await readBilibiliFallback(url, signal).catch((fallbackError) => {
+          if (!options.openCli) throw new Error("Built-in OpenCLI browser is unavailable");
+          const fallback = await readBilibiliFallback(url, signal, options.openCli).catch((fallbackError) => {
             throw runtimeError("media-tool.video_retrieval_failed_yt_dlp_bilibili_cli_opencli_fallback", { p0: String(error), p1: `${String(downloadFallbackError)}; ${String(fallbackError)}` });
           });
           const parts = [runtimeText("media-tool.fallback_analysis_the_full_video_was_not_retrieved_do", { p0: fallback.source }), fallback.text];

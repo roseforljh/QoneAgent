@@ -5,8 +5,8 @@ import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { runOpenCli } from "./browser-sync.js";
 import { ffmpegExecutable } from "./reach-channels.js";
+import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 
 const MAX_AUDIO_BYTES = 25_000_000;
 const MAX_SEGMENTS = 96;
@@ -65,7 +65,7 @@ export async function transcribeAudio(file: string, key: string, ffmpeg?: string
   }
 }
 
-export function createPodcastTools(apiKey: () => string | undefined): ToolDefinition[] {
+export function createPodcastTools(apiKey: () => string | undefined, openCli: EmbeddedOpenCliRunner): ToolDefinition[] {
   return [{
     name: "qone_podcast_transcribe",
     label: runtimeText("reach-podcast-tools.xiaoyuzhou_audio_transcription"),
@@ -77,7 +77,7 @@ export function createPodcastTools(apiKey: () => string | undefined): ToolDefini
       if (!/^[A-Za-z0-9_-]{8,80}$/.test(episodeId)) throw runtimeError("reach-podcast-tools.invalid_xiaoyuzhou_episode_id_format", {});
       const folder = await mkdtemp(path.join(qoneTemporaryDir(), "qone-podcast-"));
       try {
-        const { stdout } = await runOpenCli(["xiaoyuzhou", "download", episodeId, "--output", folder, "--format", "json"], 180_000);
+        const { stdout } = await openCli("xiaoyuzhou", ["xiaoyuzhou", "download", episodeId, "--output", folder, "--format", "json"], 180_000);
         const parsed = JSON.parse(stdout) as unknown;
         const row = Array.isArray(parsed) ? parsed[0] as { file?: unknown; status?: unknown } | undefined : undefined;
         if (row?.status !== "success" || typeof row.file !== "string") throw runtimeError("reach-podcast-tools.opencli_did_not_successfully_download_the_audio_file", {});

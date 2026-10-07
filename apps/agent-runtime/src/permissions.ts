@@ -232,12 +232,13 @@ interface Pending {
   resolve: (approved: boolean) => void;
   toolName: string;
   args: unknown;
+  evaluate?: () => PermissionDecision;
 }
 
 export class ApprovalQueue {
   private pending = new Map<string, Pending>();
 
-  request(approvalId: string, toolName: string, args: unknown, signal?: AbortSignal): Promise<boolean> {
+  request(approvalId: string, toolName: string, args: unknown, signal?: AbortSignal, evaluate?: () => PermissionDecision): Promise<boolean> {
     return new Promise((resolve) => {
       const abort = () => {
         if (this.pending.delete(approvalId)) resolve(false);
@@ -249,6 +250,7 @@ export class ApprovalQueue {
         },
         toolName,
         args,
+        evaluate,
       });
       if (signal?.aborted) abort();
       else signal?.addEventListener("abort", abort, { once: true });
@@ -271,6 +273,13 @@ export class ApprovalQueue {
     return true;
   }
 
+  reevaluate(id: string): boolean {
+    const decision = this.pending.get(id)?.evaluate?.();
+    if (decision === "allow") return this.approve(id);
+    if (decision === "deny") return this.reject(id);
+    return false;
+  }
+
   list() {
     return [...this.pending.entries()].map(([id, p]) => ({
       id,
@@ -287,6 +296,7 @@ export function withPermission<T extends ToolDefinition>(
   opts: {
     queue: ApprovalQueue;
     emitApproval: (approvalId: string, toolName: string, args: unknown, toolCallId: string) => void;
+    emitResolved?: (approvalId: string, toolCallId: string, approved: boolean) => void;
     workspacePath?: string;
     rules?: PermissionRuleStore;
     mode?: () => RunPermissionMode;
@@ -305,12 +315,13 @@ export function withPermission<T extends ToolDefinition>(
         args: params,
         workspacePath: opts.workspacePath,
       };
-      const evaluation = evaluatePermission(
+      const evaluate = () => evaluatePermission(
         context,
         opts.mode?.() ?? "ask",
         opts.rules,
         (tool as ToolDefinition & { qonePermissions?: string[] }).qonePermissions ?? [],
       );
+      const evaluation = evaluate();
       if (evaluation.decision === "deny") {
         return {
           content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} denied by permission policy (${evaluation.reason}).` }],
@@ -328,10 +339,11 @@ export function withPermission<T extends ToolDefinition>(
         }
         const approvalId = crypto.randomUUID();
         const name = logicalToolName(tool);
-        const approval = opts.queue.request(approvalId, name, params, signal);
+        const approval = opts.queue.request(approvalId, name, params, signal, () => evaluate().decision);
         opts.emitApproval(approvalId, name, params, id);
         log.info("tool waiting approval", { tool: name, approvalId });
         const approved = await approval;
+        opts.emitResolved?.(approvalId, id, approved);
         if (!approved) {
           return {
             content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} rejected by user.` }],

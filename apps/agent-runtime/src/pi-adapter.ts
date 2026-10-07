@@ -48,6 +48,7 @@ import { extractTextContent, splitModelName } from "./pi-message-utils.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
 import type { AppMediaService } from "./app-media-service.js";
 import { APP_MEDIA_ROUTING_GUIDANCE, createAppMediaTools } from "./app-media-tools.js";
+import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 
 const log = createLogger("pi-adapter");
 const MODEL_TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
@@ -121,6 +122,7 @@ export class PiAdapter {
   private customTools: ToolDefinition[] = [];
   private staleSessions = new Set<string>();
   private approvals = new ApprovalQueue();
+  private pendingApprovalIds = new Map<string, Set<string>>();
   private hooks: PiAdapterHooks;
   private delegateSubagent?: DelegateSubagent;
   private subagentController?: SubagentController;
@@ -192,6 +194,7 @@ export class PiAdapter {
     compactionPreferences: PiCompactionPreferences = DEFAULT_PI_COMPACTION_PREFERENCES,
     private douyinBridge?: DouyinBridge,
     private appMediaService?: AppMediaService,
+    private openCli?: EmbeddedOpenCliRunner,
   ) {
     this.emit = emit;
     this.hooks = hooks;
@@ -599,10 +602,11 @@ export class PiAdapter {
           return file;
         }
         : undefined,
+      openCli: this.openCli,
     };
     const mediaTools = [createVideoDownloadTool(mediaToolOptions), createAttachmentAudioTool(mediaToolOptions), createAttachmentFrameTool(mediaToolOptions), ...createVideoFallbackTools(mediaToolOptions),
       ...(this.douyinBridge ? createDouyinTools(this.douyinBridge, workspacePath) : []),
-      ...(this.appMediaService ? createAppMediaTools(this.appMediaService, workspacePath) : []),
+      ...(this.appMediaService && this.openCli ? createAppMediaTools(this.appMediaService, workspacePath, this.openCli) : []),
     ];
     const goalTools: ToolDefinition[] = goalId && goalEpoch !== undefined && goalRunId && this.goalBridge ? [{
       name: "get_goal", label: "Get goal", description: "Read the current goal and its execution state.",
@@ -631,8 +635,16 @@ export class PiAdapter {
         rules: this.permissionRules,
         mode: () => this.runModes.get(sessionId) ?? "ask",
         internal: internalToolNames.has(t.name),
-        emitApproval: (approvalId, toolName, args, toolCallId) =>
-          this.push("approval.requested", { approvalId, toolName, args, toolCallId }, eventSessionId, this.activeRunIds.get(sessionId)),
+        emitApproval: (approvalId, toolName, args, toolCallId) => {
+          const pending = this.pendingApprovalIds.get(sessionId) ?? new Set<string>();
+          pending.add(approvalId);
+          this.pendingApprovalIds.set(sessionId, pending);
+          this.push("approval.requested", { approvalId, toolName, args, toolCallId }, eventSessionId, this.activeRunIds.get(sessionId));
+        },
+        emitResolved: (approvalId, toolCallId, approved) => {
+          this.removePendingApproval(approvalId);
+          this.push("approval.resolved", { approvalId, toolCallId, approved }, eventSessionId, this.activeRunIds.get(sessionId));
+        },
       })
     );
     assertModelToolNames(wrapped.map((tool) => tool.name));
@@ -831,11 +843,29 @@ export class PiAdapter {
   }
 
   approve(approvalId: string): boolean {
-    return this.approvals.approve(approvalId);
+    const approved = this.approvals.approve(approvalId);
+    if (approved) this.removePendingApproval(approvalId);
+    return approved;
   }
 
   reject(approvalId: string): boolean {
-    return this.approvals.reject(approvalId);
+    const rejected = this.approvals.reject(approvalId);
+    if (rejected) this.removePendingApproval(approvalId);
+    return rejected;
+  }
+
+  setPermissionMode(sessionId: string, mode: RunPermissionMode): void {
+    this.runModes.set(sessionId, mode);
+    const pending = this.pendingApprovalIds.get(sessionId);
+    if (pending) for (const approvalId of pending) this.approvals.reevaluate(approvalId);
+  }
+
+  private removePendingApproval(approvalId: string): void {
+    for (const [sessionId, pending] of this.pendingApprovalIds) {
+      if (!pending.delete(approvalId)) continue;
+      if (pending.size === 0) this.pendingApprovalIds.delete(sessionId);
+      return;
+    }
   }
 
   async run(
@@ -849,7 +879,10 @@ export class PiAdapter {
     this.activeRunIds.set(sessionId, runId);
     const mediaController = new AbortController();
     this.mediaRunControllers.set(runId, mediaController);
-    this.runModes.set(sessionId, opts.permissionMode ?? "ask");
+    // Keep a mode selected immediately before the run starts. This also makes
+    // the IPC update race safe when the UI changes the mode while the run
+    // command is still entering the runtime.
+    this.runModes.set(sessionId, opts.permissionMode ?? this.runModes.get(sessionId) ?? "ask");
     const configuredImageModel = opts.model ? this.imageModelConfigs.get(opts.model) : undefined;
     const configuredSpeechModel = opts.model ? this.speechModelConfigs.get(opts.model) : undefined;
     const configuredVideoModel = opts.model ? this.videoModelConfigs.get(opts.model) : undefined;
@@ -929,6 +962,7 @@ export class PiAdapter {
       if (directories) await Promise.all([...directories].map((directory) => rm(directory, { recursive: true, force: true }).catch((error) => log.warn("failed to clean downloaded video", { directory, error: String(error) }))));
       this.runs.delete(runId);
       this.runModes.delete(sessionId);
+      this.pendingApprovalIds.delete(sessionId);
       this.stoppedRuns.delete(runId);
       if (this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
       if (session && opts.mcpServerId) {

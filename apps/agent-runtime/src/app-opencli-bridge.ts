@@ -1,7 +1,4 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { qoneAuthDir } from "@qone/shared";
-import { siteAppId, type RuntimeCommand, type RuntimeEvent } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 
 export type Prepared = { requestId: string; endpoint: string };
 
@@ -10,17 +7,7 @@ export class AppOpenCliBridge {
 
   constructor(private readonly send: (event: Extract<RuntimeEvent, { type: "apps.opencli.request" | "apps.opencli.release" }>) => void) {}
 
-  hasSavedSession(site: string): boolean {
-    const appId = siteAppId(site);
-    if (!appId) return false;
-    try {
-      const value = JSON.parse(readFileSync(path.join(qoneAuthDir(), `${appId}.json`), "utf8")) as { appId?: unknown; cookies?: unknown };
-      return value.appId === appId && Array.isArray(value.cookies) && value.cookies.length > 0;
-    } catch { return false; }
-  }
-
   prepare(site: string, url: string, signal?: AbortSignal): Promise<Prepared | undefined> {
-    if (!this.hasSavedSession(site)) return Promise.resolve(undefined);
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const cancel = () => {

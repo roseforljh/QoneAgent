@@ -11,7 +11,6 @@ const MAX_BYTES = 2_000_000;
 const TEXT_LIMIT = 80_000;
 const USER_AGENT = "QoneAgent/0.1 (public web reader)";
 const BILIBILI_HOME_URL = siteForAppId("bilibili")!.homeUrl;
-const XUEQIU_HOME_URL = siteForAppId("xueqiu")!.homeUrl;
 
 function publicUrl(input: string): URL {
   const url = new URL(input);
@@ -120,7 +119,7 @@ async function runCli(command: string, args: string[], timeout = 60_000): Promis
   });
 }
 
-export function createReachPublicTools(options: { ytDlp: () => string | undefined; githubToken?: () => string | undefined; xueqiuCookie?: () => string | undefined }): ToolDefinition[] {
+export function createReachPublicTools(options: { ytDlp: () => string | undefined; githubToken?: () => string | undefined }): ToolDefinition[] {
   const tools = [
     {
       name: "qone_rss_read", label: "RSS · read", description: "Read public RSS or Atom feed items without login.",
@@ -169,23 +168,6 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
         const data = JSON.parse(await boundedFetch(url, { Referer: BILIBILI_HOME_URL })) as { code?: number; message?: string; data?: { result?: { data?: unknown[] }[] } };
         if (data.code !== 0) throw runtimeError("reach-public-tools.bilibili_search_failed", { p0: data.message ?? data.code });
         return output((data.data?.result ?? []).flatMap((group) => group.data ?? []).slice(0, limit ?? 10));
-      },
-    },
-    {
-      name: "qone_xueqiu", label: runtimeText("reach-public-tools.xueqiu_api"), description: "Read Xueqiu stock quotes, stock search, or hot stocks through its API. Requires a Cookie configured in the application card.",
-      parameters: Type.Object({ kind: Type.Union([Type.Literal("quote"), Type.Literal("search"), Type.Literal("hot")]), value: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
-      execute: async (_id, { kind, value, limit }: { kind: string; value?: string; limit?: number }) => {
-        const cookie = options.xueqiuCookie?.();
-        if (!cookie) throw runtimeError("reach-public-tools.configure_a_cookie_in_the_xueqiu_card_on_the", {});
-        if (kind !== "hot" && !value?.trim()) throw runtimeError("reach-public-tools.enter_a_stock_symbol_or_search_term", {});
-        if (kind === "quote" && !/^[A-Z0-9.]{2,20}$/i.test(value!)) throw runtimeError("reach-public-tools.invalid_stock_symbol_format", {});
-        const route = kind === "quote"
-          ? `https://stock.xueqiu.com/v5/stock/quote.json?symbol=${encodeURIComponent(value!)}&extend=detail`
-          : kind === "search"
-            ? `${XUEQIU_HOME_URL}stock/search.json?code=${encodeURIComponent(value!)}&size=${limit ?? 10}`
-            : `https://stock.xueqiu.com/v5/stock/hot_stock/list.json?size=${limit ?? 10}&type=10`;
-        const data = JSON.parse(await boundedFetch(new URL(route), { Cookie: cookie, Referer: XUEQIU_HOME_URL })) as unknown;
-        return output(data);
       },
     },
     {

@@ -8,7 +8,7 @@ import { SideConversationService } from "./side-conversation.js";
 
 import { createLogger, EventBus, qoneDatabasePath, qoneConfigDatabasePath, qoneMcpDatabasePath, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, SessionSearchResult } from "@qone/protocol";
-import { decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, REMOVED_BUILTIN_SUBAGENT_IDS, REACH_COOKIE_CHANNEL_IDS } from "@qone/protocol";
+import { decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
 import { openDb, openConfigDb, openMcpDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
@@ -22,7 +22,7 @@ import { moveDomainData } from "./domain-data.js";
 
 
 import { ModelMetadataResolver } from "./model-resolver.js";
-import { BrowserSyncService } from "./browser-sync.js";
+import { BrowserSyncService, createEmbeddedOpenCliRunner } from "./browser-sync.js";
 import { createReachPublicTools } from "./reach-public-tools.js";
 import { listReachChannels, ytDlpExecutable } from "./reach-channels.js";
 import { podcastConfigured } from "./reach-podcast.js";
@@ -63,6 +63,7 @@ const output = createRuntimeOutput({ write: (line) => { process.stdout.write(lin
 const send = output.send;
 const douyinBridge = new DouyinBridge((event) => send(event));
 const appOpenCliBridge = new AppOpenCliBridge((event) => send(event));
+const embeddedOpenCli = createEmbeddedOpenCliRunner(appOpenCliBridge);
 const appMediaService = new AppMediaService();
 
 // Keep the user file and its directory available before the settings UI opens.
@@ -202,6 +203,21 @@ eventBus.subscribe((busEvent) => {
           approvalToolCalls.set(payload.approvalId, toolCallId);
         }
       }
+    }
+  }
+  if (busEvent.type === "approval.resolved") {
+    const payload = busEvent.payload as { approvalId?: string; toolCallId?: string; approved?: boolean };
+    if (payload.approvalId) {
+      const runId = approvalRuns.get(payload.approvalId) ?? busEvent.runId;
+      if (runId) {
+        runRepo.setStatus(runId, "running");
+        const toolCallId = approvalToolCalls.get(payload.approvalId);
+        if (toolCallId) toolCallRepo.setStatus(toolCallId, "running");
+        const run = runRepo.get(runId);
+        if (run) emit("run.status", { status: "running" }, run.sessionId, runId);
+      }
+      approvalRuns.delete(payload.approvalId);
+      approvalToolCalls.delete(payload.approvalId);
     }
   }
   const approvalParent = busEvent.runId && busEvent.type === "approval.requested" ? subagentRunRepo.get(busEvent.runId)?.parentSessionId : undefined;
@@ -526,7 +542,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   const customEntries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
   history.push(...customEntries.map((rawMessage) => ({ id: crypto.randomUUID(), role: "custom", content: "", attachments: undefined, createdAt: Date.now(), rawMessage })));
   return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
-}, compactionPreferences, douyinBridge, appMediaService);
+}, compactionPreferences, douyinBridge, appMediaService, embeddedOpenCli);
 adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
 subagentNotificationCoordinator = new SubagentNotificationCoordinator(
   subagentNotificationRepo,
@@ -658,7 +674,7 @@ const mcp = new McpManager(async (serverId, token) => {
 for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()] as McpServerConfig[]) {
   // Playwright remains available as a manually enabled fallback. OpenCLI is
   // the default browser channel, so starting Playwright here would launch a
-  // second browser and compete with the current Chrome connection.
+  // second browser and compete with the shared built-in browser session.
   if (config.id === "mcp-playwright") continue;
   const subjectId = `mcp:${config.id}`;
   permissionRepo.ensure(subjectId, "mcp.connect", "ask");
@@ -672,7 +688,7 @@ for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()] as McpServer
 }
 let browserSync: BrowserSyncService | undefined;
 await refreshCustomTools();
-browserSync = new BrowserSyncService(db, dbPath,
+browserSync = new BrowserSyncService(
   (status) => {
     send({ type: "browser.status", status });
     sendReachChannels();
@@ -687,8 +703,8 @@ async function releaseBrowserSession() {
 async function refreshCustomTools() {
   await adapter.setCustomTools([
     ...mcp.tools(),
-    ...createReachPublicTools({ ytDlp: ytDlpExecutable, xueqiuCookie: () => runtimeSecrets.get("reach.xueqiu.cookie") }),
-    ...createPodcastTools(() => runtimeSecrets.get("reach.groq.apiKey")),
+    ...createReachPublicTools({ ytDlp: ytDlpExecutable }),
+    ...createPodcastTools(() => runtimeSecrets.get("reach.groq.apiKey"), embeddedOpenCli),
     ...(browserSync?.tools() ?? []),
   ]);
 }
@@ -697,8 +713,6 @@ function sendReachChannels(requestId?: string) {
   send({ type: "reach.channels", requestId, channels: listReachChannels({
     browserConnected: browserSync?.status().targetConnected ?? false,
     mcpConnected: (id) => mcp.isConnected(id),
-    hasXueqiuCookie: Boolean(runtimeSecrets.get("reach.xueqiu.cookie")),
-    cookieSites: REACH_COOKIE_CHANNEL_IDS.filter((id) => runtimeSecrets.has(id === "xueqiu" ? "reach.xueqiu.cookie" : `reach.cookie:${id}`)),
     podcastConfigured: podcastConfigured(),
     hasGroqKey: Boolean(runtimeSecrets.get("reach.groq.apiKey")),
   }) });

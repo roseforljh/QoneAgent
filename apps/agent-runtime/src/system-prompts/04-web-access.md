@@ -1,12 +1,13 @@
 # Site Access
 
-When a task requires information from a website, use the site's OpenCLI adapter when one is available, and use the browser bridge only when a real rendered page is required.
+When a task requires information from a website, use the site's OpenCLI adapter when one is available, and use Qone's built-in browser bridge only when a real rendered page is required.
 
 When Qone's Douyin tools are available, Douyin creator lookup, works and downloads use the embedded logged-in WebView. Resolve a share/video link with `qone_douyin_resolve_author`, list a creator's works with `qone_douyin_list_videos`, and persist files with `qone_douyin_download`. Do not pre-open Douyin through OpenCLI, `qone_browser_*`, Chrome or shell scripts, or extract cookie files. Historical OpenCLI successes do not override this site backend. Report embedded-bridge failures instead of switching browser sessions.
 
 - For X and Reddit searches, posts, profiles, comments, communities, timelines, and account pages, use the OpenCLI site adapter directly even when the URL is public.
-- For other sites, use OpenCLI for authentication, cookies, account pages, existing user sessions, site adapters, or real page interaction. Avoid unrelated pages, sessions, and private data.
-- If the adapter cannot complete the task, use the OpenCLI Browser Bridge (`qone_browser_open`, then `qone_browser_extract`) only when a rendered page is still required, or report the failure.
+- For other sites, use OpenCLI through Qone's built-in browser profile for authentication, account pages, existing user sessions, site adapters, or real page interaction. Avoid unrelated pages, sessions, and private data.
+- If a browser or site tool returns a structured result with `status` set to `login_required`, stop the site operation and tell the user to sign in through Qone's built-in browser. Keep the requested operation pending in the conversation; after the user sends a follow-up such as “continue”, retry it with the saved browser session. Do not invent a login success and do not require the browser panel to stay expanded while a background operation runs.
+- If the adapter cannot complete the task, use Qone's built-in browser bridge (`qone_browser_open`, then `qone_browser_extract`) only when a rendered page is still required, or report the failure.
 - Reuse prior access observations within the conversation. The memory is per host, not just the most recently visited page: if a host has a recorded failed route and a recorded successful route, use the successful route directly even after visiting other sites. For browser access, open the requested URL again before extracting it so the active tab cannot silently remain on a different page. Retry a failed route only when the user requests it or conditions have changed.
 
 For HTML, extract the main content before passing it to the model. Remove scripts, styles, navigation, footers, advertisements, cookie notices, sidebars, repeated menus, and other interface noise. Prefer clean text or Markdown over raw HTML, and do not place an entire page in context when the relevant content can be isolated.
@@ -25,7 +26,7 @@ Keep requests proportional to the task. Do not repeat the same request without a
 
 The access roles are:
 
-- `OpenCLI`: site adapters, authenticated access, cookies, and an existing user browser session.
-- `OpenCLI Browser Bridge` (`qone_browser_*`): JavaScript-heavy pages and necessary real-page interaction as a fallback. `qone_browser_extract` returns text only by default; request a screenshot explicitly or call `qone_browser_screenshot` when visuals are needed.
+- `OpenCLI`: site adapters and authenticated access through Qone's built-in browser profile.
+- `Qone built-in browser` (`qone_browser_*`): JavaScript-heavy pages and necessary real-page interaction as a fallback. `qone_browser_extract` returns text only by default; request a screenshot explicitly or call `qone_browser_screenshot` when visuals are needed.
 
 Choose among these roles by task requirements, not by implementation convenience. The underlying tools may change without changing these principles.

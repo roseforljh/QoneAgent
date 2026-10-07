@@ -5,12 +5,13 @@ import { qoneTemporaryDir } from "@qone/shared";
 import { mediaAppContentId, siteMatchesHost } from "@qone/protocol";
 import path from "node:path";
 import { promisify } from "node:util";
-import { runOpenCli } from "./browser-sync.js";
+import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 import { biliLaunch } from "./reach-channels.js";
 import { mediaMimeType, type DownloadedVideo } from "./video-download.js";
 
 const execFileAsync = promisify(execFile);
 const pythonOptions = { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } };
+const OPENCLI_READ_TIMEOUT = 300_000;
 const AUDIO_MIME: Record<string, string> = {
   ".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".aac": "audio/aac", ".flac": "audio/flac",
 };
@@ -88,12 +89,12 @@ async function mediaFiles(directory: string): Promise<DownloadedVideo[]> {
 }
 
 /** Run only after the embedded yt-dlp route failed. The caller owns the returned directory. */
-export async function downloadBilibiliOpenCli(url: string, signal?: AbortSignal): Promise<BilibiliOpenCliDownloadResult> {
+export async function downloadBilibiliOpenCli(url: string, signal: AbortSignal | undefined, openCli: EmbeddedOpenCliRunner): Promise<BilibiliOpenCliDownloadResult> {
   if (!isBilibiliUrl(url)) throw runtimeError("bilibili-fallback.this_is_not_a_bilibili_video_url", {});
   const reference = /\bBV[A-Za-z0-9]+\b/i.exec(url)?.[0] ?? url;
   const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-bili-opencli-"));
   try {
-    const result = await runOpenCli(["bilibili", "download", reference, "--output", directory, "--format", "json"], 300_000, signal);
+    const result = await openCli("bilibili", ["bilibili", "download", reference, "--output", directory, "--format", "json"], 300_000, signal);
     const files = await mediaFiles(directory);
     if (!files.length) throw runtimeError("bilibili-fallback.opencli_download_returned_no_file", {});
     let id = mediaAppContentId("bilibili", url);
@@ -111,7 +112,7 @@ export async function downloadBilibiliOpenCli(url: string, signal?: AbortSignal)
 }
 
 /** These sources provide partial evidence only; the caller must label the result as degraded. */
-export async function readBilibiliFallback(url: string, signal?: AbortSignal): Promise<BilibiliFallbackResult> {
+export async function readBilibiliFallback(url: string, signal: AbortSignal | undefined, openCli: EmbeddedOpenCliRunner): Promise<BilibiliFallbackResult> {
   if (!isBilibiliUrl(url)) throw runtimeError("bilibili-fallback.this_is_not_a_bilibili_video_url", {});
   const bvid = /\bBV[A-Za-z0-9]+\b/i.exec(url)?.[0];
   const reference = bvid ?? url;
@@ -121,7 +122,7 @@ export async function readBilibiliFallback(url: string, signal?: AbortSignal): P
     try {
       const text = await readBilibiliVideoData(async (subtitles) => {
         const result = await execFileAsync(launch.command, [...launch.prefix, "video", reference, ...(subtitles ? ["--subtitle-timeline"] : []), "--json"], {
-          ...pythonOptions, signal, maxBuffer: 16 * 1024 * 1024,
+          ...pythonOptions, signal, timeout: OPENCLI_READ_TIMEOUT, maxBuffer: 16 * 1024 * 1024,
         });
         return result.stdout;
       }, signal);
@@ -129,7 +130,7 @@ export async function readBilibiliFallback(url: string, signal?: AbortSignal): P
         const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-bili-audio-"));
         try {
           await execFileAsync(launch.command, [...launch.prefix, "audio", reference, "--no-split", "-o", directory], {
-            ...pythonOptions, signal, maxBuffer: 1024 * 1024,
+            ...pythonOptions, signal, timeout: OPENCLI_READ_TIMEOUT, maxBuffer: 1024 * 1024,
           });
           const audio = await firstMediaFile(directory, (file) => mediaMimeType(file)?.startsWith("audio/") ? AUDIO_MIME[path.extname(file).toLowerCase()] : undefined);
           if (audio) return { source: "bilibili-cli", text: text.trim(), audio: { ...audio, directory } };
@@ -151,7 +152,7 @@ export async function readBilibiliFallback(url: string, signal?: AbortSignal): P
   const parts: string[] = [];
   for (const command of ["subtitle", "summary"] as const) {
     try {
-      const result = await runOpenCli(["bilibili", command, url, "-f", "json"], 0, signal);
+      const result = await openCli("bilibili", ["bilibili", command, url, "-f", "json"], OPENCLI_READ_TIMEOUT, signal);
       if (result.stdout) parts.push(`${command}: ${result.stdout}`);
     } catch (error) {
       if (signal?.aborted) throw error;

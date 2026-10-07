@@ -18,7 +18,7 @@ test("model-facing system text starts with the same eight modules across model/t
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
   runtime.registerNativeProvider(faux.provider);
   const adapter = new PiAdapter(() => {}, {
-    webAccessContext: () => "[QONE_WEB_ACCESS_MEMORY]\nexample.com: OpenCLI adapter failed (timeout); prefer OpenCLI Browser Bridge\n[/QONE_WEB_ACCESS_MEMORY]",
+    webAccessContext: () => "[QONE_WEB_ACCESS_MEMORY]\nexample.com: OpenCLI adapter failed (timeout); prefer Qone built-in browser\n[/QONE_WEB_ACCESS_MEMORY]",
   });
   Object.assign(adapter, { modelRuntime: runtime });
   const systemTexts: string[] = [];

@@ -193,6 +193,30 @@ describe("runtime persistence and permissions", () => {
     expect(executions).toBe(4);
   });
 
+  test("changing to full mode releases an already pending workspace approval", async () => {
+    let mode: "ask" | "auto" | "full" = "ask";
+    let approvalId = "";
+    let executed = false;
+    const queue = new ApprovalQueue();
+    const tool = withPermission(defineTool({
+      name: "write", label: "Write", description: "write",
+      parameters: Type.Object({ path: Type.String() }),
+      execute: async () => { executed = true; return { content: [{ type: "text" as const, text: "ok" }] }; },
+    }), {
+      queue,
+      workspacePath: "C:/work/app",
+      mode: () => mode,
+      emitApproval: (id) => { approvalId = id; },
+    });
+    const pending = tool.execute("pending", { path: "C:/work/app/file.ts" }, undefined, undefined, undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(approvalId).toBeTruthy();
+    mode = "full";
+    expect(queue.reevaluate(approvalId)).toBe(true);
+    await pending;
+    expect(executed).toBe(true);
+  });
+
   test("applies auto and full modes to plugin and MCP capabilities", async () => {
     let executions = 0;
     let prompts = 0;

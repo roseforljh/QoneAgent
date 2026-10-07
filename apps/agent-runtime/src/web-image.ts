@@ -30,7 +30,7 @@ export function browserScreenshotResult(output: string) {
     throw new Error("Invalid or oversized OpenCLI screenshot");
   }
   return {
-    content: [{ type: "text" as const, text: "Current Chrome page screenshot. Inspect the image; only the captured area is visible." }, webImage(Buffer.from(data, "base64"), "image/png")],
+    content: [{ type: "text" as const, text: "Current Qone built-in browser page screenshot. Inspect the image; only the captured area is visible." }, webImage(Buffer.from(data, "base64"), "image/png")],
     details: { contentType: "image/png" },
   };
 }

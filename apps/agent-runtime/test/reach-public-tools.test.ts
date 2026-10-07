@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createReachPublicTools, parseFeed } from "../src/reach-public-tools";
 import { listReachChannels } from "../src/reach-channels";
-import { reachCookieSecretKey } from "@qone/protocol";
 import { browserScreenshotResult } from "../src/web-image";
 
 const originalFetch = globalThis.fetch;
@@ -25,11 +24,6 @@ describe("Agent Reach channels", () => {
     expect(channels).toHaveLength(16);
     expect(channels.find((channel) => channel.id === "boss")?.state).toBe("needs-connection");
     expect(channels.find((channel) => channel.id === "twitter")?.state).toBe("needs-connection");
-    const twitter = listReachChannels({ browserConnected: false, mcpConnected: () => false, cookieSites: ["twitter"] })
-      .find((channel) => channel.id === "twitter");
-    expect(twitter).toMatchObject({ cookieConfigured: true, loginUrl: "https://x.com/i/flow/login" });
-    expect(reachCookieSecretKey("twitter")).toBe("reach.cookie:twitter");
-    expect(reachCookieSecretKey("github")).toBeUndefined();
     expect(createReachPublicTools({ ytDlp: () => undefined }).some((tool) => tool.name === "qone_youtube_search")).toBe(false);
     expect(listReachChannels({ browserConnected: false, mcpConnected: () => false }).find((channel) => channel.id === "youtube")?.tools).not.toContain("qone_youtube");
   });
@@ -54,26 +48,9 @@ describe("Agent Reach channels", () => {
     expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("owner/repo") });
   });
 
-  test("Xueqiu route uses the configured cookie only for the fixed API host", async () => {
-    let requested = "";
-    let sentCookie = "";
-    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
-      requested = String(url);
-      sentCookie = String((init?.headers as Record<string, string>)?.Cookie ?? "");
-      return new Response(JSON.stringify({ data: { quote: { symbol: "SH600519" } } }));
-    }) as typeof fetch;
-    const tool = createReachPublicTools({ ytDlp: () => undefined, xueqiuCookie: () => "xq_a_token=test" }).find((item) => item.name === "qone_xueqiu")!;
-    const result = await tool.execute("test", { kind: "quote", value: "SH600519" }, undefined as never, undefined as never);
-    expect(requested).toBe("https://stock.xueqiu.com/v5/stock/quote.json?symbol=SH600519&extend=detail");
-    expect(sentCookie).toBe("xq_a_token=test");
-    expect(result.content[0]).toMatchObject({ text: expect.stringContaining("SH600519") });
-    await expect(tool.execute("test", { kind: "quote", value: "https://evil.test/" }, undefined as never, undefined as never)).rejects.toThrow("格式无效");
-  });
-
   test("never forwards credentials to a different origin after a redirect", async () => {
     for (const [name, toolName, args, options] of [
       ["GitHub token", "qone_github_public", { kind: "repo", value: "owner/repo" }, { githubToken: () => "secret-token" }],
-      ["Xueqiu cookie", "qone_xueqiu", { kind: "quote", value: "SH600519" }, { xueqiuCookie: () => "secret-cookie" }],
     ] as const) {
       let calls = 0;
       globalThis.fetch = (async () => {

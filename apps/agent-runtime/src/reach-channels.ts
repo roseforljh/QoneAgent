@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { findSite, SITE_CONFIG, REACH_COOKIE_CHANNEL_IDS, type ReachChannelInfo } from "@qone/protocol";
+import { findSite, SITE_CONFIG, type ReachChannelInfo } from "@qone/protocol";
 import { reachChannelEnglish, type ReachChannelId } from "./reach-channel-copy.js";
 
 const openCliSiteIds = SITE_CONFIG.filter((site) => site.reachMode === "opencli").map((site) => site.id as ReachChannelId);
@@ -40,11 +40,7 @@ export function biliLaunch(): { command: string; prefix: string[] } | undefined 
   return uvx ? { command: uvx, prefix: ["--quiet", "--from", "bilibili-cli[audio]==0.6.2", "bili"] } : undefined;
 }
 
-interface ChannelContext { browserConnected: boolean; mcpConnected: (id: string) => boolean; hasXueqiuCookie?: boolean; podcastConfigured?: boolean; hasGroqKey?: boolean; cookieSites?: readonly string[] }
-
-function cookieConfigured(context: ChannelContext, id: string): boolean {
-  return context.cookieSites?.includes(id) ?? false;
-}
+interface ChannelContext { browserConnected: boolean; mcpConnected: (id: string) => boolean; podcastConfigured?: boolean; hasGroqKey?: boolean }
 
 export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
   const publicChannel = (id: ReachChannelId, name: string, description: string, backend: string, tools: string[], detail?: string): ReachChannelInfo =>
@@ -56,34 +52,28 @@ export function listReachChannels(context: ChannelContext): ReachChannelInfo[] {
     return ({
     id, name, description, backend: "OpenCLI", tools: ["qone_opencli_discover", "qone_opencli_run"],
     state: context.browserConnected ? "unverified" : "needs-connection",
-    detail: cookieConfigured(context, id)
-      ? "Cookie 已保存，实际有效性在调用时验证"
-      : context.browserConnected ? "浏览器桥接已连接；网站登录态和命令需执行时验证" : detail ?? "连接 Chrome 并在网站登录后使用",
+    detail: context.browserConnected ? "内置浏览器已就绪；网站登录态和命令需执行时验证" : detail ?? "打开内置浏览器并在网站登录后使用",
     action: "opencli",
     loginUrl: findSite(id)?.loginUrl,
-    cookieConfigured: REACH_COOKIE_CHANNEL_IDS.includes(id as (typeof REACH_COOKIE_CHANNEL_IDS)[number])
-      ? cookieConfigured(context, id) : undefined,
-    english: { ...reachChannelEnglish[id], detail: cookieConfigured(context, id)
-      ? "Cookie saved; validity will be verified when the channel is used."
-      : context.browserConnected
-        ? "Browser bridge connected; website sessions and commands will be verified when used."
-        : "Connect Chrome and sign in to the website to use this channel." },
+    english: { ...reachChannelEnglish[id], detail: context.browserConnected
+      ? "Built-in browser ready; website sessions and commands will be verified when used."
+      : "Open the built-in browser and sign in to the website to use this channel." },
   });
   };
   const channels: ReachChannelInfo[] = [
     publicChannel("rss", "RSS / Atom", "读取公开订阅源", "内置解析器", ["qone_rss_read"]),
     publicChannel("v2ex", "V2EX", "热门、最新、节点与回复", "V2EX 公开 API", ["qone_v2ex"]),
     { ...publicChannel("github", "GitHub", "公开仓库与搜索；账号操作可连接 GitHub MCP", "GitHub 公开 API", ["qone_github_public"], "公开功能可用；私有仓库和写入需配置 GitHub MCP"), action: "github" },
-    { id: "tiktok", name: "TikTok", description: "读取和操作 TikTok 网站内容", backend: "OpenCLI", tools: ["qone_opencli_discover", "qone_opencli_run", "qone_app_inspect", "qone_app_download"], state: context.browserConnected ? "unverified" : "needs-connection", detail: cookieConfigured(context, "tiktok") ? "登录态已保存，OpenCLI 会优先使用 Qone 内置页面" : "无 Qone 登录态时使用外置 OpenCLI 浏览器", action: "opencli", loginUrl: findSite("tiktok")?.loginUrl, cookieConfigured: cookieConfigured(context, "tiktok"), english: reachChannelEnglish.tiktok },
-    { id: "bilibili", name: "哔哩哔哩", description: "搜索、读取和操作 B 站内容；下载视频", backend: "OpenCLI / Qone 媒体工具", tools: ["qone_opencli_discover", "qone_opencli_run", "qone_app_inspect", "qone_app_list", "qone_app_download", "qone_video_download", "qone_video_use_file"], state: context.browserConnected ? "unverified" : "needs-connection", detail: cookieConfigured(context, "bilibili") ? "网站操作优先使用 Qone 内置页面；视频文件使用 Qone 媒体工具" : "网站操作使用外置 OpenCLI；视频文件使用 Qone 媒体工具", action: "bilibili", loginUrl: findSite("bilibili")?.loginUrl, cookieConfigured: cookieConfigured(context, "bilibili"), english: reachChannelEnglish.bilibili },
+    { id: "tiktok", name: "TikTok", description: "读取和操作 TikTok 网站内容", backend: "OpenCLI", tools: ["qone_opencli_discover", "qone_opencli_run", "qone_app_inspect", "qone_app_download"], state: context.browserConnected ? "unverified" : "needs-connection", detail: context.browserConnected ? "内置浏览器已就绪，网站登录态由浏览器维护" : "打开内置浏览器并在 TikTok 登录", action: "opencli", loginUrl: findSite("tiktok")?.loginUrl, english: { ...reachChannelEnglish.tiktok, detail: context.browserConnected ? "Built-in browser ready; website sessions are maintained there." : "Open the built-in browser and sign in to TikTok." } },
+    { id: "bilibili", name: "哔哩哔哩", description: "搜索、读取和操作 B 站内容；下载视频", backend: "OpenCLI / Qone 媒体工具", tools: ["qone_opencli_discover", "qone_opencli_run", "qone_app_inspect", "qone_app_list", "qone_app_download", "qone_video_download", "qone_video_use_file"], state: context.browserConnected ? "unverified" : "needs-connection", detail: context.browserConnected ? "网站操作使用内置浏览器；视频文件使用 Qone 媒体工具" : "打开内置浏览器并在 B 站登录；视频文件使用 Qone 媒体工具", action: "bilibili", loginUrl: findSite("bilibili")?.loginUrl, english: reachChannelEnglish.bilibili },
     ...openCliSiteIds.map((id) => openCliChannel(id)),
-    { id: "xueqiu", name: "雪球", description: "股票行情、搜索与热门股票", backend: "OpenCLI / 雪球 API", tools: ["qone_opencli_discover", "qone_opencli_run", "qone_xueqiu"], state: context.hasXueqiuCookie || context.browserConnected ? "unverified" : "needs-connection", detail: context.hasXueqiuCookie ? "Cookie 已配置，实际有效性需请求时验证" : "可连接 Chrome 复用登录态，也可粘贴 Cookie 用雪球 API", action: "xueqiu", loginUrl: findSite("xueqiu")?.loginUrl, cookieConfigured: context.hasXueqiuCookie || cookieConfigured(context, "xueqiu"), english: { ...reachChannelEnglish.xueqiu, detail: context.hasXueqiuCookie ? "Cookie configured; validity will be verified on request." : "Connect Chrome to reuse your session, or paste a cookie to use the Xueqiu API." } },
+    { id: "xueqiu", name: "雪球", description: "股票行情、搜索与热门股票", backend: "OpenCLI", tools: ["qone_opencli_discover", "qone_opencli_run"], state: context.browserConnected ? "unverified" : "needs-connection", detail: context.browserConnected ? "内置浏览器已就绪；网站登录态和命令需执行时验证" : "打开内置浏览器并在雪球登录", action: "opencli", loginUrl: findSite("xueqiu")?.loginUrl, english: { ...reachChannelEnglish.xueqiu, backend: "OpenCLI", detail: context.browserConnected ? "Built-in browser ready; website sessions and commands will be verified when used." : "Open the built-in browser and sign in to Xueqiu." } },
     {
-      id: "youtube", name: "YouTube", description: "搜索视频、读取元数据与下载", backend: "OpenCLI / Qone 媒体工具", loginUrl: findSite("youtube")?.loginUrl, cookieConfigured: cookieConfigured(context, "youtube"),
+      id: "youtube", name: "YouTube", description: "搜索视频、读取元数据与下载", backend: "OpenCLI / Qone 媒体工具", loginUrl: findSite("youtube")?.loginUrl,
       tools: ytDlpExecutable() ? ["qone_opencli_discover", "qone_opencli_run", "qone_youtube_search", "qone_app_inspect", "qone_app_list", "qone_app_download"] : ["qone_opencli_discover", "qone_opencli_run"], state: context.browserConnected ? "unverified" : "needs-connection",
-      detail: ytDlpExecutable() ? "网站操作使用 OpenCLI；视频文件使用 Qone 媒体工具" : "yt-dlp 未找到；网站操作仍可使用 OpenCLI",
+      detail: ytDlpExecutable() ? "网站操作使用内置浏览器 OpenCLI；视频文件使用 Qone 媒体工具" : "yt-dlp 未找到；网站操作仍可使用内置浏览器 OpenCLI",
       action: "youtube",
-      english: { ...reachChannelEnglish.youtube, detail: ytDlpExecutable() ? "Qone's embedded media route is enabled; use qone_app_download for a known video URL and qone_youtube_search for keyword search." : "yt-dlp was not found; configure Qone's embedded media route first." },
+      english: { ...reachChannelEnglish.youtube, detail: ytDlpExecutable() ? "The built-in browser OpenCLI route is enabled; use qone_app_download for a known video URL and qone_youtube_search for keyword search." : "yt-dlp was not found; the built-in browser route is still available." },
     },
     {
       id: "exa_search", name: "Exa 搜索", description: "全网语义搜索", backend: "Exa MCP",

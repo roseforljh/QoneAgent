@@ -70,7 +70,7 @@ function parsedDetails(result: unknown): Record<string, unknown> | undefined {
 function routeLabel(route: WebAccessRoute): string {
   if (route === "douyin_embedded_bridge") return "Qone embedded Douyin bridge";
   if (route === "opencli") return "OpenCLI adapter";
-  return "OpenCLI Browser Bridge";
+  return "Qone built-in browser";
 }
 
 export class WebAccessMemory {
@@ -173,7 +173,7 @@ export class WebAccessMemory {
     const lines = records.slice(-MAX_HOSTS).map(([key, record]) => {
       const label = key.startsWith("site:") ? key.slice(5) : key;
       if (key === "site:douyin" || !key.startsWith("site:") && isDouyinUrl(`https://${key}/`)) {
-        return `- ${label}: MUST use Qone embedded Douyin bridge (qone_douyin_resolve_author, qone_douyin_list_videos, qone_douyin_download). Old OpenCLI/browser observations are obsolete for this site; do not open external Chrome or read cookie files.`;
+        return `- ${label}: MUST use Qone embedded Douyin bridge (qone_douyin_resolve_author, qone_douyin_list_videos, qone_douyin_download). Old generic browser observations are obsolete for this site; do not switch browser routes or read cookie files.`;
       }
       const outcomes = record.outcomes.slice(-4).map((item) => `${routeLabel(item.route)} ${item.ok ? "succeeded" : `failed (${item.reason ?? "unknown reason"})`}`);
       const decision = record.preferred

@@ -5,7 +5,6 @@ import { promisify } from "node:util";
 import { createLogger, qoneTemporaryDir } from "@qone/shared";
 import { mediaAppContentId, mediaAppFromUrl, mediaAppHostIsAlias, mediaAppProfile, siteForAppId, type AppMediaItem, type AppMediaList, type MediaAppId, type MediaAppMode } from "@qone/protocol";
 import { ytDlpExecutable, ffmpegExecutable } from "./reach-channels";
-import { writeAppCookies } from "./app-media-auth";
 import { LocalizedRuntimeError, runtimeError } from "./runtime-localization";
 import type { DownloadedVideo } from "./video-download";
 import { mediaMimeType } from "./video-download";
@@ -32,7 +31,6 @@ export interface AppMediaDownload { item: AppMediaItem; files: DownloadedVideo[]
 
 function assertAppUrl(app: MediaAppId, url: string): void {
   if (mediaAppFromUrl(url) !== app) throw runtimeError("app-media.invalid_url", { p0: app });
-  if (app === "telegram") throw runtimeError("app-media.telegram_setup_required");
 }
 
 /** Share the mature extractor/format selection used by upstream's yt-dlp plugin. */
@@ -54,12 +52,10 @@ export class AppMediaService {
     const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-app-media-"));
     let retained = false;
     try {
-      const cookies = await writeAppCookies(app, directory);
-      log.info("media operation started", { app, stage, cookies: Boolean(cookies) });
+      log.info("media operation started", { app, stage });
       const timeout = AbortSignal.timeout(stage === "download" ? 300_000 : 120_000);
       const operationSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
       const common = ["--no-warnings", "--no-progress", "--socket-timeout", "30", "--retries", "2"];
-      if (cookies) common.push("--cookies", cookies);
       if (app === "youtube") common.push("--js-runtimes", `bun:${process.execPath}`);
       const ffmpeg = ffmpegExecutable();
       if (ffmpeg) common.push("--ffmpeg-location", path.dirname(ffmpeg));
@@ -67,7 +63,7 @@ export class AppMediaService {
       try { ({ stdout } = await this.runner(executable, [...common, ...args.map((arg) => arg.replace("{directory}", directory)), "--", url], operationSignal)); }
       catch (error) {
         signal?.throwIfAborted();
-        log.warn("media operation failed", { app, stage, reason: operationSignal.aborted ? "timeout" : failureCategory(error), cookies: Boolean(cookies) });
+        log.warn("media operation failed", { app, stage, reason: operationSignal.aborted ? "timeout" : failureCategory(error) });
         // Child errors contain signed URLs, cookies and the complete argv. Keep
         // machine status only, never return stdout/stderr to tools or log them.
         throw new AppMediaError(stage, app, operationSignal.aborted ? "timeout" : String((error as { code?: unknown }).code ?? "extractor"));
@@ -75,13 +71,12 @@ export class AppMediaService {
       let result: T;
       try { result = await consume(stdout, directory); }
       catch (error) {
-        log.warn("media operation failed", { app, stage, reason: failureCategory(error), cookies: Boolean(cookies) });
+        log.warn("media operation failed", { app, stage, reason: failureCategory(error) });
         throw error;
       }
       signal?.throwIfAborted();
-      if (cookies) await rm(cookies, { force: true });
       retained = keep;
-      log.info("media operation completed", { app, stage, cookies: Boolean(cookies), retained: keep });
+      log.info("media operation completed", { app, stage, retained: keep });
       return result;
     } finally { if (!retained) await rm(directory, { recursive: true, force: true }); }
   }
