@@ -540,8 +540,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           workspaceLoadingId: msg.workspace.id,
           workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined,
         }));
-        eventStore.getState().refreshWorkspace(msg.workspace.id);
-        eventStore.setState({ draftWorkspaceId: msg.workspace.id, draftDockId: crypto.randomUUID(), currentSessionId: undefined, messagesLoadingSessionId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], approvals: [], ...switchSessionState(eventStore.getState()) });
+        eventStore.getState().newSessionInWorkspace(msg.workspace.id);
         break;
       case "workspace.renamed":
         eventStore.setState((st) => ({ workspaces: st.workspaces.map((workspace) => workspace.id === msg.workspace.id ? msg.workspace : workspace) }));
@@ -592,8 +591,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           const available = msg.configs.filter((config) => config.enabled);
           const preferred = st.currentSessionId
             ? st.runOptionsBySession[st.currentSessionId]?.modelId
-            : st.draftRunOptions.modelId;
-          const candidate = preferred ?? st.selectedModelId;
+            : st.draftRunOptions.modelId ?? st.newSessionModelId;
+          const candidate = preferred ?? (st.currentSessionId ? st.selectedModelId : undefined);
           const selectedModelId = available.some((config) => config.id === candidate)
             ? candidate
             : available[0]?.id;

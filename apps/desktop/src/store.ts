@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { isolateBackgroundSubscriptions } from "./lib/store-subscriptions";
 import { invoke } from "@tauri-apps/api/core";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type MessageQuoteInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo } from "@qone/protocol";
-import { loadDefaultPermissionMode, loadRunOptions, saveDefaultPermissionMode, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
+import { loadDefaultPermissionMode, loadNewSessionModel, loadRunOptions, saveDefaultPermissionMode, saveNewSessionModel, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
 import { normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
 import { trackWorkspaceRequest, untrackWorkspaceRequest, useWorkspaceViewStore } from "./lib/workspace-view-state";
@@ -108,6 +108,7 @@ export interface AgentState {
   workspaces: WorkspaceInfo[];
   modelConfigs: ModelConfigInfo[];
   selectedModelId?: string;
+  newSessionModelId?: string;
   runOptionsBySession: Record<string, SessionRunOptions>;
   defaultPermissionMode: RunPermissionMode;
   draftRunOptions: SessionRunOptions;
@@ -367,10 +368,11 @@ export const useStore = create<AgentState>((set, get, api) => {
   activeSearchQuery: "",
   workspaces: [],
   modelConfigs: [],
-  selectedModelId: undefined,
+  selectedModelId: loadNewSessionModel(),
+  newSessionModelId: loadNewSessionModel(),
   runOptionsBySession: loadRunOptions(),
   defaultPermissionMode: loadDefaultPermissionMode(),
-  draftRunOptions: {},
+  draftRunOptions: { modelId: loadNewSessionModel() },
   draftDockId: crypto.randomUUID(),
   skills: [],
   plugins: [],
@@ -510,7 +512,8 @@ export const useStore = create<AgentState>((set, get, api) => {
     if (!get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
     flushNow();
     const state = get();
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), draftRunOptions: state.selectedModelId ? { modelId: state.selectedModelId } : {}, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(state) });
+    const modelId = state.newSessionModelId ?? state.modelConfigs.find((model) => model.enabled)?.id;
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), selectedModelId: modelId, draftRunOptions: { modelId }, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(state) });
     get().refreshWorkspace(workspaceId);
   },
 
@@ -796,10 +799,10 @@ export const useStore = create<AgentState>((set, get, api) => {
 
   setSelectedModel: (id, sessionId) => set((state) => {
     const sid = sessionId ?? state.currentSessionId;
-    if (!sid) return {
-      selectedModelId: id,
-      draftRunOptions: { ...state.draftRunOptions, modelId: id },
-    };
+    if (!sid) {
+      saveNewSessionModel(id);
+      return { selectedModelId: id, newSessionModelId: id, draftRunOptions: { ...state.draftRunOptions, modelId: id } };
+    }
     const runOptionsBySession = {
       ...state.runOptionsBySession,
       [sid]: { ...state.runOptionsBySession[sid], modelId: id },
