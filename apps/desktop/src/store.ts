@@ -509,7 +509,8 @@ export const useStore = create<AgentState>((set, get, api) => {
   newSessionInWorkspace: (workspaceId) => {
     if (!get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
     flushNow();
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), draftRunOptions: {}, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(get()) });
+    const state = get();
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), draftRunOptions: state.selectedModelId ? { modelId: state.selectedModelId } : {}, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(state) });
     get().refreshWorkspace(workspaceId);
   },
 
