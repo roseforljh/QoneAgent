@@ -88,7 +88,7 @@ export function modelSettingsFromMetadata(metadata?: ModelMetadata, sources?: Mo
     ...defaults,
     ...(metadata.maxTokens ? { maxOutput: metadata.maxTokens } : {}),
     ...(metadata.contextWindow ? { maxContext: metadata.contextWindow } : {}),
-    ...(imageModel ? { input: input?.includes("image") ? input : ["text", "image"], output: output?.length ? output : ["image"] } : {}),
+    ...(imageModel ? { ...(input?.length ? { input } : {}), output: output?.length ? output : ["image"] } : {}),
     ...(!imageModel && input?.length ? { input } : {}),
     ...(!imageModel && output?.length ? { output } : {}),
     modelMetadata: metadata,

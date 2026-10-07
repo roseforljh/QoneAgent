@@ -37,6 +37,28 @@ type ToolPartState = Extract<PartState, { type: "tool-call" }>;
 type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string; filePaths?: string[]; failed?: boolean; integration?: ToolIntegration };
 const GenerativeUISurface = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUISurface }));
 
+function mediaDetails(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const details = (value as { details?: unknown }).details;
+  return details && typeof details === "object" && !Array.isArray(details) ? details as Record<string, unknown> : undefined;
+}
+
+function MediaExecutionInfo({ toolName, result, call, locale }: { toolName: string; result: unknown; call?: StoreToolCall; locale: Locale }) {
+  if (!toolName.startsWith("qone_video_") && !toolName.startsWith("qone_media_")) return null;
+  const details = mediaDetails(result);
+  if (!details?.transport) return null;
+  const duration = call?.startedAt !== undefined && call.completedAt !== undefined ? `${Math.max(0, call.completedAt - call.startedAt)} ms` : undefined;
+  const values = [
+    locale === "en" ? `route=${String(details.transport)}` : `链路=${String(details.transport)}`,
+    locale === "en" ? `fullVideo=${String(details.fullVideoAttached)}` : `完整视频=${String(details.fullVideoAttached)}`,
+    locale === "en" ? `frames=${String(details.framesExtracted)}` : `帧数=${String(details.framesExtracted)}`,
+    locale === "en" ? `audio=${String(details.audioExtracted)}` : `音频=${String(details.audioExtracted)}`,
+    locale === "en" ? `timestamps=${String(details.timestampsApplied)}` : `时间点=${String(details.timestampsApplied)}`,
+    duration ? (locale === "en" ? `time=${duration}` : `耗时=${duration}`) : undefined,
+  ].filter(Boolean);
+  return <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 px-1 font-mono text-[11px] text-foreground/50">{values.map((value) => <span key={value}>{value}</span>)}</div>;
+}
+
 const TOOL_META: Record<string, ToolMeta> = {
   dispatch_subagent: { verb: { zh: "创建子代理", en: "Create subagent" }, icon: WrenchIcon },
   run_subagent_workflow: { verb: { zh: "运行子代理工作流", en: "Run subagent workflow" }, icon: WrenchIcon },
@@ -133,6 +155,7 @@ const GenericToolCallEntry: FC<ToolCallEntryProps> = ({ part, step, prepared = f
       request={formatToolPayload(call?.argsText || part.argsText || part.args)}
       resultHasOwnFrame={visiblePresentation !== undefined && visiblePresentation.kind !== "text"}
       result={<>
+        <MediaExecutionInfo toolName={part.toolName} result={result} call={call} locale={locale} />
         {preview && <p className="mb-2 text-xs text-foreground/50">{t("chat.toolPreview")}</p>}
         {visiblePresentation ? <ToolResultView presentation={visiblePresentation} emptyText={status === "success" ? t("chat.toolNoResult") : failed ? t("chat.toolFailed") : status === "waiting" ? t("chat.toolApprovalPending") : t("chat.toolResultPending")} /> : <span className="px-1 py-1 text-xs text-foreground/70">{status === "success" || failed ? visibleResultText : activeLabel}</span>}
       </>}

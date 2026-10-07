@@ -94,7 +94,7 @@ test("reserve shrinkage wakes follow even when the message list and scroll heigh
   const f = fixture();
   f.reserve.height = 300;
   ResizeStub.change(f.reserve); flush();
-  expect(f.viewport.scrollTop).toBe(800);
+  expect(f.viewport.scrollTop).toBe(1000);
   expect(f.visible()).toBe(false);
 });
 
@@ -103,12 +103,12 @@ test("reserve replacement reconnects observation and detached reserve no longer 
   const replacement = new ElementStub(); replacement.height = 300;
   f.content.reserve = replacement;
   MutationStub.instances[0]!.notify(); flush();
-  expect(f.viewport.scrollTop).toBe(800);
+  expect(f.viewport.scrollTop).toBe(1000);
   ResizeStub.change(f.reserve);
   expect(frames.size).toBe(0);
   replacement.height = 200;
   ResizeStub.change(replacement); flush();
-  expect(f.viewport.scrollTop).toBe(900);
+  expect(f.viewport.scrollTop).toBe(1000);
 });
 
 test("reading upward pauses reserve and disclosure growth until explicit bottom navigation", () => {
@@ -119,10 +119,17 @@ test("reading upward pauses reserve and disclosure growth until explicit bottom 
   expect(f.viewport.scrollTop).toBe(500);
   expect(f.visible()).toBe(true);
   f.controller.scrollToBottom();
-  expect(f.viewport.scrollTop).toBe(800);
+  expect(f.viewport.scrollTop).toBe(1000);
   f.reserve.height = 200;
   ResizeStub.change(f.reserve); flush();
-  expect(f.viewport.scrollTop).toBe(900);
+  expect(f.viewport.scrollTop).toBe(1000);
+});
+
+test("bottom navigation includes the top-anchor reserve in the native tail", () => {
+  const f = fixture();
+  f.viewport.scrollTo({ top: 500 });
+  f.controller.scrollToBottom();
+  expect(f.viewport.scrollTop).toBe(f.viewport.scrollHeight - f.viewport.clientHeight);
 });
 
 test("scrollbar dragging pauses even when content height changes with the gesture", () => {
@@ -142,10 +149,10 @@ test("tool-only completion still follows final expansion and viewport/footer res
   f.controller.sync({ turnId: "u", running: false, phase: "idle" }); flush();
   f.content.height += 100; f.viewport.scrollHeight += 100;
   ResizeStub.change(f.content); flush();
-  expect(f.viewport.scrollTop).toBe(700);
+  expect(f.viewport.scrollTop).toBe(1100);
   f.footer.top -= 100;
   ResizeStub.change(f.footer); flush();
-  expect(f.viewport.scrollTop).toBe(800);
+  expect(f.viewport.scrollTop).toBe(1100);
 });
 
 test("an already overflowing streaming panel follows on its first measured frame", () => {
@@ -196,11 +203,11 @@ test.each([false, true])("new turn watches its reserve then follows overflow (pr
   expect(f.viewport.scrollTop).toBe(600);
   f.reserve.height = 300;
   ResizeStub.change(f.reserve); flush();
-  expect(f.viewport.scrollTop).toBe(800);
+  expect(f.viewport.scrollTop).toBe(1000);
   f.controller.sync({ turnId: "next", running: true, phase: "final_answer" }); flush();
   f.reserve.height = 200;
   ResizeStub.change(f.reserve); flush();
-  expect(f.viewport.scrollTop).toBe(900);
+  expect(f.viewport.scrollTop).toBe(1000);
 });
 
 test("a direct final answer still follows after skipping prework", () => {
@@ -215,7 +222,7 @@ test("a direct final answer still follows after skipping prework", () => {
   expect(f.viewport.scrollTop).toBe(600);
   f.reserve.height = 300;
   ResizeStub.change(f.reserve); flush();
-  expect(f.viewport.scrollTop).toBe(800);
+  expect(f.viewport.scrollTop).toBe(1000);
 });
 
 test("final answer overflow follows even when prework fit inside the reserve", () => {
@@ -226,7 +233,7 @@ test("final answer overflow follows even when prework fit inside the reserve", (
   expect(f.viewport.scrollTop).toBe(600);
   f.reserve.height = 300;
   ResizeStub.change(f.reserve); flush();
-  expect(f.viewport.scrollTop).toBe(800);
+  expect(f.viewport.scrollTop).toBe(1000);
 });
 
 test("reading pauses a direct final answer before its first overflow", () => {
@@ -252,7 +259,7 @@ test("reading after placement stays paused through the first work and final answ
   f.controller.sync({ turnId: "next", running: true, phase: "final_answer" }); flush();
   expect(f.viewport.scrollTop).toBe(550);
   f.controller.scrollToBottom();
-  expect(f.viewport.scrollTop).toBe(800);
+  expect(f.viewport.scrollTop).toBe(1000);
 });
 
 test.each([0, 180])("completed tail including its spacing agrees with the native scroll limit (end content %ipx)", (endHeight) => {

@@ -7,7 +7,7 @@ import { conversationStateChanged, sameVisibleState, subscribeAllSessions } from
 export function createConversationStore(source: StoreApi<AgentState>, sessionId: string): StoreApi<AgentState> {
   const owner = sessionStore(source, sessionId);
   const actions: Partial<AgentState> = {
-    runAgent: (text, replaceId, attachments, queueId, goal, _unusedSessionId, quote) => source.getState().runAgent(text, replaceId, attachments, queueId, goal, sessionId, quote),
+    runAgent: (text, replaceId, attachments, queueId, goal, _unusedSessionId, quote, continuation) => source.getState().runAgent(text, replaceId, attachments, queueId, goal, sessionId, quote, continuation),
     stopAgent: () => source.getState().stopAgent(sessionId),
     pauseGoal: () => source.getState().pauseGoal(sessionId),
     resumeGoal: () => source.getState().resumeGoal(sessionId),

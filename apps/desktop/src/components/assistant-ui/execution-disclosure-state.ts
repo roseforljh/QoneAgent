@@ -21,6 +21,7 @@ export function executionCollapsed(override: boolean | undefined, finalAnswerSta
 export function executionStatusAtStart(finalAnswerStarted: boolean, runStatus: RunInfo["status"] | undefined, messageRunning: boolean): boolean {
   return finalAnswerStarted && runStatus !== "cancelled" && runStatus !== "interrupted"
     || runStatus === "completed"
+    || runStatus === "failed"
     || runStatus === "created" || runStatus === "running" || runStatus === "paused" || runStatus === "waiting_approval"
     || !runStatus && messageRunning;
 }

@@ -25,7 +25,6 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
   const sessionId = useConversationStore((state) => state.currentSessionId);
   // Entry intent must not be rewritten by the primitive's restoration scroll event.
   const pendingReadingAnchor = useRef(getThreadScrollState(sessionId)?.readingAnchor);
-  const entryFollowMode = useRef(getThreadScrollState(sessionId)?.follow?.mode);
   const running = useAuiState((state) => state.thread.isRunning);
   const hasActiveTopAnchorTurn = useAuiState((state) => {
     if (!state.thread.isRunning) return false;
@@ -77,8 +76,7 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
   useLayoutEffect(() => {
     const content = contentRef.current;
     const anchor = pendingReadingAnchor.current;
-    if (!viewport || !content || !topAnchorReady || !anchor
-      || entryFollowMode.current === "user_follow" || entryFollowMode.current === "prework_follow") return;
+    if (!viewport || !content || !topAnchorReady || !anchor) return;
     let frame: number | null = requestAnimationFrame(() => {
       frame = null;
       if (restoreThreadReadingAnchor(viewport, content, anchor)) pendingReadingAnchor.current = undefined;

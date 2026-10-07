@@ -53,6 +53,7 @@ import { AppChrome } from "./components/app-chrome/AppChrome";
 import { ResizableSidebar } from "./components/assistant-ui/resizable-sidebar";
 import { CollapsedSidebar } from "./components/assistant-ui/collapsed-sidebar";
 import { useTheme } from "./lib/appearance";
+import { nativeDroppedDirectories, useNativePathDrop } from "./lib/native-file-drop";
 
 type Theme = "light" | "dark";
 type PendingRun = { text: string; attachments: MessageAttachmentInfo[]; goal?: boolean; quote?: MessageQuoteInfo };
@@ -338,6 +339,15 @@ function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pe
   const currentSessionId = useStore((s) => s.currentSessionId);
   const currentWorkspaceId = useStore((s) => s.currentWorkspaceId);
   const workspaces = useStore((s) => s.workspaces);
+  const importWorkspace = useStore((s) => s.importWorkspace);
+  const [sidebarDropActive, setSidebarDropActive] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const handleSidebarPaths = useCallback(async (paths: string[]) => {
+    const directories = await nativeDroppedDirectories(paths);
+    await Promise.all(directories.map((path) => importWorkspace(path)));
+  }, [importWorkspace]);
+  const handleSidebarHover = useCallback((active: boolean) => setSidebarDropActive(active), []);
+  useNativePathDrop(sidebarRef, handleSidebarPaths, handleSidebarHover);
 
   const runAgent = useStore((s) => s.runAgent);
   const sidebarLayout = useSidebarPreferences((s) => s.layout);
@@ -358,6 +368,8 @@ function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pe
           collapsedContent={<CollapsedSidebar collapsed={sidebarCollapsed} onOpenSidebar={() => setSidebarCollapsed(false)}
             onOpenSettings={() => setSettingsOpen(true)} />}>
         <aside
+          ref={sidebarRef}
+          data-native-folder-drop={sidebarDropActive || undefined}
           className={cn(
             "q-sidebar bg-background flex h-full w-full flex-col overflow-hidden border-r border-border/50",
           )}

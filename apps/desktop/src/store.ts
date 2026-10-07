@@ -59,6 +59,14 @@ export interface ToolCall {
   completedAt?: number;
 }
 
+export type ExecutionPhase = "preparing" | "downloading" | "media-attachment" | "provider-processing" | "model-generation" | "external-tool";
+export interface ExecutionPhaseState {
+  runId: string;
+  phase: ExecutionPhase;
+  startedAt: number;
+  toolName?: string;
+}
+
 function alignToolCallIds(calls: readonly ToolCall[], messages: readonly ChatMessage[]): ToolCall[] {
   const partsByRun = new Map<string, Extract<AssistantMessagePart, { type: "tool-call" }>[] >();
   for (const message of messages) {
@@ -132,6 +140,7 @@ export interface AgentState {
   queueLoadedSessionId?: string;
   editingQueueItem?: QueueItemInfo;
   modelRequest?: { runId: string; startedAt: number };
+  executionPhase?: ExecutionPhaseState;
   streaming: string;
   streamingParts: AssistantMessagePart[];
   activeMessageSequence?: number;
@@ -169,13 +178,14 @@ export interface AgentState {
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   chooseWorkspace: () => void;
+  importWorkspace: (path: string) => Promise<boolean>;
   renameWorkspace: (id: string, name: string) => void;
   deleteWorkspace: (id: string) => void;
   togglePinWorkspace: (id: string) => void;
   selectWorkspace: (id: string) => void;
   selectSession: (id: string) => void;
   searchSessions: (query: string) => void;
-  runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean, sessionId?: string, quote?: MessageQuoteInfo) => void;
+  runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean, sessionId?: string, quote?: MessageQuoteInfo, continuation?: boolean) => void;
   pauseGoal: (sessionId?: string) => void;
   resumeGoal: (sessionId?: string) => void;
   clearGoal: (sessionId?: string) => void;
@@ -557,24 +567,28 @@ export const useStore = create<AgentState>((set, get, api) => {
       return;
     }
     invoke<string | null>("pick_workspace", { title: t("chat.importProject") })
-      .then((path) => {
-        if (!path) return;
-        get().send({
-          type: "workspace.upsert",
-          requestId: rid(),
-          name: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
-          path,
-        });
-      })
+      .then((path) => path ? get().importWorkspace(path) : undefined)
       .catch((error) => {
         console.error("workspace picker failed", error);
         set({ lastError: t("error.projectPicker", { error: localizeError(error) }) });
       });
   },
 
+  importWorkspace: (path) => get().send({
+    type: "workspace.upsert",
+    requestId: rid(),
+    name: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
+    path,
+  }),
+
   selectSession: (id) => {
     const current = get();
-    if (current.currentSessionId === id) return;
+    if (current.currentSessionId === id) {
+      if (current.completedSessionIds.includes(id)) {
+        set({ completedSessionIds: current.completedSessionIds.filter((sessionId) => sessionId !== id) });
+      }
+      return;
+    }
     flushNow();
     const state = get();
     const workspaceId = state.sessions.find((session) => session.id === id)?.workspaceId;
@@ -612,7 +626,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     });
   },
 
-  runAgent: (message, replaceFromMessageId, attachments, queueItemId, goal, sessionId, quote) => {
+  runAgent: (message, replaceFromMessageId, attachments, queueItemId, goal, sessionId, quote, continuation) => {
     const { getState: get, setState: set } = sessionStore(useStore, sessionId);
     const mcpCommand = parseMcpCommand(message);
     if (mcpCommand) {
@@ -643,7 +657,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     if (get().running || get().compactionStatuses[sid]) return;
     if (!hasTauriBridge()) { set({ lastError: t("error.runtimeDisconnected") }); return; }
     const history = get().messages;
-    replaceFromMessageId ??= repeatedUserMessageId(history, { content: message, attachments });
+    if (!continuation) replaceFromMessageId ??= repeatedUserMessageId(history, { content: message, attachments });
     const replaceIndex = replaceFromMessageId
       ? history.findIndex((item) => item.id === replaceFromMessageId && item.role === "user")
       : -1;
@@ -692,7 +706,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     pendingAgentRuns.set(requestId, { requestId, sessionId: sid, userMessageId: messageId });
     get().send(goal
       ? { type: "goal.start", requestId, sessionId: sid, objective: message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking }
-      : { type: "agent.run", requestId, sessionId: sid, message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, queueItemId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking, mcpServerId: mcpCommand?.serverId });
+      : { type: "agent.run", requestId, sessionId: sid, message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, queueItemId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking, mcpServerId: mcpCommand?.serverId, continuation });
     if (history.length === 0) {
       const titleRequestId = rid();
       pendingTitleRequests.set(titleRequestId, sid);

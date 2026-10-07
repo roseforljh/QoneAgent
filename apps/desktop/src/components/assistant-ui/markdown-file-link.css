@@ -13,3 +13,16 @@
   content: "";
 }
 .q-markdown-file-link[aria-disabled="true"] { cursor: default; }
+
+.q-markdown-file-tooltip {
+  max-width: min(36rem, calc(100vw - 24px));
+  padding: 6px 10px;
+  overflow-wrap: anywhere;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--muted) 88%, var(--background) 12%);
+  color: var(--popover-foreground);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--foreground) 20%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+}

@@ -31,3 +31,8 @@
   opacity: .95;
   will-change: transform;
 }
+[data-native-folder-drop="true"] {
+  outline: 1px solid color-mix(in srgb, var(--ring) 75%, transparent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--ring) 6%, transparent);
+}

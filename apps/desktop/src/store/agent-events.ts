@@ -9,12 +9,19 @@ import { getQoneMessageQueue } from "../lib/qone-message-queue";
 import { sessionStore } from "../lib/session-execution-state";
 
 
-import type { ToolCall } from "../store";
+import type { ExecutionPhase, ToolCall } from "../store";
 
 
 import type { AgentEvent } from "@qone/protocol";
 
 const rid = () => crypto.randomUUID();
+
+function executionPhaseForTool(toolName: string): ExecutionPhase {
+  if (toolName === "qone_video_download" || toolName === "qone_video_staging_dir") return "downloading";
+  if (toolName.startsWith("qone_video_") || toolName.startsWith("qone_media_")) return "media-attachment";
+  return "external-tool";
+}
+
 export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof sessionStore>, dependencies: ReturnType<typeof import("../store").bridgeDependencies>) {
   const { clearDelta, pendingAgentRuns, stopRequestedSessionIds, stopRun, flushNow, queueReasoning, queueDelta, ensureStreamingToolPart, finishStopRequest, requestSessionMessages } = dependencies;
 
@@ -55,6 +62,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
                 ? { ...message, persisted: true } : message)
               : st.messages,
             activeRunId: ev.runId,
+            executionPhase: { runId: ev.runId!, phase: "preparing", startedAt: ev.timestamp },
             running: true,
             runningSessionIds: ev.sessionId && !st.runningSessionIds.includes(ev.sessionId) ? [...st.runningSessionIds, ev.sessionId] : st.runningSessionIds,
             completedSessionIds: ev.sessionId ? st.completedSessionIds.filter((id) => id !== ev.sessionId) : st.completedSessionIds,
@@ -95,7 +103,19 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
         }
 
         if (ev.type === "model.request.started" && ev.runId === eventStore.getState().activeRunId) {
-          eventStore.setState({ modelRequest: { runId: ev.runId!, startedAt: ev.timestamp } });
+          eventStore.setState({
+            modelRequest: { runId: ev.runId!, startedAt: ev.timestamp },
+            executionPhase: { runId: ev.runId!, phase: "model-generation", startedAt: ev.timestamp },
+          });
+        }
+
+        if (ev.type === "media.phase" && ev.runId === eventStore.getState().activeRunId) {
+          const phase = p?.phase === "provider-processing" && p?.status === "started"
+            ? "provider-processing"
+            : p?.phase === "provider-processing" && p?.status === "completed"
+              ? "model-generation"
+              : undefined;
+          if (phase) eventStore.setState({ executionPhase: { runId: ev.runId!, phase, startedAt: ev.timestamp } });
         }
 
         // Product protocol event; Pi event names never cross into this reducer.
@@ -213,6 +233,9 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
               ?? (lastPart?.type === "tool-call" ? lastPart.messageSequence : ev.sequence);
             const existing = st.toolCalls.find((t) => t.toolCallId === toolCallId);
             return {
+              executionPhase: ev.runId === st.activeRunId
+                ? { runId: ev.runId!, phase: executionPhaseForTool(tc.toolName), startedAt: ev.timestamp, toolName: tc.toolName }
+                : st.executionPhase,
               toolCalls: existing
                 ? st.toolCalls.map((t) => t.toolCallId === toolCallId
                     ? { ...t, ...tc, startedAt: t.startedAt ?? tc.startedAt, completedAt: undefined }
@@ -248,7 +271,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
                 ? {
                     ...t,
                     status: isErr ? "failed" : "success",
-                    result: p?.content ?? p?.result,
+                    result: p?.result ?? p?.content,
                     summary: undefined,
                     completedAt: ev.timestamp,
                   }
@@ -330,7 +353,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
             eventStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status, completedAt: Date.now() } : run) }));
           }
           if (isActiveRun) {
-            eventStore.setState((st) => ({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], waitingSubagents: [], running: false, activeRunId: undefined, approvals: [], runningSessionIds: ev.sessionId ? st.runningSessionIds.filter((id) => id !== ev.sessionId) : st.runningSessionIds }));
+            eventStore.setState((st) => ({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], waitingSubagents: [], running: false, activeRunId: undefined, executionPhase: undefined, approvals: [], runningSessionIds: ev.sessionId ? st.runningSessionIds.filter((id) => id !== ev.sessionId) : st.runningSessionIds }));
           }
           if (ev.sessionId) {
             eventStore.setState((st) => ({ completedSessionIds: st.completedSessionIds.includes(ev.sessionId!) ? st.completedSessionIds : [...st.completedSessionIds, ev.sessionId!] }));

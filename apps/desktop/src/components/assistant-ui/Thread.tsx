@@ -65,7 +65,6 @@ import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 import {
   CornerDownRightIcon,
   MicIcon,
-  RefreshCwIcon,
   SquareIcon,
   FolderPlusIcon,
   Loader2Icon,
@@ -450,10 +449,8 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
   );
 };
 
-const retryUserMessage = (messageId: string, owner: ReturnType<typeof useConversationStoreApi>) => {
-  const state = owner.getState();
-  const source = state.messages.find((message) => message.id === messageId && message.role === "user");
-  if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), undefined, source.quote);
+const continueFailedRun = (owner: ReturnType<typeof useConversationStoreApi>, prompt: string) => {
+  owner.getState().runAgent(prompt, undefined, undefined, undefined, undefined, undefined, undefined, true);
 };
 
 const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; betweenContent?: ReactNode }> = memo(({ userMessageId, showLatestExtras, betweenContent }) => {
@@ -495,8 +492,8 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
             {answerError ? <div className="flex flex-col gap-1 text-sm leading-relaxed" role="alert">
               <p className="font-medium text-foreground">{t("chat.runFailed")}</p>
               <p className="whitespace-pre-wrap break-words text-muted-foreground">{answerError.detail || t("chat.runFailedDetail")}</p>
-              <button type="button" className="mt-1 flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground" onClick={() => retryUserMessage(answerError.userMessageId, owner)}>
-                <RefreshCwIcon className="size-3.5" />{t("chat.retryMessage")}
+              <button type="button" className="mt-1 flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground" onClick={() => continueFailedRun(owner, t("chat.continueMessage"))}>
+                <CornerDownRightIcon className="size-3.5" />{t("chat.continueMessage")}
               </button>
             </div> : <AssistantParts />}
             {!answerError && <>

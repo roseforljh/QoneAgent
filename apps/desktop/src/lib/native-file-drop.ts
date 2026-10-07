@@ -9,7 +9,7 @@ import { hasTauriBridge, useStore } from "../store";
 import { useCallback, useEffect, type RefObject } from "react";
 import { createNativeAttachmentFile } from "./native-attachment-file";
 
-type NativeFileInfo = { name: string; path: string; size: number; isDirectory: boolean };
+export type NativeFileInfo = { name: string; path: string; size: number; isDirectory: boolean };
 type DropPosition = { x: number; y: number };
 
 const MIME_TYPES: Record<string, string> = {
@@ -40,14 +40,14 @@ const getMimeType = (name: string) => {
 export const fileFromNativeInfo = (file: NativeFileInfo): File =>
   createNativeAttachmentFile(file.name, file.isDirectory ? DIRECTORY_MIME_TYPE : getMimeType(file.name), file.path, file.size, file.isDirectory);
 
-const isInside = (element: HTMLElement | null, position: DropPosition) => {
+export const isInsideNativeDropTarget = (element: HTMLElement | null, position: DropPosition, scale = window.devicePixelRatio || 1) => {
   if (!element) return false;
   const rect = element.getBoundingClientRect();
-  const scale = window.devicePixelRatio || 1;
+  // Tauri supplies physical pixels, while some test/webview paths use CSS pixels.
   return [
     { x: position.x, y: position.y },
     { x: position.x / scale, y: position.y / scale },
-  ].some(({ x, y }) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom);
+  ].some(({ x, y }) => x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom);
 };
 
 export async function pickNativeAttachmentFiles(): Promise<File[]> {
@@ -60,9 +60,15 @@ export async function pickNativeAttachmentFolder(): Promise<File[]> {
   return folder ? [fileFromNativeInfo(folder)] : [];
 }
 
+export async function nativeDroppedDirectories(paths: string[]): Promise<string[]> {
+  const files = await Promise.all(paths.map((path) => invoke<NativeFileInfo>("inspect_dropped_file", { path })));
+  return files.filter((file) => file.isDirectory).map((file) => file.path);
+}
+
 export function useNativeFileDrop(
   targetRef: RefObject<HTMLElement | null>,
   onFiles: (files: File[]) => Promise<void>,
+  onHover?: (hovering: boolean) => void,
 ) {
   const addFiles = useCallback(async (paths: string[]) => {
     const files = await Promise.all(paths.map(async (path) => {
@@ -77,23 +83,35 @@ export function useNativeFileDrop(
     await onFiles(files.filter((file): file is File => file !== null));
   }, [onFiles]);
 
+  useNativePathDrop(targetRef, addFiles, onHover);
+}
+
+export function useNativePathDrop(
+  targetRef: RefObject<HTMLElement | null>,
+  onPaths: (paths: string[]) => Promise<void>,
+  onHover?: (hovering: boolean) => void,
+) {
   useEffect(() => {
     if (!hasTauriBridge()) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     const handle: EventCallback<DragDropEvent> = (event) => {
       const payload = event.payload;
-      if (payload.type !== "drop") return;
-      if (!isInside(targetRef.current, payload.position)) return;
-      void addFiles(payload.paths);
+      if (disposed) return;
+      if (payload.type === "leave") { onHover?.(false); return; }
+      const inside = isInsideNativeDropTarget(targetRef.current, payload.position);
+      onHover?.(payload.type !== "drop" && inside);
+      if (payload.type === "drop" && inside) {
+        void onPaths(payload.paths).catch((error) => useStore.setState({ lastError: localizeError(error) }));
+      }
     };
     void getCurrentWebview().onDragDropEvent(handle).then((dispose) => {
       if (disposed) dispose();
       else unlisten = dispose;
-    });
+    }).catch((error) => { if (!disposed) useStore.setState({ lastError: localizeError(error) }); });
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, [addFiles, targetRef]);
+  }, [onPaths, onHover, targetRef]);
 }

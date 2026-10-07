@@ -55,6 +55,19 @@ test("a model request preserves the same label and ignores a stale request from 
   });
 });
 
+test("provider media processing exposes the phase and the last tool", () => {
+  withState({
+    activeRunId: "current",
+    modelRequest: { runId: "current", startedAt: 1 },
+    executionPhase: { runId: "current", phase: "provider-processing", startedAt: 2 },
+    toolCalls: [{ toolCallId: "media", runId: "current", toolName: "qone_video_use_file", status: "success" }],
+  }, () => {
+    const html = render([{ type: "tool-call", toolCallId: "media", toolName: "qone_video_use_file", args: {}, result: "done" }]);
+    expect(html).toMatch(/(?:供应商正在处理媒体|Provider is processing media)/);
+    expect(html).toMatch(/(?:最近工具：|Last tool: )qone_video_use_file/);
+  });
+});
+
 test("empty text and reasoning blocks cannot suppress waiting feedback", () => {
   expect(render([{ type: "text", text: " " }, { type: "reasoning", text: "", status: { type: "running" } }]))
     .toContain('data-slot="assistant-waiting"');

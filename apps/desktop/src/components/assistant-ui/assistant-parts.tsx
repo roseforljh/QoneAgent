@@ -18,6 +18,8 @@ import { executionActivityItems } from "./execution-activity-items";
 import { createPartToolsSelector, messageById, runById } from "../../lib/store-indexes";
 import { assistantWaitingPhase } from "./assistant-waiting-phase";
 import { AssistantWaiting } from "./assistant-waiting";
+import { useLocale } from "../../localization";
+import type { ExecutionPhase } from "../../store";
 
 function regenerateCurrentTurn(messageId: string, owner: ReturnType<typeof useConversationStoreApi>): void {
   const state = owner.getState();
@@ -51,6 +53,7 @@ const PendingImageGeneration: FC = () => {
 };
 
 export const AssistantParts: FC = () => {
+  const { t } = useLocale();
   const parts = useAuiState((state) => state.message.parts);
   const hasImage = parts.some((part) => part.type === "image");
   const ranges = useMemo(() => assistantPartRanges(parts), [parts]);
@@ -80,6 +83,8 @@ export const AssistantParts: FC = () => {
     return displayBlocks.map((block) => executionActivityItems(block.ranges, parts, toolCallsById));
   }, [displayBlocks, parts, toolCallsById]);
   const requestStartedAt = useConversationStore((state) => state.modelRequest?.runId === runId ? state.modelRequest?.startedAt : undefined);
+  const executionPhase = useConversationStore((state) => state.executionPhase?.runId === runId ? state.executionPhase?.phase : undefined);
+  const lastToolName = toolCalls.filter((call) => call.runId === runId).at(-1)?.toolName;
   const imageGeneration = useAuiState((state) => Boolean(state.message.metadata?.custom?.qoneImageGeneration));
   // Earlier commentary/reasoning must not hide the gap after a completed tool.
   let latestVisiblePart: PartState | undefined;
@@ -94,6 +99,15 @@ export const AssistantParts: FC = () => {
     hasReasoning: latestVisiblePart?.type === "reasoning" && latestVisiblePart.status.type === "running",
     parts, toolCallsById, requestStartedAt,
   });
+  const executionDetail = executionPhase ? ({
+    preparing: t("chat.executionPreparing"),
+    downloading: t("chat.executionDownloading"),
+    "media-attachment": t("chat.executionMediaAttachment"),
+    "provider-processing": t("chat.executionProviderProcessing"),
+    "model-generation": t("chat.executionModelGeneration"),
+    "external-tool": t("chat.executionExternalTool"),
+  } satisfies Record<ExecutionPhase, string>)[executionPhase]
+    + (lastToolName && executionPhase !== "preparing" ? ` · ${t("chat.executionLastTool", { name: lastToolName })}` : "") : undefined;
 
   const renderRange = (range: AssistantPartRange) => {
     if (range.type === "reasoning") return <MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />;
@@ -123,7 +137,7 @@ export const AssistantParts: FC = () => {
             : <SessionTimeline key={`activity-${item.startIndex}`} startIndex={item.startIndex} endIndex={item.endIndex} activityRanges={item.ranges} title={item.title} />)}
         </AssistantExecution>)}
     {sections.answer.map(renderRange)}
-    {waitingPhase && <AssistantWaiting phase={waitingPhase} />}
+    {waitingPhase && <AssistantWaiting phase={waitingPhase} detail={executionDetail} />}
     <SubagentMedia />
     <RunFileChangesAttachment messageId={messageId} runId={runId} />
   </>;

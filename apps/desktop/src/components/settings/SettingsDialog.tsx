@@ -597,9 +597,12 @@ function ModelSourceSummary({ settings, isImageModel }: { settings: ModelSetting
     ...(!isImageModel ? [["maxOutput", t("model.maxOutput")], ["maxContext", t("model.maxContext")], ["thinking", t("model.thinking")]] as Array<[ModelSettingField, string]> : []),
     ["input", t("model.inputCapabilities")], ["output", t("model.outputCapabilities")],
   ];
-  const sourceKeys = { provider: "model.source.provider", pi: "model.source.pi", "models.dev": "model.source.modelsDev", config: "model.source.manual", default: "model.source.default", unknown: "model.source.unknown" } as const;
+  const sourceKeys = { provider: "model.source.provider", pi: "model.source.pi", "models.dev": "model.source.modelsDev", config: "model.source.manual", default: "model.source.default", unknown: "model.source.unknown", unconfirmed: "model.source.unconfirmed" } as const;
   return <div className="settings-model-sources" aria-label={t("model.source.title")}>{fields.map(([field, label]) => {
-    const source = settings.metadataOverrides?.[field] ? "config" : settings.metadataSources?.[field] ?? "unknown";
+    const source = (field === "input" || field === "output") && !settings.metadataOverrides?.[field]
+      && (!settings.metadataSources?.[field] || settings.metadataSources[field] === "default")
+      ? "unconfirmed"
+      : settings.metadataOverrides?.[field] ? "config" : settings.metadataSources?.[field] ?? "unknown";
     return <span key={field}><strong>{label}</strong>{t(sourceKeys[source])}</span>;
   })}</div>;
 }
@@ -621,7 +624,7 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
   const detectedImage = detectImageModel({ model: name, provider: provider.id, apiType, imageApiFormat: settings.imageApiFormat, input: settings.input, output: settings.output, manualInput: settings.metadataOverrides?.input === true, manualOutput: settings.metadataOverrides?.output === true, metadata: settings.modelMetadata });
   const isImageModel = detectedImage.isImageModel;
   const imageApiFormat = settings.imageApiFormat ?? detectedImage.format;
-  const visibleInput = isImageModel && !settings.metadataOverrides?.input && (settings.metadataSources?.input ?? "default") === "default" ? ["text", "image"] as Capability[] : settings.input;
+  const visibleInput = settings.input;
   const visibleOutput = isImageModel && !settings.metadataOverrides?.output && (settings.metadataSources?.output ?? "default") === "default" ? ["image"] as Capability[] : settings.output;
   const thinkingOptions = thinkingLevelOptionsForApi(apiType);
   const selectedThinking = normalizeThinkingLevel(settings.thinking, apiType);

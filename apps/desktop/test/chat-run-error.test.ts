@@ -310,6 +310,36 @@ test("resending after a failed reply merges the user turn and starts execution a
   expect(useStore.getState().running).toBe(false);
 });
 
+test("continuing after a failed reply keeps the previous turn and starts a follow-up", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({
+      currentSessionId: "session-1",
+      sessions: [{ id: "session-1", title: "Test", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
+      workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }],
+      messages: [], running: false, activeRunId: undefined, chatRunError: undefined,
+    });
+    useStore.getState().runAgent("原始任务");
+    const originalId = useStore.getState().messages[0]?.id;
+    emit({ type: "agent.event", event: event("agent.started", { runId: "run-1" }) });
+    emit({ type: "agent.event", event: event("agent.failed", { message: "stream ended" }) });
+
+    useStore.getState().runAgent("继续", undefined, undefined, undefined, undefined, undefined, undefined, true);
+    const continuation = commands.filter((command) => command.type === "agent.run").at(-1);
+    expect(continuation?.type).toBe("agent.run");
+    const messages = useStore.getState().messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ id: originalId, content: "原始任务" });
+    expect(messages[1]).toMatchObject({ content: "继续" });
+    if (continuation?.type === "agent.run") {
+      expect(continuation.replaceFromMessageId).toBeUndefined();
+      expect(continuation.continuation).toBe(true);
+    }
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
 test("retry of a rejected optimistic turn sends a new message without replacing an unsaved id", () => {
   const previous = useStore.getState();
   try {

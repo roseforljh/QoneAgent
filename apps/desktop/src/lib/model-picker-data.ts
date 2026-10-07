@@ -39,7 +39,6 @@ export function providerProfilesFromModelConfigs(configs: ModelConfigInfo[]): Pr
       ...defaultModelSettings(current.apiType),
       ...saved,
       ...(detectedImage.isImageModel ? {
-        ...(manualInput ? {} : { input: ["text", "image"] }),
         ...(manualOutput ? {} : { output: ["image"] }),
       } : {}),
       apiType: providerApiTypes.has(saved.apiType as ProviderApiType) ? saved.apiType as ProviderApiType : current.apiType,

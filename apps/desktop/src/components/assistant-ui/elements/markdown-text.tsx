@@ -24,7 +24,7 @@ import { canPreviewCode, createCodePreviewHtml } from "../../../lib/code-preview
 import { openCodePreviewInDock } from "../../../lib/browser-dock";
 import { useStore } from "../../../store";
 import { useLocale } from "../../../localization";
-import { markdownUrlTransform } from "../../../lib/markdown-file-reference";
+import { markdownUrlTransform, remarkMarkdownFileReferences } from "../../../lib/markdown-file-reference";
 import { MarkdownLink } from "../markdown-link";
 
 type MarkdownNode = { type?: string; value?: string; children?: MarkdownNode[] };
@@ -102,7 +102,7 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components, urlTransform = ma
     <MarkdownTextPrimitive
       smooth={false}
       urlTransform={urlTransform}
-      remarkPlugins={[remarkQoneGfm, remarkMath, remarkQoneAutolink, ...extraRemarkPlugins]}
+      remarkPlugins={[remarkQoneGfm, remarkMath, remarkQoneAutolink, remarkMarkdownFileReferences, ...extraRemarkPlugins]}
       rehypePlugins={[rehypeKatex]}
       preprocess={(text) => escapeCurrencyDollars(normalizeMultilineDisplayMath(normalizeMathDelimiters(text)))}
       className="aui-md"

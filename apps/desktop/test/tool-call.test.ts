@@ -75,3 +75,13 @@ test("empty running command shows a status instead of a blank terminal", () => {
   expect(html.match(/q-shine-text/g)).toHaveLength(2);
   expect(html).toContain("python -c &#x27;print(1)&#x27;");
 });
+
+test("empty running command shows the command while execution output is pending", () => {
+  const html = renderToStaticMarkup(createElement(ToolResultView, {
+    presentation: { kind: "terminal", command: "python -c 'print(1)'", output: "" },
+    emptyText: "等待结果…",
+  }));
+  expect(html).toContain('data-slot="tool-terminal-command"');
+  expect(html).toContain("python -c &#x27;print(1)&#x27;");
+  expect(html).not.toContain("等待结果…");
+});

@@ -30,6 +30,7 @@ test("execution header placement also preserves active and interrupted states", 
   expect(executionStatusAtStart(false, "running", true)).toBe(true);
   expect(executionStatusAtStart(false, undefined, true)).toBe(true);
   expect(executionStatusAtStart(true, "completed", false)).toBe(true);
+  expect(executionStatusAtStart(false, "failed", false)).toBe(true);
   expect(executionStatusAtStart(false, "cancelled", false)).toBe(false);
   expect(executionStatusAtStart(true, "interrupted", false)).toBe(false);
 });

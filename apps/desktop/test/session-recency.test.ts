@@ -141,3 +141,12 @@ test("optimistic activity does not mutate, resurrect, or move a chat on older ti
   expect(sessions[0]).toBe(old);
   expect(old.updatedAt).toBe(1);
 });
+
+test("clicking the active completed chat clears its completion dot", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ currentSessionId: old.id, completedSessionIds: [old.id] });
+    useStore.getState().selectSession(old.id);
+    expect(useStore.getState().completedSessionIds).toEqual([]);
+  } finally { useStore.setState(previous, true); }
+});

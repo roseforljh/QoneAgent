@@ -22,9 +22,16 @@ interface ControllerOptions {
 export function measureThreadBottom({ content, footer, endContent }: Pick<ControllerOptions, "content" | "footer" | "endContent">) {
   const reserve = content.querySelector<HTMLElement>("[data-aui-top-anchor-reserve]");
   const reserveHeight = reserve?.getBoundingClientRect().height ?? 0;
-  let bottom = content.getBoundingClientRect().bottom - reserveHeight;
-  if (endContent && endContent.getBoundingClientRect().height > 0) bottom = Math.max(bottom, endContent.getBoundingClientRect().bottom - reserveHeight);
-  return { distance: bottom - footer.getBoundingClientRect().top, reserveHeight };
+  let contentBottom = content.getBoundingClientRect().bottom;
+  if (endContent && endContent.getBoundingClientRect().height > 0) contentBottom = Math.max(contentBottom, endContent.getBoundingClientRect().bottom);
+  const footerTop = footer.getBoundingClientRect().top;
+  return {
+    // The reserve is excluded while deciding when streamed content overflows.
+    distance: contentBottom - reserveHeight - footerTop,
+    // The reserve remains part of the native tail used by explicit bottom navigation.
+    nativeDistance: contentBottom - footerTop,
+    reserveHeight,
+  };
 }
 
 // A wheel/key gesture inside a code block belongs to that block while it can scroll.
@@ -69,7 +76,9 @@ export function mountThreadScrollController(options: ControllerOptions) {
     previousTop = viewport.scrollTop;
     programmatic = false;
   };
-  const bottomTop = () => viewport.scrollTop + geometry().distance;
+  // The top-anchor reserve is part of the native scrollable tail. Excluding it
+  // here leaves restored/following turns one reserve height above P1.
+  const bottomTop = () => viewport.scrollTop + geometry().nativeDistance;
   const hold = () => {
     held = true;
     mode = nextThreadFollowMode(mode, { type: "hold" });

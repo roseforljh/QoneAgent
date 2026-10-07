@@ -34,7 +34,7 @@ export function MarkdownFileLink({ reference, children, className, style, ...pro
         event.preventDefault(); navigate();
       }}
     >{children}</a>
-  </TooltipTrigger></WorkspacePathContextMenu><TooltipContent sideOffset={6} className="max-w-[min(36rem,calc(100vw-24px))] break-all rounded-xl border border-border/40 bg-popover text-popover-foreground shadow-lg [&>svg]:hidden">
+  </TooltipTrigger></WorkspacePathContextMenu><TooltipContent side="bottom" align="start" sideOffset={8} collisionPadding={12} showArrow={false} data-file-reference-tooltip className="q-markdown-file-tooltip">
     {label}
   </TooltipContent></Tooltip></TooltipProvider>;
 }

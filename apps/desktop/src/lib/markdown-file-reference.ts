@@ -50,3 +50,32 @@ export const markdownUrlTransform: UrlTransform = (url, key) =>
 export function fileReferenceLabel(reference: MarkdownFileReference): string {
   return `${reference.path}${reference.line ? `:${reference.line}${reference.column ? `:${reference.column}` : ""}${reference.endLine ? `–${reference.endLine}` : ""}` : ""}`;
 }
+
+interface MarkdownNode {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MarkdownNode[];
+}
+
+/** Reuse file links for complete, explicit paths in inline code, never code blocks or link labels. */
+export function remarkMarkdownFileReferences() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (node.type === "code" || node.type === "link" || node.type === "linkReference") return;
+      node.children?.forEach((child, index) => {
+        if (child.type === "inlineCode" && child.value && /^(?:[a-z]:[\\/]|\\\\|\/(?!\/)|\.{1,2}[\\/]|file:)/i.test(child.value)) {
+          const reference = parseMarkdownFileReference(child.value);
+          const name = reference?.path.split("/").at(-1);
+          if (reference && name) {
+            node.children![index] = {
+              type: "link", url: child.value,
+              children: [{ type: "text", value: fileReferenceLabel({ ...reference, path: name }) }],
+            };
+          }
+        } else visit(child);
+      });
+    };
+    visit(tree);
+  };
+}

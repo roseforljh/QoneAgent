@@ -45,10 +45,13 @@ function FileResult({ presentation }: { presentation: Extract<ToolPresentation, 
 }
 
 function TerminalResult({ presentation, emptyText }: { presentation: Extract<ToolPresentation, { kind: "terminal" }>; emptyText?: string }) {
+  const output = presentation.output.trim();
   return (
     <div data-slot="tool-terminal-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/45">
       <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground/75 [overflow-wrap:anywhere]">
-        {presentation.output.trim() ? presentation.output : <span className="text-foreground/45">{emptyText}</span>}
+        {output ? presentation.output : presentation.command?.trim() ? (
+          <span data-slot="tool-terminal-command" className="text-foreground/75">{presentation.command}</span>
+        ) : <span className="text-foreground/45">{emptyText}</span>}
       </pre>
     </div>
   );
