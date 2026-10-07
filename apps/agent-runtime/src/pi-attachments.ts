@@ -4,7 +4,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import { readFile } from "node:fs/promises";
 import { parseMcpCommand, type MessageAttachmentInfo } from "@qone/protocol";
 import { googleMediaContent, localMediaMarker } from "./google-media.js";
-import { canReadAttachment, type MediaCapability } from "./media-capabilities.js";
+import type { MediaCapability } from "./media-capabilities.js";
 
 export interface PersistedPiMessage {
   role: string;
@@ -21,11 +21,9 @@ export function videoAttachmentNotice(attachments: readonly MessageAttachmentInf
     if (!attachment.mimeType.startsWith("video/")) return [];
     const id = crypto.randomUUID();
     refs.set(id, attachment);
-    return [`<video id="${id}" name="${escape(attachment.name)}" />`];
+    return [`<attachment id="${id}" name="${escape(attachment.name)}" mime="${escape(attachment.mimeType)}" />`];
   });
-  return lines.length
-    ? runtimeText("pi-attachments.delegate_original_attachments_without_preprocessing_if_the_executing_agent", { p0: lines.join("\n") })
-    : "";
+  return lines.length ? `<qone-media-attachments>\n${lines.join("\n")}\n</qone-media-attachments>` : "";
 }
 
 function isPiTranscriptMessage(value: unknown): value is { role: string; [key: string]: unknown } {
@@ -76,29 +74,18 @@ export function promptWithAttachments(message: string, attachments: readonly (Me
     if (attachment.type === "folder") return attachment.localPath
       ? [`<attachment type="folder" name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`]
       : [runtimeText("pi-attachments.folder_attachment_no_readable_local_path_attach_it_again", { p0: escapeName(attachment.name) })];
-    if (attachment.type === "image" || attachment.mimeType.startsWith("image/")) return [
-      ...(attachment.localPath ? [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`] : []),
-      ...(allowedInput && !canReadAttachment(allowedInput, attachment)
-        ? [runtimeText("pi-attachments.image_attachment_the_current_model_has_no_image_input", { p0: escapeName(attachment.name) })] : []),
-    ];
+    if (attachment.type === "image" || attachment.mimeType.startsWith("image/")) return attachment.localPath
+      ? [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`]
+      : [];
     if (attachment.type !== "file") return [];
     const canUseNativeMedia = nativeMedia && /^(?:audio|video)\//i.test(attachment.mimeType)
       && (nativeMedia !== "audio" || attachment.mimeType.startsWith("audio/"))
-      && (!allowedInput || canReadAttachment(allowedInput, attachment));
+      && (!allowedInput || (attachment.mimeType.startsWith("video/") ? allowedInput.includes("video") : allowedInput.includes("audio")));
     if (canUseNativeMedia && attachment.localPath) return [localMediaMarker(attachment.localPath, attachment.mimeType, attachment.temporary === true)];
-    if (canUseNativeMedia && /^(?:audio|video)\//i.test(attachment.mimeType)) return [];
     if (/^(?:audio|video)\//i.test(attachment.mimeType)) {
-      const video = attachment.mimeType.startsWith("video/");
-      const canReadFrames = video && nativeMedia !== true && allowedInput?.includes("video") && allowedInput.includes("image");
-      const canExtractAudio = video && Boolean(nativeMedia) && allowedInput?.includes("audio");
-      const action = canReadFrames
-        ? runtimeText("pi-attachments.the_current_api_format_has_no_direct_video_file")
-        : canExtractAudio
-          ? runtimeText("pi-attachments.the_current_model_can_call_qone_media_extract_audio")
-          : runtimeText("pi-attachments.the_current_model_cannot_read_this_media_directly_delegate");
       return [
         ...(attachment.localPath ? [`<attachment name="${escapeName(attachment.name)}" path="${escapeName(attachment.localPath)}" />`] : []),
-        runtimeText("pi-attachments.media_attachment", { p0: escapeName(attachment.name), p1: escapeName(attachment.mimeType), p2: action }),
+        `<media name="${escapeName(attachment.name)}" mime="${escapeName(attachment.mimeType)}" />`,
       ];
     }
     if (!attachment.localPath) {
@@ -170,7 +157,7 @@ export function createPiSessionEntries(
     const isCompletions = model?.api === "openai-completions";
     const images = isGoogle ? googleMediaContent(message.attachments, allowedInput)
       : [...imageContent(message.attachments, allowedInput), ...(isCompletions ? googleMediaContent(message.attachments?.filter((item) => item.mimeType.startsWith("audio/")), allowedInput) : [])];
-    const prompt = promptWithAttachments(message.role === "user" ? parseMcpCommand(message.content)?.text ?? message.content : message.content, message.attachments, isGoogle ? true : isCompletions ? "audio" : false, allowedInput);
+    const prompt = promptWithAttachments(message.role === "user" ? parseMcpCommand(message.content)?.text ?? message.content : message.content, message.attachments, Boolean(allowedInput?.includes("video") || allowedInput?.includes("audio")), allowedInput);
     const value = message.role === "user"
       ? { ...base, message: { role: "user" as const, content: images.length ? [
           { type: "text" as const, text: prompt },

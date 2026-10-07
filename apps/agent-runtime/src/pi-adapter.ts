@@ -14,9 +14,6 @@ import {
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { streamSimple as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
-import { streamSimple as streamOpenAIResponses } from "@earendil-works/pi-ai/api/openai-responses";
-import { streamSimple as streamCodexResponses } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { Type } from "typebox";
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -37,35 +34,25 @@ import { createSubagentTools } from "./subagent-tools.js";
 import type { SubagentSelection } from "./subagent-selection.js";
 import { googleMediaContent, googleStreamSimple } from "./google-media.js";
 import { openAICompletionsStreamSimple } from "./openai-audio.js";
+import { codexResponsesMediaStreamSimple, openAIResponsesMediaStreamSimple } from "./openai-responses-media.js";
+import { anthropicMediaStreamSimple } from "./anthropic-media.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
-import { canProcessMediaAttachment, configuredCapabilities } from "./media-capabilities.js";
+import { canProcessMediaAttachment, configuredCapabilities, mediaCapabilitiesContext } from "./media-capabilities.js";
 import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
 import { createAttachmentAudioTool, createAttachmentFrameTool, createVideoDownloadTool, createVideoFallbackTools } from "./media-tool.js";
 import { downloadDouyinVideo } from "./video-download.js";
 import type { DouyinBridge } from "./douyin-bridge.js";
-import { createDouyinTools, DOUYIN_ROUTING_GUIDANCE } from "./douyin-tools.js";
+import { createDouyinTools } from "./douyin-tools.js";
 import { extractTextContent, splitModelName } from "./pi-message-utils.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
 import type { AppMediaService } from "./app-media-service.js";
-import { APP_MEDIA_ROUTING_GUIDANCE, createAppMediaTools } from "./app-media-tools.js";
+import { createAppMediaTools } from "./app-media-tools.js";
 import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
+import { withMediaPhaseReporter } from "./media-phase.js";
 
 const log = createLogger("pi-adapter");
 const MODEL_TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
-/** Keep a stalled provider from holding a user task for several minutes. */
-export const PI_REQUEST_LIMITS = {
-  httpIdleTimeoutMs: 90_000,
-  retry: {
-    maxRetries: 1,
-    baseDelayMs: 1_000,
-    maxAgentDelayMs: 5_000,
-    provider: {
-      timeoutMs: 90_000,
-      maxRetries: 0,
-      maxRetryDelayMs: 1_000,
-    },
-  },
-} as const;
+export const PI_REQUEST_OVERRIDES = { httpIdleTimeoutMs: 0 } as const;
 export { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences } from "./pi-compaction.js";
 export type { PiCompactionPreferences } from "./pi-compaction.js";
 
@@ -82,6 +69,24 @@ type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
 type DelegateSubagent = (input: SubagentSelection & { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; reason: string; expectedResult: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
 type SubagentController = import("./subagent-runner.js").SubagentController;
+
+type AutomaticMediaDelegation = {
+  result: string;
+  status: string;
+};
+
+function parseAutomaticMediaDelegation(value: string): AutomaticMediaDelegation | undefined {
+  try {
+    const parsed = JSON.parse(value) as { status?: unknown; result?: unknown; error?: unknown };
+    if (typeof parsed !== "object" || parsed === null || typeof parsed.status !== "string") return undefined;
+    const result = typeof parsed.result === "string" && parsed.result.trim()
+      ? parsed.result.trim()
+      : typeof parsed.error === "string" && parsed.error.trim() ? parsed.error.trim() : "";
+    return result ? { result, status: parsed.status } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface GoalRuntimeBridge {
   get(sessionId: string, goalId: string, epoch: number, runId: string): unknown;
@@ -346,24 +351,21 @@ export class PiAdapter {
           const input = configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input;
           if (model.api === "google-generative-ai") return googleStreamSimple(model, context, options, input.includes("video"), input);
           if (model.api === "openai-completions") return openAICompletionsStreamSimple(model, context, options, input);
-          if (model.api === "anthropic-messages") return streamAnthropic(model as never, context, options);
-          if (model.api === "openai-responses") return streamOpenAIResponses(model as never, context, options);
-          if (model.api === "openai-codex-responses") return streamCodexResponses(model as never, context, options);
+          if (model.api === "anthropic-messages") return anthropicMediaStreamSimple(model, context, options, input);
+          if (model.api === "openai-responses") return openAIResponsesMediaStreamSimple(model, context, options, input);
+          if (model.api === "openai-codex-responses") return codexResponsesMediaStreamSimple(model, context, options, input);
           throw new Error(`Unsupported model API: ${model.api}`);
         }) as never,
         models: models.map((item, index) => {
           const model = resolved[index];
           const configuredInput = configuredCapabilities(this.configuredModelConfigs, `${item.provider}/${item.model}`).input;
-          const hasConfiguredMedia = configuredInput.some((capability) => capability !== "text");
           return {
             id: item.model,
             name: model.name,
             api: model.api as never,
             baseUrl: model.baseUrl,
             reasoning: model.reasoning,
-            input: model.api === "google-generative-ai" || hasConfiguredMedia
-              ? (hasConfiguredMedia ? ["text", "image"] as ("text" | "image")[] : ["text"] as ("text" | "image")[])
-              : model.input,
+            input: configuredInput.includes("image") ? ["text", "image"] as ("text" | "image")[] : ["text"] as ("text" | "image")[],
             cost: model.cost,
             contextWindow: model.contextWindow,
             maxTokens: model.maxTokens,
@@ -375,6 +377,7 @@ export class PiAdapter {
       });
     }
     this.applyCompactionSettings();
+    for (const sessionId of this.sessions.keys()) this.staleSessions.add(sessionId);
   }
 
   private thinkingLevelForModel(modelName: string): ThinkingLevel | undefined {
@@ -527,6 +530,13 @@ export class PiAdapter {
         const [provider, modelId] = splitModelName(modelName);
         const nextModel = this.modelRuntime.getModel(provider, modelId);
         if (!nextModel) throw new Error(`configured model not found: ${modelName}`);
+        const currentModel = existing.agent.state.model;
+        if (currentModel && `${currentModel.provider}/${currentModel.id}` !== modelName && existing.isIdle) {
+          await existing.dispose();
+          this.sessions.delete(sessionId);
+          this.sessionSettingsManagers.delete(sessionId);
+          return this.getSession(sessionId, cwd, modelName, thinkingOverride, eventSessionId, mcpServerId, subagentDepth, subagentRunId, goalId, goalEpoch, goalRunId);
+        }
         await existing.setModel(nextModel);
          if (thinking) existing.setThinkingLevel(thinking);
       }
@@ -604,7 +614,14 @@ export class PiAdapter {
         : undefined,
       openCli: this.openCli,
     };
-    const mediaTools = [createVideoDownloadTool(mediaToolOptions), createAttachmentAudioTool(mediaToolOptions), createAttachmentFrameTool(mediaToolOptions), ...createVideoFallbackTools(mediaToolOptions),
+    const modelCapabilities = modelName
+      ? configuredCapabilities(this.configuredModelConfigs, modelName)
+      : configuredCapabilities([], "");
+    const mediaTools = [
+      ...(modelCapabilities.video.native || modelCapabilities.video.frames || modelCapabilities.audio.native ? [createVideoDownloadTool(mediaToolOptions)] : []),
+      ...(modelCapabilities.audio.extract ? [createAttachmentAudioTool(mediaToolOptions)] : []),
+      ...(modelCapabilities.video.frames ? [createAttachmentFrameTool(mediaToolOptions)] : []),
+      ...(modelCapabilities.video.frames || modelCapabilities.audio.extract ? createVideoFallbackTools(mediaToolOptions) : []),
       ...(this.douyinBridge ? createDouyinTools(this.douyinBridge, workspacePath) : []),
       ...(this.appMediaService && this.openCli ? createAppMediaTools(this.appMediaService, workspacePath, this.openCli) : []),
     ];
@@ -680,7 +697,10 @@ export class PiAdapter {
     const sessionSettings = SettingsManager.inMemory();
     sessionSettings.applyOverrides(this.compactionOverrides());
     sessionSettings.applyOverrides({ defaultTools: ["+codemode"] });
-    sessionSettings.applyOverrides(PI_REQUEST_LIMITS);
+    // Let the provider and SDK decide when a request has failed. A value of 0
+    // disables pi-coding-agent's HTTP idle timeout; local tool timeouts stay
+    // independent of model request lifetime.
+    sessionSettings.applyOverrides(PI_REQUEST_OVERRIDES);
     const { session } = await createAgentSession({
       cwd: workspacePath,
       sessionManager,
@@ -909,6 +929,7 @@ export class PiAdapter {
       session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.goalId, opts.goalEpoch, runId);
       if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
       this.runs.set(runId, session);
+      const activeSession = session;
       const previousLength = session.messages.length;
       const selectedModel = opts.model
         ? this.modelRuntime?.getModel(...splitModelName(opts.model))
@@ -918,35 +939,60 @@ export class PiAdapter {
       const capabilities = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`) : undefined;
       const attachments = opts.attachments;
       const videoAttachmentNotice = this.rememberVideoAttachments(runId, attachments);
-      const capabilityNotice = capabilities
-        ? runtimeText("pi-adapter.use_these_configured_capabilities_to_determine_whether_media_can", { p0: capabilities.input.join(","), p1: capabilities.output.join(",") })
-        : "";
       const missingAttachmentInput = capabilities && attachments?.some((attachment) => !canProcessMediaAttachment(selectedModel!.api, capabilities.input, attachment));
+      const nativeVideoAttachment = capabilities && attachments?.find((attachment) => attachment.mimeType.startsWith("video/") && !capabilities.input.includes("video"));
       const delegationPolicy = this.subagentPolicy?.();
       const canDelegate = this.delegateSubagent && (!opts.subagentRunId || (delegationPolicy?.allowNested ?? true))
         && (opts.subagentDepth ?? 0) < (delegationPolicy?.maxDepth ?? 3);
-      const routingCandidates = missingAttachmentInput && canDelegate ? this.subagentController?.catalog() : undefined;
-      const routingNotice = routingCandidates
+      const routingCandidates = (missingAttachmentInput || nativeVideoAttachment) && canDelegate ? this.subagentController?.catalog() : undefined;
+      const videoRecognitionSubagent = nativeVideoAttachment && canDelegate && !opts.subagentRunId
+        ? routingCandidates?.capabilities.find((candidate) => candidate.capability === "videoRecognition")
+        : undefined;
+      let automaticMediaDelegation: AutomaticMediaDelegation | undefined;
+      if (nativeVideoAttachment && videoRecognitionSubagent && this.delegateSubagent) {
+        try {
+          const delegated = await this.delegateSubagent({
+            capability: "videoRecognition", subagentId: null,
+            parentSessionId: sessionId, parentRunId: runId,
+            toolCallId: `media-routing-${runId}`,
+            title: runtimeText("pi-adapter.video_recognition_subagent_title"),
+            task: message,
+            reason: runtimeText("pi-adapter.video_recognition_subagent_reason"),
+            expectedResult: runtimeText("pi-adapter.video_recognition_subagent_expected_result"),
+            mediaAttachment: nativeVideoAttachment,
+            fallbackModel: opts.model,
+            permissionMode: opts.permissionMode ?? "ask",
+            background: false,
+            signal: mediaController.signal,
+          });
+          automaticMediaDelegation = parseAutomaticMediaDelegation(delegated);
+        } catch (error) {
+          log.warn("automatic video subagent delegation failed", { runId, error: String(error) });
+        }
+      }
+      const modelAttachments = automaticMediaDelegation
+        ? attachments?.filter((attachment) => !attachment.mimeType.startsWith("video/"))
+        : attachments;
+      const delegatedMediaNotice = automaticMediaDelegation
+        ? runtimeText("pi-adapter.video_recognition_subagent_result", { p0: automaticMediaDelegation.status, p1: automaticMediaDelegation.result })
+        : "";
+      const routingNotice = delegatedMediaNotice || (routingCandidates
         ? runtimeText("pi-adapter.the_current_model_cannot_directly_read_some_attachments_only", { p0: JSON.stringify(routingCandidates) })
         : missingAttachmentInput && !canDelegate
           ? runtimeText("pi-adapter.the_current_model_cannot_directly_read_some_attachments_and")
-          : "";
-      const unsupportedVideoNotice = !isGoogle && capabilities?.input.includes("video") && !capabilities.input.includes("image")
-        ? runtimeText("pi-adapter.the_current_api_format_has_no_general_video_file") : "";
-      const modelAttachments = await materializeModelInputs(attachments, isGoogle, capabilities?.input);
+          : "");
+      const modelInputs = await materializeModelInputs(modelAttachments, isGoogle, capabilities?.input);
       const webAccessContext = this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "";
-      await session.prompt([webAccessContext, this.douyinBridge ? DOUYIN_ROUTING_GUIDANCE : "", this.appMediaService ? APP_MEDIA_ROUTING_GUIDANCE : "", capabilityNotice, routingNotice, unsupportedVideoNotice, videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, capabilities?.input)].filter(Boolean).join("\n"), {
-        images: isGoogle ? googleMediaContent(modelAttachments, capabilities?.input)
-          : [...imageContent(modelAttachments, capabilities?.input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
-      });
+      await withMediaPhaseReporter((phase) => {
+        if (isGoogle) this.push("media.phase", { phase: "provider-processing", status: phase }, opts.eventSessionId ?? sessionId, runId);
+      }, () => activeSession.prompt([webAccessContext, capabilities ? mediaCapabilitiesContext(capabilities) : "", routingNotice, automaticMediaDelegation ? "" : videoAttachmentNotice, promptWithAttachments(message, modelAttachments, Boolean(capabilities?.input.includes("video") || capabilities?.input.includes("audio")), capabilities?.input)].filter(Boolean).join("\n"), {
+        images: isGoogle ? googleMediaContent(modelInputs, capabilities?.input)
+          : [...imageContent(modelInputs, capabilities?.input), ...(isCompletions ? googleMediaContent(modelInputs?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
+      }));
       const assistantMessages = session.messages.slice(previousLength).filter((item) => item.role === "assistant");
       const final = assistantMessages.at(-1);
-      if (!final) throw new Error("Model returned no assistant response");
-      if (final.stopReason === "error") throw new Error(final.errorMessage || "Model request failed");
-      if (final.stopReason === "aborted" && !this.stoppedRuns.has(runId)) throw new Error(final.errorMessage || "Model request aborted");
-      if (!assistantMessages.some((item) => extractTextContent(item).trim())) {
-        throw new Error("AI returned an empty response");
-      }
+      if (final?.stopReason === "error") throw new Error(final.errorMessage || "Model request failed");
+      if (final?.stopReason === "aborted" && !this.stoppedRuns.has(runId)) throw new Error(final.errorMessage || "Model request aborted");
       runEmit("agent.prompt_done", { runId });
     } catch (error) {
       // Pi cannot resume this in-memory transcript after its compaction continuation
@@ -1104,7 +1150,7 @@ export class PiAdapter {
       const runId = this.activeRunIds.get(sessionId);
       const videoAttachmentNotice = runId ? this.rememberVideoAttachments(runId, attachments) : "";
       const modelAttachments = await materializeModelInputs(attachments, isGoogle, input);
-      const prompt = [videoAttachmentNotice, promptWithAttachments(message, attachments, isGoogle ? true : isCompletions ? "audio" : false, input)].filter(Boolean).join("\n");
+      const prompt = [videoAttachmentNotice, promptWithAttachments(message, attachments, Boolean(input?.includes("video") || input?.includes("audio")), input)].filter(Boolean).join("\n");
       const images = isGoogle ? googleMediaContent(modelAttachments, input)
         : [...imageContent(modelAttachments, input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), input) : [])];
       // Materializing files can outlive the target run. Never leave an input in

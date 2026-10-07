@@ -15,6 +15,8 @@ type CompletionPart = { type: string; [key: string]: unknown };
 type CompletionMessage = { role?: string; content?: string | CompletionPart[]; [key: string]: unknown };
 type CompletionPayload = { messages?: CompletionMessage[]; [key: string]: unknown };
 type AudioPart = { type: "input_audio"; input_audio: { data: string; format: "mp3" | "wav" } };
+type VideoPart = { type: "video_url"; video_url: { url: string } };
+type MediaPart = AudioPart | VideoPart;
 
 async function audioPart(data: Buffer | string, mimeType: string, signal?: AbortSignal): Promise<AudioPart> {
   const format = /^(?:audio\/mpeg|audio\/mp3)$/i.test(mimeType) ? "mp3"
@@ -38,28 +40,32 @@ async function audioPart(data: Buffer | string, mimeType: string, signal?: Abort
   }
 }
 
-async function textParts(value: string, allowedInput: readonly string[], signal?: AbortSignal): Promise<{ parts: CompletionPart[]; audio: AudioPart[] }> {
+async function videoPart(data: Buffer | string, mimeType: string): Promise<VideoPart> {
+  const bytes = typeof data === "string" ? await readFile(data) : data;
+  return { type: "video_url", video_url: { url: `data:${mimeType};base64,${bytes.toString("base64")}` } };
+}
+
+async function textParts(value: string, allowedInput: readonly string[], signal?: AbortSignal): Promise<{ parts: CompletionPart[]; media: MediaPart[] }> {
   const parts: CompletionPart[] = [];
-  const audio: AudioPart[] = [];
+  const nativeParts: MediaPart[] = [];
   let offset = 0;
   for (const match of value.matchAll(MEDIA_MARKER)) {
     if (match.index! > offset) parts.push({ type: "text", text: value.slice(offset, match.index) });
     const media = verifiedLocalMedia(match[1]!, match[2]!);
     if (!media) parts.push({ type: "text", text: runtimeText("openai-audio.the_previous_session_s_media_reference_has_expired_provide") });
-    else if (!media.mimeType.startsWith("audio/")) {
-      throw runtimeError("openai-audio.chat_completions_has_no_general_native_video_file_input", {});
-    } else if (!allowedInput.includes("audio")) parts.push({ type: "text", text: runtimeText("openai-audio.the_current_model_has_no_audio_input_capability_configured") });
+    else if (media.mimeType.startsWith("video/") && !allowedInput.includes("video")) parts.push({ type: "text", text: runtimeText("openai-audio.the_current_model_has_no_video_input_capability_configured") });
+    else if (media.mimeType.startsWith("audio/") && !allowedInput.includes("audio")) parts.push({ type: "text", text: runtimeText("openai-audio.the_current_model_has_no_audio_input_capability_configured") });
     else if (!await stat(media.path).then((info) => info.isFile()).catch(() => false)) {
       parts.push({ type: "text", text: runtimeText("openai-audio.the_media_file_was_cleaned_up_or_is_missing") });
     } else {
-      const part = await audioPart(media.path, media.mimeType, signal);
-      audio.push(part);
+      const part = media.mimeType.startsWith("video/") ? await videoPart(media.path, media.mimeType) : await audioPart(media.path, media.mimeType, signal);
+      nativeParts.push(part);
       parts.push(part);
     }
     offset = match.index! + match[0].length;
   }
   if (offset < value.length) parts.push({ type: "text", text: value.slice(offset) });
-  return { parts, audio };
+  return { parts, media: nativeParts };
 }
 
 /** Translate Pi's transport-neutral audio references to the Chat Completions input_audio format. */
@@ -67,21 +73,21 @@ export async function prepareOpenAICompletionsPayload(payload: unknown, allowedI
   const source = payload as CompletionPayload;
   if (!Array.isArray(source.messages)) return source;
   const messages: CompletionMessage[] = [];
-  let toolAudio: AudioPart[] = [];
-  const flushToolAudio = () => {
-    if (!toolAudio.length) return;
-    messages.push({ role: "user", content: [{ type: "text", text: "Audio from the preceding tool result:" }, ...toolAudio] });
-    toolAudio = [];
+  let toolMedia: MediaPart[] = [];
+  const flushToolMedia = () => {
+    if (!toolMedia.length) return;
+    messages.push({ role: "user", content: [{ type: "text", text: "Media from the preceding tool result:" }, ...toolMedia] });
+    toolMedia = [];
   };
   for (const message of source.messages) {
-    if (message.role !== "tool") flushToolAudio();
+    if (message.role !== "tool") flushToolMedia();
     const content = message.content;
     if (typeof content === "string" && (message.role === "user" || message.role === "tool")) {
       const converted = await textParts(content, allowedInput, signal);
-      if (!converted.audio.length && converted.parts.length === 1 && converted.parts[0]?.text === content) {
+      if (!converted.media.length && converted.parts.length === 1 && converted.parts[0]?.text === content) {
         messages.push(message);
       } else if (message.role === "tool") {
-        toolAudio.push(...converted.audio);
+        toolMedia.push(...converted.media);
         messages.push({ ...message, content: converted.parts.filter((part) => part.type === "text").map((part) => part.text).join("") || runtimeText("openai-audio.audio_is_attached_to_a_subsequent_message") });
       } else if (message.role === "user") {
         messages.push({ ...message, content: converted.parts });
@@ -101,14 +107,16 @@ export async function prepareOpenAICompletionsPayload(payload: unknown, allowedI
         const url = (part.image_url as { url?: unknown } | undefined)?.url;
         const match = typeof url === "string" ? /^data:((?:audio|video)\/[^;,]+);base64,([A-Za-z0-9+/=]+)$/i.exec(url) : null;
         if (!match) next.push(part);
-        else if (match[1]!.startsWith("video/")) next.push({ type: "text", text: runtimeText("openai-audio.the_current_api_format_does_not_support_video_file") });
-        else if (!allowedInput.includes("audio")) next.push({ type: "text", text: runtimeText("openai-audio.the_current_model_has_no_audio_input_capability_configured") });
-        else next.push(await audioPart(Buffer.from(match[2]!, "base64"), match[1]!, signal));
+        else if (match[1]!.startsWith("video/") && !allowedInput.includes("video")) next.push({ type: "text", text: runtimeText("openai-audio.the_current_model_has_no_video_input_capability_configured") });
+        else if (match[1]!.startsWith("audio/") && !allowedInput.includes("audio")) next.push({ type: "text", text: runtimeText("openai-audio.the_current_model_has_no_audio_input_capability_configured") });
+        else next.push(match[1]!.startsWith("video/")
+          ? await videoPart(Buffer.from(match[2]!, "base64"), match[1]!)
+          : await audioPart(Buffer.from(match[2]!, "base64"), match[1]!, signal));
       } else next.push(part);
     }
     messages.push({ ...message, content: next });
   }
-  flushToolAudio();
+  flushToolMedia();
   return { ...source, messages };
 }
 

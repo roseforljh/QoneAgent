@@ -11,15 +11,15 @@ function store() {
 }
 
 describe("WebAccessMemory", () => {
-  test("old Douyin Chrome successes cannot force the obsolete backend", () => {
+  test("embedded media observations remain generic runtime metadata", () => {
     const memory = new WebAccessMemory(store());
-    const context = memory.context("session-douyin", "下载抖音视频", [
-      { toolName: "qone_browser_open", args: { url: "https://v.douyin.com/share/" }, result: { content: [] }, at: 1 },
-      { toolName: "qone_opencli_run", args: { site: "douyin", command: "search" }, result: { content: [] }, at: 2 },
+    const context = memory.context("session-media", "下载视频", [
+      { toolName: "qone_douyin_download", args: { url: "https://www.douyin.com/video/123" }, result: { content: [] }, at: 1 },
+      { toolName: "qone_browser_open", args: { url: "https://v.douyin.com/share/" }, result: { content: [] }, at: 2 },
     ]);
-    expect(context).toContain("MUST use Qone embedded Douyin bridge");
-    expect(context).not.toContain("MUST use OpenCLI");
-    expect(context).toContain("qone_douyin_resolve_author");
+    expect(context).toContain("qone-web-access-memory");
+    expect(context).toContain("Qone embedded media bridge");
+    expect(context).not.toContain("qone_douyin_resolve_author");
   });
 
   test("remembers a failed adapter and a successful browser route per session", () => {
@@ -32,9 +32,9 @@ describe("WebAccessMemory", () => {
 
     const context = memory.context("session-a");
     expect(context).toContain("www.nodeseek.com");
-    expect(context).toContain("OpenCLI adapter failed");
-    expect(context).toContain("Qone built-in browser succeeded");
-    expect(context).toContain("MUST use Qone built-in browser");
+    expect(context).toContain("route=\"OpenCLI adapter\" status=\"failed\"");
+    expect(context).toContain("route=\"Qone built-in browser\" status=\"ok\"");
+    expect(context).toContain("preferred-route=\"opencli_browser_bridge\"");
   });
 
   test("does not leak access memory between sessions and survives reload", () => {
@@ -45,7 +45,7 @@ describe("WebAccessMemory", () => {
 
     const second = new WebAccessMemory(saved);
     expect(second.context("session-a")).toContain("a.example.com");
-    expect(second.context("session-a")).toContain("OpenCLI adapter failed (timeout)");
+    expect(second.context("session-a")).toContain("route=\"OpenCLI adapter\" status=\"failed\" reason=\"timeout\"");
   });
 
   test("keeps an earlier host route after linked research visits many other hosts", () => {
@@ -58,7 +58,7 @@ describe("WebAccessMemory", () => {
     }
     const context = memory.context("session-a");
     expect(context).toContain("a.example.com");
-    expect(context).toContain("MUST use Qone built-in browser");
+    expect(context).toContain("preferred-route=\"opencli_browser_bridge\"");
   });
 
   test("puts the current task host first and makes the remembered route mandatory", () => {
@@ -69,8 +69,8 @@ describe("WebAccessMemory", () => {
     memory.recordToolResult("session-a", "qone_opencli_run", { site: "example", args: ["get", "https://b.example.com/post"] }, { isError: true, content: [{ type: "text", text: "blocked" }] });
     const context = memory.context("session-a", "继续读取 https://a.example.com/post 中的信息");
     expect(context.indexOf("a.example.com")).toBeLessThan(context.indexOf("b.example.com"));
-    expect(context).toContain("MUST use Qone built-in browser");
-    expect(context).toContain("MUST NOT call a known failing route again");
+    expect(context).toContain("preferred-route=\"opencli_browser_bridge\"");
+    expect(context).toContain("route=\"OpenCLI adapter\" status=\"failed\"");
   });
 
   test("rebuilds routes from persisted tool history when the runtime hook missed a write", () => {
@@ -86,7 +86,7 @@ describe("WebAccessMemory", () => {
       { toolName: "qone_browser_extract", args: {}, result: { content: [{ type: "text", text: "article" }] }, at: 3 },
     ]);
     expect(context).toContain("a.example.com");
-    expect(context).toContain("MUST use Qone built-in browser");
-    expect(context).toContain("OpenCLI adapter failed (timeout)");
+    expect(context).toContain("preferred-route=\"opencli_browser_bridge\"");
+    expect(context).toContain("route=\"OpenCLI adapter\" status=\"failed\" reason=\"timeout\"");
   });
 });

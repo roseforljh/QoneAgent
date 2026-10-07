@@ -12,7 +12,6 @@ import { downloadDouyinVideo, type DownloadedVideo } from "./video-download.js";
 
 interface SavedVideo { contentId: string; url: string; status: "saved" | "exists" | "failed"; path?: string; error?: string }
 const log = createLogger("douyin-download");
-export const DOUYIN_ROUTING_GUIDANCE = "[QONE_DOUYIN_ROUTING]\nDouyin uses Qone's dedicated embedded page bridge. For a video/share/short URL, call qone_douyin_resolve_author to identify its creator. For a creator's first N videos, use qone_douyin_list_videos then qone_douyin_download to persist the returned URLs. For recognition, qone_video_download already uses the embedded bridge. Do not pre-open Douyin with qone_browser_*, generic OpenCLI, curl or shell scripts, and do not extract cookie files. Old generic browser observations do not override this route. If embedded metadata is unavailable, report the failure instead of switching browser sessions. These tools reuse Qone's browser profile themselves.\n[/QONE_DOUYIN_ROUTING]";
 
 /** These tools save files, without requiring the model to have video/audio input. */
 export function createDouyinTools(
@@ -23,8 +22,7 @@ export function createDouyinTools(
   return [{
     name: "qone_douyin_list_videos",
     label: "Douyin · list creator videos",
-    description: "List the first N videos from a complete Douyin creator homepage URL using Qone's logged-in embedded browser. The post-list order includes pinned videos; this is not a global newest-by-date sort. Filters image posts and other authors, deduplicates and loads more pages when needed. Check authorId, nickname and completion before downloading. completion=limit means N found; exhausted means fewer exist; timeout/stalled/blocked means incomplete, never invent missing videos. Find and verify the creator's full /user/ URL first; a nickname alone is not a unique account identity.",
-    promptSnippet: DOUYIN_ROUTING_GUIDANCE,
+    description: "List the first N videos from a complete creator homepage URL using the signed-in embedded browser. The returned order may include pinned items and is not a global newest-by-date sort. The result identifies the creator, completion state, and verified work links; incomplete states must not be treated as a full list.",
     parameters: Type.Object({ url: Type.String({ minLength: 1 }), limit: Type.Integer({ minimum: 1, maximum: 100 }) }),
     execute: async (_id, params, signal) => {
       const { url, limit } = params as { url: string; limit: number };
@@ -35,7 +33,7 @@ export function createDouyinTools(
   }, {
     name: "qone_douyin_download",
     label: "Douyin · save videos",
-    description: "Persist complete Douyin /video/ URLs or modal_id links to disk using the embedded logged-in page bridge, without video-recognition requirements. Use URLs from qone_douyin_list_videos for creator batches; profile URLs, image posts and unresolved short links are not video work IDs. path is the user's destination directory (relative to the workspace, or absolute); omitted path defaults to downloads/douyin under the workspace. Preserves input order, deduplicates work IDs, names files by ID, never overwrites existing files. Returns per-file saved/exists/failed status and absolute paths; failures do not count as downloads. Page/bridge failures stop the batch: report stopped, stopReason and remaining, and do not immediately retry the unchanged batch. A confirmed unavailable work or CDN failure is recorded per file and does not stop other works. Completed files survive cancellation and task cleanup. This saves files only, and does not claim to recognize video content.",
+    description: "Persist complete video work URLs to disk through the embedded page bridge. The path is the user's destination directory; omitted path uses the workspace downloads directory. Preserve input order, deduplicate work IDs, avoid overwriting existing files, and return per-file saved/exists/failed status with absolute paths. This tool saves files and does not claim to recognize video content.",
     parameters: Type.Object({ urls: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 }), path: Type.Optional(Type.String({ minLength: 1 })) }),
     execute: async (_id, params, signal, onUpdate) => {
       const input = params as { urls: string[]; path?: string };
@@ -106,7 +104,7 @@ export function createDouyinTools(
   }, {
     name: "qone_douyin_resolve_author",
     label: "Douyin · identify video creator",
-    description: "Resolve a Douyin video or v.douyin.com share/short link in Qone's embedded logged-in browser, then return the creator's verified profileUrl, authorId, nickname and contentId from matching work metadata. Use this before qone_douyin_list_videos when the user supplies a video/share link rather than a /user/ homepage. No OpenCLI, Chrome, shell redirects or cookie extraction are required. Does not guess from unrelated profile links or recommendations.",
+    description: "Resolve a Douyin video or share link in the embedded browser and return verified creator and work metadata. Use this when the input is a video/share link rather than a creator homepage. Results are based on matching work metadata.",
     parameters: Type.Object({ url: Type.String({ minLength: 1 }) }),
     execute: async (_id, params, signal) => {
       const result = await bridge.resolveAuthor((params as { url: string }).url, signal);

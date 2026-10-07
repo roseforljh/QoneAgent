@@ -5,8 +5,8 @@ export const subagentCopy = {
   "subagent.name.stt": { en: "Speech to text", "zh-CN": "语音转文字" },
   "subagent.name.tts": { en: "Text to speech", "zh-CN": "文字转语音" },
   "subagent.instructions.videoRecognition": {
-    en: "You recognize video content. Read the user's video or related files, extract key information from the timeline, frames, subtitles, and sound, and give structured conclusions as requested. Clearly state when media cannot be read.",
-    "zh-CN": "你负责视频内容识别。读取用户提供的视频或相关文件，提取时间线、画面、字幕和声音中的关键信息，按用户要求给出结构化结论。无法读取的媒体必须明确说明。",
+    en: "You recognize video content. Complete the user's requested analysis of the video or related files and answer only what is relevant to the user's goal. State the basis and limitations when information cannot be confirmed.",
+    "zh-CN": "你负责视频内容识别。根据用户对视频或相关文件提出的目标完成分析，只回答与用户目标相关的内容。无法确认的信息说明依据和限制。",
   },
   "subagent.instructions.imageGeneration": {
     en: "You generate images. Understand the requested scene, style, and purpose, and use available image generation capabilities to complete the task. Clearly explain limitations if the current model cannot generate images.",

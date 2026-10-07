@@ -71,12 +71,37 @@ for (const mode of ["streamed", "batched", "reasoning-only", "cancelled"]) test(
     await adapter.configureModels([{ id: "reason-test/gemini-test", provider: "reason-test", model: "gemini-test", enabled: true, updatedAt: 0,
       config: { apiType: "google", baseUrl: `http://127.0.0.1:${server.port}/v1beta`, autoMetadata: false, input: ["text"], output: ["text"], reasoning: true, contextWindow: 32000, maxTokens: 2048 } }]);
     const pending = adapter.run("reason-session", "测试", { model: "reason-test/gemini-test", runId: "reason-run", thinking: "high" }, () => {});
-    if (mode === "reasoning-only" || mode === "cancelled") await expect(pending).rejects.toThrow("empty response");
-    else await pending;
+    await pending;
     expect(events.filter(e => e.type === "message.reasoning.delta").map(e => (e.payload as { delta: string }).delta).join("")).toBe("检查视频");
     expect(events.some(e => e.type === "model.request.started")).toBe(true);
     expect(events.some(e => e.type === "model.response.timing")).toBe(true);
     const final = events.findLast(e => e.type === "message.completed" && (e.payload as any).message?.role === "assistant");
     expect(assistantPartsFromPiMessage(final?.payload, 1).map(p => p.type)).toEqual(mode === "reasoning-only" || mode === "cancelled" ? ["reasoning"] : ["reasoning", "text"]);
   } finally { await adapter.disposeSession("reason-session"); server.stop(true); }
+});
+
+test("Google adapter retries a reasoning-only truncated stream with minimal thinking", async () => {
+  const requests: unknown[] = [];
+  const encoder = new TextEncoder();
+  const server = Bun.serve({ port: 0, async fetch(request) {
+    if (!new URL(request.url).pathname.includes(":streamGenerateContent")) return Response.json({ models: [] });
+    requests.push(await request.text());
+    const retry = requests.length > 1;
+    const body = `data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: retry ? [{ text: "恢复成功" }] : [{ text: "只思考", thought: true }] }, ...(retry ? { finishReason: "STOP" } : {}) }] })}\n\n`;
+    return new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(encoder.encode(body));
+      controller.close();
+    } }), { headers: { "Content-Type": "text/event-stream" } });
+  } });
+  const events: AgentEvent[] = [];
+  const adapter = new PiAdapter((event) => events.push(event));
+  try {
+    await adapter.setSecret("model.apiKey:recovery-test", "test-key");
+    await adapter.configureModels([{ id: "recovery-test/gemini-test", provider: "recovery-test", model: "gemini-test", enabled: true, updatedAt: 0,
+      config: { apiType: "google", baseUrl: `http://127.0.0.1:${server.port}/v1beta`, autoMetadata: false, input: ["text"], output: ["text"], reasoning: true, contextWindow: 32000, maxTokens: 2048 } }]);
+    await adapter.run("recovery-session", "测试", { model: "recovery-test/gemini-test", runId: "recovery-run", thinking: "high" }, () => {});
+    expect(requests).toHaveLength(2);
+    expect(events.filter((event) => event.type === "message.delta").map((event) => (event.payload as { delta: string }).delta).join(""))
+      .toBe("恢复成功");
+  } finally { await adapter.disposeSession("recovery-session"); server.stop(true); }
 });

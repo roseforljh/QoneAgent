@@ -395,7 +395,6 @@ const assistantStreamBuffers = new Map<string, string[]>();
 const assistantPartsByRun = new Map<string, AssistantMessagePart[]>();
 const assistantMessageSequenceByRun = new Map<string, number>();
 const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }>>();
-const persistedAssistantRuns = new Set<string>();
 const initialUserMessageSeen = new Set<string>();
 const toolCallIds = new Map<string, string>();
 const cancelledRuns = new Set<string>();
@@ -423,7 +422,6 @@ function deliverSteer(sessionId: string, runId: string) {
   const steer = pending.shift()!;
   if (!pending.length) pendingSteers.delete(sessionId);
   const assistant = persistPartialAssistant(sessionId, runId);
-  if (assistant) persistedAssistantRuns.add(runId);
   assistantBuffers.delete(runId);
   assistantStreamBuffers.delete(runId);
   assistantPartsByRun.set(runId, []);
@@ -900,7 +898,6 @@ export function runtimeCommandServices() {
     permissionRepo,
     preferencesRepo,
     persistPartialAssistant,
-    persistedAssistantRuns,
     publishGoal,
     handle,
     queueRepo,

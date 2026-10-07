@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PI_REQUEST_LIMITS } from "../src/pi-adapter";
+import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PI_REQUEST_OVERRIDES } from "../src/pi-adapter";
 
 describe("Qone compaction settings", () => {
   test("normalizes persisted preferences and keeps the default", () => {
@@ -16,10 +16,7 @@ describe("Qone compaction settings", () => {
     expect(compactionReserveTokens(1, 95)).toBe(1);
   });
 
-  test("bounds provider stalls and agent retries for interactive runs", () => {
-    expect(PI_REQUEST_LIMITS).toMatchObject({
-      httpIdleTimeoutMs: 90_000,
-      retry: { maxRetries: 1, provider: { timeoutMs: 90_000, maxRetries: 0 } },
-    });
+  test("does not impose a client idle timeout on model requests", () => {
+    expect(PI_REQUEST_OVERRIDES).toEqual({ httpIdleTimeoutMs: 0 });
   });
 });

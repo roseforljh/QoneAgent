@@ -18,7 +18,7 @@ test("a share link has a dedicated embedded creator lookup before listing works"
   const lookup = tools.find((tool) => tool.name === "qone_douyin_resolve_author")!;
   const result = await lookup.execute("lookup", { url: "https://v.douyin.com/share/" }, new AbortController().signal, undefined, undefined as never);
   expect(result.details).toMatchObject({ profileUrl: "https://www.douyin.com/user/MS4w-test", contentId: "123" });
-  expect(tools[0]?.promptSnippet).toContain("instead of switching browser sessions");
+  expect(tools[0]?.promptSnippet).toBeUndefined();
 });
 
 test("creator tools save a deduplicated batch persistently without media capabilities or overwriting existing files", async () => {

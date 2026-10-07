@@ -160,7 +160,7 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       },
     },
     {
-      name: "qone_bilibili_search", label: "Bilibili · search", description: "Search public Bilibili videos using the built-in public search API. For account pages, posts, comments, or other site operations use qone_opencli_discover followed by qone_opencli_run. For a result's metadata use qone_app_inspect; for subtitles, video parsing, or summaries use qone_video_download and qone_video_use_file.",
+      name: "qone_bilibili_search", label: "Bilibili · search", description: "Search public video results using the built-in public search API. Use the browser tools for account pages, posts, comments, or other site operations. Use the media tools for a result's metadata, download, or analysis.",
       parameters: Type.Object({ query: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }),
       execute: async (_id, { query, limit }: { query: string; limit?: number }) => {
         const url = new URL("https://api.bilibili.com/x/web-interface/search/all/v2");
@@ -171,7 +171,7 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       },
     },
     {
-      name: "qone_youtube_search", label: "YouTube · search", description: "Search YouTube by keyword only. For a known video URL, use qone_app_inspect; for downloading, use qone_app_download.",
+      name: "qone_youtube_search", label: "YouTube · search", description: "Search public video results by keyword. Use the media tools for a known URL or download request.",
       parameters: Type.Object({ query: Type.String({ minLength: 1 }), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }),
       execute: async (_id, { query, limit }: { query: string; limit?: number }) => {
         const executable = options.ytDlp();

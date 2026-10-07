@@ -142,7 +142,7 @@ test("Gemini converts YouTube links to native fileData parts", async () => {
 test("unconfigured media input remains an attachment reference for delegation", () => {
   const media: MessageAttachmentInfo = { type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "", localPath: join(tmpdir(), "clip.mp4") };
   const prompt = promptWithAttachments("分析", [media], true, ["text"]);
-  expect(prompt).toContain("需交给能处理该媒体的子代理");
+  expect(prompt).toContain("<media name=\"clip.mp4\" mime=\"video/mp4\" />");
   expect(prompt).not.toContain("QONE_MEDIA");
   expect(googleMediaContent([media], ["text"])).toEqual([]);
 });
@@ -151,8 +151,7 @@ test("an audio-capable agent can extract a video's sound without claiming its pi
   const media: MessageAttachmentInfo = { type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "", localPath: join(tmpdir(), "clip.mp4") };
   for (const native of [true, "audio"] as const) {
     const prompt = promptWithAttachments("听视频声音", [media], native, ["text", "audio"]);
-    expect(prompt).toContain("qone_media_extract_audio");
-    expect(prompt).toContain("若任务需要画面，请委派原始附件");
+    expect(prompt).toContain("<media name=\"clip.mp4\" mime=\"video/mp4\" />");
     expect(prompt).not.toContain("QONE_MEDIA");
   }
 });
@@ -161,9 +160,9 @@ test("media routing uses the API format and configured inputs together", () => {
   const video: MessageAttachmentInfo = { type: "file", name: "clip.mp4", mimeType: "video/mp4", data: "" };
   const audio: MessageAttachmentInfo = { type: "file", name: "voice.mp3", mimeType: "audio/mpeg", data: "" };
   expect(canProcessMediaAttachment("google-generative-ai", ["video"], video)).toBe(true);
-  expect(canProcessMediaAttachment("openai-responses", ["video"], video)).toBe(false);
+  expect(canProcessMediaAttachment("openai-responses", ["video"], video)).toBe(true);
   expect(canProcessMediaAttachment("openai-responses", ["video", "image"], video)).toBe(true);
-  expect(canProcessMediaAttachment("anthropic-messages", ["audio"], audio)).toBe(false);
+  expect(canProcessMediaAttachment("anthropic-messages", ["audio"], audio)).toBe(true);
   expect(canProcessMediaAttachment("openai-completions", ["audio"], audio)).toBe(true);
 });
 
@@ -176,14 +175,20 @@ test("image MIME type routes correctly even when the transport labels it as a fi
   expect(googleMediaContent([image], ["image"])).toEqual([{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }]);
 });
 
-test("Gemini automatic input defaults to four capabilities but manual selection wins", () => {
+test("runtime capabilities always use the saved input selection", () => {
   const base = { id: "provider/gemini", provider: "provider", model: "gemini", enabled: true, updatedAt: 1 };
-  expect(configuredCapabilities([{ ...base, config: { apiType: "google", input: ["text"], output: ["text"] } }], "provider/gemini").input)
-    .toEqual(["text", "image", "video", "audio"]);
-  expect(configuredCapabilities([{ ...base, config: { apiType: "google", input: ["text"], output: ["text"], metadataOverrides: { input: true } } }], "provider/gemini").input)
-    .toEqual(["text"]);
-  expect(configuredCapabilities([{ ...base, config: { apiType: "google", input: ["text"], output: ["text"], autoMetadata: false } }], "provider/gemini").input)
-    .toEqual(["text"]);
+  expect(configuredCapabilities([{ ...base, config: { apiType: "google", input: ["text"], output: ["text"] } }], "provider/gemini")).toMatchObject({
+    input: ["text"], inputConfirmed: true, video: { native: false, frames: false, preferred: "none" }, audio: { native: false, extract: false },
+  });
+  expect(configuredCapabilities([{ ...base, config: { apiType: "openai", input: ["text", "image", "video"], output: ["text"] } }], "provider/gemini")).toMatchObject({
+    input: ["text", "image", "video"], inputConfirmed: true, video: { native: true, frames: true, preferred: "native" },
+  });
+  expect(configuredCapabilities([{ ...base, config: { apiType: "openai", input: ["text", "image"], output: ["text"] } }], "provider/gemini")).toMatchObject({
+    input: ["text", "image"], inputConfirmed: true, video: { native: false, frames: true, preferred: "frames" },
+  });
+  expect(configuredCapabilities([{ ...base, config: { apiType: "google", output: ["text"] } }], "provider/gemini")).toMatchObject({
+    input: ["text"], inputConfirmed: false,
+  });
 });
 
 test("Gemini attaches a downloaded tool video to the next request and ignores it after cleanup", async () => {

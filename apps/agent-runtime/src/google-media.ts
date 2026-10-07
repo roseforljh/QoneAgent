@@ -3,7 +3,9 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type {
+  AssistantMessageEvent,
   AssistantMessageEventStream,
   ImageContent,
   Model,
@@ -12,6 +14,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { streamSimple as streamGoogle } from "@earendil-works/pi-ai/api/google-generative-ai";
 import type { MessageAttachmentInfo } from "@qone/protocol";
+import { reportMediaPhase } from "./media-phase.js";
 
 const GOOGLE_API_VERSION = "/v1beta";
 const LARGE_MEDIA_BYTES = 4 * 1024 * 1024;
@@ -64,6 +67,15 @@ export function verifiedLocalMedia(encoded: string, signature: string): ReturnTy
 
 function dataBytes(base64: string): number {
   return Math.floor(base64.length * 0.75);
+}
+
+function containsGoogleMedia(payload: unknown): boolean {
+  try {
+    const value = JSON.stringify(payload);
+    return Boolean(value && (value.includes("QONE_MEDIA") || value.includes("inlineData") || value.includes("fileData")));
+  } catch {
+    return false;
+  }
 }
 
 function apiRoot(baseUrl: string): URL {
@@ -328,12 +340,58 @@ export function googleStreamSimple(
   allowYouTube = true,
   allowedInput?: readonly string[],
 ): AssistantMessageEventStream {
-  const onPayload = options?.onPayload;
-  return streamGoogle(model as never, context, {
-    ...options,
-    onPayload: async (payload, requestModel) => {
-      const rewritten = await prepareGooglePayload(payload, requestModel as Model<any>, options?.apiKey, options?.signal, allowYouTube, allowedInput);
-      return onPayload ? (await onPayload(rewritten, requestModel)) ?? rewritten : rewritten;
-    },
-  });
+  const createStream = (streamOptions?: SimpleStreamOptions) => {
+    const onPayload = streamOptions?.onPayload;
+    return streamGoogle(model as never, context, {
+      ...streamOptions,
+      onPayload: async (payload, requestModel) => {
+        const hasMedia = containsGoogleMedia(payload);
+        if (hasMedia) reportMediaPhase("started");
+        const rewritten = await prepareGooglePayload(payload, requestModel as Model<any>, streamOptions?.apiKey, streamOptions?.signal, allowYouTube, allowedInput);
+        if (hasMedia) reportMediaPhase("completed");
+        return onPayload ? (await onPayload(rewritten, requestModel)) ?? rewritten : rewritten;
+      },
+    });
+  };
+  const primary = createStream(options);
+  if (!options?.reasoning || options.reasoning === "minimal") return primary;
+
+  const recovered = createAssistantMessageEventStream();
+  void (async () => {
+    const buffered: AssistantMessageEvent[] = [];
+    let visibleContent = false;
+    const hasThinking = (events: readonly AssistantMessageEvent[]) => events.some((event) => event.type === "thinking_start" || event.type === "thinking_delta" || event.type === "thinking_end");
+    const hasUsableOutput = (message: Extract<AssistantMessageEvent, { type: "done" }>['message']) => message.content.some((part) => (part.type === "text" && part.text.trim().length > 0) || part.type === "toolCall");
+    const isRecoverableError = (event: AssistantMessageEvent) => event.type === "error" && /Google stream ended without a finish reason|operation timed out/i.test(event.error.errorMessage ?? "");
+    const shouldRecover = (event: AssistantMessageEvent) => {
+      if (visibleContent || !hasThinking([...buffered, event])) return false;
+      if (isRecoverableError(event)) return true;
+      return event.type === "done" && !hasUsableOutput(event.message);
+    };
+    const retryWithMinimalThinking = async () => {
+      const retry = createStream({ ...options, reasoning: "minimal" });
+      for await (const event of retry) {
+        recovered.push(event);
+        if (event.type === "done" || event.type === "error") return;
+      }
+    };
+    for await (const event of primary) {
+      if (shouldRecover(event)) {
+        await retryWithMinimalThinking();
+        return;
+      }
+      if (!visibleContent && (event.type === "text_start" || event.type === "text_delta" || event.type === "toolcall_start" || event.type === "toolcall_delta" || event.type === "toolcall_end")) {
+        visibleContent = true;
+        for (const pending of buffered) recovered.push(pending);
+        buffered.length = 0;
+      }
+      if (visibleContent) recovered.push(event);
+      else buffered.push(event);
+      if (event.type === "done" || event.type === "error") {
+        for (const pending of buffered) recovered.push(pending);
+        return;
+      }
+    }
+  })();
+  return recovered;
 }

@@ -34,8 +34,42 @@ test("Bilibili recognition uses the embedded app route before fallback adapters"
   try {
     const result = await createVideoDownloadTool(options).execute("call", { url: "https://www.bilibili.com/video/BV1xx411c7mD" }, new AbortController().signal);
     expect((result.details as { source: string }).source).toBe("哔哩哔哩 yt-dlp");
+    expect(JSON.stringify(result.content)).toContain("完整视频并选择原生视频输入");
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native video input wins over frame extraction when both capabilities are selected", async () => {
+  const { options, dirs } = setup(["text", "image", "video"]);
+  const directory = await mkdtemp(path.join(tmpdir(), "qone-native-video-url-test-"));
+  const filePath = path.join(directory, "video.mp4");
+  await writeFile(filePath, Buffer.from([0, 1, 2]));
+  options.bilibiliDownload = async () => ({ path: filePath, mimeType: "video/mp4", directory });
+  try {
+    const result = await createVideoDownloadTool(options).execute("call", { url: "https://www.bilibili.com/video/BV1xx411c7mD" }, new AbortController().signal);
+    expect(result.details).toMatchObject({ transport: "native-video", videoRead: true, fullVideoAttached: true, framesExtracted: 0, audioExtracted: false, timestampsApplied: false });
+    expect(JSON.stringify(result.content)).toContain("QONE_MEDIA");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    for (const value of dirs) await rm(value, { recursive: true, force: true });
+  }
+});
+
+test("native video input keeps whole-video recognition out of the frame tool", async () => {
+  const { options, dirs } = setup(["text", "video"]);
+  const [staging, useFile] = createVideoFallbackTools(options);
+  const staged = await staging!.execute("call", {}, new AbortController().signal);
+  const directory = (staged.details as { directory: string }).directory;
+  const video = path.join(directory, "clip.mp4");
+  await writeFile(video, Buffer.from([0, 1, 2]));
+  try {
+    const result = await useFile!.execute("call", { path: video, timestamps: [10, 20] }, new AbortController().signal);
+    expect(result.details).toMatchObject({ transport: "native-video", videoRead: true, fullVideoAttached: true, framesExtracted: 0, audioExtracted: false, timestampsApplied: false });
+    expect(JSON.stringify(result.content)).toContain("未应用 timestamps");
+    expect(JSON.stringify(result.content)).toContain("QONE_MEDIA");
+  } finally {
+    for (const dir of dirs) await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -53,7 +87,7 @@ test("Gemini video recognition refuses a YouTube download so the native URL path
   }, new AbortController().signal)).rejects.toThrow("Gemini 可直接识别 YouTube 链接，无需下载");
 });
 
-test("Chat Completions audio model can use a downloaded audio file, but cannot claim video input", async () => {
+test("Chat Completions audio model can use a downloaded audio file", async () => {
   const chatModel = { provider: "provider", id: "chat-audio", api: "openai-completions" };
   const { options, dirs } = setup(["text", "audio"], chatModel);
   const [staging, useFile] = createVideoFallbackTools(options);
@@ -63,10 +97,8 @@ test("Chat Completions audio model can use a downloaded audio file, but cannot c
     const audio = path.join(directory, "sound.mp3");
     await writeFile(audio, Buffer.from([1, 2]));
     const result = await useFile!.execute("call", { path: audio }, new AbortController().signal);
+    expect(result.details).toMatchObject({ transport: "audio", videoRead: false, audioExtracted: true, framesExtracted: 0, fullVideoAttached: false });
     expect(JSON.stringify(result.content)).toContain("QONE_MEDIA");
-    const videoConfigured = setup(["text", "video", "audio"], chatModel);
-    await expect(createVideoDownloadTool(videoConfigured.options).execute("call", { url: "https://example.test/clip.mp4" }, new AbortController().signal))
-      .rejects.toThrow("需要画面时请配置图像输入");
   } finally {
     for (const dir of dirs) await rm(dir, { recursive: true, force: true });
   }
@@ -77,7 +109,7 @@ if (ffmpeg) test("non-Gemini visual model receives selected still frames through
   const directory = await mkdtemp(path.join(tmpdir(), "qone-frame-tool-test-"));
   const video = path.join(directory, "clip.mp4");
   const modelWithVision = { provider: "provider", id: "vision", api: "openai-responses" };
-  const { options, dirs } = setup(["text", "image", "video"], modelWithVision);
+  const { options, dirs } = setup(["text", "image"], modelWithVision);
   try {
     await promisify(execFile)(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error",
       "-f", "lavfi", "-i", "color=c=red:s=32x32:r=2", "-t", "0.5", "-c:v", "mpeg4", video], { windowsHide: true });
@@ -92,9 +124,10 @@ if (ffmpeg) test("non-Gemini visual model receives selected still frames through
     const info = await useFile!.execute("call", { path: stagedPath }, new AbortController().signal);
     expect((info.details as { duration: number; videoRead: boolean }).duration).toBeGreaterThan(0);
     expect((info.details as { videoRead: boolean }).videoRead).toBe(false);
-    const result = await useFile!.execute("call", { path: stagedPath, timestamps: [0] }, new AbortController().signal);
-    expect((result.details as { transport: string; frameCount: number }).transport).toBe("image-frames");
-    expect((result.details as { frameCount: number }).frameCount).toBeGreaterThan(0);
+    const result = await useFile!.execute("call", { path: stagedPath, mode: "frames", timestamps: [0] }, new AbortController().signal);
+    expect(result.details).toMatchObject({ transport: "image-frames", timestampsApplied: true, fullVideoAttached: false, audioExtracted: false });
+    expect((result.details as { frameCount: number; framesExtracted: number }).frameCount).toBeGreaterThan(0);
+    expect((result.details as { framesExtracted: number }).framesExtracted).toBeGreaterThan(0);
     expect(result.content.some((part) => part.type === "image")).toBe(true);
   } finally {
     for (const value of dirs) await rm(value, { recursive: true, force: true });
@@ -131,7 +164,7 @@ if (ffmpeg) test("attachment audio is extracted only when the consuming agent ca
     expect(dirs.size).toBe(0);
     const result = await tool.execute("call", { attachmentId: "video-ref" }, new AbortController().signal);
     expect(JSON.stringify(result.content)).toContain("QONE_MEDIA");
-    expect((result.details as { videoRead: boolean }).videoRead).toBe(false);
+    expect(result.details).toMatchObject({ transport: "audio", videoRead: false, audioExtracted: true, framesExtracted: 0, fullVideoAttached: false });
     expect(media).toHaveLength(1);
     expect(await readFile(video)).toEqual(original);
   } finally {
@@ -160,7 +193,7 @@ if (ffmpeg) test("video attachment frames are extracted only by a capable consum
     expect((info.details as { duration: number; videoRead: boolean }).duration).toBeGreaterThan(0);
     expect((info.details as { videoRead: boolean }).videoRead).toBe(false);
     const result = await tool.execute("call", { attachmentId: "video-ref", timestamps: [0] }, new AbortController().signal);
-    expect((result.details as { transport: string; frameCount: number }).transport).toBe("image-frames");
+    expect(result.details).toMatchObject({ transport: "image-frames", timestampsApplied: true, framesExtracted: expect.any(Number) });
     expect(result.content.some((part) => part.type === "image")).toBe(true);
     expect(result.content.some((part) => part.type === "text" && part.text.includes("画面时间：0 秒"))).toBe(true);
     const request = convertResponsesMessages({ provider: "provider", id: "vision", api: "openai-responses", input: ["text", "image"] } as never,
@@ -189,7 +222,7 @@ if (ffmpeg) test("a model configured for both media types can request only the s
   const directory = await mkdtemp(path.join(tmpdir(), "qone-video-audio-mode-test-"));
   const source = path.join(directory, "clip.mp4");
   const dualModel = { provider: "provider", id: "dual", api: "openai-completions" };
-  const { options, dirs } = setup(["text", "video", "audio"], dualModel);
+  const { options, dirs } = setup(["text", "audio"], dualModel);
   try {
     await promisify(execFile)(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error",
       "-f", "lavfi", "-i", "color=c=black:s=16x16:r=2",
@@ -202,7 +235,7 @@ if (ffmpeg) test("a model configured for both media types can request only the s
     const result = await useFile!.execute("call", { path: stagedPath, mode: "audio" }, new AbortController().signal);
     expect((result.details as { videoRead: boolean }).videoRead).toBe(false);
     expect(JSON.stringify(result.content)).toContain("QONE_MEDIA");
-    const visual = setup(["text", "video", "audio", "image"], dualModel);
+    const visual = setup(["text", "audio", "image"], dualModel);
     try {
       const [visualStaging, visualUseFile] = createVideoFallbackTools(visual.options);
       const prepared = await visualStaging!.execute("call", {}, new AbortController().signal);
@@ -213,7 +246,7 @@ if (ffmpeg) test("a model configured for both media types can request only the s
       expect(frames.content.some((part) => part.type === "image")).toBe(true);
       const sound = await visualUseFile!.execute("call", { path: sameFile, mode: "audio" }, new AbortController().signal);
       expect(JSON.stringify(sound.content)).toContain("QONE_MEDIA");
-      expect((sound.details as { videoRead: boolean }).videoRead).toBe(false);
+      expect(sound.details).toMatchObject({ transport: "audio", videoRead: false, audioExtracted: true, framesExtracted: 0 });
     } finally {
       for (const value of visual.dirs) await rm(value, { recursive: true, force: true });
     }

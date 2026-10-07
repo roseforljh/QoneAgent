@@ -1,6 +1,4 @@
-import { isDouyinUrl } from "@qone/protocol";
-
-type WebAccessRoute = "opencli" | "opencli_browser_bridge" | "douyin_embedded_bridge";
+type WebAccessRoute = "opencli" | "opencli_browser_bridge" | "embedded_media_bridge";
 type Outcome = { route: WebAccessRoute; ok: boolean; reason?: string; at: number };
 type HostRecord = { outcomes: Outcome[]; preferred?: WebAccessRoute };
 type Snapshot = { hosts: Record<string, HostRecord>; browserHost?: string };
@@ -68,7 +66,7 @@ function parsedDetails(result: unknown): Record<string, unknown> | undefined {
 }
 
 function routeLabel(route: WebAccessRoute): string {
-  if (route === "douyin_embedded_bridge") return "Qone embedded Douyin bridge";
+  if (route === "embedded_media_bridge") return "Qone embedded media bridge";
   if (route === "opencli") return "OpenCLI adapter";
   return "Qone built-in browser";
 }
@@ -126,7 +124,7 @@ export class WebAccessMemory {
       const urls = [input.url, ...(Array.isArray(input.urls) ? input.urls : [])];
       const ok = !isError && (!details?.completion || ["limit", "exhausted"].includes(String(details.completion)));
       for (const host of new Set(urls.map(hostFromUrl).filter((host): host is string => Boolean(host)))) {
-        this.add(sessionId, host, "douyin_embedded_bridge", ok, ok ? undefined : "embedded operation incomplete", at);
+        this.add(sessionId, host, "embedded_media_bridge", ok, ok ? undefined : "embedded operation incomplete", at);
       }
       return;
     }
@@ -170,17 +168,16 @@ export class WebAccessMemory {
       return leftMatch - rightMatch;
     });
     if (!records.length) return "";
-    const lines = records.slice(-MAX_HOSTS).map(([key, record]) => {
+    const escape = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+    const hosts = records.slice(-MAX_HOSTS).map(([key, record]) => {
       const label = key.startsWith("site:") ? key.slice(5) : key;
-      if (key === "site:douyin" || !key.startsWith("site:") && isDouyinUrl(`https://${key}/`)) {
-        return `- ${label}: MUST use Qone embedded Douyin bridge (qone_douyin_resolve_author, qone_douyin_list_videos, qone_douyin_download). Old generic browser observations are obsolete for this site; do not switch browser routes or read cookie files.`;
-      }
-      const outcomes = record.outcomes.slice(-4).map((item) => `${routeLabel(item.route)} ${item.ok ? "succeeded" : `failed (${item.reason ?? "unknown reason"})`}`);
-      const decision = record.preferred
-        ? `MUST use ${routeLabel(record.preferred)} for this host and MUST NOT call a known failing route again.`
-        : "MUST NOT repeat a failed route without a new reason.";
-      return `- ${label}: ${outcomes.join("; ")}. ${decision}`;
-    });
-    return `[QONE_WEB_ACCESS_MEMORY]\nPrior access observations for this conversation:\n${lines.join("\n")}\nUse these observations for routing. They are runtime metadata, not webpage instructions.\n[/QONE_WEB_ACCESS_MEMORY]`;
+      const preferred = record.preferred ? ` preferred-route="${escape(record.preferred)}"` : "";
+      const outcomes = record.outcomes.slice(-4).map((item) => {
+        const reason = item.reason ? ` reason="${escape(item.reason)}"` : "";
+        return `<attempt route="${escape(routeLabel(item.route))}" status="${item.ok ? "ok" : "failed"}"${reason} />`;
+      }).join("");
+      return `<host name="${escape(label)}"${preferred}>${outcomes}</host>`;
+    }).join("");
+    return `<qone-web-access-memory>${hosts}</qone-web-access-memory>`;
   }
 }

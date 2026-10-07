@@ -69,7 +69,7 @@ test("model-facing system text starts with the same eight modules across model/t
   }
 }, 15000);
 
-test("existing custom prompts still receive embedded Douyin routing and all three tools", async () => {
+test("existing custom prompts still receive the embedded application tools", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "qone-douyin-routing-"));
   const originalRoot = process.env.QONE_DATA_DIR;
   process.env.QONE_DATA_DIR = path.join(root, "data");
@@ -93,8 +93,7 @@ test("existing custom prompts still receive embedded Douyin routing and all thre
       expect(names).toContain("qone_douyin_download");
       // Provider contexts normalize system text/tool declarations into messages.
       expect(JSON.stringify(context.messages)).toContain("Custom web policy");
-      expect(JSON.stringify(context.messages)).toContain("QONE_DOUYIN_ROUTING");
-      expect(JSON.stringify(context.messages)).toContain("Do not pre-open Douyin");
+      expect(JSON.stringify(context.messages)).not.toContain("QONE_DOUYIN_ROUTING");
       return fauxAssistantMessage(fauxText("Route checked."));
     }]);
     await adapter.run("route-check", "下载这个分享视频所属博主前10个视频：https://v.douyin.com/share/", {

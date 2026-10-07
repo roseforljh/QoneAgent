@@ -89,6 +89,7 @@ describe("capability subagent routing", () => {
     const catalog = subagentCatalog(config);
     expect(catalog.capabilities.map((item) => item.capability)).toEqual(["videoRecognition", "stt"]);
     expect(catalog.capabilities.find((item) => item.capability === "videoRecognition")?.description).toContain("视频内容识别");
+    expect(catalog.capabilities.find((item) => item.capability === "videoRecognition")?.description).toContain("根据用户对视频或相关文件提出的目标");
     expect(catalog.unconfiguredCapabilities).toEqual(["imageGeneration", "videoGeneration", "tts"]);
     expect(catalog.temporary).toMatchObject({ id: "temporary", name: "临时通用代理" });
     expect(catalog.profiles.map((item) => item.id)).toEqual(["researcher"]);

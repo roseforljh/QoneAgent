@@ -28,8 +28,8 @@ describe("OpenCLI gateway", () => {
       const open = service.tools().find((tool) => tool.name === "qone_opencli_run");
       const discover = service.tools().find((tool) => tool.name === "qone_opencli_discover");
       const screenshot = service.tools().find((tool) => tool.name === "qone_browser_screenshot");
-      expect(open?.description).toContain("use this route directly");
-      expect(discover?.description).toContain("even when the URL is public");
+      expect(open?.description).toContain("built-in browser profile");
+      expect(discover?.description).toContain("Pass a site");
       expect(screenshot?.description).toContain("full page");
       expect(service.tools().find((tool) => tool.name === "qone_browser_extract")?.description).toContain("readable Markdown");
       expect(toolRefreshes).toBe(1);
@@ -88,7 +88,7 @@ describe("OpenCLI gateway", () => {
       const discover = service.tools().find((item) => item.name === "qone_opencli_discover")!;
       const run = service.tools().find((item) => item.name === "qone_opencli_run")!;
       expect(discover.description).toContain("built-in browser profile");
-      expect(run.description).toContain("There is no external browser fallback");
+      expect(run.description).toContain("raw adapter arguments");
       expect(service.status().targetConnected).toBe(false);
     } finally { closeDb(db); }
   });

@@ -120,8 +120,8 @@ export const runtimeCopyCore = {
     "zh-CN": "OpenCLI 操作超时"
   },
   "browser-sync.douyin_embedded_route_required": {
-    "en": "Douyin uses Qone's embedded browser. Use qone_douyin_resolve_author for a share/video URL, qone_douyin_list_videos for a creator and qone_douyin_download to save files. Do not switch browser routes or extract cookies.",
-    "zh-CN": "抖音使用 Qone 内置浏览器。视频或分享链接调用 qone_douyin_resolve_author，博主列表调用 qone_douyin_list_videos，保存文件调用 qone_douyin_download；无需切换浏览器链路或提取 Cookie。"
+    "en": "The embedded media route is unavailable for this request",
+    "zh-CN": "当前请求无法使用内置媒体链路"
   },
   "browser-sync.opencli_exit_code": {
     "en": "OpenCLI exit code {p0}",
@@ -144,12 +144,12 @@ export const runtimeCopyCore = {
     "zh-CN": "OpenCLI 的 site 和 command 只能包含字母、数字、下划线或短横线"
   },
   "browser-sync.bilibili_download_must_use_qone_app_download": {
-    "en": "Bilibili downloads must use qone_app_download first; OpenCLI is available only as an automatic fallback",
-    "zh-CN": "B站下载必须先使用 qone_app_download；OpenCLI 仅作为自动兜底"
+    "en": "The primary media download route failed; the fallback route is unavailable",
+    "zh-CN": "主要媒体下载链路失败，备用链路不可用"
   },
   "browser-sync.bilibili_embedded_route_required": {
-    "en": "Bilibili content reading must use Qone's embedded route: use qone_bilibili_search for search, qone_app_inspect for metadata, and qone_video_download followed by qone_video_use_file for subtitles, parsing, or summaries. OpenCLI is only an internal fallback after an embedded download failure.",
-    "zh-CN": "B站内容读取必须使用 Qone 内置链路：搜索用 qone_bilibili_search，元数据用 qone_app_inspect，字幕、解析和总结用 qone_video_download 后接 qone_video_use_file。OpenCLI 只能在内置下载确实失败后由 Qone 内部自动兜底。"
+    "en": "The embedded media route is unavailable for this request",
+    "zh-CN": "当前请求无法使用内置媒体链路"
   },
   "browser-sync.opencli_returned_no_available_adapter_commands": {
     "en": "OpenCLI returned no available adapter commands",
@@ -320,8 +320,8 @@ export const runtimeCopyCore = {
     "zh-CN": "视频附件 {p0} 没有可读取的本地路径或 Base64 数据"
   },
   "media-tool.video_retrieved_through_local_file_choose_timestamps_as_needed": {
-    "en": "Video retrieved through {p0}. Local file: {p1}. {p2}. Choose timestamps as needed, then call qone_video_use_file with path and timestamps (seconds) to read frames; use mode=audio on the same path to read audio. No frames or audio have been read yet.",
-    "zh-CN": "已通过 {p0} 获取视频。本地文件：{p1}。{p2}。按任务需要选择时间点，再调用 qone_video_use_file，传 path 和 timestamps（秒）读取画面；需要声音时对相同路径设置 mode=audio。当前尚未读取画面或声音。"
+    "en": "Video retrieved through {p0}. Local file: {p1}. {p2}. To read selected frames, call qone_video_use_file with mode=frames and timestamps (seconds); use mode=audio on the same path to read audio. No frames or audio have been read yet.",
+    "zh-CN": "已通过 {p0} 获取视频。本地文件：{p1}。{p2}。需要读取指定画面时，调用 qone_video_use_file 并设置 mode=frames 和 timestamps（秒）；需要声音时对相同路径设置 mode=audio。当前尚未读取画面或声音。"
   },
   "media-tool.douyin_page_bridge_not_connected": {
     "en": "The Douyin page bridge is not connected; sign in to Douyin in the app first",
@@ -447,6 +447,18 @@ export const runtimeCopyCore = {
     "en": "Video downloaded through {p0}; local path: {p1}\nMedia input: {p2}\nActual source: full video file.",
     "zh-CN": "已通过 {p0} 下载视频，本地路径：{p1}\n媒体输入：{p2}\n实际来源：完整视频文件。"
   },
+  "media-tool.native_video_already_attached_analyze_directly": {
+    "en": "The complete video input is selected. The runtime will transmit it with the next model request. No frames or audio were extracted in this operation. Local file: {p0}\nMedia input marker: {p1}",
+    "zh-CN": "当前已选择完整视频输入，运行时将在下一次模型请求中负责传输。本次没有抽帧，也没有提取音频。本地文件：{p0}\n媒体输入标记：{p1}"
+  },
+  "media-tool.native_video_downloaded_analyze_directly": {
+    "en": "The complete video downloaded through {p0} is selected. The runtime will transmit it with the next model request. No frames or audio were extracted in this operation. Local file: {p1}\nMedia input marker: {p2}",
+    "zh-CN": "已通过 {p0} 获取完整视频并选择原生视频输入，运行时将在下一次模型请求中负责传输。本次没有抽帧，也没有提取音频。本地文件：{p1}\n媒体输入标记：{p2}"
+  },
+  "media-tool.native_video_timestamps_not_applied": {
+    "en": "The complete video input is selected. The runtime will transmit it with the next model request. timestamps were not applied because native video input reads the full file; no frames or audio were extracted in this operation. Local file: {p0}\nMedia input marker: {p1}",
+    "zh-CN": "当前已选择完整视频输入，运行时将在下一次模型请求中负责传输。原生视频输入读取完整文件，因此未应用 timestamps；本次没有抽帧，也没有提取音频。本地文件：{p0}\n媒体输入标记：{p1}"
+  },
   "media-tool.the_current_model_cannot_process_video_or_audio_delegate": {
     "en": "The current model cannot process video or audio; delegate the original URL without downloading it first",
     "zh-CN": "当前模型无法处理视频或音频；请委派原始链接，勿提前下载"
@@ -523,6 +535,14 @@ export const runtimeCopyCore = {
     "en": "[The current model has no audio input capability configured; delegate to a subagent]",
     "zh-CN": "[当前模型未配置音频输入能力；请委派子代理]"
   },
+  "openai-audio.the_current_model_has_no_video_input_capability_configured": {
+    "en": "[The current model has no video input capability configured; delegate to a subagent]",
+    "zh-CN": "[当前模型未配置视频输入能力；请委派子代理]"
+  },
+  "openai-audio.media_file_was_unavailable_for_native_input": {
+    "en": "[The native media file was unavailable]",
+    "zh-CN": "[原生媒体文件不可用]"
+  },
   "openai-audio.the_media_file_was_cleaned_up_or_is_missing": {
     "en": "[The media file was cleaned up or is missing; provide it again]",
     "zh-CN": "[媒体文件已清理或不存在；请重新提供]"
@@ -535,10 +555,6 @@ export const runtimeCopyCore = {
     "en": "[The current API format does not support video file input; delegate to a subagent that can process video]",
     "zh-CN": "[当前 API 格式未接通视频文件输入；请委派能处理视频的子代理]"
   },
-  "pi-adapter.use_these_configured_capabilities_to_determine_whether_media_can": {
-    "en": "<runtime-media-capabilities input=\"{p0}\" output=\"{p1}\">Use these configured capabilities to determine whether media can be processed. If a capability is missing, delegate the original URL or attachment based on enabled subagent descriptions; do not download it first. If no suitable subagent exists, explain the missing capability and stop; do not pretend to have recognized the media.</runtime-media-capabilities>",
-    "zh-CN": "<runtime-media-capabilities input=\"{p0}\" output=\"{p1}\">按这些勾选项判断能否处理媒体。缺少能力时先按已启用子代理的描述委派原始链接或附件；不要提前下载。没有合适子代理则说明缺少的能力并停止，不能假装已识别。</runtime-media-capabilities>"
-  },
   "pi-adapter.the_current_model_cannot_directly_read_some_attachments_only": {
     "en": "<media-routing-candidates>{p0}</media-routing-candidates>\nThe current model cannot directly read some attachments. Only if their content is required, select a suitable enabled subagent using the descriptions above and delegate the original attachments. If no suitable subagent exists, state that the task cannot be completed; do not guess attachment content.",
     "zh-CN": "<media-routing-candidates>{p0}</media-routing-candidates>\n当前模型不能直接读取部分附件。仅在任务需要其内容时，按上述已启用子代理的描述选择合适代理，委派原始附件；没有合适代理则明确说明无法完成，不要猜测附件内容。"
@@ -547,9 +563,21 @@ export const runtimeCopyCore = {
     "en": "The current model cannot directly read some attachments and cannot delegate further at this execution depth. If their content is required, explain that the task cannot be completed; do not guess.",
     "zh-CN": "当前模型不能直接读取部分附件，且当前执行层级无法继续委派。任务需要这些附件内容时须明确说明无法完成，不要猜测。"
   },
-  "pi-adapter.the_current_api_format_has_no_general_video_file": {
-    "en": "The current API format has no general video file field, and the model has no image input configured; delegate the original video attachment if frames are needed.",
-    "zh-CN": "当前 API 格式没有通用的视频文件字段，且当前模型未配置图像输入；需要画面时请委派原始视频附件。"
+  "pi-adapter.video_recognition_subagent_title": {
+    "en": "Read video with the configured video agent",
+    "zh-CN": "使用已配置的视频识别子代理读取视频"
+  },
+  "pi-adapter.video_recognition_subagent_reason": {
+    "en": "The current model cannot read native video input; route the original video to the configured video recognition agent first.",
+    "zh-CN": "当前模型不能原生读取视频输入，先把原视频交给已配置的视频识别子代理。"
+  },
+  "pi-adapter.video_recognition_subagent_expected_result": {
+    "en": "Return the video findings needed to answer the user's request.",
+    "zh-CN": "返回回答用户请求所需的视频识别结果。"
+  },
+  "pi-adapter.video_recognition_subagent_result": {
+    "en": "<media-routing-result status=\"{p0}\">\n{p1}\n</media-routing-result>",
+    "zh-CN": "<media-routing-result status=\"{p0}\">\n{p1}\n</media-routing-result>"
   },
   "pi-adapter.no_api_key_configured_for_speech_provider": {
     "en": "No API key configured for speech provider {p0}",
@@ -575,10 +603,6 @@ export const runtimeCopyCore = {
     "en": "Video generated: {p0}",
     "zh-CN": "已生成视频：{p0}"
   },
-  "pi-attachments.delegate_original_attachments_without_preprocessing_if_the_executing_agent": {
-    "en": "<runtime-video-attachments>\n{p0}\nDelegate original attachments without preprocessing. If the executing agent uses an API other than Gemini and has video and image input configured, call qone_media_extract_frames to read the duration, then pass timestamps to read still frames as needed. If only audio is needed and audio input is configured, call qone_media_extract_audio. Pass attachmentId to either tool.\n</runtime-video-attachments>",
-    "zh-CN": "<runtime-video-attachments>\n{p0}\n需要委派时直接传原始附件，勿提前处理。最终执行代理若使用非 Gemini API 格式且配置了视频和图像输入，先用 qone_media_extract_frames 读取时长，再传 timestamps 按需读取静态画面；只需声音且配置了音频输入时，可调用 qone_media_extract_audio。两者都传 attachmentId。\n</runtime-video-attachments>"
-  },
   "pi-attachments.could_not_read_local_attachment": {
     "en": "Could not read local attachment: {p0}",
     "zh-CN": "无法读取本地附件：{p0}"
@@ -586,26 +610,6 @@ export const runtimeCopyCore = {
   "pi-attachments.folder_attachment_no_readable_local_path_attach_it_again": {
     "en": "[Folder attachment {p0}: no readable local path; attach it again]",
     "zh-CN": "[文件夹附件 {p0}：没有可读取的本地路径，请重新附加]"
-  },
-  "pi-attachments.image_attachment_the_current_model_has_no_image_input": {
-    "en": "[Image attachment {p0}: the current model has no image input configured; delegate to a subagent that can process images]",
-    "zh-CN": "[图片附件 {p0}：当前模型未配置图像输入能力，需交给能处理图片的子代理]"
-  },
-  "pi-attachments.the_current_api_format_has_no_direct_video_file": {
-    "en": "The current API format has no direct video file input; the executing agent must read video frames as needed",
-    "zh-CN": "当前 API 格式没有直接的视频文件输入；需要画面时由最终执行代理按需读取画面帧"
-  },
-  "pi-attachments.the_current_model_can_call_qone_media_extract_audio": {
-    "en": "The current model can call qone_media_extract_audio to read audio as needed; delegate the original attachment if frames are required",
-    "zh-CN": "当前模型可按需调用 qone_media_extract_audio 读取声音；若任务需要画面，请委派原始附件"
-  },
-  "pi-attachments.the_current_model_cannot_read_this_media_directly_delegate": {
-    "en": "The current model cannot read this media directly; delegate to a subagent that can process it",
-    "zh-CN": "当前模型无法直接读取，需交给能处理该媒体的子代理"
-  },
-  "pi-attachments.media_attachment": {
-    "en": "[Media attachment {p0} ({p1}): {p2}]",
-    "zh-CN": "[媒体附件 {p0}（{p1}）：{p2}]"
   },
   "pi-attachments.attachment_no_readable_local_path_attach_it_again_from": {
     "en": "[Attachment {p0}: no readable local path; attach it again from disk to use file tools]",

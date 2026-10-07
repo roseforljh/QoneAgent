@@ -158,6 +158,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
       message: string;
       goal?: boolean;
       goalContinuation?: boolean;
+      continuation?: boolean;
       attachments?: MessageAttachmentInfo[];
       quote?: MessageQuoteInfo;
       messageId?: string;
@@ -892,7 +893,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
-  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "medium", "high", "xhigh", "max"]).optional(), queueItemId: id.optional(), mcpServerId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && nonMediaAttachmentBytes(run.attachments) <= 140_000_000, "Message or valid attachments required"),
+  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), continuation: z.boolean().optional(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "medium", "high", "xhigh", "max"]).optional(), queueItemId: id.optional(), mcpServerId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && nonMediaAttachmentBytes(run.attachments) <= 140_000_000, "Message or valid attachments required"),
   "agent.permission-mode.set": z.object({ type: z.literal("agent.permission-mode.set"), ...request, sessionId: id, permissionMode: z.enum(["ask", "auto", "full"]) }),
   "global-prompt.get": z.object({ type: z.literal("global-prompt.get"), ...request }),
   "global-prompt.set": z.object({ type: z.literal("global-prompt.set"), ...request, content: z.string().max(200_000) }),

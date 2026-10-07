@@ -497,7 +497,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         services.queueRepo.remove(cmd.sessionId, cmd.queueItemId);
         services.sendQueue(cmd.sessionId);
       }
-      if (!cmd.goalContinuation && !cmd.replaceFromMessageId) {
+      if (!cmd.continuation && !cmd.goalContinuation && !cmd.replaceFromMessageId) {
         cmd.replaceFromMessageId = repeatedUserMessageId(services.messageRepo.listBySession(cmd.sessionId).map(message => ({
           ...message,
           attachments: message.attachments ? JSON.parse(message.attachments) as MessageAttachmentInfo[] : undefined,
@@ -578,9 +578,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           const cancelled = services.cancelledRuns.delete(run.id);
           const parts = services.assistantPartsByRun.get(run.id) ?? [];
           const assistantMessage = services.persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
-          if (!assistantMessage && !cancelled && !services.persistedAssistantRuns.has(run.id)) throw new Error("AI returned an empty response");
           services.releaseUndeliveredSteers(cmd.sessionId, run.id);
-          services.persistedAssistantRuns.delete(run.id);
           services.initialUserMessageSeen.delete(run.id);
           services.assistantBuffers.delete(run.id);
           services.assistantStreamBuffers.delete(run.id);
@@ -621,7 +619,6 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           const parts = services.assistantPartsByRun.get(run.id) ?? [];
           const assistantMessage = services.persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
           services.releaseUndeliveredSteers(cmd.sessionId, run.id);
-          services.persistedAssistantRuns.delete(run.id);
           services.initialUserMessageSeen.delete(run.id);
           services.assistantBuffers.delete(run.id);
           services.assistantStreamBuffers.delete(run.id);

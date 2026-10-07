@@ -89,6 +89,21 @@ export function parseGitStatus(raw: string): WorkspaceGitEntry[] {
 }
 
 export async function workspaceGit(root: string) {
+  // Git also discovers repositories through parent folders and worktree .git files.
+  let directory = await realpath(root);
+  if (!process.env.GIT_DIR) {
+    while (true) {
+      try {
+        await lstat(path.join(directory, ".git"));
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const parent = path.dirname(directory);
+      if (parent === directory) return { entries: [], status: "" };
+      directory = parent;
+    }
+  }
   // porcelain paths are repository-relative even when -C points to a subfolder.
   const repository = (await git(root, ["rev-parse", "--show-toplevel"])).text.trim();
   const result = await git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."], [0], 8_000_000);

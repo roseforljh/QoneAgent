@@ -52,6 +52,7 @@ test("assembly has a fixed order, ignores extra files and normalizes line ending
   expect(readSystemPrompt()).not.toContain("DYNAMIC_CONTENT_MUST_NOT_LOAD");
   expect(readSystemPrompt()).not.toContain("Qone 工作原则");
   expect(readSystemPrompt()).not.toContain("finalize_response");
+  expect(readSystemPrompt()).not.toMatch(/Douyin|TikTok|Reddit|Twitter|X \/ Twitter|qone_douyin|qone_twitter/i);
   const secondRoot = path.join(root, "another-installation", "system-prompts");
   expect(readSystemPrompt(secondRoot)).toBe(expected);
 });

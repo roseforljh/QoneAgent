@@ -49,7 +49,7 @@ test("Chat Completions adds tool audio after the contiguous tool result group", 
   }
 });
 
-test("Chat Completions translates inline audio and refuses a video file marker", async () => {
+test("Chat Completions translates inline audio and video into native parts", async () => {
   const inline = await prepareOpenAICompletionsPayload({ messages: [{ role: "user", content: [
     { type: "text", text: "听这个" },
     { type: "image_url", image_url: { url: "data:audio/mpeg;base64,AQID" } },
@@ -57,8 +57,15 @@ test("Chat Completions translates inline audio and refuses a video file marker",
   expect((inline.messages?.[0]?.content as Array<{ type: string; input_audio?: { format: string } }>)[1]).toMatchObject({
     type: "input_audio", input_audio: { format: "mp3" },
   });
-  await expect(prepareOpenAICompletionsPayload({ messages: [{ role: "user", content: localMediaMarker(path.join(tmpdir(), "clip.mp4"), "video/mp4") }] }, ["text", "video"]))
-    .rejects.toThrow("没有通用的原生视频文件输入");
+  const directory = await mkdtemp(path.join(tmpdir(), "qone-chat-video-test-"));
+  const video = path.join(directory, "clip.mp4");
+  await writeFile(video, Buffer.from([1, 2, 3]));
+  try {
+    const result = await prepareOpenAICompletionsPayload({ messages: [{ role: "user", content: localMediaMarker(video, "video/mp4") }] }, ["text", "video"]);
+    expect((result.messages?.[0]?.content as Array<{ type: string }>)[0]?.type).toBe("video_url");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 const ffmpeg = ffmpegExecutable();

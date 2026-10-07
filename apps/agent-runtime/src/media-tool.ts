@@ -27,30 +27,61 @@ export interface MediaToolOptions {
   attachment?: (runId: string, attachmentId: string) => MessageAttachmentInfo | undefined;
 }
 
-function supportsFrameVideo(model: { api: string; provider: string; id: string }, input: readonly string[]): boolean {
-  return model.api !== "google-generative-ai" && input.includes("video") && input.includes("image");
+function supportsFrameVideo(capabilities: ReturnType<typeof configuredCapabilities>): boolean {
+  return capabilities.video.frames;
 }
 
-function supportsAudioInput(model: { api: string }, input: readonly string[]): boolean {
-  return input.includes("audio") && (model.api === "google-generative-ai" || model.api === "openai-completions");
+function supportsAudioInput(capabilities: ReturnType<typeof configuredCapabilities>): boolean {
+  return capabilities.audio.native;
 }
 
-function supportsVideoInput(model: { api: string; provider: string; id: string }, input: readonly string[]): boolean {
-  return model.api === "google-generative-ai" && input.includes("video") || supportsFrameVideo(model, input);
+function supportsVideoInput(capabilities: ReturnType<typeof configuredCapabilities>): boolean {
+  return capabilities.video.native || capabilities.video.frames;
+}
+
+type MediaTransport = "native-video" | "image-frames" | "audio" | "metadata-only";
+
+type MediaState = {
+  transport: MediaTransport;
+  fullVideoAttached: boolean;
+  framesExtracted: number;
+  audioExtracted: boolean;
+  timestampsApplied: boolean;
+};
+
+function mediaState(transport: MediaTransport, state: Partial<Omit<MediaState, "transport">> = {}): MediaState {
+  return {
+    transport,
+    fullVideoAttached: false,
+    framesExtracted: 0,
+    audioExtracted: false,
+    timestampsApplied: false,
+    ...state,
+  };
 }
 
 async function frameResult(filePath: string, source: string, options: MediaToolOptions, runId: string, timestamps?: number[], signal?: AbortSignal) {
   if (!timestamps) {
     const duration = await videoDuration(filePath, signal);
     return { content: [{ type: "text" as const, text: runtimeText("media-tool.video_retrieved_through_local_file_choose_timestamps_as_needed", { p0: source, p1: filePath, p2: duration === undefined ? runtimeText("media-tool.video_duration_unknown") : runtimeText("media-tool.video_duration_seconds", { p0: duration }) }) }],
-      details: { source, path: filePath, videoRead: false, transport: "image-frames", duration } };
+      details: { source, path: filePath, videoRead: false, duration, ...mediaState("metadata-only") } };
   }
   const frames = await extractVideoFrames(filePath, timestamps, signal);
   options.registerDirectory?.(runId, frames.directory);
   return {
     content: [{ type: "text" as const, text: runtimeText("media-tool.video_retrieved_through_frames_read_at_the_selected_timestamps", { p0: source, p1: frames.frames.length, p2: filePath }) },
       ...frames.frames.flatMap(({ seconds, image }) => [{ type: "text" as const, text: runtimeText("media-tool.frame_timestamp_seconds", { p0: seconds }) }, image])],
-    details: { source, path: filePath, videoRead: true, transport: "image-frames", frameCount: frames.frames.length },
+    details: { source, path: filePath, videoRead: true, frameCount: frames.frames.length, ...mediaState("image-frames", { framesExtracted: frames.frames.length, timestampsApplied: true }) },
+  };
+}
+
+function nativeVideoResult(filePath: string, source: string, mimeType: string, temporary: boolean, messageKey: "download" | "local", timestamps?: number[]) {
+  const content = messageKey === "download"
+    ? runtimeText("media-tool.native_video_downloaded_analyze_directly", { p0: source, p1: filePath, p2: localMediaMarker(filePath, mimeType, true) })
+    : runtimeText(timestamps?.length ? "media-tool.native_video_timestamps_not_applied" : "media-tool.native_video_already_attached_analyze_directly", { p0: filePath, p1: localMediaMarker(filePath, mimeType, temporary) });
+  return {
+    content: [{ type: "text" as const, text: content }],
+    details: { source, path: filePath, mimeType, videoRead: true, ...mediaState("native-video", { fullVideoAttached: true }) },
   };
 }
 
@@ -58,7 +89,7 @@ export function createAttachmentAudioTool(options: MediaToolOptions): ToolDefini
   return {
     name: "qone_media_extract_audio",
     label: "Media · extract sound from attachment",
-    description: "Only when the task needs the sound of a user-attached video and this agent has audio input: use the attachmentId in runtime-video-attachments to extract its sound. The original local file is read in place. This does not read video frames; delegate the original attachment when the task needs the picture.",
+    description: "Extract sound from a video attachment when audio input is configured. The original file is kept.",
     parameters: Type.Object({ attachmentId: Type.String({ minLength: 1 }) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
@@ -66,9 +97,6 @@ export function createAttachmentAudioTool(options: MediaToolOptions): ToolDefini
       const { runId, model } = active;
       const input = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`).input;
       if (!input.includes("audio")) throw runtimeError("media-tool.the_current_model_has_no_audio_input_configured_delegate", {});
-      if (model.api !== "google-generative-ai" && model.api !== "openai-completions") {
-        throw runtimeError("media-tool.the_current_api_format_does_not_support_audio_attachments", {});
-      }
       const attachmentId = (params as { attachmentId: string }).attachmentId;
       const attachment = options.attachment?.(runId, attachmentId);
       if (!attachment || !attachment.mimeType.startsWith("video/")) throw runtimeError("media-tool.no_video_attachment_reference_was_found_for_the_current", {});
@@ -78,7 +106,7 @@ export function createAttachmentAudioTool(options: MediaToolOptions): ToolDefini
       if (!audio?.localPath) throw runtimeError("media-tool.could_not_extract_audio_from_the_video_attachment", {});
       options.registerMedia(runId, audio.localPath, audio.mimeType);
       return { content: [{ type: "text", text: runtimeText("media-tool.audio_extracted_from_the_user_s_video_attachment_no", { p0: localMediaMarker(audio.localPath, audio.mimeType, true) }) }],
-        details: { path: audio.localPath, mimeType: audio.mimeType, videoRead: false } };
+        details: { path: audio.localPath, mimeType: audio.mimeType, videoRead: false, ...mediaState("audio", { audioExtracted: true }) } };
     },
   };
 }
@@ -87,14 +115,14 @@ export function createAttachmentFrameTool(options: MediaToolOptions): ToolDefini
   return {
     name: "qone_media_extract_frames",
     label: "Media · read video picture frames",
-    description: "Read a user-attached video's duration first, then call again with task-relevant timestamps in seconds to read those picture frames. Use its attachmentId from runtime-video-attachments. Requires configured video and image input. The original file stays in place. This does not read sound or the complete video.",
+    description: "Read selected still frames from a video attachment when image input is configured. The original file is kept.",
     parameters: Type.Object({ attachmentId: Type.String({ minLength: 1 }), timestamps: Type.Optional(Type.Array(Type.Number({ minimum: 0 }))) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
       if (!active) throw runtimeError("media-tool.no_media_recognition_task_is_available", {});
       const { runId, model } = active;
-      const input = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`).input;
-      if (!supportsFrameVideo(model, input)) throw runtimeError("media-tool.the_current_model_cannot_read_video_frames_through_the", {});
+      const capability = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`);
+      if (!supportsFrameVideo(capability)) throw runtimeError("media-tool.the_current_model_cannot_read_video_frames_through_the", {});
       const request = params as { attachmentId: string; timestamps?: number[] };
       const attachment = options.attachment?.(runId, request.attachmentId);
       if (!attachment || !attachment.mimeType.startsWith("video/")) throw runtimeError("media-tool.no_video_attachment_reference_was_found_for_the_current", {});
@@ -103,7 +131,7 @@ export function createAttachmentFrameTool(options: MediaToolOptions): ToolDefini
       return {
         content: [{ type: "text" as const, text: request.timestamps ? runtimeText("media-tool.read_frames_from_attachment_at_the_specified_timestamps_no", { p0: attachment.name, p1: prepared.frames.length }) : runtimeText("media-tool.attachment_choose_timestamps_as_needed_and_call_this_tool", { p0: attachment.name, p1: prepared.duration === undefined ? runtimeText("media-tool.video_duration_unknown") : runtimeText("media-tool.video_duration_seconds", { p0: prepared.duration }) }) },
           ...prepared.frames.flatMap(({ seconds, image }) => [{ type: "text" as const, text: runtimeText("media-tool.frame_timestamp_seconds", { p0: seconds }) }, image])],
-        details: { source: "user attachment", videoRead: Boolean(request.timestamps), transport: "image-frames", frameCount: prepared.frames.length, duration: prepared.duration },
+        details: { source: "user attachment", videoRead: Boolean(request.timestamps), frameCount: prepared.frames.length, duration: prepared.duration, ...mediaState(request.timestamps ? "image-frames" : "metadata-only", { framesExtracted: prepared.frames.length, timestampsApplied: Boolean(request.timestamps) }) },
       };
     },
   };
@@ -113,8 +141,7 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
   return {
     name: "qone_video_download",
     label: "Video · download for recognition",
-    description: "Get an online video or its audio for this agent's own recognition. Set mode=audio when only sound is needed. Non-Gemini visual input returns the local path and duration; call qone_video_use_file with relevant timestamps to read still frames. Try Qone's embedded session or page route first: Douyin uses the signed in-page bridge, Bilibili uses its saved Qone session, and other sites use yt-dlp. If the embedded route fails, use the site's OpenCLI or web download as a labeled fallback. Gemini reads YouTube URLs directly when video input is configured. Never download before delegating to another agent.",
-    promptSnippet: "When you are configured to read video or audio and need to inspect an online video URL yourself, call qone_video_download; set mode=audio if the task needs only sound. Always try Qone's embedded route first. Douyin downloads use the signed in-page bridge; Bilibili downloads use Qone's saved Bilibili session and yt-dlp. Only after that route fails, use the site's OpenCLI or website to save into a qone_video_staging_dir, then qone_video_use_file. Gemini with video input can read YouTube links directly. If your model lacks the needed capability, delegate the original URL instead.",
+    description: "Retrieve online media for the current model. The configured input capabilities determine whether the complete file or an extracted representation is attached.",
     parameters: Type.Object({ url: Type.String({ minLength: 1 }), mode: Type.Optional(Type.Union([Type.Literal("video"), Type.Literal("audio")])) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
@@ -122,11 +149,11 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
       const { runId, model } = active;
       const capability = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`);
       const request = params as { url: string; mode?: "video" | "audio" };
-      const mode = request.mode ?? (capability.input.includes("video") ? "video" : "audio");
-      if (mode === "video" && !supportsVideoInput(model, capability.input)) {
+      const mode = request.mode ?? (capability.video.native || capability.video.frames ? "video" : "audio");
+      if (mode === "video" && !supportsVideoInput(capability)) {
         throw runtimeError("media-tool.the_current_api_format_cannot_read_full_videos_or", {});
       }
-      if (mode === "audio" && !supportsAudioInput(model, capability.input)) {
+      if (mode === "audio" && !supportsAudioInput(capability)) {
         throw runtimeError("media-tool.the_current_model_or_api_format_cannot_read_audio", {});
       }
       const url = request.url.trim();
@@ -169,22 +196,25 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
           if (fallback.audio) {
             options.registerMedia(runId, fallback.audio.path, fallback.audio.mimeType, fallback.audio.directory);
             parts.push(runtimeText("media-tool.available_audio_path", { p0: fallback.audio.path }));
-            if (supportsAudioInput(model, capability.input)) parts.push(runtimeText("media-tool.audio_input", { p0: localMediaMarker(fallback.audio.path, fallback.audio.mimeType, true) }));
+            if (supportsAudioInput(capability)) parts.push(runtimeText("media-tool.audio_input", { p0: localMediaMarker(fallback.audio.path, fallback.audio.mimeType, true) }));
             else parts.push(runtimeText("media-tool.the_current_model_has_no_audio_input_configured_delegate_details_0"));
           } else parts.push(runtimeText("media-tool.no_readable_audio_file_was_retrieved"));
-          return { content: [{ type: "text", text: parts.join("\n\n") }], details: { source: fallback.source, degraded: true, hasAudio: Boolean(fallback.audio) } };
+          return { content: [{ type: "text", text: parts.join("\n\n") }], details: { source: fallback.source, degraded: true, hasAudio: Boolean(fallback.audio), ...mediaState("metadata-only", { audioExtracted: Boolean(fallback.audio) }) } };
         }
       }
       options.registerMedia(runId, downloaded.path, downloaded.mimeType, downloaded.directory);
-      if (mode === "video" && supportsFrameVideo(model, capability.input)) return frameResult(downloaded.path, source, options, runId, undefined, signal);
+      if (mode === "video" && capability.video.native) {
+        return nativeVideoResult(downloaded.path, source, downloaded.mimeType, true, "download");
+      }
+      if (mode === "video" && supportsFrameVideo(capability)) return frameResult(downloaded.path, source, options, runId, undefined, signal);
       if (mode === "audio") {
         const audio = downloaded.mimeType.startsWith("audio/") ? downloaded : await extractVideoAudio(downloaded.path, signal);
         if (audio !== downloaded) options.registerMedia(runId, audio.path, audio.mimeType, audio.directory);
         return { content: [{ type: "text", text: runtimeText("media-tool.used_to_no_frames_have_been_read_audio_path", { p0: source, p1: audio === downloaded ? runtimeText("media-tool.retrieve_audio_directly") : runtimeText("media-tool.retrieve_the_video_and_extract_audio"), p2: audio.path, p3: localMediaMarker(audio.path, audio.mimeType, true) }) }],
-          details: { source, path: audio.path, mimeType: audio.mimeType, videoRead: false } };
+          details: { source, path: audio.path, mimeType: audio.mimeType, videoRead: false, ...mediaState("audio", { audioExtracted: true }) } };
       }
       return { content: [{ type: "text", text: runtimeText("media-tool.video_downloaded_through_local_path_media_input_actual_source", { p0: source, p1: downloaded.path, p2: localMediaMarker(downloaded.path, downloaded.mimeType, true) }) }],
-        details: { source, path: downloaded.path, mimeType: downloaded.mimeType } };
+        details: { source, path: downloaded.path, mimeType: downloaded.mimeType, ...mediaState("metadata-only") } };
     },
   };
 }
@@ -194,13 +224,13 @@ export function createVideoFallbackTools(options: MediaToolOptions): ToolDefinit
   return [{
     name: "qone_video_staging_dir",
     label: "Video · prepare download directory",
-    description: "Create a temporary directory for an OpenCLI or website video download after yt-dlp fails. Give this directory to the site's download command; Qone cleans it when this run ends.",
+    description: "Create a temporary directory for a browser or downloader fallback after the primary media route fails. Qone cleans it when this run ends.",
     parameters: Type.Object({}),
     execute: async () => {
       const active = options.active();
       if (!active) throw runtimeError("media-tool.no_media_recognition_task_is_available", {});
-      const input = configuredCapabilities(options.configs(), `${active.model.provider}/${active.model.id}`).input;
-      if (!supportsVideoInput(active.model, input) && !supportsAudioInput(active.model, input)) {
+      const capability = configuredCapabilities(options.configs(), `${active.model.provider}/${active.model.id}`);
+      if (!supportsVideoInput(capability) && !supportsAudioInput(capability) && !capability.video.frames) {
         throw runtimeError("media-tool.the_current_model_cannot_process_video_or_audio_delegate", {});
       }
       const directory = await mkdtemp(path.join(qoneTemporaryDir(), "qone-video-fallback-"));
@@ -210,42 +240,46 @@ export function createVideoFallbackTools(options: MediaToolOptions): ToolDefinit
   }, {
     name: "qone_video_use_file",
     label: "Video · use downloaded file",
-    description: "Use a media file from this run. For non-Gemini video input, first call without timestamps to read duration, then select relevant timestamps in seconds to read those still frames. Set mode=audio to extract sound from the same file. Gemini receives the full file. User files outside Qone's temporary directory are never deleted.",
-    parameters: Type.Object({ path: Type.String({ minLength: 1 }), mode: Type.Optional(Type.Union([Type.Literal("video"), Type.Literal("audio")])), timestamps: Type.Optional(Type.Array(Type.Number({ minimum: 0 }))) }),
+    description: "Attach a media file from this run. Use mode=video for full native video, mode=frames with timestamps for selected still frames, or mode=audio for sound. User files outside Qone's temporary directory are never deleted.",
+    parameters: Type.Object({ path: Type.String({ minLength: 1 }), mode: Type.Optional(Type.Union([Type.Literal("video"), Type.Literal("frames"), Type.Literal("audio")])), timestamps: Type.Optional(Type.Array(Type.Number({ minimum: 0 }))) }),
     execute: async (_toolCallId, params, signal) => {
       const active = options.active();
       if (!active) throw runtimeError("media-tool.no_media_recognition_task_is_available", {});
       const { runId, model } = active;
-      const input = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`).input;
-      if (!input.includes("video") && !input.includes("audio")) throw runtimeError("media-tool.the_current_model_cannot_process_video_or_audio_delegate", {});
-      const request = params as { path: string; mode?: "video" | "audio"; timestamps?: number[] };
+      const capability = configuredCapabilities(options.configs(), `${model.provider}/${model.id}`);
+      if (!capability.video.native && !capability.audio.native && !capability.video.frames) throw runtimeError("media-tool.the_current_model_cannot_process_video_or_audio_delegate", {});
+      const request = params as { path: string; mode?: "video" | "frames" | "audio"; timestamps?: number[] };
       const filePath = request.path;
       if (!path.isAbsolute(filePath)) throw runtimeError("media-tool.an_absolute_media_file_path_is_required", {});
       const info = await stat(filePath);
       if (!info.isFile()) throw runtimeError("media-tool.the_media_path_is_not_a_file", {});
       const mimeType = mediaMimeType(filePath);
       if (!mimeType) throw runtimeError("media-tool.could_not_identify_the_media_file_format", {});
-      const mode = request.mode ?? (mimeType.startsWith("audio/") || !input.includes("video") ? "audio" : "video");
-      if (mode === "video" && !mimeType.startsWith("video/")) throw runtimeError("media-tool.mode_video_requires_a_video_file_the_current_path", {});
+      const mode = request.mode ?? (mimeType.startsWith("audio/") ? "audio" : capability.video.native ? "video" : capability.video.frames ? "frames" : "audio");
+      if ((mode === "video" || mode === "frames") && !mimeType.startsWith("video/")) throw runtimeError("media-tool.mode_video_requires_a_video_file_the_current_path", {});
       if (mode === "audio" && !/^(?:audio|video)\//.test(mimeType)) throw runtimeError("media-tool.mode_audio_requires_an_audio_or_video_file", {});
-      if (mode === "video" && !supportsVideoInput(model, input)) throw runtimeError("media-tool.the_current_api_format_cannot_read_full_videos_or_details_0", {});
-      if (mode === "audio" && !supportsAudioInput(model, input)) throw runtimeError("media-tool.the_current_model_or_api_format_cannot_read_audio_details_0", {});
+      if (mode === "video" && !capability.video.native) throw runtimeError("media-tool.the_current_api_format_cannot_read_full_videos_or_details_0", {});
+      if (mode === "frames" && !capability.video.frames) throw runtimeError("media-tool.the_current_model_cannot_read_video_frames_through_the", {});
+      if (mode === "audio" && !supportsAudioInput(capability)) throw runtimeError("media-tool.the_current_model_or_api_format_cannot_read_audio_details_0", {});
       const temporary = options.isTemporary?.(runId, filePath) ?? false;
       if (!temporary && !options.hasMedia?.(runId, filePath)) {
         throw runtimeError("media-tool.the_media_file_must_be_in_the_current_task", {});
       }
       options.registerMedia(runId, filePath, mimeType);
-      if (mode === "video" && supportsFrameVideo(model, input) && mimeType.startsWith("video/")) return frameResult(filePath, "local download", options, runId, request.timestamps, signal);
+      if (mode === "video" && capability.video.native) {
+        return nativeVideoResult(filePath, "local download", mimeType, temporary, "local", request.timestamps);
+      }
+      if (mode === "frames" && mimeType.startsWith("video/")) return frameResult(filePath, "local download", options, runId, request.timestamps, signal);
       if (mimeType.startsWith("video/") && mode === "audio") {
         const audio = await extractVideoAudio(filePath, signal);
         options.registerMedia(runId, audio.path, audio.mimeType, audio.directory);
         return { content: [{ type: "text", text: runtimeText("media-tool.audio_extracted_from_the_file_no_frames_have_been", { p0: localMediaMarker(audio.path, audio.mimeType, true) }) }],
-          details: { source: "local download", path: audio.path, mimeType: audio.mimeType, videoRead: false } };
+          details: { source: "local download", path: audio.path, mimeType: audio.mimeType, videoRead: false, ...mediaState("audio", { audioExtracted: true }) } };
       }
-      const capability = mimeType.startsWith("video/") ? "video" : "audio";
-      if (!input.includes(capability)) return { content: [{ type: "text", text: runtimeText("media-tool.the_current_model_has_no_input_configured_delegate_to", { p0: capability === "video" ? runtimeText("media-tool.video") : runtimeText("media-tool.audio"), p1: filePath }) }], details: { path: filePath, mimeType, delegated: true } };
+      const mediaKind = mimeType.startsWith("video/") ? "video" : "audio";
+      if (!capability.input.includes(mediaKind)) return { content: [{ type: "text", text: runtimeText("media-tool.the_current_model_has_no_input_configured_delegate_to", { p0: mediaKind === "video" ? runtimeText("media-tool.video") : runtimeText("media-tool.audio"), p1: filePath }) }], details: { path: filePath, mimeType, delegated: true, ...mediaState("metadata-only") } };
       return { content: [{ type: "text", text: runtimeText("media-tool.actual_source_local_downloaded_file_media_input", { p0: filePath, p1: localMediaMarker(filePath, mimeType, temporary) }) }],
-        details: { source: "local download", path: filePath, mimeType } };
+        details: { source: "local download", path: filePath, mimeType, videoRead: false, ...mediaState(mimeType.startsWith("audio/") ? "audio" : "metadata-only", { audioExtracted: mimeType.startsWith("audio/") }) } };
     },
   }];
 }

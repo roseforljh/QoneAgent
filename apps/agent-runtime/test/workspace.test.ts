@@ -27,6 +27,12 @@ function fixture() {
 }
 
 describe("workspace explorer", () => {
+  test("returns an empty Git view for an ordinary folder", async () => {
+    const root = mkdtempSync(path.join(process.cwd(), ".test-data", "workspace-"));
+    roots.push(root);
+    expect(await workspaceGit(root)).toEqual({ entries: [], status: "" });
+  });
+
   test("lists directories, reads text and rejects workspace escapes", async () => {
     const root = fixture();
     expect((await listWorkspaceFiles(root)).map((entry) => entry.path)).toEqual(["src"]);

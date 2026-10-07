@@ -288,11 +288,11 @@ export class BrowserSyncService {
       this.browserScreenshotTool(),
       this.browserCommand("qone_browser_tabs", "List tabs available in Qone's built-in browser.", Type.Object({}), () => ["tab", "list"]),
       this.browserCloseTool(),
-      this.twitterCommand("qone_twitter_search", "Read Twitter/X search results as structured data in the background. Use this OpenCLI route directly for X search and account data.", Type.Object({ query: Type.String(), limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "search", value.query, "--limit", String(value.limit ?? 20)]),
-      this.twitterCommand("qone_twitter_tweets", "Read a Twitter/X user's latest tweets as structured data in the background. Use this OpenCLI route directly for X timelines and account data.", Type.Object({ username: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "tweets", ...(value.username ? [value.username] : []), "--limit", String(value.limit ?? 20)]),
-      this.twitterCommand("qone_twitter_profile", "Read a Twitter/X profile as structured data in the background. Use this OpenCLI route directly for X profiles.", Type.Object({ username: Type.Optional(Type.String()) }), (value) => ["twitter", "profile", ...(value.username ? [value.username] : [])]),
-      this.twitterCommand("qone_twitter_timeline", "Read the logged-in Twitter/X home timeline as structured data in the background. Use this OpenCLI route directly for read-only timeline questions.", Type.Object({ type: Type.Optional(Type.Union([Type.Literal("for-you"), Type.Literal("following")])), limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "timeline", "--type", value.type ?? "for-you", "--limit", String(value.limit ?? 20)]),
-      this.twitterCommand("qone_twitter_trending", "Read Twitter/X trending topics as structured data in the background. Use this OpenCLI route directly for X trends.", Type.Object({ limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "trending", "--limit", String(value.limit ?? 20)]),
+      this.twitterCommand("qone_twitter_search", "Read adapter search results as structured data.", Type.Object({ query: Type.String(), limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "search", value.query, "--limit", String(value.limit ?? 20)]),
+      this.twitterCommand("qone_twitter_tweets", "Read an account's latest posts as structured data.", Type.Object({ username: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "tweets", ...(value.username ? [value.username] : []), "--limit", String(value.limit ?? 20)]),
+      this.twitterCommand("qone_twitter_profile", "Read an account profile as structured data.", Type.Object({ username: Type.Optional(Type.String()) }), (value) => ["twitter", "profile", ...(value.username ? [value.username] : [])]),
+      this.twitterCommand("qone_twitter_timeline", "Read the signed-in account timeline as structured data.", Type.Object({ type: Type.Optional(Type.Union([Type.Literal("for-you"), Type.Literal("following")])), limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "timeline", "--type", value.type ?? "for-you", "--limit", String(value.limit ?? 20)]),
+      this.twitterCommand("qone_twitter_trending", "Read trending topics as structured data.", Type.Object({ limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "trending", "--limit", String(value.limit ?? 20)]),
     ];
   }
 
@@ -300,7 +300,7 @@ export class BrowserSyncService {
     return {
       name: "qone_opencli_discover",
       label: "OpenCLI · discover adapters",
-      description: "Discover OpenCLI site adapter commands on demand for site-specific structured operations, authenticated data, or account actions. For X or Reddit searches, posts, profiles, comments, communities, timelines, or account pages, use this OpenCLI route even when the URL is public. Pass a site such as twitter, reddit, bilibili, xiaohongshu, or github to receive only that site's commands and parameters. Site commands always run through Qone's built-in browser profile. Without a site, returns only a compact site/count index to keep context small.",
+      description: "Discover available site adapter commands on demand for structured operations, authenticated data, or account actions. Pass a site to receive only that site's commands and parameters. Commands run through Qone's built-in browser profile. Without a site, return a compact site/count index.",
       parameters: Type.Object({
         site: Type.Optional(Type.String()),
         query: Type.Optional(Type.String()),
@@ -319,7 +319,7 @@ export class BrowserSyncService {
     return {
       name: "qone_opencli_run",
       label: "OpenCLI · site adapter",
-      description: "Run an OpenCLI site adapter through Qone's built-in browser profile for structured site operations, authenticated data, account pages, or explicit browser-session work. For X or Reddit searches, posts, profiles, comments, communities, timelines, or account pages, use this route directly even when the URL is public. There is no external browser fallback. Use qone_opencli_discover first when the site command or parameters are unknown. Arguments are raw CLI arguments in order, for example [\"opencli\", \"--limit\", \"10\"] is not needed: pass [\"keyword\", \"--limit\", \"10\"].",
+      description: "Run a site adapter through Qone's built-in browser profile for structured operations, authenticated data, account pages, or explicit browser-session work. Use qone_opencli_discover first when the command or parameters are unknown. Pass raw adapter arguments in order without the executable name.",
       parameters: Type.Object({
         site: Type.String(),
         command: Type.String(),
@@ -380,7 +380,7 @@ export class BrowserSyncService {
     return {
       name: "qone_browser_extract",
       label: "OpenCLI · extract",
-      description: "Extract the current Qone built-in browser page as readable Markdown. Use qone_browser_screenshot separately only when the task needs visual inspection. For X or Reddit content, use qone_opencli_run instead. Before calling this for a URL, call qone_browser_open with that URL so the current tab is the requested page.",
+      description: "Extract the current Qone built-in browser page as readable Markdown. Use qone_browser_screenshot separately when visual inspection is required. Open the requested URL first so the current tab is the target page.",
       parameters: Type.Object({ includeScreenshot: Type.Optional(Type.Boolean({ description: "Capture a full-page screenshot only when visual inspection is required" })) }),
       execute: async (_id, value: { includeScreenshot?: boolean }) => {
         try {
