@@ -47,7 +47,6 @@ import { useLocale } from "./localization";
 import { QoneSelect } from "./components/ui/Select";
 import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-preferences";
 import qonePenguinUrl from "./assets/qone-penguin.png";
-import { BrowserPage } from "./components/browser/BrowserPage";
 import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
 import { AppChrome } from "./components/app-chrome/AppChrome";
 import { ResizableSidebar } from "./components/assistant-ui/resizable-sidebar";
@@ -60,6 +59,7 @@ type PendingRun = { text: string; attachments: MessageAttachmentInfo[]; goal?: b
 
 const Thread = lazy(async () => ({ default: (await import("./components/assistant-ui/Thread")).Thread }));
 const SettingsDialog = lazy(async () => ({ default: (await import("./components/settings/SettingsDialog")).SettingsDialog }));
+const BrowserPage = lazy(async () => ({ default: (await import("./components/browser/BrowserPage")).BrowserPage }));
 
 function ThemeButton({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
   return (
@@ -537,7 +537,7 @@ export default function App() {
 
   return <AppChrome path={pathname}>
     {pathname === "/browser"
-      ? <BrowserPage />
+      ? <Suspense fallback={<ConversationLoadingSkeleton />}><BrowserPage /></Suspense>
       : ["/skills", "/permissions"].includes(pathname)
       ? <ManagementPanel kind={pathname.slice(1) as "skills" | "permissions"} />
       : <ChatPage theme={theme} onToggleTheme={toggleTheme} initialSettingsOpen={pathname === "/settings"} />}

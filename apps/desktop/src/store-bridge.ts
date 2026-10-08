@@ -598,7 +598,9 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             : available[0]?.id;
           return { modelConfigs: msg.configs, selectedModelId };
         });
+        const restoredProviders = new Set<string>();
         for (const config of msg.configs) {
+          if (!restoredProviders.add(config.provider)) continue;
           invoke<string | null>("secret_get", { key: `model.apiKey:${config.provider}` })
             .then((value) => {
               if (value) eventStore.getState().send({ type: "secret.set", requestId: rid(), key: `model.apiKey:${config.provider}`, value });
