@@ -138,6 +138,8 @@ export class PiAdapter {
   private modelApiTypes = new Map<string, ProviderApiType>();
   private modelApiKeys = new Map<string, string>();
   private configuredModelConfigs: ModelConfigInfo[] = [];
+  private configuredModelConfigFingerprint = "";
+  private queuedModelConfigFingerprint?: string;
   private imageModelConfigs = new Map<string, ModelConfigInfo>();
   private speechModelConfigs = new Map<string, ModelConfigInfo>();
   private videoModelConfigs = new Map<string, ModelConfigInfo>();
@@ -257,14 +259,25 @@ export class PiAdapter {
     }
   }
 
-  async configureModels(configs: ModelConfigInfo[]): Promise<void> {
+  async configureModels(configs: ModelConfigInfo[], force = false): Promise<void> {
     // Commands and credential restoration arrive concurrently over NDJSON.
     // Serialize registry replacement so an older, slower /models request
     // cannot overwrite a newer model configuration.
     const snapshot = configs.map((item) => ({ ...item, config: { ...item.config } }));
+    const fingerprint = JSON.stringify(snapshot);
+    if (!force && (fingerprint === this.configuredModelConfigFingerprint || fingerprint === this.queuedModelConfigFingerprint)) {
+      return this.modelConfigurationQueue;
+    }
     const operation = this.modelConfigurationQueue.then(() => this.applyModelConfiguration(snapshot));
     this.modelConfigurationQueue = operation.catch(() => undefined);
-    return operation;
+    this.queuedModelConfigFingerprint = fingerprint;
+    return operation.then(() => {
+      this.configuredModelConfigFingerprint = fingerprint;
+      if (this.queuedModelConfigFingerprint === fingerprint) this.queuedModelConfigFingerprint = undefined;
+    }, (error) => {
+      if (this.queuedModelConfigFingerprint === fingerprint) this.queuedModelConfigFingerprint = undefined;
+      throw error;
+    });
   }
 
   setSubagentDispatcher(dispatcher: DelegateSubagent) {
@@ -412,7 +425,7 @@ export class PiAdapter {
     await this.modelRuntime.setRuntimeApiKey(provider, value);
     if (key.startsWith("model.apiKey:") && this.configuredModelConfigs.length > 0) {
       this.modelMetadataResolver.invalidateProviderCatalog(provider);
-      await this.configureModels(this.configuredModelConfigs).catch((error) => {
+      await this.configureModels(this.configuredModelConfigs, true).catch((error) => {
         log.warn("model metadata refresh failed", { provider, err: String(error) });
       });
     }
@@ -474,7 +487,7 @@ export class PiAdapter {
     this.modelMetadataResolver.invalidateProviderCatalog(provider);
     if (this.modelRuntime) await this.modelRuntime.removeRuntimeApiKey(provider);
     if (key.startsWith("model.apiKey:") && this.configuredModelConfigs.length > 0) {
-      await this.configureModels(this.configuredModelConfigs).catch((error) => {
+      await this.configureModels(this.configuredModelConfigs, true).catch((error) => {
         log.warn("model metadata refresh after credential removal failed", { provider, err: String(error) });
       });
     }

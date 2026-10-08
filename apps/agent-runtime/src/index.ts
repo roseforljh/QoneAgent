@@ -611,7 +611,9 @@ const currentGoalForTool = (sessionId: string, goalId: string, epoch: number, ru
     return updated;
   },
 });
-await adapter.configureModels(modelConfigRepo.list());
+const modelsReady = adapter.configureModels(modelConfigRepo.list());
+void modelsReady.catch((error) => log.warn("initial model configuration failed", { err: String(error) }));
+const ensureModelsReady = () => modelsReady.then(() => adapter.configureModels(modelConfigRepo.list()));
 for (const [permission, decision] of [
   ["agent.delegate", "allow"],
   ["filesystem.write", "ask"],
@@ -626,6 +628,8 @@ for (const [permission, decision] of [
   ["tool.execute", "ask"],
 ] as const) permissionRepo.ensure("builtin", permission, decision);
 const pendingMcpAuthRequests = new Map<string, string>();
+let browserSync: BrowserSyncService | undefined;
+let browserReady: Promise<void> = Promise.resolve();
 
 const mcp = new McpManager(async (serverId, token) => {
   const config = mcpServerRepo.list().find((server) => server.id === serverId);
@@ -669,30 +673,6 @@ const mcp = new McpManager(async (serverId, token) => {
   runtimeSecrets.set(key, credential);
   send({ type: "mcp.oauth.token", requestId: "oauth-refresh", serverId: config.id, key, accessToken: credential });
 });
-for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()] as McpServerConfig[]) {
-  // Playwright remains available as a manually enabled fallback. OpenCLI is
-  // the default browser channel, so starting Playwright here would launch a
-  // second browser and compete with the shared built-in browser session.
-  if (config.id === "mcp-playwright") continue;
-  const subjectId = `mcp:${config.id}`;
-  permissionRepo.ensure(subjectId, "mcp.connect", "ask");
-  if (permissionRepo.get(subjectId, "mcp.connect") !== "allow") continue;
-  try {
-    await mcp.connect(config);
-    log.info("mcp connected", { serverId: config.id });
-  } catch (err) {
-    log.warn("mcp connection failed", { serverId: config.id, err: String(err) });
-  }
-}
-let browserSync: BrowserSyncService | undefined;
-await refreshCustomTools();
-browserSync = new BrowserSyncService(
-  (status) => {
-    send({ type: "browser.status", status });
-    sendReachChannels();
-  }, refreshCustomTools, appOpenCliBridge);
-await browserSync.initialize();
-
 async function releaseBrowserSession() {
   try { await browserSync?.release(); }
   catch (error) { log.warn("browser session release failed", { err: String(error) }); }
@@ -715,6 +695,39 @@ function sendReachChannels(requestId?: string) {
     hasGroqKey: Boolean(runtimeSecrets.get("reach.groq.apiKey")),
   }) });
 }
+
+async function initializeOptionalIntegrations() {
+  browserSync = new BrowserSyncService(
+    (status) => {
+      send({ type: "browser.status", status });
+      sendReachChannels();
+    }, refreshCustomTools, appOpenCliBridge);
+  browserReady = browserSync.initialize().catch((error) => {
+    log.warn("browser initialization failed", { err: String(error) });
+  });
+
+  for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()] as McpServerConfig[]) {
+    // Playwright remains available as a manually enabled fallback. OpenCLI is
+    // the default browser channel, so starting Playwright here would launch a
+    // second browser and compete with the shared built-in browser session.
+    if (config.id === "mcp-playwright") continue;
+    const subjectId = `mcp:${config.id}`;
+    permissionRepo.ensure(subjectId, "mcp.connect", "ask");
+    if (permissionRepo.get(subjectId, "mcp.connect") !== "allow") continue;
+    try {
+      await mcp.connect(config);
+      log.info("mcp connected", { serverId: config.id });
+    } catch (err) {
+      log.warn("mcp connection failed", { serverId: config.id, err: String(err) });
+    }
+  }
+  await browserReady;
+  await refreshCustomTools();
+}
+
+void initializeOptionalIntegrations().catch((error) => {
+  log.error("optional integration initialization failed", { err: String(error) });
+});
 
 function loadMcpConfigs() {
   const raw = process.env.QONE_MCP_SERVERS;
@@ -863,6 +876,8 @@ function sendSubagentConfig(requestId?: string) {
 export function runtimeCommandServices() {
   return {
     adapter,
+    ensureModelsReady,
+    browserReady,
     approvalRuns,
     approvalToolCalls,
     artifactRepo,

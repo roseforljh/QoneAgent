@@ -99,9 +99,16 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       return true;
     }
 
-    case "browser.status":
-      services.send({ type: "browser.status", requestId: cmd.requestId, status: services.browserSync!.status() });
+    case "browser.status": {
+      await services.browserReady;
+      const browser = services.browserSync;
+      if (!browser) {
+        services.send({ type: "error", requestId: cmd.requestId, message: "browser integration is unavailable" });
+        return true;
+      }
+      services.send({ type: "browser.status", requestId: cmd.requestId, status: browser.status() });
       return true;
+    }
 
     case "reach.channels":
       services.sendReachChannels(cmd.requestId);
@@ -146,18 +153,26 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
 
     case "browser.connect":
       try {
-        const status = await services.browserSync!.connect();
+        await services.browserReady;
+        const browser = services.browserSync;
+        if (!browser) throw new Error("browser integration is unavailable");
+        const status = await browser.connect();
         services.send({ type: "browser.status", requestId: cmd.requestId, status: status });
       } catch {
         // Browser failures already update the integration status. Avoid showing
         // the same error a second time in the page-wide banner.
-        services.send({ type: "browser.status", requestId: cmd.requestId, status: services.browserSync!.status() });
+        const browser = services.browserSync;
+        if (browser) services.send({ type: "browser.status", requestId: cmd.requestId, status: browser.status() });
+        else services.send({ type: "error", requestId: cmd.requestId, message: "browser integration is unavailable" });
       }
       return true;
 
     case "browser.open":
       try {
-        await services.browserSync!.openUrl(cmd.url);
+        await services.browserReady;
+        const browser = services.browserSync;
+        if (!browser) throw new Error("browser integration is unavailable");
+        await browser.openUrl(cmd.url);
         services.send({ type: "pong", requestId: cmd.requestId });
       } catch (error) {
         services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
@@ -166,7 +181,10 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
 
     case "browser.current-url":
       try {
-        const url = await services.browserSync!.currentUrl();
+        await services.browserReady;
+        const browser = services.browserSync;
+        if (!browser) throw new Error("browser integration is unavailable");
+        const url = await browser.currentUrl();
         services.send({ type: "browser.current-url", requestId: cmd.requestId, url });
       } catch (error) {
         services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
@@ -306,6 +324,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     }
 
     case "session.compact": {
+      await services.ensureModelsReady();
       const session = services.sessionRepo.get(cmd.sessionId);
       const cwd = session?.workspaceId ? services.workspaceRepo.get(session.workspaceId)?.path : undefined;
       if (!session || !cwd) {
@@ -346,6 +365,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     }
 
     case "session.context.get": {
+      await services.ensureModelsReady();
       const session = services.sessionRepo.get(cmd.sessionId);
       const cwd = session?.workspaceId ? services.workspaceRepo.get(session.workspaceId)?.path : undefined;
       if (!session || !cwd) {
@@ -362,7 +382,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     }
 
     case "model.list":
-      await services.adapter.configureModels(services.modelConfigRepo.list());
+      await services.ensureModelsReady();
       services.send({ type: "model.list", configs: services.modelConfigRepo.list() });
       return true;
 
@@ -465,6 +485,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       return true;
 
     case "agent.run": {
+      await services.ensureModelsReady();
       if (!cmd.goal) {
         const timer = services.goalContinuationTimers.get(cmd.sessionId);
         if (timer) { clearTimeout(timer); services.goalContinuationTimers.delete(cmd.sessionId); }

@@ -78,6 +78,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
     }
 
     case "session.generate-title": {
+      await services.ensureModelsReady();
       const provisional = provisionalSessionTitle(cmd.prompt);
       const current = services.sessionRepo.get(cmd.sessionId);
       if (!current) {
