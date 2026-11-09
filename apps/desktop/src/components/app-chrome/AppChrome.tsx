@@ -13,7 +13,9 @@ type AppChromeProps = { path: string; children: ReactNode };
 
 const emit = (name: string) => window.dispatchEvent(new Event(name));
 const toggleDock = (view: string) => window.dispatchEvent(new CustomEvent("qone-toggle-dock-view", { detail: view }));
-const isNative = () => Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+const isNative = () => typeof window !== "undefined" && Boolean(
+  (window as any).__TAURI_INTERNALS__ || (window as any).electronBridge
+);
 
 export function AppChrome({ path, children }: AppChromeProps) {
   const { locale } = useLocale();

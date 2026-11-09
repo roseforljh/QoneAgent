@@ -261,7 +261,7 @@ function ImagePreview({
       {error ? (
         <div
           data-slot="image-preview-error"
-          className="bg-muted/50 flex min-h-32 items-center justify-center p-4"
+          className="bg-muted/50 absolute inset-0 flex items-center justify-center p-2"
         >
           <ImageOffIcon className="text-muted-foreground size-8" />
         </div>

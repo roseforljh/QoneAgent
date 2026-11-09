@@ -17,7 +17,9 @@ const displayRuntimeError = (message: string) => message === "MCP_NPX_UNAVAILABL
   : message;
 
 export function hasTauriBridge() {
-  return typeof window !== "undefined" && Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  return typeof window !== "undefined" && Boolean(
+    (window as any).__TAURI_INTERNALS__ || (window as any).electronBridge
+  );
 }
 
 export interface ChatMessage {

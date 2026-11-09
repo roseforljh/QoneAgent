@@ -33,6 +33,17 @@ export default defineConfig({
   // VITE_* values are exposed to the renderer; the GitHub client ID is public.
   envDir: "../..",
   plugins: [react(), tailwindcss(), requestDiagnostics(), reactPreviewRuntime(), dependencyPatches(fileURLToPath(new URL("../../", import.meta.url)))],
+  resolve: {
+    alias: {
+      "@tauri-apps/api/core": fileURLToPath(new URL("./src/lib/desktop-bridge.ts", import.meta.url)),
+      "@tauri-apps/api/event": fileURLToPath(new URL("./src/lib/desktop-bridge.ts", import.meta.url)),
+      "@tauri-apps/api/window": fileURLToPath(new URL("./src/lib/desktop-bridge.ts", import.meta.url)),
+      "@tauri-apps/api/webview": fileURLToPath(new URL("./src/lib/desktop-bridge.ts", import.meta.url)),
+      "@tauri-apps/api": fileURLToPath(new URL("./src/lib/desktop-bridge.ts", import.meta.url)),
+      "@tauri-apps/plugin-opener": fileURLToPath(new URL("./src/lib/desktop-bridge.ts", import.meta.url)),
+      "@tauri-apps/plugin-updater": fileURLToPath(new URL("./src/lib/desktop-bridge.ts", import.meta.url)),
+    },
+  },
   clearScreen: false,
   server: {
     host: "127.0.0.1",

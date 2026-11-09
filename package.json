@@ -21,6 +21,7 @@
     "dev:runtime": "bun run --cwd apps/agent-runtime dev",
     "dev:desktop": "bun run --cwd apps/desktop dev",
     "build": "bun run --cwd apps/desktop build",
+    "build:release": "bun run --cwd apps/desktop build:release",
     "typecheck": "bun run --cwd apps/agent-runtime typecheck && bun run --cwd apps/desktop build",
     "test": "bun test apps/agent-runtime/test",
     "test:smoke": "bun run apps/agent-runtime/test/smoke.ts"

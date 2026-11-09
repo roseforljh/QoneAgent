@@ -1,0 +1,39 @@
+{
+  "appId": "com.qone.agent",
+  "productName": "QoneAgent",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "resources/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "binaries",
+      "to": "binaries",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "resources/icon.ico"
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": false,
+    "deleteAppDataOnUninstall": false
+  }
+}

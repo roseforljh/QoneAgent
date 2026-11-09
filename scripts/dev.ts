@@ -1,5 +1,5 @@
-// Starts agent-runtime + Tauri desktop together.
-const desktop = Bun.spawn(["bun", "run", "--cwd", "apps/desktop", "tauri", "dev"], {
+// Starts agent-runtime + Electron desktop together.
+const desktop = Bun.spawn(["bun", "run", "--cwd", "apps/desktop", "dev"], {
   stdout: "inherit",
   stderr: "inherit",
   stdin: "inherit",
