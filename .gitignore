@@ -6,7 +6,6 @@ target/
 *.db-shm
 .test-data/
 gen/
-apps/desktop/src-tauri/binaries/
 .playwright-cli/
 .playwright-mcp/
 .env
