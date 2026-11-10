@@ -125,6 +125,9 @@ async function readExactFile(response: Response, expectedSize: number): Promise<
   return Buffer.concat(chunks, size);
 }
 
+/** Sidecar next to SKILL.md so an installed skill keeps its catalog origin. */
+export const SKILL_PUBLISHER_FILE = ".qone-source.json";
+
 export async function installCloudSkill(source: string, skillId: string, fetcher: typeof fetch = fetch): Promise<SkillInfo> {
   assertUserSkillName(skillId);
   const downloaded = await downloadGithubSkill(source, skillId, fetcher);
@@ -133,8 +136,9 @@ export async function installCloudSkill(source: string, skillId: string, fetcher
     const destination = path.join(qoneSkillsDir(), downloaded.skill.name);
     if (existsSync(destination)) throw runtimeError("skill-catalog.skill_is_already_installed", { p0: downloaded.skill.name });
     await mkdir(qoneSkillsDir(), { recursive: true });
+    await writeFile(path.join(downloaded.directory, SKILL_PUBLISHER_FILE), JSON.stringify({ source, revision: downloaded.revision }), "utf8");
     await rename(downloaded.directory, destination);
-    return { ...downloaded.skill, path: path.join(destination, "SKILL.md") };
+    return { ...downloaded.skill, path: path.join(destination, "SKILL.md"), source, revision: downloaded.revision };
   } finally {
     await rm(downloaded.directory, { recursive: true, force: true });
   }

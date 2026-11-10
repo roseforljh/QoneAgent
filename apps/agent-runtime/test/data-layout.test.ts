@@ -101,7 +101,11 @@ test("the real sidecar creates, restores and deletes project/session resources w
   } finally {
     await stop();
     if (path.dirname(path.resolve(root)) !== path.resolve(tmpdir())) throw new Error("Unsafe test cleanup path");
-    rmSync(root, { recursive: true, force: true });
+    // The stopped sidecar releases its SQLite handles asynchronously on Windows.
+    for (let attempt = 0; attempt < 40; attempt++) {
+      try { rmSync(root, { recursive: true, force: true }); break; }
+      catch { await new Promise((resolve) => setTimeout(resolve, 100)); }
+    }
   }
 }, 20000);
 

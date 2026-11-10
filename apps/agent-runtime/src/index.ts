@@ -3,12 +3,12 @@ import { handleRuntimeCommand } from "./runtime-commands.js";
 import { configureBuiltinSkills } from "./builtin-skills/manager.js";
 import { withRuntimeLocale, runtimeErrorInfo } from "./runtime-localization";
 import { CompactionPositions } from "./compaction-position.js";
-import { isAssistantMessageActivity } from "./session-activity.js";
+import { handleRuntimeEvent, type RuntimeBusEvent } from "./runtime-event-subscriber.js";
 import { SideConversationService } from "./side-conversation.js";
 
 import { createLogger, EventBus, qoneDatabasePath, qoneConfigDatabasePath, qoneMcpDatabasePath, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, SessionSearchResult } from "@qone/protocol";
-import { decodeCommand, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
+import { decodeCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
 import { openDb, openConfigDb, openMcpDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
@@ -33,27 +33,18 @@ import { WebAccessMemory, type WebAccessObservation } from "./web-access-memory.
 import { normalizeSubagentConfig } from "./subagents.js";
 import { restoreCompactedContext, type SessionCompactionCheckpoint } from "./session-compaction.js";
 import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
-import { finalSubagentSummary } from "./subagent-result.js";
 import { createSubagentPublisher } from "./subagent-publisher.js";
-import { isSubagentUpdatePrompt, SubagentNotificationCoordinator } from "./subagent-notifications.js";
+import { SubagentNotificationCoordinator } from "./subagent-notifications.js";
 
 import { ensureGlobalInstructions } from "./global-instructions.js";
 import { ensureSystemPromptModules } from "./system-prompt.js";
-import { updateLiveAssistant, type LiveAssistantState } from "./live-assistant.js";
+import type { LiveAssistantState } from "./live-assistant.js";
 import { createRuntimeOutput } from "./runtime-output.js";
 import { DouyinBridge } from "./douyin-bridge.js";
 import { AppMediaService } from "./app-media-service.js";
 import { AppOpenCliBridge } from "./app-opencli-bridge.js";
 
 const log = createLogger("runtime");
-
-interface RuntimeBusEvent {
-  type: string;
-  payload: unknown;
-  sessionId?: string;
-  runId?: string;
-  scope?: "conversation" | "subagent";
-}
 
 const eventBus = new EventBus<RuntimeBusEvent>();
 
@@ -133,16 +124,6 @@ const subagentPublisher = createSubagentPublisher({
 });
 let subagentController: ReturnType<typeof registerSubagentDispatcher>;
 let subagentNotificationCoordinator: SubagentNotificationCoordinator | undefined;
-function readTokenUsage(value: unknown) {
-  const usage = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const cost = usage.cost && typeof usage.cost === "object" ? usage.cost as Record<string, unknown> : {};
-  const input = Number(usage.input ?? usage.inputTokens ?? 0) || 0;
-  const output = Number(usage.output ?? usage.outputTokens ?? 0) || 0;
-  const cacheRead = Number(usage.cacheRead ?? usage.cacheReadTokens ?? 0) || 0;
-  const cacheWrite = Number(usage.cacheWrite ?? usage.cacheWriteTokens ?? 0) || 0;
-  const reportedTotal = Number(usage.total ?? usage.totalTokens ?? 0) || 0;
-  return { input, output, cacheRead, cacheWrite, total: input + output + cacheRead + cacheWrite || reportedTotal, cost: Number(usage.totalCost ?? cost.total ?? usage.cost ?? 0) || 0 };
-}
 function publishSubagent(runId: string) {
   subagentRunIds.add(runId);
   subagentPublisher.publish(runId);
@@ -191,208 +172,30 @@ function runRequiresSubagentFinalization(sessionId: string, runId: string): bool
 }
 eventBus.subscribe((busEvent) => {
   const childExecution = busEvent.scope === "subagent" || Boolean(busEvent.runId && subagentRunIds.has(busEvent.runId));
-  if (busEvent.type === "approval.requested" && busEvent.runId) {
-    runRepo.setStatus(busEvent.runId, "waiting_approval");
-    const payload = busEvent.payload as { approvalId?: string; toolCallId?: string };
-    if (payload.approvalId) {
-      approvalRuns.set(payload.approvalId, busEvent.runId);
-      if (payload.toolCallId) {
-        const toolCallId = toolCallIds.get(`${busEvent.runId}:${payload.toolCallId}`);
-        if (toolCallId) {
-          toolCallRepo.setStatus(toolCallId, "waiting_approval");
-          approvalToolCalls.set(payload.approvalId, toolCallId);
-        }
-      }
-    }
-  }
-  if (busEvent.type === "approval.resolved") {
-    const payload = busEvent.payload as { approvalId?: string; toolCallId?: string; approved?: boolean };
-    if (payload.approvalId) {
-      const runId = approvalRuns.get(payload.approvalId) ?? busEvent.runId;
-      if (runId) {
-        runRepo.setStatus(runId, "running");
-        const toolCallId = approvalToolCalls.get(payload.approvalId);
-        if (toolCallId) toolCallRepo.setStatus(toolCallId, "running");
-        const run = runRepo.get(runId);
-        if (run) emit("run.status", { status: "running" }, run.sessionId, runId);
-      }
-      approvalRuns.delete(payload.approvalId);
-      approvalToolCalls.delete(payload.approvalId);
-    }
-  }
   const approvalParent = busEvent.runId && busEvent.type === "approval.requested" ? subagentRunRepo.get(busEvent.runId)?.parentSessionId : undefined;
   const agentEvent = eventJournal.record((sequence) => ({
     eventId: crypto.randomUUID(), sequence, type: busEvent.type,
     sessionId: approvalParent ?? busEvent.sessionId, runId: busEvent.runId,
     timestamp: Date.now(), payload: busEvent.payload, scope: approvalParent ? "conversation" : childExecution ? "subagent" : "conversation",
   } satisfies AgentEvent), busEvent.type !== "message.delta" && busEvent.type !== "message.reasoning.delta");
-  if (agentEvent.runId) {
-    const live = liveAssistantByRun.get(agentEvent.runId);
-    if (live) liveAssistantByRun.set(agentEvent.runId, updateLiveAssistant(live, agentEvent));
-    const completedMessageSequence = assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence;
-    const parts = assistantPartsByRun.get(agentEvent.runId);
-    if (parts) {
-      const messageRole = (agentEvent.payload as { message?: { role?: unknown } } | undefined)?.message?.role;
-      if (agentEvent.type === "message.started" && messageRole === "assistant") {
-        assistantMessageSequenceByRun.set(agentEvent.runId, agentEvent.sequence);
-      } else if (agentEvent.type === "message.completed" && messageRole === "assistant") {
-        const messageSequence = assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence;
-        assistantPartsByRun.set(agentEvent.runId, [
-          ...parts.filter((part) => part.messageSequence !== messageSequence),
-          ...assistantPartsFromPiMessage(agentEvent.payload, messageSequence,
-            runRequiresSubagentFinalization(agentEvent.sessionId ?? "", agentEvent.runId)
-              && !runRepo.isFinalizationAuthorized(agentEvent.runId) ? "commentary" : undefined),
-        ]);
-        assistantMessageSequenceByRun.delete(agentEvent.runId);
-      } else if (agentEvent.type === "message.reasoning.delta") {
-        assistantPartsByRun.set(agentEvent.runId, applyReasoningDelta(parts, agentEvent.payload, completedMessageSequence));
-      } else if (agentEvent.type === "message.block.completed" && (agentEvent.payload as { blockType?: string }).blockType === "reasoning") {
-        assistantPartsByRun.set(agentEvent.runId, applyReasoningDelta(parts, { ...(agentEvent.payload as object), complete: true }, completedMessageSequence));
-      } else if (agentEvent.type === "tool.started" || agentEvent.type === "tool.completed" || agentEvent.type === "tool.failed") {
-        assistantPartsByRun.set(agentEvent.runId, applyAssistantToolEvent(parts, agentEvent.type, agentEvent.payload));
-      }
-      if (childExecution && (agentEvent.type === "message.block.started"
-        || (agentEvent.type === "message.delta" || agentEvent.type === "message.block.completed") && (agentEvent.payload as { blockType?: string }).blockType === "tool-call")) {
-        const current = updateLiveAssistant({ content: subagentStreams.get(agentEvent.runId)?.join("") ?? "", parts,
-          messageSequence: assistantMessageSequenceByRun.get(agentEvent.runId), sequence: agentEvent.sequence }, agentEvent);
-        assistantPartsByRun.set(agentEvent.runId, current.parts);
-        if (current.content) subagentStreams.set(agentEvent.runId, [current.content]);
-        else subagentStreams.delete(agentEvent.runId);
-      }
-    }
-    if (activeSubagents.has(agentEvent.runId)) {
-      if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string; usage?: unknown } }).message?.role === "assistant") {
-        const usage = subagentRunRepo.updateUsage(agentEvent.runId, readTokenUsage((agentEvent.payload as { message?: { usage?: unknown } }).message?.usage));
-        subagentPublisher.patch(agentEvent.runId, { tokenUsage: usage });
-        const budget = subagentConfig.runtime.tokenBudget;
-        if (budget > 0 && usage.total >= budget) {
-          subagentController.fail(agentEvent.runId, "Subagent token budget exceeded");
-          emit("subagent.budget_exceeded", { budget, usage }, agentEvent.sessionId, agentEvent.runId);
-        }
-      }
-      if (agentEvent.type === "message.delta" && (agentEvent.payload as { blockType?: string }).blockType !== "tool-call" && typeof (agentEvent.payload as { delta?: unknown }).delta === "string") {
-        const chunks = subagentStreams.get(agentEvent.runId);
-        if (chunks) chunks.push((agentEvent.payload as { delta: string }).delta);
-        else subagentStreams.set(agentEvent.runId, [(agentEvent.payload as { delta: string }).delta]);
-      }
-      if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string } }).message?.role === "assistant") {
-        subagentStreams.delete(agentEvent.runId);
-      }
-      const parts = assistantPartsByRun.get(agentEvent.runId) ?? [];
-      if (["message.completed", "tool.completed", "tool.failed"].includes(agentEvent.type)) {
-        subagentRunRepo.save(agentEvent.runId, assistantBuffers.get(agentEvent.runId) ?? "", parts);
-      }
-      subagentController?.recordEvent(agentEvent.runId, agentEvent.type, agentEvent.payload, completedMessageSequence);
-      if (agentEvent.type === "message.delta" && (agentEvent.payload as { blockType?: string }).blockType === "tool-call") {
-        const runId = agentEvent.runId;
-        subagentPublisher.queueParts(runId, () => assistantPartsByRun.get(runId) ?? []);
-      } else if (agentEvent.type === "message.block.started" || agentEvent.type === "message.block.completed" && (agentEvent.payload as { blockType?: string }).blockType === "tool-call") {
-        subagentPublisher.patch(agentEvent.runId, { parts, streaming: subagentStreams.get(agentEvent.runId)?.join("") ?? null });
-      } else if (agentEvent.type === "message.delta" && typeof (agentEvent.payload as { delta?: unknown }).delta === "string") {
-        subagentPublisher.append(agentEvent.runId, (agentEvent.payload as { delta: string }).delta);
-      } else if (agentEvent.type === "message.reasoning.delta" || (agentEvent.type === "message.block.completed" && (agentEvent.payload as { blockType?: string }).blockType === "reasoning")) {
-        const payload = agentEvent.payload as { delta?: unknown; contentIndex?: number };
-        subagentPublisher.appendReasoning(agentEvent.runId, {
-          delta: typeof payload.delta === "string" ? payload.delta : "", contentIndex: payload.contentIndex,
-          messageSequence: completedMessageSequence, ...(agentEvent.type === "message.block.completed" ? { complete: true } : {}),
-        });
-      } else if (agentEvent.type === "agent.started") {
-        subagentPublisher.patch(agentEvent.runId, { status: "running" });
-      } else if (agentEvent.type === "approval.requested") {
-        subagentPublisher.patch(agentEvent.runId, { status: "waiting_approval" });
-      } else if (["agent.completed", "agent.cancelled", "agent.failed"].includes(agentEvent.type)) {
-        subagentPublisher.patch(agentEvent.runId, {
-          status: agentEvent.type === "agent.failed" ? "failed" : agentEvent.type === "agent.cancelled" ? "cancelled" : "completed",
-        });
-      } else if (agentEvent.type === "message.completed" || agentEvent.type === "tool.started" || agentEvent.type === "tool.completed" || agentEvent.type === "tool.failed") {
-        const messagesAppend = agentEvent.type === "message.completed"
-          ? [subagentRunRepo.latestMessage(agentEvent.runId)].filter((message): message is NonNullable<typeof message> => Boolean(message)).map((message) => ({
-            id: message.id, sequence: message.sequence,
-            role: message.role as "user" | "assistant" | "tool" | "system", content: message.content,
-            internal: message.role === "user" && Boolean(message.rawMessage),
-            parts: message.parts ? JSON.parse(message.parts) as AssistantMessagePart[] : undefined,
-            createdAt: message.createdAt,
-          }))
-          : undefined;
-        subagentPublisher.patch(agentEvent.runId, {
-          content: assistantBuffers.get(agentEvent.runId) ?? "",
-          parts,
-          streaming: subagentStreams.get(agentEvent.runId)?.join("") ?? null,
-          ...(messagesAppend?.length ? { messagesAppend } : {}),
-        });
-      }
-    }
-  }
-  const isSubagentExecution = agentEvent.scope === "subagent";
-  if (agentEvent.sessionId && agentEvent.runId && !isSubagentExecution && isAssistantMessageActivity(agentEvent)) {
-    touchSession(agentEvent.sessionId);
-  }
-  // Reconnects restore canonical messages and live snapshots. Persisting every
-  // token in the replay journal only grows SQLite work without adding recovery
-  // information.
-  if (agentEvent.type !== "message.delta" && agentEvent.type !== "message.reasoning.delta") {
-    queueEventPersistence(agentEvent);
-  }
-  // Child tokens and tool events have their own compact delta protocol. Sending
-  // them again as agent.event only duplicates IPC work and is ignored by the UI.
-  if (!isSubagentExecution) send({ type: "agent.event", event: agentEvent });
-  if (agentEvent.type === "subagent.finished" && agentEvent.runId) {
-    const child = subagentRunRepo.get(agentEvent.runId);
-    const childRun = runRepo.get(agentEvent.runId);
-    if (child && childRun) {
-      const status = childRun.status === "completed" ? "completed" : childRun.status === "cancelled" ? "cancelled" : "failed";
-      const directParent = subagentRunRepo.get(child.parentRunId);
-      if (child.background) subagentNotificationCoordinator?.enqueue({
-        // A nested child must notify the execution session of the direct
-        // parent agent, not only the root conversation session.
-        sessionId: directParent?.executionSessionId ?? child.parentSessionId,
-        subagentRunId: child.runId,
-        // A child run can be resumed/retried and emit another terminal event.
-        // The terminal timestamp makes each completion a durable idempotency key.
-        version: childRun.completedAt ?? Date.now(),
-        kind: status,
-        title: child.title,
-        content: finalSubagentSummary({
-          content: child.content,
-          parts: JSON.parse(child.parts) as AssistantMessagePart[],
-          messages: subagentRunRepo.listMessages(child.runId),
-          status,
-        }),
-      });
-    }
-  }
-  if (agentEvent.type === "compaction_end" && agentEvent.sessionId && agentEvent.runId
-    && (!subagentRunRepo.get(agentEvent.runId) || subagentRunRepo.getByExecutionSession(agentEvent.sessionId))) {
-    subagentNotificationCoordinator?.scheduleLedger(agentEvent.sessionId);
-  }
-  if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string } }).message?.role === "user" && agentEvent.sessionId && agentEvent.runId && !subagentRunRepo.get(agentEvent.runId)) {
-    if (initialUserMessageSeen.has(agentEvent.runId)) {
-      if (!isSubagentUpdatePrompt(agentEvent.payload)) deliverSteer(agentEvent.sessionId, agentEvent.runId);
-    }
-    else initialUserMessageSeen.add(agentEvent.runId);
-  }
-  if ((agentEvent.type === "compaction_start" || agentEvent.type === "compaction_end") && agentEvent.sessionId && agentEvent.runId && !subagentRunRepo.get(agentEvent.runId)) {
-    const payload = agentEvent.payload as { reason?: string; result?: unknown };
-    if (payload.reason === "threshold" || payload.reason === "overflow") {
-      const history = messageRepo.listBySession(agentEvent.sessionId);
-      const throughMessageId = history.find((message) => message.role === "user" && message.runId === agentEvent.runId)?.id ?? history.at(-1)?.id;
-      if (throughMessageId) {
-        const position = compactionPositions.update(agentEvent.runId, agentEvent.eventId, agentEvent.timestamp, agentEvent.type === "compaction_start", assistantPartsByRun.get(agentEvent.runId) ?? []);
-        if (agentEvent.type === "compaction_start") {
-          emit("context.compaction.started", { ...position, throughMessageId, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
-        } else {
-          const status = payload.result ? "completed" : "interrupted";
-          emit(status === "completed" ? "context.compacted" : "context.compaction.interrupted", { ...position, throughMessageId, createdAt: position.startedAt, status, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
-          flushEvents();
-        }
-      }
-    }
-  }
+  handleRuntimeEvent({
+    messageRepo, runRepo, subagentRunRepo, toolCallRepo, settingsRepo,
+    assistantBuffers, assistantStreamBuffers, assistantPartsByRun, assistantRawMessagesByRun, assistantMessageSequenceByRun,
+    liveAssistantByRun, subagentStreams, activeSubagents, subagentRunIds, initialUserMessageSeen,
+    approvalRuns, approvalToolCalls, toolCallIds, compactionPositions,
+    send: (event) => send(event as never), emit, flushEvents, touchSession, deliverSteer, queueEventPersistence,
+    runRequiresSubagentFinalization,
+    subagentConfig: () => subagentConfig,
+    subagentController: () => subagentController,
+    subagentNotificationCoordinator: () => subagentNotificationCoordinator,
+    subagentPublisher,
+  }, busEvent, agentEvent, childExecution);
 });
 const assistantBuffers = new Map<string, string>();
 // Raw streamed deltas per run; survives aborts so partial answers can be saved.
 const assistantStreamBuffers = new Map<string, string[]>();
 const assistantPartsByRun = new Map<string, AssistantMessagePart[]>();
+const assistantRawMessagesByRun = new Map<string, unknown[]>();
 const assistantMessageSequenceByRun = new Map<string, number>();
 const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }>>();
 const initialUserMessageSeen = new Set<string>();
@@ -413,10 +216,10 @@ function persistPartialAssistant(sessionId: string, runId: string, model?: strin
     .trim();
   const content = streamText || assistantBuffers.get(runId)?.trim() || partsText;
   if (!content && !parts.length) return undefined;
-  return messageRepo.addAssistant(sessionId, content, runId, model, parts);
+  return messageRepo.addAssistant(sessionId, content, runId, model, parts, undefined, assistantRawMessagesByRun.get(runId));
 }
 
-function deliverSteer(sessionId: string, runId: string) {
+function deliverSteer(sessionId: string, runId: string, rawUser?: unknown) {
   const pending = pendingSteers.get(sessionId);
   if (!pending?.length || pending[0]?.runId !== runId) return;
   const steer = pending.shift()!;
@@ -425,10 +228,13 @@ function deliverSteer(sessionId: string, runId: string) {
   assistantBuffers.delete(runId);
   assistantStreamBuffers.delete(runId);
   assistantPartsByRun.set(runId, []);
+  // The segment above already owns these raw messages; the next assistant row
+  // starts a new segment instead of duplicating the transcript.
+  assistantRawMessagesByRun.delete(runId);
   assistantMessageSequenceByRun.delete(runId);
   const live = liveAssistantByRun.get(runId);
   if (live) liveAssistantByRun.set(runId, { content: "", parts: [], sequence: live.sequence });
-  const userMessage = messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments, undefined, undefined, steer.quote);
+  const userMessage = messageRepo.add(sessionId, "user", steer.message, runId, undefined, steer.queueItemId, steer.attachments, undefined, undefined, steer.quote, rawUser);
   touchSession(sessionId, userMessage.createdAt);
   queueRepo.remove(sessionId, steer.queueItemId);
   sendQueue(sessionId);
@@ -497,7 +303,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       else assistantStreamBuffers.set(runId, [delta]);
     }
   },
-  onTool: (sessionId, runId, phase, name, args, result, toolCallId) => {
+  onTool: (sessionId, runId, phase, name, args, result, toolCallId, _parentToolCallId, durationMs) => {
     if (phase === "start") {
       const row = toolCallRepo.start(runId, name, args, toolCallId);
       if (toolCallId) toolCallIds.set(`${runId}:${toolCallId}`, row.id);
@@ -505,7 +311,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       if (toolCallId) {
         const id = toolCallIds.get(`${runId}:${toolCallId}`);
         if (id) {
-          toolCallRepo.finish(id, result && (result as { isError?: boolean }).isError ? "failed" : "success", result);
+          toolCallRepo.finish(id, result && (result as { isError?: boolean }).isError ? "failed" : "success", result, durationMs);
           toolCallIds.delete(`${runId}:${toolCallId}`);
         }
       }
@@ -535,10 +341,12 @@ const adapter = new PiAdapter((event) => eventBus.emit({
     role: message.role,
     content: message.content,
     attachments: message.attachments ? JSON.parse(message.attachments) : undefined,
+    parts: message.parts ? JSON.parse(message.parts) : undefined,
+    rawMessage: message.rawMessage ? JSON.parse(message.rawMessage) : undefined,
     createdAt: message.createdAt,
   }));
   const customEntries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
-  history.push(...customEntries.map((rawMessage) => ({ id: crypto.randomUUID(), role: "custom", content: "", attachments: undefined, createdAt: Date.now(), rawMessage })));
+  history.push(...customEntries.map((rawMessage) => ({ id: crypto.randomUUID(), role: "custom", content: "", attachments: undefined, parts: undefined, createdAt: Date.now(), rawMessage })));
   return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
 }, compactionPreferences, douyinBridge, appMediaService, embeddedOpenCli);
 adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
@@ -672,6 +480,13 @@ const mcp = new McpManager(async (serverId, token) => {
   const key = config.oauth?.tokenSecretKey ?? `mcp.oauth:${config.id}`;
   runtimeSecrets.set(key, credential);
   send({ type: "mcp.oauth.token", requestId: "oauth-refresh", serverId: config.id, key, accessToken: credential });
+}, async (serverId, kind) => {
+  // The OAuth SDK rejected a stored credential. Delete the same key the
+  // credential was saved under, otherwise every restart retries a dead
+  // registration or a spent refresh token.
+  const key = `mcp.oauth:${serverId}.${kind}`;
+  runtimeSecrets.delete(key);
+  send({ type: "mcp.oauth.invalidated", serverId, key });
 });
 async function releaseBrowserSession() {
   try { await browserSync?.release(); }
@@ -883,6 +698,7 @@ export function runtimeCommandServices() {
     artifactRepo,
     assistantBuffers,
     assistantMessageSequenceByRun,
+    assistantRawMessagesByRun,
     assistantPartsByRun,
     assistantStreamBuffers,
     authorizeCommand,

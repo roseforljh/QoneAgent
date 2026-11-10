@@ -15,7 +15,7 @@ export interface SubagentController {
   finalize(parentRunId: string, resolvedSubagentRunIds: string[]): { ok: boolean; missing: { runId: string; title: string; status: string; dependencyState: string; failureKind?: string }[] };
   waitForDependencyChange(parentRunId: string, signal?: AbortSignal): Promise<void>;
   catalog(): ReturnType<typeof subagentCatalog>;
-  control(runId: string, action: "stop" | "resume" | "retry" | "steer" | "follow_up", message?: string): Promise<SubagentRunInfo>;
+  control(runId: string, action: "stop" | "resume" | "retry" | "steer" | "follow_up", message?: string, signal?: AbortSignal): Promise<SubagentRunInfo>;
   wait(runId: string, timeoutMs?: number, signal?: AbortSignal, callerId?: string): Promise<SubagentRunInfo>;
   recordEvent(id: string, type: string, payload: unknown, sequence: number): void;
   fail(id: string, message: string): void;
@@ -164,6 +164,10 @@ export function registerSubagentDispatcher(options: {
     };
   };
   const waitForDependencyChange = (parentRunId: string, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error("aborted"));
+      return;
+    }
     const cleanup = () => { dependencyWaiters.get(parentRunId)?.delete(finish); signal?.removeEventListener("abort", abort); };
     const finish = () => { cleanup(); resolve(); };
     const abort = () => { cleanup(); reject(signal?.reason ?? new Error("aborted")); };
@@ -486,7 +490,10 @@ export function registerSubagentDispatcher(options: {
       await Promise.all(waiting);
       for (const row of children) if (row.executionSessionId) await adapter.disposeSession(row.executionSessionId);
     },
-    control: async (id, action, message) => {
+    control: async (id, action, message, signal?: AbortSignal) => {
+      // A parent tool call can already be cancelled when control is invoked;
+      // starting a child turn first would leave a cancelled run behind.
+      if (signal?.aborted) throw signal.reason ?? new Error("aborted");
       const row = repo.get(id);
       if (!row) throw new Error(`Unknown subagent ${id}`);
       const job = jobs.get(id);
@@ -520,7 +527,7 @@ export function registerSubagentDispatcher(options: {
           repo.incrementRetry(id);
         }
         const attachments = originalAttachments(row.parentSessionId, id);
-        await start(id, message?.trim() || (action === "retry" ? row.task : runtimeText("subagent-runner.continue_the_previous_task_and_describe_the_new_results")), false, action !== "retry", undefined, attachments).done;
+        await start(id, message?.trim() || (action === "retry" ? row.task : runtimeText("subagent-runner.continue_the_previous_task_and_describe_the_new_results")), false, action !== "retry", signal, attachments).done;
       }
       const result = requireInfo(id);
       if (["completed", "failed", "cancelled", "interrupted"].includes(result.status)) acknowledge(id);

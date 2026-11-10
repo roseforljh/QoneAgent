@@ -11,8 +11,8 @@ function executable(name: string): string | undefined {
     process.env.QONE_TOOLS_DIR && path.join(process.env.QONE_TOOLS_DIR, file),
     path.join(path.dirname(process.execPath), file),
     path.join(path.dirname(process.execPath), "binaries", file),
-    path.resolve(import.meta.dir, "../../desktop/src-tauri/binaries", file),
-    path.join(process.cwd(), "apps", "desktop", "src-tauri", "binaries", file),
+    path.resolve(import.meta.dir, "../../desktop/binaries", file),
+    path.join(process.cwd(), "apps", "desktop", "binaries", file),
     ...((process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map((dir) => path.join(dir, file))),
   ];
   return candidates.find((candidate): candidate is string => Boolean(candidate && existsSync(candidate)));

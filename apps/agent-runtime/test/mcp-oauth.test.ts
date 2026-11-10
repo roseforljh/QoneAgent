@@ -42,6 +42,44 @@ describe("MCP OAuth", () => {
     provider.clear();
     expect(provider.hasToken()).toBe(false);
   });
+  test("rejects invalidated credentials and deletes the persisted copy", async () => {
+    const invalidated: string[] = [];
+    const provider = new HostedMcpOAuth("https://mcp.example.test/mcp", () => {}, () => {}, (kind) => { invalidated.push(kind); });
+    provider.restore("client", JSON.stringify({ client_id: "qone-test" }));
+    provider.restore("tokens", JSON.stringify({ access_token: "private-test-token", token_type: "Bearer" }));
+    await provider.invalidateCredentials("tokens");
+    expect(provider.hasToken()).toBe(false);
+    expect(provider.clientInformation()?.client_id).toBe("qone-test");
+    expect(invalidated).toEqual(["tokens"]);
+    await provider.invalidateCredentials("all");
+    expect(provider.clientInformation()).toBeUndefined();
+    expect(invalidated).toEqual(["tokens", "client", "tokens"]);
+    // In-memory-only scopes must not touch the persisted credential.
+    invalidated.length = 0;
+    await provider.invalidateCredentials("verifier");
+    expect(invalidated).toEqual([]);
+  });
+
+  test("bounds the OAuth discovery fetch with a deadline", async () => {
+    const originalFetch = globalThis.fetch;
+    let sawSignal = false;
+    let seenInit: RequestInit | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      seenInit = init;
+      sawSignal = init?.signal instanceof AbortSignal;
+      return new Response(JSON.stringify({ error: "invalid_client" }), { status: 400 });
+    }) as typeof fetch;
+    try {
+      const provider = new HostedMcpOAuth("https://mcp.example.test/mcp", () => {}, () => {});
+      await provider.begin().catch(() => undefined);
+      expect(sawSignal).toBe(true);
+      // A pre-existing caller signal must win over the deadline.
+      expect(seenInit?.signal?.aborted).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("normalizes model-facing tool names and avoids collisions", () => {
     const used = new Set<string>();
     const first = safeToolName("mcp:server:search", used);

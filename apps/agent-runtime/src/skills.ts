@@ -1,5 +1,5 @@
 import { runtimeError } from "./runtime-localization";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -14,6 +14,7 @@ import { readGlobalInstructions } from "./global-instructions.js";
 import { workspaceInstructions } from "./workspace-instructions.js";
 import { toolPromptContextExtension } from "./tool-prompt-context.js";
 import { assertUserSkillName, isBuiltinSkillName } from "./builtin-skills/identity.js";
+import { SKILL_PUBLISHER_FILE } from "./skill-catalog.js";
 import { listBuiltinSkills } from "./builtin-skills/manager.js";
 import { syncPonytailProjectInstructions } from "./project-instructions.js";
 import eccResources from "./builtin-subagents/ecc-resources.json";
@@ -151,5 +152,19 @@ function toInfo(skill: Skill): SkillInfo {
     name: skill.name,
     description: skill.description,
     path: skill.filePath,
+    ...installedSource(skill.filePath),
   };
+}
+
+/** Read the origin recorded at install time so the UI can show the publisher. */
+function installedSource(filePath: string): Pick<SkillInfo, "source" | "revision"> {
+  try {
+    const meta = JSON.parse(readFileSync(path.join(path.dirname(filePath), SKILL_PUBLISHER_FILE), "utf8")) as { source?: unknown; revision?: unknown };
+    return {
+      ...(typeof meta.source === "string" ? { source: meta.source } : {}),
+      ...(typeof meta.revision === "string" ? { revision: meta.revision } : {}),
+    };
+  } catch {
+    return {};
+  }
 }

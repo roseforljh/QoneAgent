@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Type } from "typebox";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import type { AgentEvent } from "@qone/protocol";
 import { streamSimple as streamResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { PiAdapter } from "../src/pi-adapter";
 import { readSystemPrompt } from "../src/system-prompt";
@@ -48,6 +49,8 @@ test("model-facing system text starts with the same eight modules across model/t
         expect(text).toContain(`USER_CONTEXT_${index}`);
         expect(text).toContain(`PROJECT_CONTEXT_${index}`);
         expect(text).toContain(workspace.replace(/\\/g, "/"));
+        expect(text).toContain("Keep long-running tests and builds streaming");
+        expect(text).toContain("Preserve pipelines explicitly requested by the user.");
         expect(text).not.toContain("You are an expert coding assistant operating inside pi");
         expect(text).not.toContain("Qone 工作原则");
         expect(JSON.stringify(payload.input)).toContain("QONE_WEB_ACCESS_MEMORY");
@@ -65,6 +68,52 @@ test("model-facing system text starts with the same eight modules across model/t
     if (originalRoot === undefined) delete process.env.QONE_DATA_DIR;
     else process.env.QONE_DATA_DIR = originalRoot;
     if (path.dirname(path.resolve(root)) !== path.resolve(tmpdir())) throw new Error("Unsafe test cleanup");
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 15000);
+
+test("PowerShell output reaches adapter events before the command completes", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "qone-shell-stream-"));
+  const originalRoot = process.env.QONE_DATA_DIR;
+  process.env.QONE_DATA_DIR = path.join(root, "data");
+  const faux = fauxProvider({ provider: "qone-shell-stream", models: [{ id: "test" }] });
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("powershell", {
+      command: "[Console]::Out.WriteLine('stdout-before'); [Console]::Error.WriteLine('stderr-before'); Start-Sleep -Milliseconds 600; [Console]::Out.WriteLine('stdout-after')",
+      timeout: 10,
+    })),
+    fauxAssistantMessage(fauxText("done")),
+  ]);
+  const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
+  runtime.registerNativeProvider(faux.provider);
+  const events: AgentEvent[] = [];
+  const adapter = new PiAdapter((event) => events.push(event));
+  Object.assign(adapter, { modelRuntime: runtime });
+  const text = (value: unknown) => (value as { content?: { text?: string }[] } | undefined)?.content?.map((part) => part.text ?? "").join("\n") ?? "";
+  try {
+    await adapter.run("shell-stream", "run the command", {
+      cwd: root, model: "qone-shell-stream/test", runId: "stream-run", permissionMode: "full",
+    }, () => {});
+    const updates = events.filter((event) => event.type === "tool.updated");
+    const before = updates.find((event) => {
+      const output = text((event.payload as { update?: unknown }).update);
+      return output.includes("stdout-before") && output.includes("stderr-before") && !output.includes("stdout-after");
+    });
+    expect(before).toBeDefined();
+    const completed = events.find((event) => event.type === "tool.completed");
+    expect(completed).toBeDefined();
+    expect(before!.runId).toBe("stream-run");
+    expect(events.indexOf(before!)).toBeLessThan(events.indexOf(completed!));
+    expect((before!.payload as { toolCallId: string }).toolCallId).toBe((completed!.payload as { toolCallId: string }).toolCallId);
+    const payload = completed!.payload as { result: unknown; durationMs?: number };
+    const output = text(payload.result);
+    for (const line of ["stdout-before", "stderr-before", "stdout-after"]) expect(output).toContain(line);
+    expect(payload.durationMs).toBeGreaterThanOrEqual(600);
+    expect(payload.result).toMatchObject({ structuredContent: { exit_code: 0, truncated: false } });
+  } finally {
+    await adapter.disposeSession("shell-stream");
+    if (originalRoot === undefined) delete process.env.QONE_DATA_DIR;
+    else process.env.QONE_DATA_DIR = originalRoot;
     rmSync(root, { recursive: true, force: true });
   }
 }, 15000);

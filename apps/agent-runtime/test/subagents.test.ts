@@ -584,6 +584,55 @@ test("recoverable failures continue the original run at most twice before exhaus
   }
 });
 
+test("a pre-aborted dependency wait rejects immediately and a retry follows the control signal", async () => {
+  const db = openDb(":memory:");
+  try {
+    const workspaceRepo = new WorkspaceRepo(db);
+    const workspace = workspaceRepo.upsert("test", process.cwd());
+    const sessionRepo = new SessionRepo(db);
+    const session = sessionRepo.create("cancel", workspace.id);
+    const runRepo = new RunRepo(db);
+    const parent = runRepo.create(session.id);
+    const repo = new SubagentRunRepo(db);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    let started = 0;
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async () => {
+        started++;
+        if (started > 1) await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      },
+      stop: () => true,
+      disposeSession: async () => undefined,
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({
+      adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo: repo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(),
+      streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(), publish: () => undefined, emit: () => undefined,
+    });
+
+    // The parent turn was already cancelled before it began waiting.
+    const alreadyAborted = new AbortController();
+    alreadyAborted.abort(new Error("parent cancelled"));
+    await expect(controller.waitForDependencyChange(parent.id, alreadyAborted.signal))
+      .rejects.toThrow("parent cancelled");
+
+    await dispatch({ parentSessionId: session.id, parentRunId: parent.id, title: "继续", task: "执行", reason: "需要独立执行", expectedResult: "返回总结", toolCallId: "cancel-call", background: false, permissionMode: "full" });
+    const child = repo.listBySession(session.id)[0]!;
+    await controller.wait(child.runId, 1000);
+    controller.acknowledge(child.runId);
+
+    // A cancelled control call must not start another child turn.
+    const cancelled = new AbortController();
+    cancelled.abort(new Error("control cancelled"));
+    const before = started;
+    await expect(controller.control(child.runId, "retry", undefined, cancelled.signal)).rejects.toBeDefined();
+    expect(started).toBe(before);
+  } finally {
+    closeDb(db);
+  }
+});
+
 test("exhausted recoverable failures can finalize only with the same run's failure fact", async () => {
   const db = openDb(":memory:");
   try {

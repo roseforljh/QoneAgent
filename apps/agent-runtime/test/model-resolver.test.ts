@@ -300,7 +300,7 @@ describe("model metadata resolver", () => {
     const resolver = new ModelMetadataResolver({ disableModelsDev: true });
     const model = await resolver.resolve({
       provider: "openai-codex",
-      model: "gpt-5.5",
+      model: "gpt-6.1-sol",
       config: baseConfig("codex", { baseUrl: "https://chatgpt.com/backend-api" }),
     });
     expect(model.api).toBe("openai-codex-responses");

@@ -314,6 +314,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         id: t.id, runId: t.runId, toolName: t.toolName,
         arguments: t.arguments ?? undefined, resultSummary: t.resultSummary ?? undefined,
         status: t.status, startedAt: t.startedAt ?? undefined, completedAt: t.completedAt ?? undefined,
+        durationMs: t.durationMs ?? undefined,
       })) });
       return true;
 

@@ -111,10 +111,11 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       message: Type.Optional(Type.String({ maxLength: 32_000 })),
     }),
     executionMode: "sequential",
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, signal) => {
       const input = params as { runId: string; action: "stop" | "resume" | "retry" | "steer" | "follow_up"; message?: string };
       checkChild(input.runId);
-      const result = await options.controller!.control(input.runId, input.action, input.message);
+      if (signal?.aborted) throw signal.reason ?? new Error("aborted");
+      const result = await options.controller!.control(input.runId, input.action, input.message, signal);
       return subagentResultForModel(result);
     },
   }] : [];

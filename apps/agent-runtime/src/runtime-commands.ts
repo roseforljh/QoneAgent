@@ -576,6 +576,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         services.runRepo.finish(run.id, "failed", "session workspace no longer exists");
         services.assistantPartsByRun.delete(run.id);
         services.assistantMessageSequenceByRun.delete(run.id);
+        services.assistantRawMessagesByRun.delete(run.id);
         services.liveAssistantByRun.delete(run.id);
         services.turnRepo.finish(turn.id, "failed");
         services.emit("agent.failed", { message: "session workspace no longer exists" }, cmd.sessionId, run.id);
@@ -605,6 +606,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           services.assistantStreamBuffers.delete(run.id);
           services.assistantPartsByRun.delete(run.id);
           services.assistantMessageSequenceByRun.delete(run.id);
+          services.assistantRawMessagesByRun.delete(run.id);
           services.liveAssistantByRun.delete(run.id);
           for (const key of services.toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) services.toolCallIds.delete(key);
           const status = cancelled ? "cancelled" : "completed";
@@ -645,6 +647,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           services.assistantStreamBuffers.delete(run.id);
           services.assistantPartsByRun.delete(run.id);
           services.assistantMessageSequenceByRun.delete(run.id);
+          services.assistantRawMessagesByRun.delete(run.id);
           services.liveAssistantByRun.delete(run.id);
           for (const key of services.toolCallIds.keys()) if (key.startsWith(`${run.id}:`)) services.toolCallIds.delete(key);
           const status = cancelled ? "cancelled" : "failed";

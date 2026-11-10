@@ -73,6 +73,10 @@ test("a real sidecar returns all conversation state in one ordered stdout batch 
     process.kill(); await process.exited; await reader.cancel();
     const resolved = path.resolve(directory);
     if (path.dirname(resolved) !== path.resolve(tmpdir()) || !path.basename(resolved).startsWith("qone-snapshot-test-")) throw new Error("Unsafe test cleanup path");
-    rmSync(resolved, { recursive: true, force: true });
+    // The killed sidecar releases its SQLite handles asynchronously on Windows.
+    for (let attempt = 0; attempt < 40; attempt++) {
+      try { rmSync(resolved, { recursive: true, force: true }); break; }
+      catch { await new Promise((resolve) => setTimeout(resolve, 100)); }
+    }
   }
 }, 15_000);

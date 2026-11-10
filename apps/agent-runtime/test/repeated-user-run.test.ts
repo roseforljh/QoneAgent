@@ -85,13 +85,13 @@ test("runtime resend merges persisted identical user turns and preserves distinc
     process.kill();
     await process.exited;
     await output;
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 40; attempt++) {
       try {
         await rm(sandbox, { recursive: true, force: true });
         break;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EBUSY" || attempt === 9) throw error;
-        await Bun.sleep(50);
+        if ((error as NodeJS.ErrnoException).code !== "EBUSY" || attempt === 39) throw error;
+        await Bun.sleep(100);
       }
     }
   }

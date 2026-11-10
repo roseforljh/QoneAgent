@@ -140,6 +140,15 @@ export function createPiSessionEntries(
       parentId = id;
       continue;
     }
+    const rawMessages = Array.isArray(message.rawMessage) ? message.rawMessage : message.rawMessage === undefined ? [] : [message.rawMessage];
+    if (rawMessages.length && rawMessages.every(isPiTranscriptMessage)) {
+      for (const rawMessage of rawMessages) {
+        const id = crypto.randomUUID();
+        entries.push({ type: "message", id, parentId, timestamp: new Date(message.createdAt).toISOString(), message: rawMessage } as FileEntry);
+        parentId = id;
+      }
+      continue;
+    }
     if (isPiTranscriptMessage(message.rawMessage)) {
       const id = crypto.randomUUID();
       entries.push({ type: "message", id, parentId, timestamp: new Date(message.createdAt).toISOString(), message: message.rawMessage } as FileEntry);

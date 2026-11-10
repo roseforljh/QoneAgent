@@ -101,7 +101,7 @@ export type { PersistedPiMessage } from "./pi-attachments.js";
 interface PiAdapterHooks {
   onMessage?: (sessionId: string, runId: string, role: "assistant" | "tool", content: string) => void;
   onAssistantFinal?: (sessionId: string, runId: string, content: string) => void;
-  onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string) => void;
+  onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string, durationMs?: number) => void;
   webAccessContext?: (sessionId: string, task?: string) => string;
   onCustomEntry?: (sessionId: string, entry: unknown) => void;
   onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
@@ -566,17 +566,22 @@ export class PiAdapter {
       const { loader } = await createResourceLoader(workspacePath, sideConversation ? SIDE_CHAT_INSTRUCTIONS : undefined, true, subagentDepth > 0);
       this.resourceLoaders.set(resourceKey, loader);
     }
+    const powershell = createPowerShellTool(workspacePath, {
+      // PowerShell 7 can emit ANSI color codes for formatted objects. The
+      // tool output is sent to the chat as plain text, so those codes would
+      // become visible as garbled characters instead of colors.
+      spawnHook: ({ command, ...context }) => ({
+        ...context,
+        command: "try { $PSStyle.OutputRendering = 'PlainText' } catch {}\n" + command,
+      }),
+    });
+    Object.assign(powershell, { promptGuidelines: [
+      ...((powershell as ToolDefinition).promptGuidelines ?? []),
+      "Keep long-running tests and builds streaming: run commands directly rather than adding buffering pipelines such as Select-Object -Last or tail just to shorten output. The tool already truncates output and saves the full log. Preserve pipelines explicitly requested by the user.",
+    ] });
     const builtinTools = [
       createReadTool(workspacePath),
-      createPowerShellTool(workspacePath, {
-        // PowerShell 7 can emit ANSI color codes for formatted objects. The
-        // tool output is sent to the chat as plain text, so those codes would
-        // become visible as garbled characters instead of colors.
-        spawnHook: ({ command, ...context }) => ({
-          ...context,
-          command: "try { $PSStyle.OutputRendering = 'PlainText' } catch {}\n" + command,
-        }),
-      }),
+      powershell,
       ...createFileChangeTools(workspacePath),
       createGrepTool(workspacePath),
       createFindTool(workspacePath),
@@ -837,7 +842,7 @@ export class PiAdapter {
         const result = raw.result as { isError?: boolean } | undefined;
         const isError = e.isError || result?.isError === true;
         protocolType = isError ? "tool.failed" : "tool.completed";
-        protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: isError ? { ...result, isError: true } : raw.result, isError };
+        protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: isError ? { ...result, isError: true } : raw.result, isError, durationMs: e.durationMs };
       } else if (e.type === "agent_start") protocolType = "turn.started";
       else if (e.type === "agent_end") protocolType = "turn.completed";
       else if (e.type === "entry_appended") {
@@ -866,7 +871,7 @@ export class PiAdapter {
       }
       if (e.type === "tool_execution_end") {
         const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
-        this.hooks.onTool?.(eventSessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId, String((toolPayload as { parentToolCallId?: unknown }).parentToolCallId ?? "") || undefined);
+        this.hooks.onTool?.(eventSessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId, String((toolPayload as { parentToolCallId?: unknown }).parentToolCallId ?? "") || undefined, typeof e.durationMs === "number" ? e.durationMs : undefined);
       }
     });
 

@@ -108,8 +108,8 @@ export function bundledOpenCli(args: string[]): { command: string; args: string[
   const roots = [
     path.dirname(process.execPath),
     path.join(path.dirname(process.execPath), "binaries"),
-    path.resolve(import.meta.dir, "../../desktop/src-tauri/binaries"),
-    path.join(process.cwd(), "apps", "desktop", "src-tauri", "binaries"),
+    path.resolve(import.meta.dir, "../../desktop/binaries"),
+    path.join(process.cwd(), "apps", "desktop", "binaries"),
   ];
   for (const root of roots) {
     const node = path.join(root, process.platform === "win32" ? "node.exe" : "node");
