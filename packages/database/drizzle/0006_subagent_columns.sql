@@ -1,0 +1,15 @@
+ALTER TABLE subagent_runs ADD COLUMN parent_subagent_id TEXT;
+ALTER TABLE subagent_runs ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subagent_runs ADD COLUMN execution_session_id TEXT;
+ALTER TABLE subagent_runs ADD COLUMN media_attachment TEXT;
+ALTER TABLE subagent_runs ADD COLUMN profile_id TEXT;
+ALTER TABLE subagent_runs ADD COLUMN permission_mode TEXT;
+ALTER TABLE subagent_runs ADD COLUMN tools TEXT;
+ALTER TABLE subagent_runs ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE subagent_runs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subagent_runs ADD COLUMN workflow_id TEXT;
+ALTER TABLE subagent_runs ADD COLUMN workflow_step_id TEXT;
+ALTER TABLE subagent_runs ADD COLUMN depends_on TEXT;
+ALTER TABLE subagent_runs ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'snapshot';
+ALTER TABLE subagent_runs ADD COLUMN context_message_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subagent_runs ADD COLUMN token_usage TEXT;

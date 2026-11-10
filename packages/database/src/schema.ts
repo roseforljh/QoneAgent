@@ -25,6 +25,7 @@ export const messages = sqliteTable(
     content: text("content").notNull(),
     quote: text("quote"), // JSON: selected text annotation metadata
     parts: text("parts"), // ordered visible Pi assistant parts; null for legacy messages
+    rawMessage: text("raw_message"), // JSON: native Pi transcript messages for restart fidelity
     attachments: text("attachments"),
     model: text("model"),
     goalId: text("goal_id"),
@@ -130,6 +131,7 @@ export const toolCalls = sqliteTable(
     status: text("status").notNull().default("queued"),
     startedAt: integer("started_at"),
     completedAt: integer("completed_at"),
+    durationMs: integer("duration_ms"),
   },
   (t) => [index("idx_tool_calls_run").on(t.runId)]
 );

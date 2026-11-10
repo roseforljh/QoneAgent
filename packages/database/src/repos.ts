@@ -119,7 +119,7 @@ export class MessageRepo {
       .where(and(eq(messages.id, messageId), eq(messages.sessionId, sessionId), eq(messages.role, "user"))).get());
   }
 
-  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[], parts?: AssistantMessagePart[], goalId?: string, quote?: { text: string; messageId: string }) {
+  add(sessionId: string, role: string, content: string, runId?: string, model?: string, messageId?: string, attachments?: MessageAttachmentInfo[], parts?: AssistantMessagePart[], goalId?: string, quote?: { text: string; messageId: string }, rawMessage?: unknown) {
     const now = Date.now();
     const row = {
       id: messageId ?? crypto.randomUUID(),
@@ -129,6 +129,7 @@ export class MessageRepo {
       content,
       quote: quote ? JSON.stringify(quote) : null,
       parts: parts ? JSON.stringify(parts) : null,
+      rawMessage: rawMessage === undefined ? null : JSON.stringify(rawMessage),
       attachments: attachments?.length ? JSON.stringify(attachments) : null,
       model,
       goalId: goalId ?? null,
@@ -146,6 +147,10 @@ export class MessageRepo {
       .where(eq(messages.sessionId, sessionId))
       .orderBy(messages.createdAt, sql`rowid`)
       .all();
+  }
+
+  setRawMessage(id: string, rawMessage: unknown) {
+    this.db.update(messages).set({ rawMessage: JSON.stringify(rawMessage), updatedAt: Date.now() }).where(eq(messages.id, id)).run();
   }
 
   /** Replace a user turn and everything after it as one database operation. */
@@ -180,8 +185,8 @@ export class MessageRepo {
     });
   }
 
-  addAssistant(sessionId: string, content: string, runId?: string, model?: string, parts?: AssistantMessagePart[], goalId?: string) {
-    return this.add(sessionId, "assistant", content, runId, model, undefined, undefined, parts, goalId);
+  addAssistant(sessionId: string, content: string, runId?: string, model?: string, parts?: AssistantMessagePart[], goalId?: string, rawMessage?: unknown) {
+    return this.add(sessionId, "assistant", content, runId, model, undefined, undefined, parts, goalId, undefined, rawMessage);
   }
 }
 
@@ -558,13 +563,14 @@ export class ToolCallRepo {
     this.db.update(toolCalls).set({ status }).where(eq(toolCalls.id, id)).run();
   }
 
-  finish(id: string, status: "success" | "failed" | "cancelled", result?: unknown) {
+  finish(id: string, status: "success" | "failed" | "cancelled", result?: unknown, durationMs?: number) {
     this.db
       .update(toolCalls)
       .set({
         status,
         resultSummary: result === undefined ? null : JSON.stringify(persistedToolResult(result)),
         completedAt: Date.now(),
+        durationMs: durationMs ?? null,
       })
       .where(eq(toolCalls.id, id))
       .run();
@@ -583,7 +589,7 @@ export class ToolCallRepo {
     return this.db.select({
       id: toolCalls.id, runId: toolCalls.runId, toolName: toolCalls.toolName,
       arguments: toolCalls.arguments, resultSummary: toolCalls.resultSummary,
-      status: toolCalls.status, startedAt: toolCalls.startedAt, completedAt: toolCalls.completedAt,
+      status: toolCalls.status, startedAt: toolCalls.startedAt, completedAt: toolCalls.completedAt, durationMs: toolCalls.durationMs,
     }).from(toolCalls).innerJoin(runs, eq(toolCalls.runId, runs.id)).where(eq(runs.sessionId, sessionId)).orderBy(toolCalls.startedAt).all();
   }
 }

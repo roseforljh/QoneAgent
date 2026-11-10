@@ -388,6 +388,8 @@ export interface ToolCallInfo {
   status: string;
   startedAt?: number;
   completedAt?: number;
+  /** Wall time reported by the tool runtime; survives restarts. */
+  durationMs?: number;
 }
 
 export interface ArtifactInfo {
