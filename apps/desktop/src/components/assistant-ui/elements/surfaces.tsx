@@ -29,8 +29,11 @@ export const iconSwapIn = "scale-100 opacity-100 blur-none";
 
 export const iconSwapOut = "scale-[0.25] opacity-0 blur-[4px]";
 
+// The row centers its icon and disclosure arrow against this box, so it must
+// keep a normal line box. `leading-none` shrinks it below the glyph ink and
+// leaves the arrow looking a few pixels high.
 export const labelSwap =
-  "col-start-1 row-start-1 flex w-max items-center gap-1.5 leading-none transition-[opacity,filter] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none";
+  "col-start-1 row-start-1 flex w-max items-center gap-1.5 transition-[opacity,filter] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none";
 
 export const labelSwapIn = "opacity-100 blur-none";
 

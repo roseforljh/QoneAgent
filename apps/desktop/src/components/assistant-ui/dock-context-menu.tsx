@@ -2,7 +2,7 @@
 
 import { ContextMenu } from "radix-ui";
 import { useRef, useState, type ReactElement } from "react";
-import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl, revealItemInDir } from "../../lib/desktop-bridge";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { localizeError } from "../../lib/error-localization";

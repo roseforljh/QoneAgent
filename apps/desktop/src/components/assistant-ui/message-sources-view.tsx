@@ -3,8 +3,8 @@ import { useAuiState } from "@assistant-ui/react";
 import { useLocale } from "../../localization";
 import { Sources } from "./elements/sources";
 import { messageSources } from "./message-sources";
-import { hasTauriBridge } from "../../store";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { hasDesktopBridge } from "../../store";
+import { openUrl } from "../../lib/desktop-bridge";
 
 export function MessageSourcesView() {
   const parts = useAuiState((state) => state.message.parts);
@@ -13,6 +13,6 @@ export function MessageSourcesView() {
   const [open, setOpen] = useState(false);
   const { locale } = useLocale();
   if (sources.length === 0) return null;
-  const openSource = (url: string) => hasTauriBridge() ? void openUrl(url) : window.open(url, "_blank", "noopener,noreferrer");
+  const openSource = (url: string) => hasDesktopBridge() ? void openUrl(url) : window.open(url, "_blank", "noopener,noreferrer");
   return <Sources sources={sources} open={open} onOpenChange={setOpen} onOpenSource={openSource} label={locale.startsWith("zh") ? "来源" : "Sources"} className="mt-3" />;
 }

@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke } from "./desktop-bridge";
+import { listen } from "./desktop-bridge";
 import { createDockTerminalSession } from "./dock-terminal-session";
 import { bindDockTerminalAppearance, readDockTerminalAppearance } from "./dock-terminal-appearance";
 

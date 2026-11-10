@@ -1,4 +1,5 @@
 import { useConversationStore } from "../../lib/conversation-context";
+import { DEFAULT_RUN_PERMISSION_MODE } from "../../lib/run-options";
 import { useEffect, useRef, useState, type CSSProperties, type FC, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AssistantModalPrimitive } from "@assistant-ui/react";
 import { CheckIcon, SnowflakeIcon } from "lucide-react";
@@ -190,12 +191,11 @@ export const RunOptionsPopover: FC = () => {
   const sessionId = useConversationStore((state) => state.currentSessionId);
   const options = useConversationStore((state) => sessionId ? state.runOptionsBySession[sessionId] : state.draftRunOptions);
   const setPermission = useConversationStore((state) => state.setRunPermissionMode);
-  const defaultPermissionMode = useConversationStore((state) => state.defaultPermissionMode);
   const setDefaultPermissionMode = useConversationStore((state) => state.setDefaultPermissionMode);
   const [grantScope, setGrantScope] = useState<GrantScope | "pending" | null>(null);
   const [grantDialogOpen, setGrantDialogOpen] = useState(false);
   const [modeBeforeGrant, setModeBeforeGrant] = useState<RunPermissionMode>("ask");
-  const permissionMode = options?.permissionMode ?? defaultPermissionMode;
+  const permissionMode = options?.permissionMode ?? DEFAULT_RUN_PERMISSION_MODE;
   const modeLabel = t(permissionModes.find((mode) => mode.value === permissionMode)?.labelKey ?? "composer.permissionAsk");
   const modeIcon = permissionModes.find((mode) => mode.value === permissionMode)?.icon ?? handIcon;
 

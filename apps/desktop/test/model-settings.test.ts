@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { defaultModelSettings, mergeFetchedModel, modelSettingsFromMetadata, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withProviderInputDefaults, withResolvedModelSettings } from "../src/lib/model-settings";
+import { defaultModelSettings, defaultThinkingForModel, mergeFetchedModel, modelSettingsFromMetadata, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withProviderInputDefaults, withResolvedModelSettings } from "../src/lib/model-settings";
 
 test("provider model list metadata becomes saved model settings", () => {
   const [listed] = parseModelsResponse({ data: [{ id: "gemini-demo", context_length: 64_000, modalities: { input: ["text", "image"], output: ["text"] } }] });
@@ -67,6 +67,14 @@ test("resolved model settings retain each field's fallback source", () => {
   expect(merged.settings?.metadataSources).toEqual({ maxContext: "provider", maxOutput: "pi", thinking: "default", input: "pi", output: "default" });
   expect(merged.settings).toMatchObject({ maxContext: 64_000, maxOutput: 4_096, thinking: "none", input: ["text", "image"] });
   expect(merged.settings?.modelMetadata).toEqual({ id: "demo", contextWindow: 64_000 });
+});
+
+test("composer thinking defaults to medium unless the model explicitly configures another level", () => {
+  expect(defaultThinkingForModel(undefined, "openai-compatible")).toBe("medium");
+  expect(defaultThinkingForModel({ thinking: "none" }, "openai-compatible")).toBe("medium");
+  expect(defaultThinkingForModel({ thinking: "none", metadataOverrides: { thinking: true } }, "openai-compatible")).toBe("none");
+  expect(defaultThinkingForModel({ thinking: "high" }, "openai-compatible")).toBe("high");
+  expect(defaultThinkingForModel({ thinking: "max" }, "google")).toBe("high");
 });
 
 test("model API format controls the available thinking levels", () => {

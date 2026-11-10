@@ -4,23 +4,22 @@ import type { RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 const commands: RuntimeCommand[] = [];
 let onRuntimeEvent: ((event: { payload: string }) => void) | undefined;
 
-mock.module("@tauri-apps/api/core", () => ({
+const originalBridge = { ...await import("../src/lib/desktop-bridge") };
+mock.module("../src/lib/desktop-bridge", () => ({
+  ...originalBridge,
   invoke: async (command: string, args?: { cmd?: string }) => {
     if (command === "runtime_send" && args?.cmd) commands.push(JSON.parse(args.cmd));
   },
-}));
-mock.module("@tauri-apps/api/event", () => ({
   listen: async (_name: string, listener: typeof onRuntimeEvent) => {
     onRuntimeEvent = listener;
     return () => {};
   },
 }));
-mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 Object.defineProperty(globalThis, "window", {
   configurable: true,
-  value: { __TAURI_INTERNALS__: {}, localStorage: { getItem: () => null, setItem: () => {} } },
+  value: { electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p }, localStorage: { getItem: () => null, setItem: () => {} } },
 });
 afterAll(() => {
   if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);

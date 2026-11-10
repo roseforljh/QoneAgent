@@ -274,6 +274,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
                     result: p?.result ?? p?.content,
                     summary: undefined,
                     completedAt: ev.timestamp,
+                    ...(typeof p?.durationMs === "number" ? { durationMs: p.durationMs } : {}),
                   }
                 : t
             ),

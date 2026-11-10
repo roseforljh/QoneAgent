@@ -129,6 +129,9 @@ export function toolFullTarget(part: ToolActionPart, call?: ToolCall): string {
 }
 
 function elapsedSeconds(call: ToolCall | undefined, now: number): number | undefined {
+  // Prefer the runtime-reported wall time; it survives a reload where the
+  // client clock and the persisted timestamps do not line up.
+  if (call?.durationMs !== undefined && Number.isFinite(call.durationMs)) return Math.max(0, call.durationMs / 1000);
   if (call?.startedAt === undefined || !Number.isFinite(call.startedAt)) return undefined;
   const end = call.completedAt ?? now;
   if (!Number.isFinite(end)) return undefined;

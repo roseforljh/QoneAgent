@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "./desktop-bridge";
 
 const previews = new Map<string, Promise<string>>();
 

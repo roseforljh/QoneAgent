@@ -11,7 +11,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import { createPortal } from "react-dom";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke, isDesktop } from "../../../lib/desktop-bridge";
 import { cva, type VariantProps } from "class-variance-authority";
 import {
   DownloadIcon,
@@ -110,7 +110,7 @@ const saveImagePart = async (
 ): Promise<void> => {
   const filename = part.filename ?? defaultFilenameFromImage(part.image);
   const isDataUri = /^data:/i.test(part.image);
-  const native = isTauri();
+  const native = isDesktop();
   const picker = (window as Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
   if (!native && !picker) {
     const blob = isDataUri ? dataUriToBlob(part.image) : null;

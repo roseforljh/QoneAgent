@@ -1,6 +1,6 @@
 import { localizeError } from "../lib/error-localization";
 import { useEffect, useState } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "./desktop-bridge";
 
 export function useLocalFilePreview(path: string | undefined, revision: unknown = path, allowedRoot?: string): { url?: string; error?: string } {
   const [preview, setPreview] = useState<{ path?: string; revision?: unknown; url?: string; error?: string }>({});

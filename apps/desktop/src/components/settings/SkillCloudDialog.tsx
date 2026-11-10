@@ -5,6 +5,7 @@ import { CloudDownload, LoaderCircle, Search, X } from "lucide-react";
 import { SKILL_CATALOG_TIMEOUT, type CloudSkillInfo } from "@qone/protocol";
 import { requestSkillCloud, useStore } from "../../store";
 import { useLocale } from "../../localization";
+import { SkillIcon } from "../skills/SkillIcon";
 import "./skill-cloud.css";
 
 type Collection = "popular" | "trending" | "official";
@@ -114,7 +115,7 @@ export function SkillCloudDialog({ onClose }: { onClose: () => void }) {
               items.length === 0 ? <div className="skill-cloud-state">{t("skills.cloud.empty")}</div> : items.map((item) => {
                 const isInstalled = installed.some((skill) => skill.name === item.skillId) || installedKeys.includes(`${item.source}#${item.skillId}`);
                 return <button key={`${item.source}#${item.skillId}`} type="button" className="skill-cloud-item" onClick={() => { setSelected(item); setInstallError(""); }}>
-                  <span className="skill-cloud-item-icon"><CloudDownload size={17} /></span>
+                  <span className="skill-cloud-item-icon"><SkillIcon skill={{ source: item.source, name: item.name }} className="size-4" /></span>
                   <span className="skill-cloud-item-copy"><strong>{item.name}</strong><small>{item.source}</small></span>
                   <span className="skill-cloud-item-meta">{item.isOfficial && <em>{t("skills.cloud.officialBadge")}</em>}<small>{item.installs.toLocaleString(locale)} {t("skills.cloud.installs")}</small>{isInstalled && <em>{t("skills.cloud.installed")}</em>}</span>
                 </button>;

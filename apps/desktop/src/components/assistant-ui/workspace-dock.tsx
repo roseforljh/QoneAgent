@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from "react";
 import { Popover } from "radix-ui";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath } from "../../lib/desktop-bridge";
 import { motion, useMotionValueEvent, useReducedMotion } from "motion/react";
 import {
   ArrowLeftIcon,

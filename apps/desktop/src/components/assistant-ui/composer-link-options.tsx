@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNearestNodeFromDOMNode, $getNodeByKey, HISTORY_PUSH_TAG } from "lexical";
 import { Popover } from "radix-ui";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { hasTauriBridge } from "../../store";
+import { openUrl } from "../../lib/desktop-bridge";
+import { hasDesktopBridge } from "../../store";
 import { useLocale } from "../../localization";
 import { Button } from "../ui/Button";
 import { CodexIcon } from "../ui/CodexIcon";
@@ -89,7 +89,7 @@ export function ComposerLinkOptionsPlugin() {
       >
         {draft.mode === "actions" ? <>
           <Button variant="ghost" size="sm" autoFocus onClick={() => {
-            if (hasTauriBridge()) void openUrl(draft.href)
+            if (hasDesktopBridge()) void openUrl(draft.href)
               .then(() => setDraft((current) => current?.key === draft.key ? null : current))
               .catch(() => setDraft((current) => current?.key === draft.key ? { ...current, error: true } : current));
             else { window.open(draft.href, "_blank", "noopener,noreferrer"); close(); }

@@ -1,4 +1,4 @@
-// 统一的桌面原生接口桥接（支持 Electron）
+// The only native boundary between the renderer and the Electron main process.
 
 export interface BridgeAPI {
   invoke: <T = any>(cmd: string, args?: Record<string, any>) => Promise<T>;
@@ -18,8 +18,8 @@ function getBridge(): BridgeAPI {
   };
 }
 
-export function isTauri(): boolean {
-  return typeof window !== "undefined" && Boolean((window as any).electronBridge || (window as any).__TAURI_INTERNALS__);
+export function isDesktop(): boolean {
+  return typeof window !== "undefined" && Boolean((window as any).electronBridge);
 }
 
 export const invoke: <T = any>(cmd: string, args?: Record<string, any>) => Promise<T> = (cmd, args) => {
@@ -82,6 +82,11 @@ export async function revealItemInDir(path: string): Promise<void> {
 }
 
 // Updater API
-export async function check(): Promise<null> {
+export interface UpdateResult {
+  version: string;
+  downloadAndInstall: () => Promise<void>;
+}
+
+export async function check(_options?: { timeout?: number }): Promise<UpdateResult | null> {
   return null;
 }

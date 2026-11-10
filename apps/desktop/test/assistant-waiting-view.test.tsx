@@ -55,7 +55,19 @@ test("a model request preserves the same label and ignores a stale request from 
   });
 });
 
-test("provider media processing exposes the phase and the last tool", () => {
+test("provider media processing exposes the phase and the real invocation", () => {
+  withState({
+    activeRunId: "current",
+    modelRequest: { runId: "current", startedAt: 1 },
+    executionPhase: { runId: "current", phase: "provider-processing", startedAt: 2 },
+    toolCalls: [{ toolCallId: "media", runId: "current", toolName: "qone_video_use_file", status: "success", args: { path: "clip.mp4" } }],
+  }, () => {
+    const html = render([{ type: "tool-call", toolCallId: "media", toolName: "qone_video_use_file", args: { path: "clip.mp4" }, result: "done" }]);
+    // The target itself is the live detail; the phase noun alone carries no work.
+    expect(html).toMatch(/clip\.mp4/);
+    expect(html).not.toMatch(/(?:最近工具：|Last tool: )/);
+  });
+  // Without a target the phase label remains the only honest signal.
   withState({
     activeRunId: "current",
     modelRequest: { runId: "current", startedAt: 1 },
@@ -64,7 +76,6 @@ test("provider media processing exposes the phase and the last tool", () => {
   }, () => {
     const html = render([{ type: "tool-call", toolCallId: "media", toolName: "qone_video_use_file", args: {}, result: "done" }]);
     expect(html).toMatch(/(?:供应商正在处理媒体|Provider is processing media)/);
-    expect(html).toMatch(/(?:最近工具：|Last tool: )qone_video_use_file/);
   });
 });
 

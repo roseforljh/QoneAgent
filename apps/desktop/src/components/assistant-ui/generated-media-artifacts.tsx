@@ -1,6 +1,6 @@
 import { useConversationStore } from "../../lib/conversation-context";
 import { localizeError } from "../../lib/error-localization";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "../../lib/desktop-bridge";
 import { AudioLinesIcon, FilmIcon, FolderOpenIcon } from "lucide-react";
 import { useMemo, type FC } from "react";
 import { useStore } from "../../store";

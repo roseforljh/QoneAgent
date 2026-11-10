@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "../../lib/desktop-bridge";
 import { CodexIcon } from "../ui/CodexIcon";
 import backIcon from "../../assets/codex-icons/arrow-left-lg-light-16.svg";
 import forwardIcon from "../../assets/codex-icons/arrow-right-lg-light-16.svg";
@@ -13,9 +13,7 @@ type AppChromeProps = { path: string; children: ReactNode };
 
 const emit = (name: string) => window.dispatchEvent(new Event(name));
 const toggleDock = (view: string) => window.dispatchEvent(new CustomEvent("qone-toggle-dock-view", { detail: view }));
-const isNative = () => typeof window !== "undefined" && Boolean(
-  (window as any).__TAURI_INTERNALS__ || (window as any).electronBridge
-);
+const isNative = () => typeof window !== "undefined" && Boolean((window as any).electronBridge);
 
 export function AppChrome({ path, children }: AppChromeProps) {
   const { locale } = useLocale();

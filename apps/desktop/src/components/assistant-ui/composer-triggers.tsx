@@ -8,7 +8,7 @@ import {
   type Unstable_SlashCommand,
 } from "@assistant-ui/react";
 import { useLocale } from "../../localization";
-import { hasTauriBridge } from "../../store";
+import { hasDesktopBridge } from "../../store";
 import { ComposerMenuItem } from "./elements/composer";
 import { ComposerSlashRow, ComposerToolRow, getComposerTools, type ComposerSlashEntry, type ComposerTool } from "./composer-tools";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
@@ -51,7 +51,7 @@ export const ComposerTriggers: FC<{
     && !compacting;
   const canUseGoal = connected && !!(currentWorkspaceId || draftWorkspaceId);
   const tools = useMemo(() => getComposerTools(t).filter((tool) =>
-    (tool.id !== "compact" || canCompact) && (tool.id !== "goal" || canUseGoal) && (tool.id !== "folder" || hasTauriBridge()),
+    (tool.id !== "compact" || canCompact) && (tool.id !== "goal" || canUseGoal) && (tool.id !== "folder" || hasDesktopBridge()),
   ), [canCompact, canUseGoal, t]);
   const compactTool = tools.find((tool) => tool.id === "compact");
   const slashEntries = useMemo<ComposerSlashEntry[]>(() => [

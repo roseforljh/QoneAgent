@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Switch } from "@base-ui/react/switch";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "../../lib/desktop-bridge";
 import { ChevronRight, LoaderCircle } from "lucide-react";
 import type { SkillInfo } from "@qone/protocol";
 import { requestSkillMutation } from "../../store";

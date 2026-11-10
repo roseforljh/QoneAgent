@@ -83,7 +83,7 @@ export function ToolCall({
           <OverflowFade title={target || undefined}>
             <span className="inline-flex items-center gap-1.5">
               <SwapLabel active={running ? 0 : 1} className="shrink-0 text-start font-medium">
-                <ShimmerLabel active={running} className="relative inline-block leading-none">{activeLabel}</ShimmerLabel>
+                <ShimmerLabel active={running} className="relative inline-block">{activeLabel}</ShimmerLabel>
                 <>{label}</>
               </SwapLabel>
               {!targetAction && query && <ShimmerLabel active={running} className={cn(mono, "text-current")}>{query}</ShimmerLabel>}

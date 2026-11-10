@@ -12,13 +12,11 @@ test("replacing the conversation store reloads the renderer instead of retaining
     let reloads = 0;
     globalThis.__hot = { accept: callback => accepts.push(callback) };
     globalThis.window = {
-      __TAURI_INTERNALS__: {},
+      electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p },
       location: { reload: () => reloads++ },
       localStorage: { getItem: () => null, setItem: () => {} },
     };
-    mock.module("@tauri-apps/api/core", () => ({ invoke: async () => {} }));
-    mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
-    mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
+    mock.module("./src/lib/desktop-bridge.ts", () => ({ invoke: async () => {}, listen: async () => () => {}, openUrl: async () => {}, check: async () => null }));
     plugin({ name: "vite-hot-context", setup(build) {
       build.onLoad({ filter: /[/\\]store\.ts$/ }, async ({ path }) => ({
         contents: (await Bun.file(path).text()).replaceAll("import.meta.hot", "globalThis.__hot"),

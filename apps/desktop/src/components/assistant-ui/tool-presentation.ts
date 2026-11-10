@@ -128,12 +128,13 @@ function contentBlocks(result: unknown): RecordValue[] {
   return Array.isArray(content) ? content.flatMap((block): RecordValue[] => { const record = asRecord(block); return record ? [record] : []; }) : [];
 }
 
-function resultText(result: unknown): string | undefined {
+function resultText(result: unknown, tail = false): string | undefined {
   const parsed = parseJson(result);
   const text = typeof parsed === "string"
     ? parsed
     : contentBlocks(parsed).flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
-  return text.trim() ? limitText(text) : undefined;
+  if (!text.trim()) return undefined;
+  return tail && text.length > MAX_TEXT_LENGTH ? `…${text.slice(-MAX_TEXT_LENGTH)}` : limitText(text);
 }
 
 function resultImage(result: unknown): { src: string; mimeType?: string } | undefined {
@@ -167,9 +168,10 @@ export function detectToolPresentation(toolName: string, result: unknown, args?:
       ? { kind: "diff", patch: change.patch, name: change.path }
       : { kind: "diff", name: change.path, oldFile: { content: change.oldContent ?? "", name: change.path }, newFile: { content: change.newContent ?? "", name: change.path } };
   }
-  const text = resultText(result);
+  const commandTool = isCommandTool({ toolName });
+  const text = resultText(result, commandTool);
   const path = toolArg(args, "path");
-  if (isCommandTool({ toolName })) {
+  if (commandTool) {
     const command = commandForTool({ toolName, args });
     return { kind: "terminal", ...(command ? { command } : {}), output: text ?? "" };
   }

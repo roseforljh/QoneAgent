@@ -84,14 +84,31 @@ body {
   padding: 10px 16px;
   font-size: var(--q-text-base);
   line-height: 1.5;
+  --q-user-message-collapse-lines: 20;
 }
 .aui-thread-root .q-user-message-bubble-paired {
   max-width: 70%;
 }
-.aui-thread-root .q-user-message-bubble > .aui-md {
+/* Codex 26.928 collapses user text past 20 lines; the fade marks the cut. */
+.aui-thread-root .q-user-message-content-collapsed {
+  overflow: hidden;
+  max-height: calc(var(--q-user-message-collapse-lines) * 1lh);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2rem), transparent);
+}
+.aui-thread-root .q-user-message-toggle {
+  margin-top: 0.375rem;
+  color: var(--muted-foreground);
+  font-size: var(--q-text-base);
+  line-height: 1.5;
+  transition: color 150ms ease;
+}
+.aui-thread-root .q-user-message-toggle:hover { color: var(--foreground); }
+.aui-thread-root .q-user-message-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 0.25rem; }
+.aui-thread-root .q-user-message-bubble .aui-md {
   line-height: inherit;
 }
-.aui-thread-root .q-user-message-bubble > .aui-md > .aui-md-p {
+.aui-thread-root .q-user-message-bubble .aui-md > .aui-md-p {
   margin-block: 0;
   color: inherit;
   line-height: inherit;

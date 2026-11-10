@@ -11,6 +11,7 @@ import braveLogo from "@lobehub/icons-static-svg/icons/brave-color.svg";
 import perplexityLogo from "@lobehub/icons-static-svg/icons/perplexity-color.svg";
 import context7Logo from "../../assets/context7-logo.svg";
 import playwrightLogo from "../../assets/playwright-logo.svg";
+import reaLogo from "../../assets/rea-logo.svg";
 import outlookLogo from "../../assets/outlook-logo.svg";
 import gmailLogo from "../../assets/gmail-logo.svg";
 import qqmailLogo from "../../assets/qqmail-logo.svg";
@@ -30,6 +31,7 @@ export interface ToolIntegration {
 const BUILTIN_MCP_LOGOS: Record<string, string> = {
   "mcp-playwright": playwrightLogo,
   "mcp-context7": context7Logo,
+  "mcp-rea": reaLogo,
   "mcp-cloudflare-docs": cloudflareLogo,
   "mcp-notion": notionLogo,
   "mcp-github": githubLogo,
@@ -47,6 +49,7 @@ const BUILTIN_MCP_LOGOS: Record<string, string> = {
 const BUILTIN_MCP_NAMES: Record<string, string> = {
   "mcp-playwright": "Playwright",
   "mcp-context7": "Context7",
+  "mcp-rea": "REA",
   "mcp-cloudflare-docs": "Cloudflare",
   "mcp-notion": "Notion",
   "mcp-github": "GitHub",

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./lib/desktop-bridge";
 import { en } from "./i18n/en";
 import { zh, type MessageKey } from "./i18n/zh-CN";
 import { GENERAL_SETTINGS_KEY, normalizeLanguageSetting, resolveLocale, type LanguageSetting, type Locale } from "./locale-core";
@@ -29,7 +29,7 @@ export function getLanguageSetting(): LanguageSetting {
 
 export function applyLocale() {
   document.documentElement.lang = resolveLocale(getLanguageSetting());
-  if ((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
+  if ((window as Window & { electronBridge?: unknown }).electronBridge) {
     void invoke("set_native_copy", { copy: {
       show: translateCurrent("native.show"), quit: translateCurrent("native.quit"), completed: translateCurrent("native.completed"),
     } }).catch((error) => console.warn("Failed to synchronize native language", error));

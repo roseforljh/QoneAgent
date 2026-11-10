@@ -157,7 +157,7 @@ const GenericToolCallEntry: FC<ToolCallEntryProps> = ({ part, step, prepared = f
       result={<>
         <MediaExecutionInfo toolName={part.toolName} result={result} call={call} locale={locale} />
         {preview && <p className="mb-2 text-xs text-foreground/50">{t("chat.toolPreview")}</p>}
-        {visiblePresentation ? <ToolResultView presentation={visiblePresentation} emptyText={status === "success" ? t("chat.toolNoResult") : failed ? t("chat.toolFailed") : status === "waiting" ? t("chat.toolApprovalPending") : t("chat.toolResultPending")} /> : <span className="px-1 py-1 text-xs text-foreground/70">{status === "success" || failed ? visibleResultText : activeLabel}</span>}
+        {visiblePresentation ? <ToolResultView presentation={visiblePresentation} running={status === "running" || status === "generating"} emptyText={status === "success" ? t("chat.toolNoResult") : failed ? t("chat.toolFailed") : status === "waiting" ? t("chat.toolApprovalPending") : t("chat.toolResultPending")} /> : <span className="px-1 py-1 text-xs text-foreground/70">{status === "success" || failed ? visibleResultText : activeLabel}</span>}
       </>}
       running={status === "running" || status === "generating"}
       pending={status === "queued" || status === "generating"}
@@ -174,6 +174,9 @@ const GenericToolCallEntry: FC<ToolCallEntryProps> = ({ part, step, prepared = f
 
 export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activityRanges?: readonly AssistantPartRange[]; title?: string }> = ({ startIndex, endIndex, activityRanges, title }) => {
   const { locale, t } = useLocale();
+  // Running and completed keep separate choices, but the lane must follow the
+  // turn, not the momentary tool state. Switching lanes whenever one tool
+  // finished reopened and re-closed the panel on every tool boundary.
   const [runningOpen, setRunningOpen] = useState(false);
   const [completedOpen, setCompletedOpen] = useState(false);
   // `useAuiState` compares selected values by reference. Select the stable
@@ -224,9 +227,11 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   const awaitingStageWork = Boolean(title) && messageRunning && endIndex === parts.length;
   const stageCompacting = Boolean(title) && activityRanges?.some((range) => range.type === "compaction" && range.marker.status === "running");
   const working = toolWorking || thinking || awaitingStageWork || Boolean(stageCompacting);
-  const open = working ? runningOpen : completedOpen;
+  // Own the lane by turn state, not by the momentary tool state: a finished tool
+  // followed by the next one must not reset what the user just expanded.
+  const open = messageRunning ? runningOpen : completedOpen;
   const setOpen = (nextOpen: boolean) => {
-    if (working) setRunningOpen(nextOpen);
+    if (messageRunning) setRunningOpen(nextOpen);
     else setCompletedOpen(nextOpen);
   };
   const activePart = activeIndex >= 0 ? executedToolParts[activeIndex] : undefined;

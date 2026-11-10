@@ -27,3 +27,10 @@ test("the active Chinese command title stays in present tense", () => {
     toolCallId: "call-running", runId: "run-1", toolName: "powershell", status: "running", startedAt: 1_000,
   }, true, 3_200, "zh-CN")).toBe("正在运行 Get-ChildItem · 2秒");
 });
+
+test("a restored tool call uses the persisted runtime duration, not client timestamps", () => {
+  expect(toolActionSummary(part, step, {
+    toolCallId: "call-restored", runId: "run-1", toolName: "powershell", status: "success",
+    startedAt: 1_000, completedAt: 60_000, durationMs: 2_200,
+  }, false, 90_000, "zh-CN")).toBe("命令已运行 2秒");
+});

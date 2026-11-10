@@ -40,6 +40,20 @@ test("read, shell and grep get their dedicated views by tool name", () => {
   expect(search.kind === "search" && search.items[0]).toEqual({ path: "src/app.ts", line: 12, text: "ready" });
 });
 
+test("command output keeps the latest tail while other tool text keeps its prefix", () => {
+  const first = `first-line\n${"x".repeat(25_000)}\nlatest-one`;
+  const next = `${first}\nlatest-two`;
+  for (const toolName of ["powershell", "bash", "exec"]) {
+    const presentation = detectToolPresentation(toolName, { content: [{ type: "text", text: first }] });
+    const updated = detectToolPresentation(toolName, { content: [{ type: "text", text: next }] });
+    expect(presentation.kind === "terminal" && presentation.output).toBe(`…${first.slice(-20_000)}`);
+    expect(updated.kind === "terminal" && updated.output).toBe(`…${next.slice(-20_000)}`);
+    expect(updated.kind === "terminal" && updated.output).not.toContain("first-line");
+  }
+  expect(detectToolPresentation("read", first, { path: "log.txt" }))
+    .toEqual({ kind: "file", name: "log.txt", content: `${first.slice(0, 20_000)}…` });
+});
+
 test("other tools are never guessed into diffs, file writes, searches or terminals", () => {
   expect(detectToolPresentation("mcp:git:diff", { content: [{ type: "text", text: patch }] }).kind).toBe("text");
   expect(detectToolPresentation("mcp:fs:save", { content: [{ type: "text", text: "Successfully saved" }] }, { path: "a.ts", content: "x" }).kind).toBe("text");

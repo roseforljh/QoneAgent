@@ -8,7 +8,7 @@ import type { ProviderApiType } from "@qone/protocol";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, filterPickerModels, readCurrentProvider, getPickerModels, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
-import { normalizeThinkingLevel, thinkingLevelOptionsForApi, type ThinkingLevel } from "../../lib/model-settings";
+import { defaultThinkingForModel, normalizeThinkingLevel, thinkingLevelOptionsForApi, type ThinkingLevel } from "../../lib/model-settings";
 import { ModelLogo } from "./model-logo";
 import { ThinkingWave } from "./run-options-popover";
 import "./model-picker.css";
@@ -53,7 +53,10 @@ export const ModelPicker: FC = () => {
   const activeConfig = modelConfigs.find((model) => model.id === activeModel?.id);
   const apiType = (activeConfig?.config.apiType as ProviderApiType | undefined) ?? "openai-compatible";
   const thinkingOptions = thinkingLevelOptionsForApi(apiType);
-  const thinking = normalizeThinkingLevel((activeModel?.id && runOptions?.thinkingByModel?.[activeModel.id]) || activeConfig?.config.thinking, apiType);
+  const storedThinking = activeModel?.id ? runOptions?.thinkingByModel?.[activeModel.id] : undefined;
+  const thinking = storedThinking === undefined
+    ? defaultThinkingForModel(activeConfig?.config, apiType)
+    : normalizeThinkingLevel(storedThinking, apiType);
   const thinkingIndex = Math.max(0, thinkingOptions.findIndex((option) => option.value === thinking));
   const displayLabel = activeModel?.label ?? t("chat.configureModel");
   const thinkingLabel = activeModel ? t(thinkingOptions[thinkingIndex]?.labelKey ?? "") : "";

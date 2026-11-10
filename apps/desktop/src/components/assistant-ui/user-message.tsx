@@ -1,5 +1,5 @@
 import { MessagePrimitive, useAuiState, useMessageQuote } from "@assistant-ui/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Popover } from "radix-ui";
 import { cn } from "../../lib/utils";
 import { memo } from "react";
@@ -12,15 +12,47 @@ import { UserMessageActions } from "./message-actions";
 import { UserMessageEditComposer } from "./user-message-edit";
 import { MarkdownText } from "./markdown-text";
 
+/** Codex collapses long user text and offers Show more. The line budget lives
+ * in CSS so the clamp and this measurement cannot drift apart. */
+export const USER_MESSAGE_COLLAPSED_LINES = 20;
+
+export function userMessageNeedsCollapse(contentHeight: number, lineHeight: number, lines = USER_MESSAGE_COLLAPSED_LINES): boolean {
+  return lineHeight > 0 && contentHeight > lineHeight * lines + 1;
+}
+
 function UserMessageText({ paired = false }: { paired?: boolean }) {
+  const { t } = useLocale();
   const parts = useAuiState((state) => state.message.parts);
   const textPartIndexes = parts.flatMap((part, index) => part.type === "text" && part.text.length > 0 ? [index] : []);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return undefined;
+    // scrollHeight stays the full height while the clamp is applied, so the
+    // toggle keeps its state after expansion.
+    const measure = () => {
+      const style = getComputedStyle(content);
+      const lines = Number.parseFloat(style.getPropertyValue("--q-user-message-collapse-lines")) || USER_MESSAGE_COLLAPSED_LINES;
+      setOverflows(userMessageNeedsCollapse(content.scrollHeight, Number.parseFloat(style.lineHeight) || 0, lines));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
   if (textPartIndexes.length === 0) return null;
-  return (
+  return <>
     <div data-aui-quote-selectable="true" className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-[70%]" : "max-w-[70%]")}>
-      {textPartIndexes.map((index) => <MessagePrimitive.PartByIndex key={index} index={index} components={{ Text: MarkdownText }} />)}
+      <div ref={contentRef} className={cn(overflows && !expanded && "q-user-message-content-collapsed")}>
+        {textPartIndexes.map((index) => <MessagePrimitive.PartByIndex key={index} index={index} components={{ Text: MarkdownText }} />)}
+      </div>
     </div>
-  );
+    {overflows && <button type="button" className="q-user-message-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+      {t(expanded ? "chat.showLess" : "chat.showMore")}
+    </button>}
+  </>;
 }
 
 function UserMessageAnnotation() {

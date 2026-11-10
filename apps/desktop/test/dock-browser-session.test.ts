@@ -153,14 +153,19 @@ test("an offscreen host hides its old native hit area", async () => {
   }
 });
 
-test("WebView2 commands cannot block the synchronous IPC handler", async () => {
-  const source = await Bun.file(new URL("../src-tauri/src/main.rs", import.meta.url)).text();
-  for (const command of ["open", "navigate", "preview", "bounds", "visible", "eval", "close"]) {
-    expect(source).toMatch(new RegExp(`async fn browser_${command}\\(`));
+test("browser commands reach Electron only through the async IPC handler", async () => {
+  // The native boundary is Electron's main process now, not the removed Rust shell.
+  const handlers = await Bun.file(new URL("../electron/ipc-handlers.ts", import.meta.url)).text();
+  expect(handlers).toContain('ipcMain.handle("desktop_invoke"');
+  // A synchronous `ipcMain.on` would block the main process on WebView2 work.
+  expect(handlers).not.toMatch(/ipcMain\.on\(\s*"desktop_invoke"/);
+  for (const command of ["browser_open", "browser_navigate", "browser_preview", "browser_bounds", "browser_visible", "browser_eval", "browser_close"]) {
+    expect(handlers, command).toContain(`case "${command}"`);
   }
-  expect(source).toContain("spawn_blocking(move || {");
-  expect(source).toContain("browser::open(");
-  expect(source).toContain("browser::preview(");
+  // The blocking-capable work (eval) stays async; the rest only schedules it.
+  const manager = await Bun.file(new URL("../electron/browser-dock-manager.ts", import.meta.url)).text();
+  expect(manager).toMatch(/public async eval\(/);
+  expect(manager).toMatch(/public async evalResult\(/);
 });
 
 test("code preview loads after native creation and before the child becomes visible", async () => {

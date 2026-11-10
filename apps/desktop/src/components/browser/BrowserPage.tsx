@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "../../lib/desktop-bridge";
+import { listen } from "../../lib/desktop-bridge";
+import { openUrl } from "../../lib/desktop-bridge";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, ExternalLink, Globe, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
 import { useLocale } from "../../localization";
-import { hasTauriBridge } from "../../store";
+import { hasDesktopBridge } from "../../store";
 import { clipBrowserBounds, createDockBrowserSession } from "../../lib/dock-browser-session";
 import { Button } from "../ui/Button";
 import "./browser-page.css";
@@ -49,7 +49,7 @@ export function BrowserPage() {
   };
 
   useEffect(() => {
-    if (!hasTauriBridge()) return undefined;
+    if (!hasDesktopBridge()) return undefined;
     let alive = true;
     const unlisten = listen<{ browserId: string; url: string }>("browser:navigated", (event) => {
       if (!alive) return;
@@ -67,7 +67,7 @@ export function BrowserPage() {
   }, []);
 
   useEffect(() => {
-    if (!hasTauriBridge()) return undefined;
+    if (!hasDesktopBridge()) return undefined;
     const currentIds = new Set(tabs.map((tab) => tab.id));
     for (const [id, session] of sessions.current) {
       if (!currentIds.has(id)) {
@@ -124,7 +124,7 @@ export function BrowserPage() {
     const url = normalizeUrl(address);
     if (!url) return;
     try {
-      if (hasTauriBridge()) await openUrl(url);
+      if (hasDesktopBridge()) await openUrl(url);
       else window.open(url, "_blank", "noopener,noreferrer");
     } catch (reason) { updateTab(activeTab.id, (tab) => ({ ...tab, error: String(reason) })); }
   };
@@ -173,8 +173,8 @@ export function BrowserPage() {
       <div className="browser-page-frames">
         {tabs.map((tab) => <div key={tab.id} className={`browser-page-frame${tab.id === activeTabId ? " is-active" : " is-inactive"}`}>
           <div ref={(node) => { if (node) hostRefs.current.set(tab.id, node); else hostRefs.current.delete(tab.id); }} className="browser-page-host" aria-label={locale === "en" ? "Built-in browser page" : "内置浏览器页面"} />
-          {!hasTauriBridge() && tab.id === activeTabId && <div className="browser-page-placeholder">请在 Tauri 桌面应用中打开此页面。</div>}
-          {tab.loading && hasTauriBridge() && tab.id === activeTabId && <div className="browser-page-placeholder"><LoaderCircle size={20} className="settings-spin" />{locale === "en" ? "Opening browser…" : "正在打开浏览器…"}</div>}
+          {!hasDesktopBridge() && tab.id === activeTabId && <div className="browser-page-placeholder">请在 Tauri 桌面应用中打开此页面。</div>}
+          {tab.loading && hasDesktopBridge() && tab.id === activeTabId && <div className="browser-page-placeholder"><LoaderCircle size={20} className="settings-spin" />{locale === "en" ? "Opening browser…" : "正在打开浏览器…"}</div>}
           {tab.error && tab.id === activeTabId && <div className="browser-page-placeholder"><p>{tab.error}</p><Button variant="outline" onClick={() => window.location.reload()}>重新打开页面</Button></div>}
         </div>)}
       </div>

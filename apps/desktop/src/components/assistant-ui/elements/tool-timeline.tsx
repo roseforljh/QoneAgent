@@ -50,10 +50,10 @@ export interface ToolTimelineProps {
 
 export function ToolTimelineRow({ step, active = false, children }: { step: TimelineStep; active?: boolean; children?: ReactNode }) {
   const Icon = step.icon;
-  return <div className="fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-foreground/55 flex min-w-0 items-start gap-2 text-[13.5px] duration-300">
-    <Icon className="mt-1.5 size-3.5 shrink-0 transition-colors duration-300 text-foreground/55" />
+  return <div className={cn("fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-foreground/55 flex min-w-0 gap-2 text-[13.5px] duration-300", children ? "items-start" : "items-center")}>
+    <Icon className={cn("size-3.5 shrink-0 transition-colors duration-300 text-foreground/55", children && "mt-1.5")} />
     {children ?? <>
-      <ShimmerLabel active={active} className="relative inline-block leading-none">{step.verb}</ShimmerLabel>
+      <ShimmerLabel active={active} className="relative inline-block">{step.verb}</ShimmerLabel>
       <span className="bg-foreground/[0.06] text-foreground/70 rounded-md px-1.5 py-0.5 font-mono text-xs">{step.chip}</span>
     </>}
   </div>;
@@ -102,7 +102,7 @@ export function ToolTimeline({
           >
             <ShimmerLabel
               active={streaming}
-              className="relative inline-block leading-none"
+              className="relative inline-block"
             >
               {activeLabel}
             </ShimmerLabel>

@@ -15,7 +15,7 @@ for (const name of domGlobals) Object.defineProperty(globalThis, name, { configu
 Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
 Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
-Object.assign(dom.window, { __TAURI_INTERNALS__: {} });
+Object.assign(dom.window, { electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p } });
 // JSDOM has no layout observer; popup navigation does not depend on its callbacks.
 Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class { observe() {} disconnect() {} } });
 const { createRoot } = await import("react-dom/client");
@@ -23,11 +23,14 @@ dom.window.localStorage.setItem("qone-general-settings", JSON.stringify({ langua
 
 let onRuntimeEvent: ((event: { payload: string }) => void) | undefined;
 const sent: RuntimeCommand[] = [];
-const originalCore = { ...await import("@tauri-apps/api/core") };
-mock.module("@tauri-apps/api/core", () => ({ ...originalCore, invoke: async (name: string, args?: { cmd: string }) => {
-  if (name === "runtime_send" && args) sent.push(JSON.parse(args.cmd));
-} }));
-mock.module("@tauri-apps/api/event", () => ({ listen: async (_name: string, callback: typeof onRuntimeEvent) => { onRuntimeEvent = callback; return () => {}; } }));
+const originalBridge = { ...await import("../src/lib/desktop-bridge") };
+mock.module("../src/lib/desktop-bridge", () => ({
+  ...originalBridge,
+  invoke: async (name: string, args?: { cmd: string }) => {
+    if (name === "runtime_send" && args) sent.push(JSON.parse(args.cmd));
+  },
+  listen: async (_name: string, callback: typeof onRuntimeEvent) => { onRuntimeEvent = callback; return () => {}; },
+}));
 const { initBridge, useStore } = await import("../src/store");
 const { SkillCard } = await import("../src/components/settings/SkillCard");
 const { SkillPackageCard } = await import("../src/components/settings/SkillPackageCard");
@@ -199,10 +202,12 @@ test("all ponytail skills show the official logo in slash suggestions and select
       expect(host.querySelector<HTMLImageElement>("img")?.getAttribute("src")?.replace(/\\/g, "/")).toContain("assets/ponytail/logo.svg");
       expect(host.getElementsByTagName("svg")).toHaveLength(0);
     }
-    const custom = { ...skill, builtin: false, id: "custom", name: "custom" };
+    // A local custom skill has no catalog source, so it keeps the fallback icon.
+    const custom = { ...skill, builtin: false, source: undefined, id: "custom", name: "custom" };
     wrapper.innerHTML = renderToStaticMarkup(<ComposerSlashRow entry={{ id: "skill:custom", kind: "skill", skill: custom, label: "/skill:custom", description: custom.description }} />);
     expect(wrapper.getElementsByTagName("img")).toHaveLength(0);
-    expect(wrapper.getElementsByTagName("svg")).toHaveLength(1);
+    // A publisher-less local skill keeps a visible identity: its initial.
+    expect(wrapper.textContent).toContain("C");
     await act(async () => root.render(<ComposerToolChip directiveId="skill:unknown" directiveType="qone-command" label="unknown" />));
     expect(host.getElementsByTagName("img")).toHaveLength(0);
     expect(host.getElementsByTagName("svg")).toHaveLength(1);

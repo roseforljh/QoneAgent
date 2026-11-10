@@ -26,8 +26,12 @@ test("official assistant elements render their real data slots", () => {
   expect(render(createElement(InlineCitation, { sources: [{ domain: "example.com", url: "https://example.com", label: "1" }], openIndex: null, onOpenIndexChange: () => {} }))).toContain('data-slot="inline-citation"');
   expect(render(createElement(MathBlock, { steps: [{ expression: "x = 1" }], visibleSteps: 1 }))).toContain('data-slot="math-block"');
   expect(render(createElement(MemoryChips, { chips: [{ id: "memory-1", text: "昵称: Qone", change: "existing" }] }))).toContain('data-slot="memory-chips"');
-  expect(render(createElement(ComposerContext, { usage: { tools: 1, messages: 2, total: 128 } }))).toContain('data-slot="composer-context"');
-  expect(render(createElement(File, { type: "file", data: "data:text/plain;base64,aGk=", mimeType: "text/plain", filename: "notes.txt" } as never))).toContain('data-slot="file-download"');
+  expect(render(createElement(ComposerContext, { usage: { used: 42, total: 128 } }))).toContain('data-slot="composer-context"');
+  const fileMarkup = render(createElement(File, { type: "file", data: "data:text/plain;base64,aGk=", mimeType: "text/plain", filename: "notes.txt" } as never));
+  // An inline-previewable attachment opens the preview instead of offering a download.
+  expect(fileMarkup).toContain('data-slot="file-root"');
+  expect(fileMarkup).toContain('role="button"');
+  expect(fileMarkup).not.toContain('data-slot="file-download"');
   expect(render(createElement(Image, { type: "image", image: "data:image/png;base64,aGk=", filename: "plot.png" } as never))).toContain('data-slot="image-preview"');
   const sourcesMarkup = render(createElement(Sources, { sources: [{ domain: "example.com", title: "Docs", url: "https://example.com" }], open: true, onOpenChange: () => {} }));
   expect(sourcesMarkup).toContain('data-slot="sources"');

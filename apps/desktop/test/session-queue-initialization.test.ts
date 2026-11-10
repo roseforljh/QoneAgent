@@ -4,16 +4,18 @@ import { createQoneMessageQueue } from "../src/lib/qone-message-queue";
 
 const commands: RuntimeCommand[] = [];
 let listener: ((event: { payload: string }) => void) | undefined;
-const originalCore = { ...await import("@tauri-apps/api/core") };
-mock.module("@tauri-apps/api/core", () => ({ ...originalCore, invoke: async (name: string, args?: { cmd?: string }) => {
-  if (name === "runtime_send" && args?.cmd) commands.push(JSON.parse(args.cmd));
-} }));
-mock.module("@tauri-apps/api/event", () => ({ listen: async (_name: string, callback: typeof listener) => { listener = callback; return () => {}; } }));
-mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
+const originalBridge = { ...await import("../src/lib/desktop-bridge") };
+mock.module("../src/lib/desktop-bridge", () => ({
+  ...originalBridge,
+  invoke: async (name: string, args?: { cmd?: string }) => {
+    if (name === "runtime_send" && args?.cmd) commands.push(JSON.parse(args.cmd));
+  },
+  listen: async (_name: string, callback: typeof listener) => { listener = callback; return () => {}; },
+}));
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, "window", { configurable: true, value: {
-  __TAURI_INTERNALS__: {},
+  electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p },
   localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) },
 } });
 afterAll(() => {

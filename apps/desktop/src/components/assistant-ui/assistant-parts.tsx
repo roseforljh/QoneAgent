@@ -15,6 +15,7 @@ import { Reasoning } from "./reasoning";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { compactionDisplayIndex, positionedAssistantRanges, type PositionedCompaction } from "./compaction-ranges";
 import { executionActivityItems } from "./execution-activity-items";
+import { toolTarget } from "./tool-action-summary";
 import { createPartToolsSelector, messageById, runById } from "../../lib/store-indexes";
 import { assistantWaitingPhase } from "./assistant-waiting-phase";
 import { AssistantWaiting } from "./assistant-waiting";
@@ -84,7 +85,11 @@ export const AssistantParts: FC = () => {
   }, [displayBlocks, parts, toolCallsById]);
   const requestStartedAt = useConversationStore((state) => state.modelRequest?.runId === runId ? state.modelRequest?.startedAt : undefined);
   const executionPhase = useConversationStore((state) => state.executionPhase?.runId === runId ? state.executionPhase?.phase : undefined);
-  const lastToolName = toolCalls.filter((call) => call.runId === runId).at(-1)?.toolName;
+  // Show the work itself: the model's actual invocation, not its tool name.
+  const lastToolCall = toolCalls.filter((call) => call.runId === runId).at(-1);
+  const lastToolTarget = lastToolCall
+    ? toolTarget({ toolName: lastToolCall.toolName, args: lastToolCall.args, result: lastToolCall.result })
+    : "";
   const imageGeneration = useAuiState((state) => Boolean(state.message.metadata?.custom?.qoneImageGeneration));
   // Earlier commentary/reasoning must not hide the gap after a completed tool.
   let latestVisiblePart: PartState | undefined;
@@ -106,8 +111,10 @@ export const AssistantParts: FC = () => {
     "provider-processing": t("chat.executionProviderProcessing"),
     "model-generation": t("chat.executionModelGeneration"),
     "external-tool": t("chat.executionExternalTool"),
-  } satisfies Record<ExecutionPhase, string>)[executionPhase]
-    + (lastToolName && executionPhase !== "preparing" ? ` · ${t("chat.executionLastTool", { name: lastToolName })}` : "") : undefined;
+  } satisfies Record<ExecutionPhase, string>)[executionPhase] : undefined;
+  // The model's own invocation reads as live progress; a static phase noun does
+  // not. Commands and searches are what the turn is actually doing right now.
+  const waitingDetail = lastToolTarget || executionDetail;
 
   const renderRange = (range: AssistantPartRange) => {
     if (range.type === "reasoning") return <MessagePrimitive.PartByIndex key={`reasoning-${range.index}`} index={range.index} components={{ Reasoning }} />;
@@ -137,7 +144,7 @@ export const AssistantParts: FC = () => {
             : <SessionTimeline key={`activity-${item.startIndex}`} startIndex={item.startIndex} endIndex={item.endIndex} activityRanges={item.ranges} title={item.title} />)}
         </AssistantExecution>)}
     {sections.answer.map(renderRange)}
-    {waitingPhase && <AssistantWaiting phase={waitingPhase} detail={executionDetail} />}
+    {waitingPhase && <AssistantWaiting phase={waitingPhase} detail={waitingDetail} />}
     <SubagentMedia />
     <RunFileChangesAttachment messageId={messageId} runId={runId} />
   </>;

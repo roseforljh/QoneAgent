@@ -5,10 +5,10 @@ import { sessionStore, switchSessionState, type SessionExecutionState } from "./
 import { updateSessionActivity } from "./lib/session-recency";
 import { create } from "zustand";
 import { isolateBackgroundSubscriptions } from "./lib/store-subscriptions";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./lib/desktop-bridge";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type MessageQuoteInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo } from "@qone/protocol";
-import { loadDefaultPermissionMode, loadNewSessionModel, loadRunOptions, saveDefaultPermissionMode, saveNewSessionModel, saveRunOptions, type SessionRunOptions } from "./lib/run-options";
-import { normalizeThinkingLevel } from "./lib/model-settings";
+import { DEFAULT_RUN_PERMISSION_MODE, loadNewSessionRunOptions, loadRunOptions, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults, type SessionRunOptions } from "./lib/run-options";
+import { defaultThinkingForModel, normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
 import { trackWorkspaceRequest, untrackWorkspaceRequest, useWorkspaceViewStore } from "./lib/workspace-view-state";
 
@@ -16,10 +16,8 @@ const displayRuntimeError = (message: string) => message === "MCP_NPX_UNAVAILABL
   ? translate(resolveLocale(getLanguageSetting()), "mcp.nodeRequired")
   : message;
 
-export function hasTauriBridge() {
-  return typeof window !== "undefined" && Boolean(
-    (window as any).__TAURI_INTERNALS__ || (window as any).electronBridge
-  );
+export function hasDesktopBridge() {
+  return typeof window !== "undefined" && Boolean((window as any).electronBridge);
 }
 
 export interface ChatMessage {
@@ -59,6 +57,7 @@ export interface ToolCall {
   summary?: string;
   startedAt?: number;
   completedAt?: number;
+  durationMs?: number;
 }
 
 export type ExecutionPhase = "preparing" | "downloading" | "media-attachment" | "provider-processing" | "model-generation" | "external-tool";
@@ -110,9 +109,8 @@ export interface AgentState {
   workspaces: WorkspaceInfo[];
   modelConfigs: ModelConfigInfo[];
   selectedModelId?: string;
-  newSessionModelId?: string;
   runOptionsBySession: Record<string, SessionRunOptions>;
-  defaultPermissionMode: RunPermissionMode;
+  /** Shared model/thinking/permission configuration for every new conversation. */
   draftRunOptions: SessionRunOptions;
   skills: SkillInfo[];
   plugins: PluginInfo[];
@@ -284,7 +282,7 @@ function finishMcpConnection(serverId: string) {
 }
 
 export function requestModelMetadata(input: Omit<Extract<RuntimeCommand, { type: "model.resolve-metadata" }>, "type" | "requestId">): Promise<Extract<RuntimeEvent, { type: "model.metadata-resolved" }>["models"]> {
-  if (!hasTauriBridge()) return Promise.reject(new Error(t("error.runtimeUnavailable")));
+  if (!hasDesktopBridge()) return Promise.reject(new Error(t("error.runtimeUnavailable")));
   if (!useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeNotConnected")));
   if (!metadataLookupSupported) return Promise.reject(new Error("MODEL_METADATA_UNSUPPORTED"));
   const requestId = rid();
@@ -300,7 +298,7 @@ export function requestModelMetadata(input: Omit<Extract<RuntimeCommand, { type:
 }
 
 export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
-  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
+  if (!hasDesktopBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
   const cacheKey = JSON.stringify(command);
   const existing = cloudInFlight.get(cacheKey);
   if (existing) return existing;
@@ -321,7 +319,7 @@ export function requestSkillCloud(command: CloudInput): Promise<CloudResponse> {
 }
 
 export function requestSkillMutation(command: SkillMutationInput): Promise<SkillMutationResponse> {
-  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
+  if (!hasDesktopBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
   const requestId = rid();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { skillMutationRequests.delete(requestId); reject(new Error(t("error.skillTimeout"))); }, command.type === "skills.builtin.update" ? 120_000 : 20_000);
@@ -336,7 +334,7 @@ export function requestSkillMutation(command: SkillMutationInput): Promise<Skill
 }
 
 export function requestBrowserUrl(): Promise<string> {
-  if (!hasTauriBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
+  if (!hasDesktopBridge() || !useStore.getState().connected) return Promise.reject(new Error(t("error.runtimeUnavailable")));
   const requestId = rid();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { browserUrlRequests.delete(requestId); reject(new Error("BROWSER_URL_TIMEOUT")); }, 5_000);
@@ -352,11 +350,12 @@ export function requestBrowserUrl(): Promise<string> {
 
 export const useStore = create<AgentState>((set, get, api) => {
   isolateBackgroundSubscriptions(api);
+  const newSessionRunOptions = loadNewSessionRunOptions();
   return ({
   backgroundSessions: {},
   connected: false,
-  sessionsLoaded: !hasTauriBridge(),
-  workspacesLoaded: !hasTauriBridge(),
+  sessionsLoaded: !hasDesktopBridge(),
+  workspacesLoaded: !hasDesktopBridge(),
   lastError: undefined,
   chatRunError: undefined,
   compactionStatuses: {},
@@ -370,11 +369,9 @@ export const useStore = create<AgentState>((set, get, api) => {
   activeSearchQuery: "",
   workspaces: [],
   modelConfigs: [],
-  selectedModelId: loadNewSessionModel(),
-  newSessionModelId: loadNewSessionModel(),
+  selectedModelId: newSessionRunOptions.modelId,
   runOptionsBySession: loadRunOptions(),
-  defaultPermissionMode: loadDefaultPermissionMode(),
-  draftRunOptions: { modelId: loadNewSessionModel() },
+  draftRunOptions: newSessionRunOptions,
   draftDockId: crypto.randomUUID(),
   skills: [],
   plugins: [],
@@ -416,7 +413,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   globalPrompt: "",
   globalPromptPath: undefined,
   globalPromptDirectory: undefined,
-  globalPromptLoaded: !hasTauriBridge(),
+  globalPromptLoaded: !hasDesktopBridge(),
   ...DEFAULT_COMPACTION_SETTINGS,
   workspaceError: undefined,
   pinnedWorkspaceIds: (() => {
@@ -429,7 +426,7 @@ export const useStore = create<AgentState>((set, get, api) => {
 
   send: (cmd) => {
     // Browser previews do not expose Tauri's invoke bridge.
-    if (!hasTauriBridge()) return Promise.resolve(false);
+    if (!hasDesktopBridge()) return Promise.resolve(false);
     if (cmd.type === "ping") handshakeRequests.add(cmd.requestId);
     if (cmd.type === "workspace.files" || cmd.type === "workspace.git" || cmd.type === "workspace.gitDiff" || cmd.type === "file.read") {
       workspaceRequests.set(cmd.requestId, cmd.type);
@@ -514,8 +511,13 @@ export const useStore = create<AgentState>((set, get, api) => {
     if (!get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
     flushNow();
     const state = get();
-    const modelId = state.newSessionModelId ?? state.modelConfigs.find((model) => model.enabled)?.id;
-    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), selectedModelId: modelId, draftRunOptions: { modelId }, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(state) });
+    const configuredModel = state.draftRunOptions.modelId;
+    const modelId = configuredModel && (state.modelConfigs.length === 0 || state.modelConfigs.some((model) => model.enabled && model.id === configuredModel))
+      ? configuredModel
+      : state.modelConfigs.find((model) => model.enabled)?.id;
+    const draftRunOptions = modelId && modelId !== configuredModel ? { ...state.draftRunOptions, modelId } : state.draftRunOptions;
+    if (draftRunOptions !== state.draftRunOptions) saveNewSessionRunOptions(draftRunOptions);
+    set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), selectedModelId: modelId, draftRunOptions, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(state) });
     get().refreshWorkspace(workspaceId);
   },
 
@@ -568,7 +570,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   },
 
   chooseWorkspace: () => {
-    if (!hasTauriBridge()) {
+    if (!hasDesktopBridge()) {
       set({ lastError: t("error.previewRuntime") });
       return;
     }
@@ -604,7 +606,12 @@ export const useStore = create<AgentState>((set, get, api) => {
     // is refreshed. Only show the blocking skeleton for a first load or a load
     // that was already pending when the conversation was left.
     const messagesLoadingSessionId = cached?.messagesLoadingSessionId === id ? id : cached ? undefined : id;
-    set({ currentSessionId: id, completedSessionIds: state.completedSessionIds.filter((sessionId) => sessionId !== id), queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: state.runOptionsBySession[id]?.modelId, currentWorkspaceId: workspaceId ?? state.currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], chatRunError: undefined, ...switchSessionState(state, id), messagesLoadingSessionId });
+    const storedRunOptions = state.runOptionsBySession[id];
+    const needsDefaults = !storedRunOptions?.modelId || !storedRunOptions?.permissionMode;
+    const sessionRunOptions = needsDefaults ? withRunOptionDefaults(storedRunOptions, state.draftRunOptions) : storedRunOptions ?? {};
+    const runOptionsBySession = needsDefaults ? { ...state.runOptionsBySession, [id]: sessionRunOptions } : state.runOptionsBySession;
+    if (needsDefaults) saveRunOptions(runOptionsBySession);
+    set({ currentSessionId: id, completedSessionIds: state.completedSessionIds.filter((sessionId) => sessionId !== id), queueItems: [], queueLoadedSessionId: undefined, editingQueueItem: undefined, selectedModelId: sessionRunOptions.modelId, runOptionsBySession, currentWorkspaceId: workspaceId ?? state.currentWorkspaceId, ...(workspaceChanged ? { workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined } : {}), draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], chatRunError: undefined, ...switchSessionState(state, id), messagesLoadingSessionId });
     requestSessionMessages(id, true);
     if (!get().runtimeCapabilities.includes("session.snapshot")) {
     get().send({ type: "goal.get", requestId: rid(), sessionId: id });
@@ -661,7 +668,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     const session = get().sessions.find((item) => item.id === sid) ?? get().sideChats[sid];
     if (!session?.workspaceId || !get().workspaces.some((workspace) => workspace.id === session.workspaceId)) return;
     if (get().running || get().compactionStatuses[sid]) return;
-    if (!hasTauriBridge()) { set({ lastError: t("error.runtimeDisconnected") }); return; }
+    if (!hasDesktopBridge()) { set({ lastError: t("error.runtimeDisconnected") }); return; }
     const history = get().messages;
     if (!continuation) replaceFromMessageId ??= repeatedUserMessageId(history, { content: message, attachments });
     const replaceIndex = replaceFromMessageId
@@ -707,12 +714,13 @@ export const useStore = create<AgentState>((set, get, api) => {
     const modelConfig = get().modelConfigs.find((item) => item.id === model)?.config;
     const apiType = modelConfig?.apiType as ProviderApiType | undefined;
     const requestedThinking = model ? options?.thinkingByModel?.[model] : undefined;
-    const thinking = requestedThinking === undefined ? undefined : normalizeThinkingLevel(requestedThinking, apiType);
+    const thinking = model ? normalizeThinkingLevel(requestedThinking ?? defaultThinkingForModel(modelConfig, apiType), apiType) : undefined;
+    const permissionMode = options?.permissionMode ?? DEFAULT_RUN_PERMISSION_MODE;
     const requestId = rid();
     pendingAgentRuns.set(requestId, { requestId, sessionId: sid, userMessageId: messageId });
     get().send(goal
-      ? { type: "goal.start", requestId, sessionId: sid, objective: message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking }
-      : { type: "agent.run", requestId, sessionId: sid, message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, queueItemId, model, permissionMode: options?.permissionMode ?? get().defaultPermissionMode, thinking, mcpServerId: mcpCommand?.serverId, continuation });
+      ? { type: "goal.start", requestId, sessionId: sid, objective: message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, model, permissionMode, thinking }
+      : { type: "agent.run", requestId, sessionId: sid, message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, queueItemId, model, permissionMode, thinking, mcpServerId: mcpCommand?.serverId, continuation });
     if (history.length === 0) {
       const titleRequestId = rid();
       pendingTitleRequests.set(titleRequestId, sid);
@@ -802,8 +810,9 @@ export const useStore = create<AgentState>((set, get, api) => {
   setSelectedModel: (id, sessionId) => set((state) => {
     const sid = sessionId ?? state.currentSessionId;
     if (!sid) {
-      saveNewSessionModel(id);
-      return { selectedModelId: id, newSessionModelId: id, draftRunOptions: { ...state.draftRunOptions, modelId: id } };
+      const draftRunOptions = { ...state.draftRunOptions, modelId: id };
+      saveNewSessionRunOptions(draftRunOptions);
+      return { selectedModelId: id, draftRunOptions };
     }
     const runOptionsBySession = {
       ...state.runOptionsBySession,
@@ -817,19 +826,28 @@ export const useStore = create<AgentState>((set, get, api) => {
   sideChatTransfers: {},
   setRunPermissionMode: (mode, sessionId) => set((state) => {
     const sid = sessionId ?? state.currentSessionId;
-    if (!sid) return { draftRunOptions: { ...state.draftRunOptions, permissionMode: mode } };
+    if (!sid) {
+      const draftRunOptions = { ...state.draftRunOptions, permissionMode: mode };
+      saveNewSessionRunOptions(draftRunOptions);
+      return { draftRunOptions };
+    }
     const runOptionsBySession = { ...state.runOptionsBySession, [sid]: { ...state.runOptionsBySession[sid], permissionMode: mode } };
     saveRunOptions(runOptionsBySession);
     void get().send({ type: "agent.permission-mode.set", requestId: rid(), sessionId: sid, permissionMode: mode });
     return { runOptionsBySession };
   }),
-  setDefaultPermissionMode: (mode) => {
-    saveDefaultPermissionMode(mode);
-    set({ defaultPermissionMode: mode });
-  },
+  setDefaultPermissionMode: (mode) => set((state) => {
+    const draftRunOptions = { ...state.draftRunOptions, permissionMode: mode };
+    saveNewSessionRunOptions(draftRunOptions);
+    return { draftRunOptions };
+  }),
   setRunThinking: (modelId, level, sessionId) => set((state) => {
     const sid = sessionId ?? state.currentSessionId;
-    if (!sid) return { draftRunOptions: { ...state.draftRunOptions, thinkingByModel: { ...state.draftRunOptions.thinkingByModel, [modelId]: level } } };
+    if (!sid) {
+      const draftRunOptions = { ...state.draftRunOptions, thinkingByModel: { ...state.draftRunOptions.thinkingByModel, [modelId]: level } };
+      saveNewSessionRunOptions(draftRunOptions);
+      return { draftRunOptions };
+    }
     const current = state.runOptionsBySession[sid];
     const runOptionsBySession = { ...state.runOptionsBySession, [sid]: { ...current, thinkingByModel: { ...current?.thinkingByModel, [modelId]: level } } };
     saveRunOptions(runOptionsBySession);
@@ -932,7 +950,7 @@ function clearSessionMessageRequests(sessionId: string) {
 }
 
 export function bridgeDependencies() {
-  return { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
+  return { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
 }
 
 export function initBridge() { initRuntimeBridge(bridgeDependencies()); }

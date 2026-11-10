@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import ts from "typescript";
 import { en } from "../src/i18n/en";
 import { zh, type MessageKey } from "../src/i18n/zh-CN";
@@ -134,10 +134,15 @@ test("native and runtime structured errors follow the current UI language and pr
 });
 
 test("every native error code has translated copy and file preview failures preserve diagnostics", () => {
-  const source = readFileSync(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
-  const codes = [...source.matchAll(/NativeError::(?:new|detail)\("([^"]+)"/g)].map((match) => match[1]!);
+  // The native boundary is now the Electron main process, not the removed Rust shell.
+  const electronDir = new URL("../electron/", import.meta.url);
+  const sources = readdirSync(electronDir).filter((name) => name.endsWith(".ts"))
+    .map((name) => readFileSync(new URL(name, electronDir), "utf8"));
+  const codes = [...new Set(sources.flatMap((source) =>
+    [...source.matchAll(/["'`](native\.[A-Za-z]+)["'`]/g)].map((match) => match[1]!)))];
   expect(codes.length).toBeGreaterThan(0);
-  expect(source).not.toMatch(/Err\("[^"\n]*\p{Script=Han}/u);
+  // Diagnostics cross the IPC boundary; a Chinese literal here would be untranslatable.
+  for (const source of sources) expect(source).not.toMatch(/throw new Error\("[^"\n]*\p{Script=Han}/u);
   for (const locale of ["en", "zh-CN"] as const) {
     saveLanguageSetting(locale);
     for (const code of codes) {

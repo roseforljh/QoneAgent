@@ -1,11 +1,11 @@
 import { modelListUrl, type ProviderApiType } from "@qone/protocol";
-import { invoke } from "@tauri-apps/api/core";
-import { hasTauriBridge } from "../store";
+import { invoke } from "./desktop-bridge";
+import { hasDesktopBridge } from "../store";
 
 export async function fetchProviderModelCatalog(apiType: ProviderApiType, baseUrl: string, provider: string, enteredKey = ""): Promise<unknown> {
   const endpoint = modelListUrl(apiType, baseUrl);
   if (!endpoint) throw new Error("Invalid model endpoint");
-  const storedKey = !enteredKey && hasTauriBridge() ? await invoke<string | null>("secret_get", { key: `model.apiKey:${provider}` }).catch(() => null) : null;
+  const storedKey = !enteredKey && hasDesktopBridge() ? await invoke<string | null>("secret_get", { key: `model.apiKey:${provider}` }).catch(() => null) : null;
   const apiKey = enteredKey || storedKey || "";
   const headers: Record<string, string> = { Accept: "application/json" };
   if (apiType === "claude") { if (apiKey) headers["x-api-key"] = apiKey; headers["anthropic-version"] = "2023-06-01"; }

@@ -27,7 +27,7 @@ function boot(ready = false, language = "zh-CN") {
     localStorage: { getItem: () => JSON.stringify({ language }) },
     window: {
       addEventListener: document.addEventListener,
-      __TAURI_INTERNALS__: { invoke: async (_command: string, { message }: { message: string }) => { reports.push(message); } },
+      electronBridge: { invoke: async (_command: string, { message }: { message: string }) => { reports.push(message); } },
     },
     HTMLScriptElement: Script,
     ErrorEvent: class {},

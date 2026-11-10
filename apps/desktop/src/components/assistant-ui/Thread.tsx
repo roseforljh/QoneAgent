@@ -48,7 +48,7 @@ import { createMessageStructureSelector } from "../../lib/thread-message-structu
 import { getThreadScrollState, pruneThreadScrollStates } from "../../lib/thread-scroll-state";
 import { useLocale } from "../../localization";
 import { pickNativeAttachmentFiles, pickNativeAttachmentFolder, useNativeFileDrop } from "../../lib/native-file-drop";
-import { hasTauriBridge } from "../../store";
+import { hasDesktopBridge } from "../../store";
 import { getQoneMessageQueue } from "../../lib/qone-message-queue";
 import { ComposerQueueEnterPlugin } from "./composer-queue-enter";
 import { ComposerHistoryPlugin } from "./composer-history";
@@ -207,6 +207,12 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
         <ThreadPrimitive.Viewport
           key={currentSessionId}
           turnAnchor="top"
+          // assistant-ui's default clamp over-scrolls any message taller than
+          // 10em, pushing ordinary multi-line bubbles above the viewport top.
+          // Text is already capped at 20 lines by the bubble's own collapse, so
+          // this ceiling only matters for attachment-heavy messages; when it
+          // does trigger, keep most of the viewport visible.
+          topAnchorMessageClamp={{ tallerThan: "100em", visibleHeight: "60em" }}
           scrollRestoration={getThreadScrollState(currentSessionId)}
           scrollToBottomOnInitialize={false}
           scrollToBottomOnRunStart={false}
@@ -307,7 +313,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const onCommandSelect = useCallback((command: ComposerCommand) => { insertCommandRef.current?.(command); }, []);
   const onToolSelect = useCallback((tool: ComposerTool) => {
     if (tool.id === "attachment") {
-      if (hasTauriBridge()) void pickNativeAttachmentFiles().then(onNativeFiles).catch((error) => {
+      if (hasDesktopBridge()) void pickNativeAttachmentFiles().then(onNativeFiles).catch((error) => {
         useStore.setState({ lastError: localizeError(error) });
       });
       else shellRef.current?.querySelector<HTMLButtonElement>(".aui-composer-add-attachment")?.click();

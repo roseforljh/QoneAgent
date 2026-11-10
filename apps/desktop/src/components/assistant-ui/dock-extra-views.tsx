@@ -14,10 +14,10 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { useStore, hasTauriBridge } from "../../store";
+import { invoke } from "../../lib/desktop-bridge";
+import { listen } from "../../lib/desktop-bridge";
+import { openPath, openUrl } from "../../lib/desktop-bridge";
+import { useStore, hasDesktopBridge } from "../../store";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { clipBrowserBounds, createDockBrowserSession } from "../../lib/dock-browser-session";
 import { FadeScroll, mono } from "./elements/surfaces";
@@ -43,7 +43,7 @@ function toUrl(input: string): string | undefined {
   return `https://www.bing.com/search?q=${encodeURIComponent(text)}`;
 }
 
-// The page area is a real WebView2 child of the main window (src-tauri
+// The page area is a real WebView2 child of the main window (electron
 // browser.rs); this view only owns the toolbar and reports its rect.
 export function DockBrowserView({ browserId, active, initialUrl, previewHtml, previewId, onClose }: { browserId: string; active: boolean; initialUrl: string; previewHtml?: string; previewId?: string; onClose?: () => void }) {
   const { t } = useLocale();
@@ -221,7 +221,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
 
   const remove = async (serverId: string, name: string, tokenKey?: string) => {
     if (!await confirmDestructiveAction(t("mcp.deleteConfirm", { name }))) return;
-    if (hasTauriBridge()) await invoke("secret_delete", { key: tokenKey ?? `mcp.oauth:${serverId}` }).catch(() => undefined);
+    if (hasDesktopBridge()) await invoke("secret_delete", { key: tokenKey ?? `mcp.oauth:${serverId}` }).catch(() => undefined);
     send({ type: "mcp.delete", requestId: rid(), serverId });
     window.setTimeout(() => send({ type: "mcp.list", requestId: rid() }), 500);
   };

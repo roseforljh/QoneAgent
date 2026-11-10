@@ -1,6 +1,6 @@
 import { parseMcpCommand, type QueueItemInfo, type RuntimeCommand, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
 import { useStore } from "../store";
-import { saveRunOptions, type SessionRunOptions } from "./run-options";
+import { DEFAULT_RUN_PERMISSION_MODE, saveRunOptions, type SessionRunOptions } from "./run-options";
 import { emptySessionState } from "./session-execution-state";
 import { getQoneMessageQueue } from "./qone-message-queue";
 import { bindSessionQueue } from "./session-queue-lifecycle";
@@ -47,11 +47,15 @@ export function openQueuedSideConversation(item: QueueItemInfo): Promise<boolean
 function createSideConversation(command: Pending["command"], item?: QueueItemInfo, draft?: ComposerDraft): Promise<boolean> {
   const state = useStore.getState();
   const { requestId, sessionId } = command;
+  const parentOptions = state.runOptionsBySession[sessionId];
   return new Promise((resolve, reject) => {
     requests.set(requestId, {
       command, resolve, reject, draft,
-      options: { ...state.runOptionsBySession[sessionId], modelId: state.runOptionsBySession[sessionId]?.modelId ?? state.selectedModelId,
-        permissionMode: state.runOptionsBySession[sessionId]?.permissionMode ?? state.defaultPermissionMode },
+      options: {
+        ...parentOptions,
+        modelId: parentOptions?.modelId ?? state.selectedModelId,
+        permissionMode: parentOptions?.permissionMode ?? DEFAULT_RUN_PERMISSION_MODE,
+      },
     });
     if (item) useStore.setState((current) => ({ sideChatTransfers: { ...current.sideChatTransfers, [requestId]: item } }));
     // An IPC error can arrive after the runtime committed. Keep ownership

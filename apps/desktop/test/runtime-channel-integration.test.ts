@@ -2,33 +2,52 @@ import { afterAll, expect, mock, test } from "bun:test";
 import type { AgentEvent, RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 
 const commands: RuntimeCommand[] = [];
-let channel: { onmessage: (data: unknown) => void } | undefined;
 let legacy: ((event: { payload: unknown }) => void) | undefined;
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-Object.defineProperty(globalThis, "window", { configurable: true, value: { __TAURI_INTERNALS__: { transformCallback: () => {} }, localStorage: { getItem: () => null, setItem: () => {} } } });
-mock.module("@tauri-apps/api/core", () => ({
-  Channel: class { onmessage = (_data: unknown) => {}; },
-  invoke: async (name: string, args?: { channel?: typeof channel; cmd?: string }) => {
-    if (name === "runtime_subscribe") channel = args?.channel;
+Object.defineProperty(globalThis, "window", { configurable: true, value: { electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p }, localStorage: { getItem: () => null, setItem: () => {} } } });
+// The renderer reaches Electron only through this bridge module, so one mock
+// covers every IPC surface the store touches.
+const originalBridge = { ...await import("../src/lib/desktop-bridge") };
+mock.module("../src/lib/desktop-bridge", () => ({
+  ...originalBridge,
+  isDesktop: () => true,
+  invoke: async (name: string, args?: { cmd?: string }) => {
     if (name === "runtime_send" && args?.cmd) commands.push(JSON.parse(args.cmd));
   },
+  listen: async (_name: string, listener: typeof legacy) => { legacy = listener; return () => {}; },
 }));
-mock.module("@tauri-apps/api/event", () => ({ listen: async (_name: string, listener: typeof legacy) => { legacy = listener; return () => {}; } }));
-mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
-const { initBridge, useStore } = await import("../src/store");
-initBridge(); await Promise.resolve(); await Promise.resolve();
+// Bun keeps modules cached across test files, so the shared store-bridge
+// module would reuse the first file's `wired` flag and never register this
+// file's listener. Import a file-scoped instance instead.
+const { bridgeDependencies, useStore } = await import("../src/store");
+const { initRuntimeBridge } = await import("../src/store-bridge?test=runtime-channel");
+initRuntimeBridge(bridgeDependencies()); await Promise.resolve(); await Promise.resolve();
 afterAll(() => { if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window"); });
-const emit = (event: RuntimeEvent) => channel!.onmessage([event]);
+const emit = (event: RuntimeEvent) => legacy!({ payload: [event] });
 const execution = (sequence: number, type: string, runId: string, sessionId: string, payload: unknown, scope: AgentEvent["scope"] = "conversation"): RuntimeEvent => ({ type: "agent.event", event: { sequence, type, runId, sessionId, payload, scope, eventId: `event-${sequence}`, timestamp: sequence } });
 
-test("Channel registration accepts Rust nested batches and ignores malformed items without stopping delivery", () => {
-  expect(channel).toBeDefined(); expect(legacy).toBeDefined();
+test("nested batches and legacy encoded payloads are accepted and malformed items do not stop delivery", () => {
+  expect(legacy).toBeDefined();
   const previous = useStore.getState();
   try {
-    channel!.onmessage([null, [JSON.stringify([{ type: "session.queue", sessionId: "channel-session", items: [] }])], "invalid"]);
+    legacy!({ payload: [null, [JSON.stringify([{ type: "session.queue", sessionId: "channel-session", items: [] }])], "invalid"] });
     expect(useStore.getState().backgroundSessions["channel-session"]!.queueLoadedSessionId).toBe("channel-session");
     legacy!({ payload: JSON.stringify({ type: "session.queue", sessionId: "legacy-session", items: [] }) });
     expect(useStore.getState().backgroundSessions["legacy-session"]!.queueLoadedSessionId).toBe("legacy-session");
+  } finally { useStore.setState(previous, true); }
+});
+
+test("Pi shell updates reach the desktop before completion and keep structured results", () => {
+  const previous = useStore.getState();
+  const update = { content: [{ type: "text", text: "stdout-before" }] };
+  const result = { content: [{ type: "text", text: "stdout-before\nstdout-after" }], structuredContent: { output: "stdout-before\nstdout-after", truncated: false, exit_code: 0 } };
+  try {
+    useStore.setState({ currentSessionId: "shell-session", activeRunId: "shell-run", toolCalls: [], backgroundSessions: {} });
+    emit(execution(2001, "tool.started", "shell-run", "shell-session", { toolCallId: "shell-call", toolName: "powershell", args: { command: "test" } }));
+    emit(execution(2002, "tool.updated", "shell-run", "shell-session", { toolCallId: "shell-call", toolName: "powershell", update }));
+    expect(useStore.getState().toolCalls[0]).toMatchObject({ status: "running", result: update });
+    emit(execution(2003, "tool.completed", "shell-run", "shell-session", { toolCallId: "shell-call", toolName: "powershell", result, durationMs: 600 }));
+    expect(useStore.getState().toolCalls[0]).toMatchObject({ status: "success", result });
   } finally { useStore.setState(previous, true); }
 });
 

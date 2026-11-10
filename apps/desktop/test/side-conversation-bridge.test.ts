@@ -3,13 +3,16 @@ import type { RuntimeCommand, RuntimeEvent, SessionInfo } from "@qone/protocol";
 
 const commands: RuntimeCommand[] = [];
 let listener: ((event: { payload: string }) => void) | undefined;
-mock.module("@tauri-apps/api/core", () => ({ invoke: async (name: string, args?: { cmd?: string }) => {
-  if (name === "runtime_send" && args?.cmd) commands.push(JSON.parse(args.cmd));
-} }));
-mock.module("@tauri-apps/api/event", () => ({ listen: async (_name: string, callback: typeof listener) => { listener = callback; return () => {}; } }));
-mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
+const originalBridge = { ...await import("../src/lib/desktop-bridge") };
+mock.module("../src/lib/desktop-bridge", () => ({
+  ...originalBridge,
+  invoke: async (name: string, args?: { cmd?: string }) => {
+    if (name === "runtime_send" && args?.cmd) commands.push(JSON.parse(args.cmd));
+  },
+  listen: async (_name: string, callback: typeof listener) => { listener = callback; return () => {}; },
+}));
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-Object.defineProperty(globalThis, "window", { configurable: true, value: { __TAURI_INTERNALS__: {} } });
+Object.defineProperty(globalThis, "window", { configurable: true, value: { electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p } } });
 afterAll(() => { if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window"); });
 
 const { useStore, initBridge } = await import("../src/store");

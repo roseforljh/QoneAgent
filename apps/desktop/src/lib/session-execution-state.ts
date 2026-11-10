@@ -52,7 +52,7 @@ export function selectSessionState(state: AgentState, sessionId?: string): Agent
     ...state, ...idleSessionState, ...state.backgroundSessions[sessionId],
     currentSessionId: sessionId,
     currentWorkspaceId: conversationSession(state, sessionId)?.workspaceId,
-    selectedModelId: state.runOptionsBySession[sessionId]?.modelId,
+    selectedModelId: state.runOptionsBySession[sessionId]?.modelId ?? state.draftRunOptions?.modelId,
     creatingSession: false,
   };
 }

@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke } from "./lib/desktop-bridge";
+import { listen } from "./lib/desktop-bridge";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {

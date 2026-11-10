@@ -9,10 +9,10 @@ import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkin
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { check } from "@tauri-apps/plugin-updater";
-import { invoke } from "@tauri-apps/api/core";
-import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { hasTauriBridge, requestModelMetadata } from "../../store";
+import { check } from "../../lib/desktop-bridge";
+import { invoke } from "../../lib/desktop-bridge";
+import { openPath, openUrl, revealItemInDir } from "../../lib/desktop-bridge";
+import { hasDesktopBridge, requestModelMetadata } from "../../store";
 import { MemoryChips, type MemoryChip } from "../assistant-ui/elements/memory-chips";
 import { QoneSelect } from "../ui/Select";
 import { Slider } from "../ui/Slider";
@@ -49,6 +49,7 @@ import notionLogo from "@lobehub/icons-static-svg/icons/notion.svg";
 import githubLogo from "@lobehub/icons-static-svg/icons/github.svg";
 import context7Logo from "../../assets/context7-logo.svg";
 import playwrightLogo from "../../assets/playwright-logo.svg";
+import reaLogo from "../../assets/rea-logo.svg";
 import outlookLogo from "../../assets/outlook-logo.svg";
 import gmailLogo from "../../assets/gmail-logo.svg";
 import qqmailLogo from "../../assets/qqmail-logo.svg";
@@ -470,7 +471,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
     try {
       const profile: ProviderProfile = { id: initial?.id ?? providerId(name), name: name.trim(), apiType, baseUrl: normalizeBaseUrl(baseUrl), logoUrl: logoUrl.trim() || undefined, models, updatedAt: Date.now() };
       if (apiKey) {
-        if (hasTauriBridge()) await invoke("secret_set", { key: `model.apiKey:${profile.id}`, value: apiKey });
+        if (hasDesktopBridge()) await invoke("secret_set", { key: `model.apiKey:${profile.id}`, value: apiKey });
         useStore.getState().send({ type: "secret.set", requestId: crypto.randomUUID(), key: `model.apiKey:${profile.id}`, value: apiKey });
       }
       onSaved(profile); onClose();
@@ -485,7 +486,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
     setRemoving(true);
     try {
       if (!await confirmDestructiveAction(t("provider.deleteConfirm", { name: initial.name }))) return;
-      if (hasTauriBridge()) await invoke("secret_delete", { key: `model.apiKey:${initial.id}` }).catch(() => undefined);
+      if (hasDesktopBridge()) await invoke("secret_delete", { key: `model.apiKey:${initial.id}` }).catch(() => undefined);
       useStore.getState().send({ type: "secret.delete", requestId: crypto.randomUUID(), key: `model.apiKey:${initial.id}` });
       onDeleted(initial); onClose();
     } finally {
@@ -1118,6 +1119,7 @@ function SubagentsSection() {
 const MCP_PRESETS: { id: string; name: string; descKey: MessageKey; logo: string; mono?: boolean; lightBadge?: boolean; config: { command?: string; args?: string[]; url?: string; tokenEnv?: string; env?: Record<string, string>; authMode?: "oauth" } }[] = [
   { id: "mcp-playwright", name: "Playwright", descKey: "mcp.presetPlaywright", logo: playwrightLogo, lightBadge: true, config: { command: "npx", args: ["-y", "@playwright/mcp@latest"] } },
   { id: "mcp-context7", name: "Context7", descKey: "mcp.presetContext7", logo: context7Logo, lightBadge: true, config: { command: "npx", args: ["-y", "@upstash/context7-mcp"] } },
+  { id: "mcp-rea", name: "REA", descKey: "mcp.presetRea", logo: reaLogo, config: { command: "npx", args: ["-y", "rea-agents", "mcp"] } },
   { id: "mcp-cloudflare-docs", name: "Cloudflare", descKey: "mcp.presetCloudflare", logo: cloudflareLogo, config: { url: "https://mcp.cloudflare.com/mcp", authMode: "oauth" } },
   { id: "mcp-notion", name: "Notion", descKey: "mcp.presetNotion", logo: notionLogo, mono: true, lightBadge: true, config: { url: "https://mcp.notion.com/mcp", authMode: "oauth" } },
   { id: "mcp-github", name: "GitHub", descKey: "mcp.presetGitHub", logo: githubLogo, mono: true, lightBadge: true, config: { url: "https://api.githubcopilot.com/mcp/" } },
@@ -1201,7 +1203,7 @@ function McpSection() {
 
   const deleteServer = async (server: { id: string; oauth?: { tokenSecretKey?: string }; env?: Record<string, string> }) => {
     try {
-      if (hasTauriBridge()) {
+      if (hasDesktopBridge()) {
         const oauthKeys = [server.oauth?.tokenSecretKey ?? `mcp.oauth:${server.id}`, `mcp.oauth:${server.id}.client`, `mcp.oauth:${server.id}.tokens`];
         await Promise.all(oauthKeys.map((key) => invoke("secret_delete", { key }).catch(() => undefined)));
         const envKeys = Object.values(server.env ?? {}).filter((value) => value.startsWith("$mcp.env:")).map((value) => value.slice(1));

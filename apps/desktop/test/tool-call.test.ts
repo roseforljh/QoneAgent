@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ToolCall } from "../src/components/assistant-ui/elements/tool-call";
 import { ToolResultView } from "../src/components/assistant-ui/elements/tool-result";
 import { formatToolPayload, toolCallStatus, toolResultText } from "../src/components/assistant-ui/tool-call-display";
+import { CodexFileSearchIcon } from "../src/components/assistant-ui/execution-icons";
 
 test("tool states do not mark pending or failed calls as successful", () => {
   expect(toolCallStatus({})).toBe("running");
@@ -29,6 +30,7 @@ test("empty command output falls back to a visible failure message", () => {
 test("official ToolCall displays actual request, result, and failure state", () => {
   const html = renderToStaticMarkup(createElement(ToolCall, {
     label: "读取",
+    icon: CodexFileSearchIcon,
     activeLabel: "正在读取",
     query: "file.ts",
     request: '{ "path": "file.ts" }',
@@ -74,6 +76,24 @@ test("empty running command shows a status instead of a blank terminal", () => {
   expect(html).toContain("等待结果…");
   expect(html.match(/q-shine-text/g)).toHaveLength(2);
   expect(html).toContain("python -c &#x27;print(1)&#x27;");
+});
+
+test("running commands show a waiting indicator until their first output, never after completion", () => {
+  const render = (running: boolean, output: string) => renderToStaticMarkup(createElement(ToolResultView, {
+    presentation: { kind: "terminal", command: "bun test", output },
+    emptyText: "等待结果…", running,
+  }));
+  const waiting = render(true, "");
+  expect(waiting).toContain("bun test");
+  expect(waiting).toContain("等待结果…");
+  expect(waiting).toContain('role="status"');
+  expect(waiting).toContain("q-ellipsis-dots");
+  for (const [running, output] of [[true, "first\n"], [true, "first\nsecond\n"], [false, ""], [false, "failed"]] as const) {
+    const html = render(running, output);
+    expect(html).not.toContain('role="status"');
+    expect(html).not.toContain("等待结果…");
+    if (output) expect(html).toContain(output);
+  }
 });
 
 test("empty running command shows the command while execution output is pending", () => {

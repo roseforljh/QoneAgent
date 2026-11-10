@@ -1,11 +1,11 @@
 import { localizeError } from "../lib/error-localization";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./desktop-bridge";
 import { translateCurrent } from "../localization";
 import { DIRECTORY_MIME_TYPE, mediaMimeTypeFromName } from "@qone/protocol";
-import type { EventCallback } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { DragDropEvent } from "@tauri-apps/api/webview";
-import { hasTauriBridge, useStore } from "../store";
+import type { EventCallback } from "./desktop-bridge";
+import { getCurrentWebview } from "./desktop-bridge";
+import type { DragDropEvent } from "./desktop-bridge";
+import { hasDesktopBridge, useStore } from "../store";
 import { useCallback, useEffect, type RefObject } from "react";
 import { createNativeAttachmentFile } from "./native-attachment-file";
 
@@ -92,7 +92,7 @@ export function useNativePathDrop(
   onHover?: (hovering: boolean) => void,
 ) {
   useEffect(() => {
-    if (!hasTauriBridge()) return;
+    if (!hasDesktopBridge()) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     const handle: EventCallback<DragDropEvent> = (event) => {

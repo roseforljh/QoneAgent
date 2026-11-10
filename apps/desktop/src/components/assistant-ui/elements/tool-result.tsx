@@ -5,6 +5,7 @@ import type { FC } from "react";
 import { Image } from "./image";
 import { cn } from "../../../lib/utils";
 import { DiffViewer } from "./diff-viewer";
+import { EllipsisDots } from "./surfaces";
 import type { ToolPresentation } from "../tool-presentation";
 
 const ToolImage = Image as unknown as FC<{ image: string; filename?: string }>;
@@ -44,15 +45,18 @@ function FileResult({ presentation }: { presentation: Extract<ToolPresentation, 
   );
 }
 
-function TerminalResult({ presentation, emptyText }: { presentation: Extract<ToolPresentation, { kind: "terminal" }>; emptyText?: string }) {
+function TerminalResult({ presentation, emptyText, running }: { presentation: Extract<ToolPresentation, { kind: "terminal" }>; emptyText?: string; running?: boolean }) {
   const output = presentation.output.trim();
   return (
     <div data-slot="tool-terminal-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/45">
       <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground/75 [overflow-wrap:anywhere]">
         {output ? presentation.output : presentation.command?.trim() ? (
           <span data-slot="tool-terminal-command" className="text-foreground/75">{presentation.command}</span>
-        ) : <span className="text-foreground/45">{emptyText}</span>}
+        ) : !running && <span className="text-foreground/45">{emptyText}</span>}
       </pre>
+      {!output && running && <div role="status" className="flex items-center gap-1 px-3 pb-2.5 text-foreground/45">
+        {emptyText}<EllipsisDots />
+      </div>}
     </div>
   );
 }
@@ -107,12 +111,12 @@ export function ToolFallback({ presentation }: { presentation: Extract<ToolPrese
   );
 }
 
-export function ToolResultView({ presentation, className, emptyText }: { presentation: ToolPresentation; className?: string; emptyText?: string }) {
+export function ToolResultView({ presentation, className, emptyText, running = false }: { presentation: ToolPresentation; className?: string; emptyText?: string; running?: boolean }) {
   return (
     <ResultFrame className={className}>
       {presentation.kind === "diff" && <DiffResult presentation={presentation} />}
       {presentation.kind === "file" && <FileResult presentation={presentation} />}
-      {presentation.kind === "terminal" && <TerminalResult presentation={presentation} emptyText={emptyText} />}
+      {presentation.kind === "terminal" && <TerminalResult presentation={presentation} emptyText={emptyText} running={running} />}
       {presentation.kind === "search" && <SearchResult presentation={presentation} />}
       {presentation.kind === "image" && <ImageResult presentation={presentation} />}
       {presentation.kind === "text" && <TextResult presentation={presentation} />}

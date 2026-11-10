@@ -17,13 +17,15 @@ export function OverflowFade({ children, className, ...props }: ComponentProps<"
     return observeInlineOverflow(viewport, content, setOverflow);
   }, []);
 
+  // Flex, not inline-block: an inline formatting context keeps a line-box strut
+  // whose baseline pushes the label down, so row icons looked vertically off.
   return <span
     {...props}
     ref={viewportRef}
     data-slot="overflow-fade"
     data-overflow={overflow}
-    className={cn("q-inline-overflow-fade inline-block min-w-0 max-w-full overflow-hidden whitespace-nowrap align-middle", className)}
+    className={cn("q-inline-overflow-fade flex min-w-0 max-w-full items-center overflow-hidden whitespace-nowrap", className)}
   >
-    <span ref={contentRef} className="inline-block w-max align-middle">{children}</span>
+    <span ref={contentRef} className="w-max shrink-0">{children}</span>
   </span>;
 }

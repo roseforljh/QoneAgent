@@ -1,11 +1,9 @@
 import { handleAgentEvent } from "./store/agent-events";
 import { translateCurrent as t } from "./localization";
 import { localizeError } from "./lib/error-localization";
-import * as TauriCore from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke, listen, openUrl } from "./lib/desktop-bridge";
 import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
-import { saveRunOptions } from "./lib/run-options";
+import { DEFAULT_RUN_PERMISSION_MODE, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults } from "./lib/run-options";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
 import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
@@ -33,8 +31,6 @@ function subagentChange(state: AgentState, subagents: AgentState["subagents"]): 
 }
 
 const rid = () => crypto.randomUUID();
-const invoke = TauriCore.invoke;
-const Channel = (TauriCore as typeof TauriCore & { Channel?: typeof TauriCore.Channel }).Channel;
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 const CAPABILITY_ROUTING_STORAGE_KEY = "qone-capability-routing";
 const SUBAGENT_RUNTIME_STORAGE_KEY = "qone-subagent-runtime";
@@ -98,9 +94,9 @@ let wired = false;
 let lastSequence = -1;
 const lastRunSequences = new Map<string, number>();
 export function initRuntimeBridge(dependencies: ReturnType<typeof import("./store").bridgeDependencies>) {
-  const { useStore, hasTauriBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
+  const { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
   if (wired) return;
-  if (!hasTauriBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
+  if (!hasDesktopBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
 
   const receive = (payload: RuntimeEvent | RuntimeEvent[] | string) => {
@@ -244,45 +240,51 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         break;
       case "session.created":
         flushNow();
-        eventStore.setState((st) => ({
-          runOptionsBySession: {
-            ...st.runOptionsBySession,
-            [msg.session.id]: {
-              ...(st.runOptionsBySession[msg.session.id] ?? {}),
-              ...(st.creatingSession ? st.draftRunOptions : {}),
-              ...(!st.runOptionsBySession[msg.session.id]?.modelId && !st.draftRunOptions.modelId && st.selectedModelId ? { modelId: st.selectedModelId } : {}),
-            },
-          },
-          selectedModelId: st.draftRunOptions.modelId ?? st.runOptionsBySession[msg.session.id]?.modelId ?? st.selectedModelId,
-          draftRunOptions: {},
-          sessions: [msg.session, ...st.sessions],
-          currentSessionId: msg.session.id,
-          currentWorkspaceId: msg.session.workspaceId ?? st.currentWorkspaceId,
-          draftWorkspaceId: undefined,
-          messagesLoadingSessionId: undefined,
-          messages: [],
-          compactions: [],
-          streaming: "",
-          streamingParts: [],
-          activeMessageSequence: undefined,
-          preparedToolCallIds: [],
-          toolCalls: [],
-          runs: [],
-          subagents: [],
-          subagentNotifications: [],
-          artifacts: [],
-          running: false,
-          activeRunId: undefined,
-          modelRequest: undefined,
-          approvals: [],
-          ...switchSessionState(st, msg.session.id),
-          // A newly created conversation has no persisted queue. Establish
-          // that baseline before it can send queue.sync; its first echo is
-          // an acknowledgement, not a snapshot to restore over local work.
-          queueItems: [],
-          queueLoadedSessionId: msg.session.id,
-          editingQueueItem: undefined,
-        }));
+        eventStore.setState((st) => {
+          const modelId = st.draftRunOptions.modelId
+            ?? (st.creatingSession ? st.selectedModelId : undefined)
+            ?? st.modelConfigs.find((model) => model.enabled)?.id;
+          const newSessionDefaults = {
+            ...st.draftRunOptions,
+            ...(modelId ? { modelId } : {}),
+            ...(!st.draftRunOptions.permissionMode ? { permissionMode: DEFAULT_RUN_PERMISSION_MODE } : {}),
+          };
+          // A new conversation snapshots the shared new-session configuration.
+          // Later edits in that conversation stay local to it.
+          const sessionRunOptions = withRunOptionDefaults(st.runOptionsBySession[msg.session.id], newSessionDefaults);
+          return {
+            runOptionsBySession: { ...st.runOptionsBySession, [msg.session.id]: sessionRunOptions },
+            selectedModelId: sessionRunOptions.modelId ?? st.selectedModelId,
+            draftRunOptions: st.draftRunOptions,
+            sessions: [msg.session, ...st.sessions],
+            currentSessionId: msg.session.id,
+            currentWorkspaceId: msg.session.workspaceId ?? st.currentWorkspaceId,
+            draftWorkspaceId: undefined,
+            messagesLoadingSessionId: undefined,
+            messages: [],
+            compactions: [],
+            streaming: "",
+            streamingParts: [],
+            activeMessageSequence: undefined,
+            preparedToolCallIds: [],
+            toolCalls: [],
+            runs: [],
+            subagents: [],
+            subagentNotifications: [],
+            artifacts: [],
+            running: false,
+            activeRunId: undefined,
+            modelRequest: undefined,
+            approvals: [],
+            ...switchSessionState(st, msg.session.id),
+            // A newly created conversation has no persisted queue. Establish
+            // that baseline before it can send queue.sync; its first echo is
+            // an acknowledgement, not a snapshot to restore over local work.
+            queueItems: [],
+            queueLoadedSessionId: msg.session.id,
+            editingQueueItem: undefined,
+          };
+        });
         saveRunOptions(eventStore.getState().runOptionsBySession);
         if (eventStore.getState().creatingSession && eventStore.getState().pendingMessage !== undefined) {
           queueMicrotask(() => {
@@ -297,7 +299,14 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         const selected = msg.sessions.find((session) => session.id === cur) ?? msg.sessions[0];
         const selectionChanged = selected?.id !== cur;
         if (selectionChanged) flushNow();
-        const storedModelId = selected ? state.runOptionsBySession[selected.id]?.modelId : undefined;
+        const storedOptions = selected ? state.runOptionsBySession[selected.id] : undefined;
+        const needsDefaults = Boolean(selected && (!storedOptions?.modelId || !storedOptions?.permissionMode));
+        const selectedOptions = selected && needsDefaults
+          ? withRunOptionDefaults(storedOptions, state.draftRunOptions)
+          : storedOptions;
+        const runOptionsBySession = selected && selectedOptions && needsDefaults
+          ? { ...state.runOptionsBySession, [selected.id]: selectedOptions }
+          : state.runOptionsBySession;
         eventStore.setState({
           sessions: msg.sessions,
           ...(msg.sideChats ? { sideChats: Object.fromEntries(msg.sideChats.map((session) => [session.id, session])) } : {}),
@@ -305,7 +314,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           currentSessionId: selected?.id,
           currentWorkspaceId: selected?.workspaceId ?? state.currentWorkspaceId,
           ...(selected?.workspaceId && selected.workspaceId !== state.currentWorkspaceId ? { workspaceLoadingId: selected.workspaceId } : {}),
-          selectedModelId: storedModelId ?? (state.modelConfigs.some((config) => config.id === state.selectedModelId) ? state.selectedModelId : undefined),
+          selectedModelId: selectedOptions?.modelId ?? (state.modelConfigs.some((config) => config.id === state.selectedModelId) ? state.selectedModelId : undefined),
+          runOptionsBySession,
           ...(selectionChanged ? {
             messages: [],
             compactions: [],
@@ -325,6 +335,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             ...switchSessionState(state, selected?.id),
           } : {}),
         });
+        if (needsDefaults) saveRunOptions(runOptionsBySession);
         if (selected) {
           requestSessionMessages(selected.id);
           s.send({ type: "goal.get", requestId: rid(), sessionId: selected.id });
@@ -457,6 +468,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
                 summary: t.resultSummary,
                 startedAt: t.startedAt,
                 completedAt: t.completedAt,
+                durationMs: t.durationMs,
               } satisfies ToolCall));
             const live = new Map(st.toolCalls.filter((call) => call.runId === st.activeRunId).map((call) => [call.toolCallId, call]));
             const merged = calls.map((call) => live.get(call.toolCallId) ?? call);
@@ -589,13 +601,23 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         restoreProviderProfilesFromModelConfigs(msg.configs);
         eventStore.setState((st) => {
           const available = msg.configs.filter((config) => config.enabled);
-          const preferred = st.currentSessionId
-            ? st.runOptionsBySession[st.currentSessionId]?.modelId
-            : st.draftRunOptions.modelId ?? st.newSessionModelId;
-          const candidate = preferred ?? (st.currentSessionId ? st.selectedModelId : undefined);
+          const sessionOptions = st.currentSessionId
+            ? withRunOptionDefaults(st.runOptionsBySession[st.currentSessionId], st.draftRunOptions)
+            : undefined;
+          const candidate = sessionOptions?.modelId ?? st.draftRunOptions.modelId ?? st.selectedModelId;
           const selectedModelId = available.some((config) => config.id === candidate)
             ? candidate
             : available[0]?.id;
+          if (selectedModelId && selectedModelId !== candidate) {
+            if (st.currentSessionId) {
+              const runOptionsBySession = { ...st.runOptionsBySession, [st.currentSessionId]: { ...sessionOptions, modelId: selectedModelId } };
+              saveRunOptions(runOptionsBySession);
+              return { modelConfigs: msg.configs, selectedModelId, runOptionsBySession };
+            }
+            const draftRunOptions = { ...st.draftRunOptions, modelId: selectedModelId };
+            saveNewSessionRunOptions(draftRunOptions);
+            return { modelConfigs: msg.configs, selectedModelId, draftRunOptions };
+          }
           return { modelConfigs: msg.configs, selectedModelId };
         });
         const restoredProviders = new Set<string>();
@@ -609,10 +631,19 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         break;
       case "model.updated":
-        eventStore.setState((st) => ({
-          modelConfigs: [msg.config, ...st.modelConfigs.filter((c) => c.id !== msg.config.id)],
-          selectedModelId: st.selectedModelId ?? msg.config.id,
-        }));
+        eventStore.setState((st) => {
+          const modelConfigs = [msg.config, ...st.modelConfigs.filter((c) => c.id !== msg.config.id)];
+          if (st.selectedModelId) return { modelConfigs };
+          if (st.currentSessionId) {
+            const sessionOptions = withRunOptionDefaults(st.runOptionsBySession[st.currentSessionId], st.draftRunOptions);
+            const runOptionsBySession = { ...st.runOptionsBySession, [st.currentSessionId]: { ...sessionOptions, modelId: msg.config.id } };
+            saveRunOptions(runOptionsBySession);
+            return { modelConfigs, selectedModelId: msg.config.id, runOptionsBySession };
+          }
+          const draftRunOptions = { ...st.draftRunOptions, modelId: msg.config.id };
+          saveNewSessionRunOptions(draftRunOptions);
+          return { modelConfigs, selectedModelId: msg.config.id, draftRunOptions };
+        });
         break;
       case "skills.list":
         eventStore.setState({ skills: msg.skills });
@@ -893,15 +924,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
   };
   const ready = listen<RuntimeEvent | RuntimeEvent[] | string>("runtime-event", (event) => receive(event.payload));
   void ready
-    .then(async () => {
-      const tauriInternals = typeof window === "undefined" ? undefined : (window as Window & { __TAURI_INTERNALS__?: { transformCallback?: unknown } }).__TAURI_INTERNALS__;
-      if (typeof Channel === "function" && typeof tauriInternals?.transformCallback === "function") {
-        const channel = new Channel<RuntimeEvent[]>();
-        channel.onmessage = receive;
-        await invoke("runtime_subscribe", { channel });
-      }
-      return useStore.getState().send({ type: "ping", requestId: rid() });
-    })
+    .then(() => useStore.getState().send({ type: "ping", requestId: rid() }))
     .catch((error) => {
       wired = false;
       console.error("runtime listener setup failed", error);

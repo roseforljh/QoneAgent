@@ -6,11 +6,14 @@ import { emptySessionState } from "../src/lib/session-execution-state";
 import { updateSessionActivity } from "../src/lib/session-recency";
 
 let listener: ((event: { payload: string }) => void) | undefined;
-mock.module("@tauri-apps/api/core", () => ({ invoke: async () => {} }));
-mock.module("@tauri-apps/api/event", () => ({ listen: async (_name: string, callback: typeof listener) => { listener = callback; return () => {}; } }));
-mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
+const originalBridge = { ...await import("../src/lib/desktop-bridge") };
+mock.module("../src/lib/desktop-bridge", () => ({
+  ...originalBridge,
+  invoke: async () => {},
+  listen: async (_name: string, callback: typeof listener) => { listener = callback; return () => {}; },
+}));
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-Object.defineProperty(globalThis, "window", { configurable: true, value: { __TAURI_INTERNALS__: {} } });
+Object.defineProperty(globalThis, "window", { configurable: true, value: { electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p } } });
 afterAll(() => { if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window"); });
 
 const { useStore, initBridge } = await import("../src/store");

@@ -68,6 +68,16 @@ export function normalizeThinkingLevel(value: unknown, apiType?: ProviderApiType
   return normalizeThinkingLevelForApi(value, apiType);
 }
 
+/** The composer fallback when a model has no explicit thinking preference. */
+export const DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium";
+
+export function defaultThinkingForModel(settings: { thinking?: unknown; metadataOverrides?: unknown } | undefined, apiType?: ProviderApiType): ThinkingLevel {
+  const configured = settings?.thinking;
+  const overrides = settings?.metadataOverrides;
+  const explicit = Boolean(overrides && typeof overrides === "object" && !Array.isArray(overrides) && (overrides as Record<string, unknown>).thinking === true);
+  return normalizeThinkingLevel(explicit || (configured && configured !== "none") ? configured : DEFAULT_THINKING_LEVEL, apiType);
+}
+
 export function defaultModelSettings(apiType?: ProviderApiType): ModelSettings {
   return { maxOutput: 8192, maxContext: 128000, thinking: "none", input: apiType === "google" ? [...capabilities] : ["text"], output: ["text"], autoMetadata: true, metadataSources: { maxOutput: "default", maxContext: "default", thinking: "default", input: "default", output: "default" } };
 }

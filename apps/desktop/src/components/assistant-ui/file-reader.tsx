@@ -1,6 +1,6 @@
 import { localizeError } from "../../lib/error-localization";
 import { useEffect, useMemo, useState } from "react";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath } from "../../lib/desktop-bridge";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import type { DockFileTarget } from "../../lib/dock-state";

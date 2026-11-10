@@ -7,9 +7,12 @@ const commands: RuntimeCommand[] = [];
 let sendFailure: ((command: RuntimeCommand) => Promise<void>) | undefined;
 let onRuntimeEvent: ((event: { payload: string }) => void) | undefined;
 
-const originalTauriCore = { ...await import("@tauri-apps/api/core") };
-mock.module("@tauri-apps/api/core", () => ({
-  ...originalTauriCore,
+// The renderer reaches Electron only through this bridge module, so one mock
+// covers every IPC surface the store touches.
+const originalBridge = { ...await import("../src/lib/desktop-bridge") };
+mock.module("../src/lib/desktop-bridge", () => ({
+  ...originalBridge,
+  isDesktop: () => true,
   invoke: async (command: string, args?: { cmd?: string; key?: string }) => {
     if (command === "runtime_send" && args?.cmd) {
       const parsed = JSON.parse(args.cmd) as RuntimeCommand;
@@ -17,22 +20,20 @@ mock.module("@tauri-apps/api/core", () => ({
       await sendFailure?.(parsed);
     }
     if (command === "secret_get" && args?.key === "mcp.env:mcp-key-restore/TEST_API_KEY") return "restored-test-key";
+    return undefined;
   },
-}));
-mock.module("@tauri-apps/api/event", () => ({
   listen: async (_name: string, listener: typeof onRuntimeEvent) => {
     onRuntimeEvent = listener;
     return () => {};
   },
 }));
-mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
 
 const storage = new Map<string, string>();
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 Object.defineProperty(globalThis, "window", {
   configurable: true,
   value: {
-    __TAURI_INTERNALS__: {},
+    electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p },
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => storage.set(key, value),

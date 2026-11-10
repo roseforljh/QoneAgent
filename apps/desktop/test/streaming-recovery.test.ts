@@ -2,16 +2,17 @@ import { afterAll, expect, mock, test } from "bun:test";
 import type { RuntimeEvent } from "@qone/protocol";
 
 let listener: ((event: { payload: string }) => void) | undefined;
-mock.module("@tauri-apps/api/core", () => ({ invoke: async () => {} }));
-mock.module("@tauri-apps/api/event", () => ({
+const originalBridge = { ...await import("../src/lib/desktop-bridge") };
+mock.module("../src/lib/desktop-bridge", () => ({
+  ...originalBridge,
+  invoke: async () => {},
   listen: async (_name: string, callback: typeof listener) => { listener = callback; return () => {}; },
 }));
-mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 Object.defineProperty(globalThis, "window", {
   configurable: true,
-  value: { __TAURI_INTERNALS__: {}, localStorage: { getItem: () => null, setItem: () => {} } },
+  value: { electronBridge: { invoke: async () => undefined, listen: async () => () => {}, convertFileSrc: (p: string) => p }, localStorage: { getItem: () => null, setItem: () => {} } },
 });
 afterAll(() => {
   if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
