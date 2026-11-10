@@ -95,32 +95,35 @@ export class SidecarManager {
   }
 
   private handleRuntimeLine(rawLine: string): void {
-    let processed = rawLine;
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(rawLine);
-      if (parsed && typeof parsed === "object") {
-        if (parsed.type === "agent.event" && parsed.event?.type === "agent.completed") {
-          try {
-            new Notification({
-              title: "QoneAgent",
-              body: this.completedCopy,
-            }).show();
-          } catch (e) {
-            console.error("[sidecar] notification failed:", e);
-          }
-        }
-        processed = persistRuntimeSecret(rawLine);
-      }
+      parsed = JSON.parse(rawLine);
     } catch {
-      // 保持原始
+      this.enqueueBatch(rawLine);
+      return;
     }
 
-    try {
-      const obj = JSON.parse(processed);
-      this.enqueueBatch(obj);
-    } catch {
-      this.enqueueBatch(processed);
+    // Batched payloads arrive as NDJSON arrays; intercept every event so no
+    // credential-bearing event slips through to the renderer.
+    const events = (Array.isArray(parsed) ? parsed : [parsed])
+      .map((event) => persistRuntimeSecret(event))
+      .filter((event): event is object => event !== null);
+
+    for (const event of events) {
+      const record = event as { type?: unknown; event?: { type?: unknown } };
+      if (record.type === "agent.event" && record.event?.type === "agent.completed") {
+        try {
+          new Notification({
+            title: "QoneAgent",
+            body: this.completedCopy,
+          }).show();
+        } catch (e) {
+          console.error("[sidecar] notification failed:", e);
+        }
+      }
     }
+
+    for (const event of events) this.enqueueBatch(event);
   }
 
   private enqueueBatch(item: unknown): void {

@@ -5,7 +5,7 @@ import path from "node:path";
 const VERSION = "2026.08.19";
 const ASSET_ID = "521488854";
 const SHA256 = "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a";
-const destination = path.resolve(import.meta.dir, "../src-tauri/binaries/yt-dlp.exe");
+const destination = path.resolve(import.meta.dir, "../binaries/yt-dlp.exe");
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 try {

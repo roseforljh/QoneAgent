@@ -6,7 +6,7 @@ import path from "node:path";
 const NODE_VERSION = "v24.5.0";
 const NODE_SHA256 = "56dbd529d1eaa0f59c8f015ea604fe3d505a77ef9592fc4aed8030dc79f1bc14";
 const OPENCLI_VERSION = "1.8.8";
-const binaries = path.resolve(import.meta.dir, "../src-tauri/binaries");
+const binaries = path.resolve(import.meta.dir, "../binaries");
 const nodeExecutable = path.join(binaries, "node.exe");
 const opencliDir = path.join(binaries, "opencli");
 const opencliEntry = path.join(opencliDir, "node_modules", "@jackwener", "opencli", "dist", "src", "main.js");

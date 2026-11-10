@@ -17,7 +17,7 @@ function validateSecretKey(key: string): void {
   if (!namespace || namespace.length > 64 || !/^[a-zA-Z0-9.-]+$/.test(namespace)) {
     throw new Error("invalid secret key");
   }
-  if (!name || name.length > 128 || !/^[a-zA-Z0-9._\/-]+$/.test(name)) {
+  if (!name || name.length > 128 || !/^[\p{L}\p{N}._\/-]+$/u.test(name)) {
     throw new Error("invalid secret key");
   }
 }
@@ -111,21 +111,33 @@ export function deleteSecret(key: string): void {
   }
 }
 
-export function persistRuntimeSecret(line: string): string {
-  try {
-    const parsed = JSON.parse(line);
-    if (parsed && typeof parsed === "object") {
-      if (parsed.type === "mcp.oauth.token" && parsed.key && parsed.token) {
-        setSecret(`mcp.oauth.token:${parsed.key}`, parsed.token);
-      } else if (parsed.type === "mcp.oauth.credential" && parsed.key && parsed.credential) {
-        setSecret(`mcp.oauth.credential:${parsed.key}`, parsed.credential);
-      } else if (parsed.type === "mcp.oauth.invalidated" && parsed.key) {
-        deleteSecret(`mcp.oauth.token:${parsed.key}`);
-        deleteSecret(`mcp.oauth.credential:${parsed.key}`);
-      }
+/**
+ * Persists runtime credentials under the key the protocol already names, and
+ * returns the event that may be forwarded to the renderer. Credential-bearing
+ * events never reach the renderer; they become a redacted `mcp.oauth.saved`
+ * acknowledgement. Returns null when the event must not be forwarded at all.
+ */
+export function persistRuntimeSecret(event: unknown): unknown | null {
+  if (!event || typeof event !== "object") return event;
+  const record = event as Record<string, unknown>;
+  const key = record.key;
+  if (record.type === "mcp.oauth.token" || record.type === "mcp.oauth.credential") {
+    const secret = record.type === "mcp.oauth.token" ? record.accessToken : record.value;
+    if (typeof key !== "string" || typeof secret !== "string" || secret.length === 0) return null;
+    try {
+      setSecret(key, secret);
+    } catch {
+      // Never fall back to forwarding the secret when it cannot be stored.
+      return { type: "error", message: "OAuth credential could not be stored" };
     }
-  } catch {
-    // 忽略格式错误
+    return { type: "mcp.oauth.saved", serverId: record.serverId, key };
   }
-  return line;
+  if (record.type === "mcp.oauth.invalidated" && typeof key === "string") {
+    try {
+      deleteSecret(key);
+    } catch {
+      // Invalidation carries no credential; forwarding it is safe.
+    }
+  }
+  return event;
 }

@@ -60,9 +60,3 @@ const bridge = {
 
 // 暴露到 window
 contextBridge.exposeInMainWorld("electronBridge", bridge);
-
-// 同时提供 __TAURI_INTERNALS__ 垫片以保持向下兼容
-contextBridge.exposeInMainWorld("__TAURI_INTERNALS__", {
-  invoke: bridge.invoke,
-  plugins: {},
-});

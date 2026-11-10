@@ -4,7 +4,7 @@
   function fail(message) {
     if (document.documentElement.dataset.qoneBooted === "true") return;
     console.error("[qone:startup]", message);
-    window.__TAURI_INTERNALS__?.invoke("frontend_diagnostic", { message }).catch(() => {});
+    window.electronBridge?.invoke("frontend_diagnostic", { message }).catch(() => {});
     const root = document.getElementById("root");
     if (!root) return;
     root.replaceChildren();

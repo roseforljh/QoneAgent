@@ -14,7 +14,7 @@ const licenses = {
   "LICENSE-MIT": "860e3d7a86b84e6a7012c7a635fc64df475cebc6cce34dfeb73a5982ec58176c",
   "LICENSE-APACHE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
 } as const;
-const binaries = path.resolve(import.meta.dir, "../src-tauri/binaries");
+const binaries = path.resolve(import.meta.dir, "../binaries");
 
 async function digest(file: string): Promise<string> {
   const hash = createHash("sha256");

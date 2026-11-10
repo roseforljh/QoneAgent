@@ -52,6 +52,7 @@ const electron = spawn(electronBin, [path.join(root, "dist-electron/main.cjs")],
   env: {
     ...process.env,
     NODE_ENV: "development",
+    QONE_AGENT_RUNTIME: process.env.QONE_AGENT_RUNTIME || path.resolve(root, "../agent-runtime/src/index.ts"),
     VITE_DEV_SERVER_URL: "http://127.0.0.1:1480",
   },
 });

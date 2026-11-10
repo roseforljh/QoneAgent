@@ -22,18 +22,18 @@
       {
         "target": "nsis",
         "arch": ["x64"]
-      },
-      {
-        "target": "portable",
-        "arch": ["x64"]
       }
     ],
     "icon": "resources/icon.ico"
   },
   "nsis": {
-    "oneClick": true,
+    "oneClick": false,
     "perMachine": false,
-    "allowToChangeInstallationDirectory": false,
-    "deleteAppDataOnUninstall": false
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "QoneAgent",
+    "deleteAppDataOnUninstall": false,
+    "include": "resources/installer.nsh"
   }
 }

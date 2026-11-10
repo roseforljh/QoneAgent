@@ -17,9 +17,20 @@ import { SidecarManager } from "./sidecar";
 import { TerminalManager } from "./terminal-manager";
 import { BrowserDockManager } from "./browser-dock-manager";
 import { registerIpcHandlers } from "./ipc-handlers";
+import { installDevtoolsShortcutGuard } from "./devtools-policy";
 
-// 注册 asset 特权协议
+// 注册 app 与 asset 特权协议
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "app",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
   {
     scheme: "asset",
     privileges: {
@@ -173,8 +184,10 @@ function createMainWindow(): BrowserWindow {
       setTimeout(() => win.loadURL(devUrl).catch(() => {}), 1500);
     });
   } else {
-    win.loadFile(path.join(__dirname, "../dist/index.html"));
+    win.loadURL("app://localhost/");
   }
+
+  installDevtoolsShortcutGuard(win.webContents);
 
   win.webContents.on("did-finish-load", () => {
     win.show();
@@ -231,6 +244,29 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     ensureGlobalInstructions();
+
+    // 处理 app:// 生产页面协议
+    protocol.handle("app", (request) => {
+      try {
+        const url = new URL(request.url);
+        let pathname = decodeURIComponent(url.pathname);
+        if (pathname.startsWith("/")) {
+          pathname = pathname.slice(1);
+        }
+        if (!pathname || pathname === "/") {
+          pathname = "index.html";
+        }
+        const distDir = path.join(__dirname, "../dist");
+        let targetPath = path.join(distDir, pathname);
+        if (!fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
+          targetPath = path.join(distDir, "index.html");
+        }
+        return net.fetch(pathToFileURL(targetPath).toString());
+      } catch (e) {
+        console.error("[protocol:app] failed to fetch:", e);
+        return new Response("Not Found", { status: 404 });
+      }
+    });
 
     // 处理 asset:// 协议
     protocol.handle("asset", (request) => {

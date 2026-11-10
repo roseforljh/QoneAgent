@@ -23,12 +23,38 @@ function runCommand(command: string, args: string[], cwd: string): Promise<void>
   });
 }
 
+function cleanIntermediates() {
+  console.log("\n[清理] 自动清理编译中间缓存与临时解压目录...");
+  const releaseDir = path.join(desktopRoot, "release");
+  if (fs.existsSync(releaseDir)) {
+    const unpackedDir = path.join(releaseDir, "win-unpacked");
+    if (fs.existsSync(unpackedDir)) {
+      try {
+        fs.rmSync(unpackedDir, { recursive: true, force: true });
+        console.log("已清理临时解包目录: win-unpacked");
+      } catch (e) {
+        console.warn("清理 win-unpacked 失败:", e);
+      }
+    }
+    try {
+      for (const item of fs.readdirSync(releaseDir)) {
+        if (item.endsWith(".yaml") || item.endsWith(".yml") || item.endsWith(".blockmap")) {
+          fs.rmSync(path.join(releaseDir, item), { force: true });
+        }
+      }
+    } catch {
+      // 忽略
+    }
+  }
+}
+
 async function buildRelease() {
   console.log("=== 开始编译 QoneAgent Release 版本 ===");
 
-  // 1. 确保 binaries 目录存在
+  // 1. 确保 binaries 目录存在并预先清理旧的解包垃圾
   const binariesDir = path.join(desktopRoot, "binaries");
   fs.mkdirSync(binariesDir, { recursive: true });
+  cleanIntermediates();
 
   // 2. 编译 agent-runtime 独立可执行程序
   console.log("\n[1/5] 编译 agent-runtime 独立进程...");
@@ -53,8 +79,17 @@ async function buildRelease() {
   console.log("\n[5/5] 执行 Electron Builder 打包 Windows 独立 exe...");
   await runCommand("bun", ["x", "electron-builder", "--config", "electron-builder.json"], desktopRoot);
 
+  // 7. 编译完成后自动清理中间产物垃圾
+  cleanIntermediates();
+
   console.log("\n=== 编译成功！===");
-  console.log(`产物位于: ${path.join(desktopRoot, "release")}`);
+  const releaseDir = path.join(desktopRoot, "release");
+  console.log(`产物位于: ${releaseDir}`);
+  if (fs.existsSync(releaseDir)) {
+    const exes = fs.readdirSync(releaseDir).filter((f) => f.endsWith(".exe"));
+    console.log("生成的可执行程序:");
+    exes.forEach((exe) => console.log(` - ${exe}`));
+  }
 }
 
 buildRelease().catch((err) => {

@@ -9,7 +9,7 @@ import path from "node:path";
 const VERSION = "n8.1.3-win64-lgpl-8.1";
 const ASSET_ID = "586106604";
 const SHA256 = "feac41635cd2018d9c7f7f37c3837bec89a7507a3dabfa08664725aba3cda535";
-const binaries = path.resolve(import.meta.dir, "../src-tauri/binaries");
+const binaries = path.resolve(import.meta.dir, "../binaries");
 const destination = path.join(binaries, "ffmpeg.exe");
 const marker = path.join(binaries, "ffmpeg-build.txt");
 
