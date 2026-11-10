@@ -1,7 +1,21 @@
-import { auth, type AuthProvider, type OAuthClientMetadata, type OAuthClientProvider, type OAuthDiscoveryState, type StoredOAuthClientInformation, type StoredOAuthTokens } from "@modelcontextprotocol/client";
+import { auth, type AuthProvider, type FetchLike, type OAuthClientMetadata, type OAuthClientProvider, type OAuthDiscoveryState, type StoredOAuthClientInformation, type StoredOAuthTokens } from "@modelcontextprotocol/client";
 
 export type HostedOAuthCredential = "client" | "tokens";
 export type HostedOAuthAuthorization = { url: string; state: string };
+
+/** Hard ceiling for any OAuth HTTP call; discovery/registration must not hang a connect forever. */
+const OAUTH_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * `fetch` with a deadline. The SDK threads one `fetchFn` through discovery, DCR
+ * and the token exchange, so bounding it here covers the whole handshake.
+ */
+export function boundedFetch(timeoutMs = OAUTH_FETCH_TIMEOUT_MS): FetchLike {
+  return (url, init) => fetch(url, {
+    ...init,
+    signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
+  });
+}
 
 /** One OAuth session per hosted MCP server. The SDK handles discovery, DCR, PKCE and refresh. */
 export class HostedMcpOAuth implements OAuthClientProvider {
@@ -11,11 +25,14 @@ export class HostedMcpOAuth implements OAuthClientProvider {
   private verifier?: string;
   private pendingState?: string;
   private authorizationUrl?: URL;
+  private fetchFn: FetchLike = boundedFetch();
 
   constructor(
     private readonly serverUrl: string,
     private readonly persist: (kind: HostedOAuthCredential, value: string) => void | Promise<void>,
     private readonly onAuthorizationRequired: (authorization: HostedOAuthAuthorization) => void,
+    /** Told when the SDK rejects a persisted credential, so the disk copy is deleted too. */
+    private readonly onInvalidate?: (kind: "client" | "tokens") => void | Promise<void>,
   ) {}
 
   get redirectUrl() { return "http://127.0.0.1:17891/mcp/oauth/callback"; }
@@ -71,8 +88,25 @@ export class HostedMcpOAuth implements OAuthClientProvider {
     this.authorizationUrl = undefined;
   }
 
+  /**
+   * The SDK calls this when a credential is rejected (invalid_client /
+   * invalid_grant). Without it the dead copy stays on disk and every restart
+   * retries the same rejected registration.
+   */
+  async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery") {
+    if (scope === "all" || scope === "tokens") this.tokenSet = undefined;
+    if (scope === "all" || scope === "client") this.client = undefined;
+    if (scope === "all" || scope === "discovery") this.discovery = undefined;
+    if (scope === "all" || scope === "verifier") this.verifier = undefined;
+    // verifier/discovery are in-memory only — nothing on disk to delete.
+    const kinds = scope === "all" ? (["client", "tokens"] as const)
+      : scope === "client" || scope === "tokens" ? ([scope] as const)
+      : [];
+    for (const kind of kinds) await this.onInvalidate?.(kind);
+  }
+
   async begin(): Promise<HostedOAuthAuthorization | undefined> {
-    const result = await auth(this, { serverUrl: this.serverUrl });
+    const result = await auth(this, { serverUrl: this.serverUrl, fetchFn: this.fetchFn });
     if (result === "AUTHORIZED") return undefined;
     if (!this.authorizationUrl || !this.pendingState) throw new Error("MCP OAuth did not provide an authorization URL");
     return { url: this.authorizationUrl.toString(), state: this.pendingState };
@@ -80,7 +114,7 @@ export class HostedMcpOAuth implements OAuthClientProvider {
 
   async complete(code: string, state: string, iss?: string) {
     if (!this.pendingState || state !== this.pendingState) throw new Error("invalid MCP OAuth state");
-    await auth(this, { serverUrl: this.serverUrl, authorizationCode: code, iss });
+    await auth(this, { serverUrl: this.serverUrl, authorizationCode: code, iss, fetchFn: this.fetchFn });
     this.pendingState = undefined;
     this.verifier = undefined;
     this.authorizationUrl = undefined;

@@ -1,5 +1,6 @@
 import { Client, StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
-import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { TreeKillingStdioTransport } from "./stdio-transport";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSecureServiceUrl } from "@qone/protocol";
@@ -101,6 +102,10 @@ export class McpManager {
   private pendingHostedOAuth = new Map<string, { config: McpServerConfig; createdAt: number }>();
   private deviceAuthGenerations = new Map<string, string>();
   private deviceAuthSessions = new Map<string, { userCode: string; verificationUri: string; expiresAt: number; completion: Promise<void> }>();
+  private connecting = new Map<string, Promise<ToolDefinition[]>>();
+  // Bumped by disconnect/delete so an in-flight connect cannot register itself
+  // after the server was removed.
+  private connectionGenerations = new Map<string, number>();
   private oauthCallbackServers = new Map<string, BunHttpServer>();
 
   constructor(
@@ -111,6 +116,8 @@ export class McpManager {
     private readonly resolveSecret: (key: string) => string | undefined = () => undefined,
     private readonly onAccessTokenInvalidated?: (config: McpServerConfig) => void | Promise<void>,
     private readonly onAccessTokenRefreshed?: (config: McpServerConfig, credential: string) => void | Promise<void>,
+    /** Fires when the OAuth SDK rejects a stored client/token, so the disk copy can go too. */
+    private readonly onOAuthInvalidate?: (serverId: string, kind: "client" | "tokens") => void | Promise<void>,
   ) {}
 
   private validateConfig(config: McpServerConfig) {
@@ -142,7 +149,8 @@ export class McpManager {
           this.pendingHostedOAuth.set(authorization.state, { config, createdAt: Date.now() });
           this.ensureOAuthCallbackServer("http://127.0.0.1:17891/mcp/oauth/callback");
           this.onOAuthAuthorization?.(config.id, authorization);
-        });
+        },
+        (scope) => this.onOAuthInvalidate?.(config.id, scope));
       this.hostedOAuth.set(config.id, provider);
     }
     return provider;
@@ -237,6 +245,7 @@ export class McpManager {
       }
       const result = await response.json() as { access_token?: string; refresh_token?: string; error?: string; interval?: number };
       if (result.access_token) {
+        if (this.deviceAuthGenerations.get(config.id) !== generation) return;
         const credential = serializeCredential(result.access_token, result.refresh_token);
         this.setAccessToken(config.id, credential);
         await this.onOAuthComplete?.(config.id, credential);
@@ -388,7 +397,16 @@ export class McpManager {
     this.validateConfig(config);
     const existing = this.conns.get(config.id);
     if (existing) return existing.tools;
+    const pending = this.connecting.get(config.id);
+    if (pending) return pending;
+    const generation = this.connectionGenerations.get(config.id) ?? 0;
+    const operation = this.connectOnce(config, generation);
+    this.connecting.set(config.id, operation);
+    try { return await operation; }
+    finally { if (this.connecting.get(config.id) === operation) this.connecting.delete(config.id); }
+  }
 
+  private async connectOnce(config: McpServerConfig, generation: number): Promise<ToolDefinition[]> {
     const resolvedEnv = resolveMcpEnvironment(config.env, this.resolveSecret);
     const token = this.accessTokens.get(config.id) ?? (config.tokenEnv ? process.env[config.tokenEnv] : undefined);
     if (config.authMode === "oauth" && !this.hosted(config).hasToken()) throw new Error("MCP account login is required");
@@ -402,7 +420,7 @@ export class McpManager {
     const launch = config.command ? resolveStdioLaunch(config.command, config.args ?? []) : undefined;
     const transport = config.url
       ? new StreamableHTTPClientTransport(new URL(config.url), authProvider ? { authProvider } : undefined)
-      : new StdioClientTransport({ command: launch!.command, args: launch!.args,
+      : new TreeKillingStdioTransport({ command: launch!.command, args: launch!.args,
         env: resolvedEnv ? { ...getDefaultEnvironment(), ...resolvedEnv } : undefined, cwd: config.cwd });
     const client = new Client({ name: "qone-agent", version: "0.0.1" }, { capabilities: {} });
     try {
@@ -410,6 +428,12 @@ export class McpManager {
         await client.connect(transport);
         return client.listTools();
       });
+      // A disconnect/delete during the handshake owns the teardown; never let
+      // this late connection re-register itself as live.
+      if ((this.connectionGenerations.get(config.id) ?? 0) !== generation) {
+        await client.close().catch(() => {});
+        throw new Error(`MCP server ${config.id} was disconnected during connect`);
+      }
       const defs = tools.map((t) => this.adaptTool(config, client, t));
       this.conns.set(config.id, { config, client, tools: defs });
       return defs;
@@ -422,7 +446,7 @@ export class McpManager {
   private adaptTool(
     config: McpServerConfig,
     client: Client,
-    t: { name: string; description?: string; inputSchema?: unknown }
+    t: { name: string; description?: string; inputSchema?: unknown; outputSchema?: unknown }
   ): ToolDefinition {
     const serverId = config.id;
     const fullName = `mcp:${serverId}:${t.name}`;
@@ -442,11 +466,13 @@ export class McpManager {
       parameters: Type.Unsafe(t.inputSchema && typeof t.inputSchema === "object"
         ? t.inputSchema as Record<string, unknown>
         : { type: "object", additionalProperties: true }),
-      execute: async (_id, params) => {
+      outputSchema: t.outputSchema && typeof t.outputSchema === "object"
+        ? Type.Unsafe(t.outputSchema as Record<string, unknown>) : undefined,
+      execute: async (_id, params, signal) => {
         const res = await this.authenticated(config, () => client.callTool({
           name: t.name,
           arguments: params as Record<string, unknown>,
-        }));
+        }, { signal }));
         const text = Array.isArray(res.content)
           ? res.content
               .map((c: { type: string; text?: string }) => (c.type === "text" ? c.text ?? "" : `[${c.type}]`))
@@ -455,6 +481,7 @@ export class McpManager {
         return {
           content: [{ type: "text", text }],
           details: res.structuredContent ?? undefined,
+          structuredContent: res.structuredContent,
           isError: Boolean(res.isError),
         } as never;
       },
@@ -487,6 +514,10 @@ export class McpManager {
   }
 
   async disconnect(id: string) {
+    // Invalidate any connect that is still negotiating before tearing down, so
+    // a late handshake cannot revive a deleted server.
+    this.connectionGenerations.set(id, (this.connectionGenerations.get(id) ?? 0) + 1);
+    this.connecting.delete(id);
     const c = this.conns.get(id);
     if (!c) return;
     await c.client.close();
@@ -494,6 +525,9 @@ export class McpManager {
   }
 
   async disconnectAll() {
+    // In-flight handshakes are not in `conns` yet; invalidate them too.
+    for (const id of this.connecting.keys()) this.connectionGenerations.set(id, (this.connectionGenerations.get(id) ?? 0) + 1);
+    this.connecting.clear();
     for (const id of [...this.conns.keys()]) {
       await this.disconnect(id).catch(() => {});
     }
