@@ -1,7 +1,8 @@
 import { runtimeCopyCore } from "./runtime-copy-core";
+import { runtimeCopyMedia } from "./runtime-copy-media";
 import { subagentCopy } from "./subagent-copy";
 export const runtimeCopy = {
-  ...runtimeCopyCore, ...subagentCopy,
+  ...runtimeCopyCore, ...runtimeCopyMedia, ...subagentCopy,
   "skills.builtin.reserved": { en: "{name} is a built-in skill. Use its switch and update button to manage it.", "zh-CN": "{name} 是内置技能，请通过开关和更新按钮管理，不能重复安装或覆盖。" },
   "skills.builtin.unknown": { en: "Unknown built-in skill", "zh-CN": "未知的内置技能" },
   "skills.builtin.unavailable": { en: "Built-in skill preferences are unavailable", "zh-CN": "内置技能配置不可用" },

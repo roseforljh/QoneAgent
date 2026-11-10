@@ -1,0 +1,674 @@
+/** Media pipeline copy: downloads, transcription, image/speech/video generation. */
+export const runtimeCopyMedia = {
+  "app-media.operation_failed": { "en": "{p0} {p1} failed ({p2})", "zh-CN": "{p0} {p1} 失败（{p2}）" },
+  "app-media.invalid_url": { "en": "This is not a valid {p0} URL", "zh-CN": "这不是有效的 {p0} 链接" },
+  "app-media.extractor_missing": { "en": "yt-dlp is unavailable", "zh-CN": "找不到 yt-dlp" },
+  "app-media.work_link_required": { "en": "Provide a single media work URL", "zh-CN": "请提供单个作品链接" },
+  "app-media.content_mismatch": { "en": "The returned content does not match the requested URL", "zh-CN": "返回内容与请求链接不匹配" },
+  "app-media.profile_link_required": { "en": "Provide a valid profile or channel URL and a limit from 1 to 100", "zh-CN": "请提供有效的主页或频道链接，以及 1 到 100 的数量" },
+  "app-media.list_bridge_unavailable": { "en": "The signed page list bridge is unavailable", "zh-CN": "网页列表桥接不可用" },
+  "app-media.invalid_mode": { "en": "Unsupported media mode", "zh-CN": "不支持的媒体模式" },
+  "app-media.subtitle_languages_required": { "en": "YouTube subtitle languages are required", "zh-CN": "YouTube 字幕必须指定语言" },
+  "app-media.invalid_output": { "en": "The extractor returned an invalid output file", "zh-CN": "下载器返回了无效输出文件" },
+  "app-media.no_output": { "en": "The extractor returned no output file", "zh-CN": "下载器没有返回输出文件" },
+  "bilibili-fallback.bilibili_cli_returned_no_data": {
+    "en": "bilibili-cli returned no data",
+    "zh-CN": "bilibili-cli 未返回资料"
+  },
+  "bilibili-fallback.bilibili_cli_returned_invalid_json": {
+    "en": "bilibili-cli returned invalid JSON",
+    "zh-CN": "bilibili-cli 未返回有效 JSON"
+  },
+  "bilibili-fallback.invalid_bilibili_cli_response_format": {
+    "en": "Invalid bilibili-cli response format",
+    "zh-CN": "bilibili-cli 返回格式无效"
+  },
+  "bilibili-fallback.bilibili_cli_failed_to_retrieve_data": {
+    "en": "bilibili-cli failed to retrieve data: {p0}",
+    "zh-CN": "bilibili-cli 获取资料失败：{p0}"
+  },
+  "bilibili-fallback.this_is_not_a_bilibili_video_url": {
+    "en": "This is not a Bilibili video URL",
+    "zh-CN": "不是 B 站视频链接"
+  },
+  "bilibili-fallback.bilibili_cli_is_not_installed": {
+    "en": "bilibili-cli is not installed",
+    "zh-CN": "bilibili-cli 未安装"
+  },
+  "bilibili-fallback.opencli_download_returned_no_file": {
+    "en": "OpenCLI Bilibili download completed without a readable media file",
+    "zh-CN": "OpenCLI B站下载完成，但没有生成可读取的媒体文件"
+  },
+  "bilibili-fallback.could_not_retrieve_the_full_bilibili_video_subtitles_audio": {
+    "en": "Could not retrieve the full Bilibili video, subtitles, audio, or summary. {p0}",
+    "zh-CN": "无法取得 B 站完整视频、字幕、音频或摘要。{p0}"
+  },
+  "douyin-bridge.unsupported_url": {
+    "en": "Douyin downloads support douyin.com, iesdouyin.com and v.douyin.com URLs only",
+    "zh-CN": "抖音下载只支持 douyin.com、iesdouyin.com 或 v.douyin.com 链接"
+  },
+  "douyin-bridge.page_bridge_timed_out": {
+    "en": "The Douyin page bridge timed out without matching work metadata. The batch was stopped; this does not establish that cookies are invalid.",
+    "zh-CN": "抖音页面桥接超时，未收到匹配作品的数据。批次已停止；不能据此判断 Cookie 无效。"
+  },
+  "douyin-bridge.download_cancelled": {
+    "en": "Douyin download was cancelled",
+    "zh-CN": "抖音下载已取消"
+  },
+  "douyin-bridge.no_video_address": {
+    "en": "The Douyin page did not return a downloadable video URL",
+    "zh-CN": "抖音页面没有返回可下载视频地址"
+  },
+  "douyin-bridge.page_bridge_failed": {
+    "en": "The Douyin page bridge failed: {p0}",
+    "zh-CN": "抖音页面桥接失败：{p0}"
+  },
+  "douyin-bridge.invalid_video_url": {
+    "en": "The page returned an invalid video URL",
+    "zh-CN": "页面返回的视频地址无效"
+  },
+  "douyin-bridge.content_mismatch": {
+    "en": "The Douyin page does not match the requested work",
+    "zh-CN": "抖音页面与请求的目标作品不匹配"
+  },
+  "douyin-bridge.invalid_author_url": {
+    "en": "Use the creator's complete Douyin /user/ homepage URL, not a nickname, video URL or /user/self alias",
+    "zh-CN": "请使用博主完整的抖音 /user/ 主页链接，不能使用昵称、视频链接或 /user/self 别名"
+  },
+  "douyin-bridge.invalid_limit": {
+    "en": "The requested Douyin video count must be an integer from 1 to 100",
+    "zh-CN": "抖音视频数量须为 1–100 的整数"
+  },
+  "douyin-bridge.invalid_author_result": {
+    "en": "The creator list contains invalid data or works from a different author",
+    "zh-CN": "博主作品列表数据无效，或包含其他作者的作品"
+  },
+  "douyin-tools.invalid_destination": {
+    "en": "The download destination must be a valid directory path",
+    "zh-CN": "下载目标须为有效的目录路径"
+  },
+  "douyin-tools.invalid_video_link": {
+    "en": "Use complete Douyin /video/ links or modal_id URLs from the creator list, not a profile URL, image post or unresolved short link",
+    "zh-CN": "请使用作品列表返回的完整 /video/ 或 modal_id 链接，不能使用主页、图集或未解析的短链接"
+  },
+  "douyin-tools.download_failed": {
+    "en": "Download failed ({p0})",
+    "zh-CN": "下载失败（{p0}）"
+  },
+  "generated-artifacts.invalid_media_file_format": {
+    "en": "Invalid media file format",
+    "zh-CN": "无效的媒体文件格式"
+  },
+  "generated-artifacts.the_media_generation_api_returned_an_empty_file": {
+    "en": "The media generation API returned an empty file",
+    "zh-CN": "媒体生成接口返回了空文件"
+  },
+  "google-media.invalid_local_media_attachment_reference": {
+    "en": "Invalid local media attachment reference",
+    "zh-CN": "无效的本地媒体附件引用"
+  },
+  "google-media.invalid_local_media_attachment_path_or_type": {
+    "en": "Invalid local media attachment path or type",
+    "zh-CN": "无效的本地媒体附件路径或类型"
+  },
+  "google-media.gemini_file_upload_returned_an_invalid_result": {
+    "en": "Gemini file upload returned an invalid result",
+    "zh-CN": "Gemini 文件上传返回了无效结果"
+  },
+  "google-media.gemini_file_upload_returned_no_file_uri": {
+    "en": "Gemini file upload returned no file URI",
+    "zh-CN": "Gemini 文件上传缺少文件 URI"
+  },
+  "google-media.gemini_files_api_http": {
+    "en": "Gemini Files API HTTP {p0}: {p1}",
+    "zh-CN": "Gemini 文件接口 HTTP {p0}: {p1}"
+  },
+  "google-media.gemini_files_api_http_details_1": {
+    "en": "Gemini Files API HTTP {p0}",
+    "zh-CN": "Gemini 文件接口 HTTP {p0}"
+  },
+  "google-media.gemini_could_not_process_this_audio_or_video_file": {
+    "en": "Gemini could not process this audio or video file{p0}",
+    "zh-CN": "Gemini 无法处理这个音视频文件{p0}"
+  },
+  "google-media.gemini_audio_video_processing_timed_out_please_try_again": {
+    "en": "Gemini audio/video processing timed out; please try again later",
+    "zh-CN": "Gemini 音视频处理超时，请稍后重试"
+  },
+  "google-media.gemini_video_has_not_been_uploaded_files_api_returned": {
+    "en": "Gemini video has not been uploaded: Files API {p0} returned an HTTP {p1} HTML page instead of an upload session. Verify that the gateway supports the Gemini Files API and upload routes; support for text or YouTube links does not imply file upload support.",
+    "zh-CN": "Gemini 视频尚未上传：Files API {p0} 返回 HTTP {p1} HTML 网页，未返回上传会话。请核实网关是否支持 Gemini Files API 及上传路由；支持文本或 YouTube 链接不代表支持文件上传。"
+  },
+  "google-media.gemini_files_api_returned_no_upload_url_http_content": {
+    "en": "Gemini Files API returned no upload URL ({p0}, HTTP {p1}, Content-Type: {p2}){p3}",
+    "zh-CN": "Gemini 文件接口未返回上传地址（{p0}，HTTP {p1}，Content-Type: {p2}）{p3}"
+  },
+  "google-media.not_provided": {
+    "en": "not provided",
+    "zh-CN": "未提供"
+  },
+  "google-media.the_local_media_attachment_is_no_longer_a_file": {
+    "en": "The local media attachment is no longer a file",
+    "zh-CN": "本地媒体附件已不是文件"
+  },
+  "google-media.the_current_model_lacks_the_required_media_input_capability": {
+    "en": "[The current model lacks the required media input capability; delegate to a subagent]",
+    "zh-CN": "[当前模型未配置对应媒体输入能力；请委派子代理]"
+  },
+  "google-media.the_previous_session_s_media_reference_has_expired_provide": {
+    "en": "[The previous session's media reference has expired; provide it again to analyze it]",
+    "zh-CN": "[先前会话的媒体引用已失效；如需分析，请重新提供]"
+  },
+  "google-media.previously_processed_temporary_media_has_been_cleaned_up_retrieve": {
+    "en": "[Previously processed temporary media has been cleaned up; retrieve it again to analyze it]",
+    "zh-CN": "[先前处理的媒体临时文件已清理；如需再次分析，请重新获取]"
+  },
+  "google-media.media_files_are_attached_after_the_tool_result": {
+    "en": "[Media files are attached after the tool result]",
+    "zh-CN": "[媒体文件已附在工具结果后]"
+  },
+  "google-media.previously_downloaded_temporary_media_has_been_cleaned_up_download": {
+    "en": "[Previously downloaded temporary media has been cleaned up; download it again to analyze it]",
+    "zh-CN": "[先前下载的媒体临时文件已清理；如需再次分析，请重新下载]"
+  },
+  "google-media.gemini_audio_video_upload_requires_an_api_key": {
+    "en": "Gemini audio/video upload requires an API key",
+    "zh-CN": "Gemini 音视频上传需要 API Key"
+  },
+  "google-media.gemini_files_api_returned_no_file_uri": {
+    "en": "Gemini Files API returned no file URI",
+    "zh-CN": "Gemini 文件接口未返回文件 URI"
+  },
+  "google-video-generation.google_veo_api_http": {
+    "en": "Google Veo API HTTP {p0}: {p1}",
+    "zh-CN": "Google Veo 接口 HTTP {p0}: {p1}"
+  },
+  "google-video-generation.invalid_google_veo_api_response_format": {
+    "en": "Invalid Google Veo API response format",
+    "zh-CN": "Google Veo 接口返回格式无效"
+  },
+  "google-video-generation.google_veo_api_returned_no_valid_operation_name": {
+    "en": "Google Veo API returned no valid operation name",
+    "zh-CN": "Google Veo 接口未返回有效任务名称"
+  },
+  "google-video-generation.the_google_veo_model_has_no_api_url": {
+    "en": "The Google Veo model has no API URL",
+    "zh-CN": "Google Veo 模型缺少 API 地址"
+  },
+  "google-video-generation.google_veo_video_generation_failed": {
+    "en": "Google Veo video generation failed: {p0}",
+    "zh-CN": "Google Veo 视频生成失败：{p0}"
+  },
+  "google-video-generation.google_veo_finished_but_returned_no_video_url": {
+    "en": "Google Veo finished but returned no video URL",
+    "zh-CN": "Google Veo 生成完成但未返回视频地址"
+  },
+  "google-video-generation.google_veo_returned_an_unsupported_download_url": {
+    "en": "Google Veo returned an unsupported download URL",
+    "zh-CN": "Google Veo 返回了不支持的下载地址"
+  },
+  "google-video-generation.google_veo_video_download_redirect_has_no_url": {
+    "en": "Google Veo video download redirect has no URL",
+    "zh-CN": "Google Veo 视频下载重定向缺少地址"
+  },
+  "google-video-generation.invalid_google_veo_video_download_redirect_url": {
+    "en": "Invalid Google Veo video download redirect URL",
+    "zh-CN": "Google Veo 视频下载重定向地址无效"
+  },
+  "google-video-generation.too_many_google_veo_video_download_redirects": {
+    "en": "Too many Google Veo video download redirects",
+    "zh-CN": "Google Veo 视频下载重定向过多"
+  },
+  "google-video-generation.google_veo_video_download_http": {
+    "en": "Google Veo video download HTTP {p0}: {p1}",
+    "zh-CN": "Google Veo 视频下载 HTTP {p0}: {p1}"
+  },
+  "google-video-generation.google_veo_video_download_returned_content_other_than_mp4": {
+    "en": "Google Veo video download returned content other than MP4: {p0}",
+    "zh-CN": "Google Veo 视频下载返回了非 MP4 内容：{p0}"
+  },
+  "google-video-generation.google_veo_video_download_returned_no_file": {
+    "en": "Google Veo video download returned no file",
+    "zh-CN": "Google Veo 视频下载没有返回文件"
+  },
+  "media-attachments.video_attachment_has_no_readable_local_path_or_base64": {
+    "en": "Video attachment {p0} has no readable local path or Base64 data",
+    "zh-CN": "视频附件 {p0} 没有可读取的本地路径或 Base64 数据"
+  },
+  "media-tool.video_retrieved_through_local_file_choose_timestamps_as_needed": {
+    "en": "Video retrieved through {p0}. Local file: {p1}. {p2}. To read selected frames, call qone_video_use_file with mode=frames and timestamps (seconds); use mode=audio on the same path to read audio. No frames or audio have been read yet.",
+    "zh-CN": "已通过 {p0} 获取视频。本地文件：{p1}。{p2}。需要读取指定画面时，调用 qone_video_use_file 并设置 mode=frames 和 timestamps（秒）；需要声音时对相同路径设置 mode=audio。当前尚未读取画面或声音。"
+  },
+  "media-tool.douyin_page_bridge_not_connected": {
+    "en": "The Douyin page bridge is not connected; sign in to Douyin in the app first",
+    "zh-CN": "抖音页面桥接尚未连接，请先在应用中登录抖音"
+  },
+  "media-tool.video_duration_unknown": {
+    "en": "Video duration unknown",
+    "zh-CN": "视频时长未知"
+  },
+  "media-tool.video_duration_seconds": {
+    "en": "Video duration: {p0} seconds",
+    "zh-CN": "视频时长 {p0} 秒"
+  },
+  "media-tool.video_retrieved_through_frames_read_at_the_selected_timestamps": {
+    "en": "Video retrieved through {p0}; {p1} frames read at the selected timestamps. The model has read these still frames, not the full video or its audio. Local file: {p2}. To read audio, call qone_video_use_file on this path with mode=audio; no new download is needed.",
+    "zh-CN": "已通过 {p0} 获取视频并按所选时间点读取 {p1} 帧。模型实际读取的是这些静态画面，不是完整视频，也未读取声音。本地文件：{p2}。需要声音时可对这个路径调用 qone_video_use_file 并设置 mode=audio；无需重新下载。"
+  },
+  "media-tool.frame_timestamp_seconds": {
+    "en": "Frame timestamp: {p0} seconds",
+    "zh-CN": "画面时间：{p0} 秒"
+  },
+  "media-tool.no_media_recognition_task_is_available": {
+    "en": "No media recognition task is available",
+    "zh-CN": "没有可用的媒体识别任务"
+  },
+  "media-tool.the_current_model_has_no_audio_input_configured_delegate": {
+    "en": "The current model has no audio input configured; delegate the original attachment",
+    "zh-CN": "当前模型未配置音频输入；请委派原始附件"
+  },
+  "media-tool.the_current_api_format_does_not_support_audio_attachments": {
+    "en": "The current API format does not support audio attachments; delegate the original attachment",
+    "zh-CN": "当前 API 格式尚未接入音频附件输入；请委派原始附件"
+  },
+  "media-tool.no_video_attachment_reference_was_found_for_the_current": {
+    "en": "No video attachment reference was found for the current task",
+    "zh-CN": "未找到当前任务的视频附件引用"
+  },
+  "media-tool.temporary_file_management_for_audio_extraction_is_not_initialized": {
+    "en": "Temporary file management for audio extraction is not initialized",
+    "zh-CN": "音轨提取的临时文件管理尚未初始化"
+  },
+  "media-tool.could_not_extract_audio_from_the_video_attachment": {
+    "en": "Could not extract audio from the video attachment",
+    "zh-CN": "无法从视频附件提取音轨"
+  },
+  "media-tool.audio_extracted_from_the_user_s_video_attachment_no": {
+    "en": "Audio extracted from the user's video attachment; no frames have been read. Audio input: {p0}",
+    "zh-CN": "已从用户视频附件提取声音；未读取画面。音频输入：{p0}"
+  },
+  "media-tool.the_current_model_cannot_read_video_frames_through_the": {
+    "en": "The current model cannot read video frames through the image protocol; delegate the original attachment",
+    "zh-CN": "当前模型无法通过图像协议读取视频画面；请委派原始附件"
+  },
+  "media-tool.temporary_file_management_for_frame_extraction_is_not_initialized": {
+    "en": "Temporary file management for frame extraction is not initialized",
+    "zh-CN": "画面提取的临时文件管理尚未初始化"
+  },
+  "media-tool.read_frames_from_attachment_at_the_specified_timestamps_no": {
+    "en": "Read {p1} frames from attachment {p0} at the specified timestamps; no audio or full video has been read.",
+    "zh-CN": "已从附件 {p0} 按指定时间点读取 {p1} 帧；未读取声音或完整视频。"
+  },
+  "media-tool.attachment_choose_timestamps_as_needed_and_call_this_tool": {
+    "en": "Attachment {p0}: {p1}. Choose timestamps as needed and call this tool again with timestamps (seconds). No frames or audio have been read yet.",
+    "zh-CN": "附件 {p0}：{p1}。请按任务需要选择时间点，带 timestamps（秒）再次调用本工具。当前未读取画面或声音。"
+  },
+  "media-tool.no_video_recognition_task_is_available": {
+    "en": "No video recognition task is available",
+    "zh-CN": "没有可用的视频识别任务"
+  },
+  "media-tool.the_current_api_format_cannot_read_full_videos_or": {
+    "en": "The current API format cannot read full videos or video frames; configure image input or delegate the original URL to read frames",
+    "zh-CN": "当前 API 格式无法读取完整视频或画面帧；需要画面时请配置图像输入，或委派原始链接"
+  },
+  "media-tool.the_current_model_or_api_format_cannot_read_audio": {
+    "en": "The current model or API format cannot read audio; delegate the original URL",
+    "zh-CN": "当前模型或 API 格式无法读取音频；请委派原始链接"
+  },
+  "media-tool.gemini_can_recognize_youtube_urls_directly_no_download_is": {
+    "en": "Gemini can recognize YouTube URLs directly; no download is needed",
+    "zh-CN": "Gemini 可直接识别 YouTube 链接，无需下载"
+  },
+  "media-tool.audio_download_failed_full_video_download_failed": {
+    "en": "Audio download failed: {p0}; full video download failed: {p1}",
+    "zh-CN": "音轨下载失败：{p0}；完整视频下载失败：{p1}"
+  },
+  "media-tool.video_retrieval_failed_yt_dlp_bilibili_cli_opencli_fallback": {
+    "en": "Video retrieval failed: yt-dlp: {p0}; bilibili-cli/OpenCLI fallback data: {p1}",
+    "zh-CN": "视频获取失败：yt-dlp: {p0}；bilibili-cli/OpenCLI 降级资料: {p1}"
+  },
+  "media-tool.fallback_analysis_the_full_video_was_not_retrieved_do": {
+    "en": "Fallback analysis: the full video was not retrieved; do not claim to have recognized its frames. Data source: {p0}.",
+    "zh-CN": "降级分析：未取得完整视频，不能声称识别了画面。资料来源：{p0}。"
+  },
+  "media-tool.available_audio_path": {
+    "en": "Available audio path: {p0}",
+    "zh-CN": "可用音频路径：{p0}"
+  },
+  "media-tool.audio_input": {
+    "en": "Audio input: {p0}",
+    "zh-CN": "音频输入：{p0}"
+  },
+  "media-tool.the_current_model_has_no_audio_input_configured_delegate_details_0": {
+    "en": "The current model has no audio input configured; delegate to an audio subagent with mediaPath if audio analysis is required.",
+    "zh-CN": "当前模型未配置音频输入；需要声音分析时委派音频子代理并传 mediaPath。"
+  },
+  "media-tool.no_readable_audio_file_was_retrieved": {
+    "en": "No readable audio file was retrieved.",
+    "zh-CN": "未取得可读取的音频文件。"
+  },
+  "media-tool.used_to_no_frames_have_been_read_audio_path": {
+    "en": "Used {p0} to {p1}; no frames have been read. Audio path: {p2}\nAudio input: {p3}",
+    "zh-CN": "已通过 {p0} {p1}；未读取画面。音频路径：{p2}\n音频输入：{p3}"
+  },
+  "media-tool.retrieve_audio_directly": {
+    "en": "retrieve audio directly",
+    "zh-CN": "直接获取音频"
+  },
+  "media-tool.retrieve_the_video_and_extract_audio": {
+    "en": "retrieve the video and extract audio",
+    "zh-CN": "获取视频并提取音频"
+  },
+  "media-tool.video_downloaded_through_local_path_media_input_actual_source": {
+    "en": "Video downloaded through {p0}; local path: {p1}\nMedia input: {p2}\nActual source: full video file.",
+    "zh-CN": "已通过 {p0} 下载视频，本地路径：{p1}\n媒体输入：{p2}\n实际来源：完整视频文件。"
+  },
+  "media-tool.native_video_already_attached_analyze_directly": {
+    "en": "The complete video input is selected. The runtime will transmit it with the next model request. No frames or audio were extracted in this operation. Local file: {p0}\nMedia input marker: {p1}",
+    "zh-CN": "当前已选择完整视频输入，运行时将在下一次模型请求中负责传输。本次没有抽帧，也没有提取音频。本地文件：{p0}\n媒体输入标记：{p1}"
+  },
+  "media-tool.native_video_downloaded_analyze_directly": {
+    "en": "The complete video downloaded through {p0} is selected. The runtime will transmit it with the next model request. No frames or audio were extracted in this operation. Local file: {p1}\nMedia input marker: {p2}",
+    "zh-CN": "已通过 {p0} 获取完整视频并选择原生视频输入，运行时将在下一次模型请求中负责传输。本次没有抽帧，也没有提取音频。本地文件：{p1}\n媒体输入标记：{p2}"
+  },
+  "media-tool.native_video_timestamps_not_applied": {
+    "en": "The complete video input is selected. The runtime will transmit it with the next model request. timestamps were not applied because native video input reads the full file; no frames or audio were extracted in this operation. Local file: {p0}\nMedia input marker: {p1}",
+    "zh-CN": "当前已选择完整视频输入，运行时将在下一次模型请求中负责传输。原生视频输入读取完整文件，因此未应用 timestamps；本次没有抽帧，也没有提取音频。本地文件：{p0}\n媒体输入标记：{p1}"
+  },
+  "media-tool.the_current_model_cannot_process_video_or_audio_delegate": {
+    "en": "The current model cannot process video or audio; delegate the original URL without downloading it first",
+    "zh-CN": "当前模型无法处理视频或音频；请委派原始链接，勿提前下载"
+  },
+  "media-tool.temporary_download_directory_after_downloading_call_qone_video_use": {
+    "en": "Temporary download directory: {p0}. After downloading, call qone_video_use_file with the actual media file path.",
+    "zh-CN": "临时下载目录：{p0}。下载完成后调用 qone_video_use_file，传入实际媒体文件路径。"
+  },
+  "media-tool.an_absolute_media_file_path_is_required": {
+    "en": "An absolute media file path is required",
+    "zh-CN": "需要媒体文件的绝对路径"
+  },
+  "media-tool.the_media_path_is_not_a_file": {
+    "en": "The media path is not a file",
+    "zh-CN": "媒体路径不是文件"
+  },
+  "media-tool.could_not_identify_the_media_file_format": {
+    "en": "Could not identify the media file format",
+    "zh-CN": "无法识别媒体文件格式"
+  },
+  "media-tool.mode_video_requires_a_video_file_the_current_path": {
+    "en": "mode=video requires a video file; the current path is an audio file",
+    "zh-CN": "mode=video 需要视频文件；当前路径是音频文件"
+  },
+  "media-tool.mode_audio_requires_an_audio_or_video_file": {
+    "en": "mode=audio requires an audio or video file",
+    "zh-CN": "mode=audio 需要音频或视频文件"
+  },
+  "media-tool.the_current_api_format_cannot_read_full_videos_or_details_0": {
+    "en": "The current API format cannot read full videos or video frames; configure image input or delegate the original attachment",
+    "zh-CN": "当前 API 格式无法读取完整视频或画面帧；请配置图像输入或委派原始附件"
+  },
+  "media-tool.the_current_model_or_api_format_cannot_read_audio_details_0": {
+    "en": "The current model or API format cannot read audio; delegate the original attachment",
+    "zh-CN": "当前模型或 API 格式无法读取音频；请委派原始附件"
+  },
+  "media-tool.the_media_file_must_be_in_the_current_task": {
+    "en": "The media file must be in the current task's temporary download directory or have been created by its download tool",
+    "zh-CN": "媒体文件必须位于当前任务的临时下载目录，或由当前任务的下载工具生成"
+  },
+  "media-tool.audio_extracted_from_the_file_no_frames_have_been": {
+    "en": "Audio extracted from the file; no frames have been read. Audio input: {p0}",
+    "zh-CN": "已从文件提取音频，未读取画面。音频输入：{p0}"
+  },
+  "media-tool.the_current_model_has_no_input_configured_delegate_to": {
+    "en": "The current model has no {p0} input configured; delegate to a suitable subagent with mediaPath={p1}.",
+    "zh-CN": "当前模型未配置{p0}输入；请用 mediaPath={p1} 委派合适的子代理。"
+  },
+  "media-tool.video": {
+    "en": "video",
+    "zh-CN": "视频"
+  },
+  "media-tool.audio": {
+    "en": "audio",
+    "zh-CN": "音频"
+  },
+  "media-tool.actual_source_local_downloaded_file_media_input": {
+    "en": "Actual source: local downloaded file {p0}. Media input: {p1}",
+    "zh-CN": "实际来源：本地下载文件 {p0}。媒体输入：{p1}"
+  },
+  "openai-audio.chat_completions_audio_input_requires_mp3_wav_ffmpeg_was": {
+    "en": "Chat Completions audio input requires MP3/WAV; FFmpeg was not found to convert {p0}",
+    "zh-CN": "Chat Completions 音频输入需要 MP3/WAV；转换 {p0} 时未找到 FFmpeg"
+  },
+  "openai-audio.the_previous_session_s_media_reference_has_expired_provide": {
+    "en": "[The previous session's media reference has expired; provide it again]",
+    "zh-CN": "[先前会话的媒体引用已失效；请重新提供]"
+  },
+  "openai-audio.chat_completions_has_no_general_native_video_file_input": {
+    "en": "Chat Completions has no general native video file input; a download path cannot be sent as video content",
+    "zh-CN": "Chat Completions API 格式没有通用的原生视频文件输入；不能把下载路径当作视频内容发送"
+  },
+  "openai-audio.the_current_model_has_no_audio_input_capability_configured": {
+    "en": "[The current model has no audio input capability configured; delegate to a subagent]",
+    "zh-CN": "[当前模型未配置音频输入能力；请委派子代理]"
+  },
+  "openai-audio.the_current_model_has_no_video_input_capability_configured": {
+    "en": "[The current model has no video input capability configured; delegate to a subagent]",
+    "zh-CN": "[当前模型未配置视频输入能力；请委派子代理]"
+  },
+  "openai-audio.media_file_was_unavailable_for_native_input": {
+    "en": "[The native media file was unavailable]",
+    "zh-CN": "[原生媒体文件不可用]"
+  },
+  "openai-audio.the_media_file_was_cleaned_up_or_is_missing": {
+    "en": "[The media file was cleaned up or is missing; provide it again]",
+    "zh-CN": "[媒体文件已清理或不存在；请重新提供]"
+  },
+  "openai-audio.audio_is_attached_to_a_subsequent_message": {
+    "en": "[Audio is attached to a subsequent message]",
+    "zh-CN": "[音频已附于后续消息]"
+  },
+  "openai-audio.the_current_api_format_does_not_support_video_file": {
+    "en": "[The current API format does not support video file input; delegate to a subagent that can process video]",
+    "zh-CN": "[当前 API 格式未接通视频文件输入；请委派能处理视频的子代理]"
+  },
+  "speech-generation.gemini_speech_api_returned_no_valid_audio_data": {
+    "en": "Gemini speech API returned no valid audio data",
+    "zh-CN": "Gemini 语音接口未返回有效音频数据"
+  },
+  "speech-generation.gemini_speech_api_returned_an_unsupported_audio_format": {
+    "en": "Gemini speech API returned an unsupported audio format: {p0}",
+    "zh-CN": "Gemini 语音接口返回了未接入的音频格式：{p0}"
+  },
+  "speech-generation.audio_returned_by_the_gemini_speech_api_has_no": {
+    "en": "Audio returned by the Gemini speech API has no WAV header",
+    "zh-CN": "Gemini 语音接口返回的音频缺少 WAV 文件头"
+  },
+  "speech-generation.speech_generation_requires_text_to_read_aloud": {
+    "en": "Speech generation requires text to read aloud",
+    "zh-CN": "语音生成缺少待朗读文本"
+  },
+  "speech-generation.the_current_api_format_does_not_support_speech_generation": {
+    "en": "The current API format does not support speech generation",
+    "zh-CN": "当前 API 格式尚未接入语音生成接口"
+  },
+  "speech-generation.speech_generation_requires_a_voice_in_the_model_parameters": {
+    "en": "Speech generation requires a voice in the model parameters",
+    "zh-CN": "语音生成需要在模型参数中填写 voice"
+  },
+  "speech-generation.the_speech_generation_model_has_no_api_url": {
+    "en": "The speech generation model has no API URL",
+    "zh-CN": "语音生成模型缺少 API 地址"
+  },
+  "speech-generation.gemini_speech_api_http": {
+    "en": "Gemini speech API HTTP {p0}: {p1}",
+    "zh-CN": "Gemini 语音接口 HTTP {p0}: {p1}"
+  },
+  "speech-generation.speech_generation_api_http": {
+    "en": "Speech generation API HTTP {p0}: {p1}",
+    "zh-CN": "语音生成接口 HTTP {p0}: {p1}"
+  },
+  "speech-generation.speech_generation_api_returned_no_audio": {
+    "en": "Speech generation API returned no audio: {p0}",
+    "zh-CN": "语音生成接口未返回音频：{p0}"
+  },
+  "speech-generation.speech_generation_api_returned_no_audio_data": {
+    "en": "Speech generation API returned no audio data",
+    "zh-CN": "语音生成接口没有返回音频数据"
+  },
+  "speech-generation.speech_generation_api_returned_an_unsupported_audio_format": {
+    "en": "Speech generation API returned an unsupported audio format: {p0}",
+    "zh-CN": "语音生成接口返回了不支持的音频格式：{p0}"
+  },
+  "video-download.the_video_url_must_use_http_or_https": {
+    "en": "The video URL must use HTTP or HTTPS",
+    "zh-CN": "视频地址必须是 HTTP 或 HTTPS 链接"
+  },
+  "video-download.yt_dlp_was_not_found_cannot_download_the_video": {
+    "en": "yt-dlp was not found; cannot download the video",
+    "zh-CN": "未找到 yt-dlp，无法下载视频"
+  },
+  "video-download.audio_download_requires_ffmpeg_to_create_a_standard_mp3": {
+    "en": "Audio download requires FFmpeg to create a standard MP3 file",
+    "zh-CN": "音频下载需要 FFmpeg 来生成通用 MP3 文件"
+  },
+  "video-download.yt_dlp_returned_no_downloaded_file_path": {
+    "en": "yt-dlp returned no downloaded file path",
+    "zh-CN": "yt-dlp 未返回下载文件路径"
+  },
+  "video-download.yt_dlp_did_not_create_a_video_file": {
+    "en": "yt-dlp did not create a video file",
+    "zh-CN": "yt-dlp 未生成视频文件"
+  },
+  "video-download.could_not_identify_the_downloaded_format": {
+    "en": "Could not identify the downloaded {p0} format: {p1}",
+    "zh-CN": "无法识别下载的{p0}格式：{p1}"
+  },
+  "video-download.no_extension": {
+    "en": "no extension",
+    "zh-CN": "无扩展名"
+  },
+  "video-download.ffmpeg_was_not_found_cannot_extract_audio_from_the": {
+    "en": "FFmpeg was not found; cannot extract audio from the video",
+    "zh-CN": "未找到 FFmpeg，无法从视频中提取音频"
+  },
+  "video-download.the_video_file_no_longer_exists_cannot_extract_audio": {
+    "en": "The video file no longer exists; cannot extract audio",
+    "zh-CN": "视频文件已不存在，无法提取音频"
+  },
+  "video-download.ffmpeg_did_not_create_an_audio_file": {
+    "en": "FFmpeg did not create an audio file",
+    "zh-CN": "FFmpeg 未生成音频文件"
+  },
+  "video-download.douyin_stream_http": {
+    "en": "Douyin video stream request failed (HTTP {p0})",
+    "zh-CN": "抖音视频流请求失败（HTTP {p0}）"
+  },
+  "video-download.douyin_download_cancelled": {
+    "en": "Douyin video download was cancelled",
+    "zh-CN": "抖音视频下载已取消"
+  },
+  "video-download.douyin_empty_file": {
+    "en": "The Douyin page returned an empty video file",
+    "zh-CN": "抖音页面返回了空视频文件"
+  },
+  "video-download.douyin_partial_stream": {
+    "en": "Douyin returned an incomplete video range without a valid Content-Range",
+    "zh-CN": "抖音返回了不完整的视频分片，且缺少有效的 Content-Range"
+  },
+  "video-download.douyin_incomplete_stream": {
+    "en": "Douyin video stream is incomplete: expected {p0} bytes, received {p1}",
+    "zh-CN": "抖音视频流不完整：应接收 {p0} 字节，实际收到 {p1} 字节"
+  },
+  "video-download.douyin_non_video_response": {
+    "en": "Douyin returned a non-video response ({p0})",
+    "zh-CN": "抖音返回的不是视频内容（{p0}）"
+  },
+  "video-frames.the_video_file_no_longer_exists_cannot_read_frames": {
+    "en": "The video file no longer exists; cannot read frames",
+    "zh-CN": "视频文件已不存在，无法读取画面"
+  },
+  "video-frames.video_understanding_outside_gemini_requires_ffmpeg_to_read_frames": {
+    "en": "Video understanding outside Gemini requires FFmpeg to read frames",
+    "zh-CN": "非 Gemini 视频理解需要 FFmpeg 来读取画面"
+  },
+  "video-frames.ffmpeg_could_not_read_the_video_file": {
+    "en": "FFmpeg could not read the video file: {p0}",
+    "zh-CN": "FFmpeg 无法读取视频文件：{p0}"
+  },
+  "video-frames.unknown_error": {
+    "en": "unknown error",
+    "zh-CN": "未知错误"
+  },
+  "video-frames.video_understanding_outside_gemini_requires_ffmpeg_to_extract_frames": {
+    "en": "Video understanding outside Gemini requires FFmpeg to extract frames",
+    "zh-CN": "非 Gemini 视频理解需要 FFmpeg 来提取画面帧"
+  },
+  "video-frames.provide_non_negative_video_timestamps_in_seconds": {
+    "en": "Provide non-negative video timestamps in seconds",
+    "zh-CN": "请提供要读取的非负视频时间点（秒）"
+  },
+  "video-frames.no_readable_video_frame_at_seconds": {
+    "en": "No readable video frame at {p0} seconds",
+    "zh-CN": "视频在 {p0} 秒处没有可读取的画面"
+  },
+  "video-generation.video_generation_api_http": {
+    "en": "Video generation API HTTP {p0}: {p1}",
+    "zh-CN": "视频生成接口 HTTP {p0}: {p1}"
+  },
+  "video-generation.invalid_video_generation_api_response_format": {
+    "en": "Invalid video generation API response format",
+    "zh-CN": "视频生成接口返回格式无效"
+  },
+  "video-generation.video_generation_requires_a_prompt": {
+    "en": "Video generation requires a prompt",
+    "zh-CN": "视频生成缺少提示词"
+  },
+  "video-generation.google_veo_video_generation_requires_the_google_api_format": {
+    "en": "Google Veo video generation requires the Google API format",
+    "zh-CN": "Google Veo 视频接口需要 Google API 格式"
+  },
+  "video-generation.select_a_video_generation_api_format_for_the_video": {
+    "en": "Select a video generation API format for the video output model",
+    "zh-CN": "视频输出模型需要选择视频生成接口格式"
+  },
+  "video-generation.the_video_generation_model_has_no_api_url": {
+    "en": "The video generation model has no API URL",
+    "zh-CN": "视频生成模型缺少 API 地址"
+  },
+  "video-generation.video_generation_api_returned_no_task_id": {
+    "en": "Video generation API returned no task ID",
+    "zh-CN": "视频生成接口未返回任务 ID"
+  },
+  "video-generation.video_generation_failed": {
+    "en": "Video generation failed: {p0}",
+    "zh-CN": "视频生成失败：{p0}"
+  },
+  "video-generation.video_generation_completed_but_the_api_returned_no_video": {
+    "en": "Video generation completed but the API returned no video URL",
+    "zh-CN": "视频生成完成但接口未返回视频 URL"
+  },
+  "video-generation.video_generation_api_returned_an_unsupported_download_url": {
+    "en": "Video generation API returned an unsupported download URL",
+    "zh-CN": "视频生成接口返回了不支持的下载地址"
+  },
+  "video-generation.generated_video_download_failed_http": {
+    "en": "Generated video download failed HTTP {p0}: {p1}",
+    "zh-CN": "生成视频下载失败 HTTP {p0}: {p1}"
+  },
+  "video-generation.video_generation_api_returned_no_video_file": {
+    "en": "Video generation API returned no video file",
+    "zh-CN": "视频生成接口未返回视频文件"
+  },
+  "video-generation.video_generation_api_returned_no_video_file_details_1": {
+    "en": "Video generation API returned no video file: {p0}",
+    "zh-CN": "视频生成接口未返回视频文件：{p0}"
+  },
+  "video-generation.could_not_identify_the_generated_video_format": {
+    "en": "Could not identify the generated video format: {p0}",
+    "zh-CN": "无法识别生成视频的格式：{p0}"
+  },
+  "video-generation.content_type_not_provided": {
+    "en": "Content-Type not provided",
+    "zh-CN": "未提供 Content-Type"
+  }
+} as const;
