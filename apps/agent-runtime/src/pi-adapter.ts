@@ -1,4 +1,4 @@
-import { runtimeText, runtimeError } from "./runtime-localization";
+import { runtimeText } from "./runtime-localization";
 import {
   createAgentSession,
   createReadTool,
@@ -14,22 +14,19 @@ import {
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { Type } from "typebox";
 import { rm } from "node:fs/promises";
-import path from "node:path";
-import { detectImageModel, modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ModelMetadata, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { detectImageModel, modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
-import { ModelResponseTiming } from "./model-response-timing.js";
+import { subscribeSessionEvents } from "./pi-session-events.js";
+import { installSubagentFinalizationGuard } from "./subagent-finalization-guard.js";
 import { contextTokens, subscribeContextUsage } from "./context-usage.js";
 import { SessionInputQueue } from "./session-input-queue.js";
 import { SIDE_CHAT_INSTRUCTIONS } from "./side-conversation.js";
 import { createFileChangeTools } from "./file-change-tools.js";
-import { createActivityTitleTool } from "./activity-title-tool.js";
+import { createMediaTools, createInternalTools, mediaToolHostFor } from "./pi-tool-kit.js";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { createResourceLoader } from "./skills.js";
-import { generateImage } from "./image-generation.js";
-import { generateSpeech } from "./speech-generation.js";
-import { generateVideo } from "./video-generation.js";
+import { runImageGeneration, runSpeechGeneration, runVideoGeneration, type GenerationContext } from "./media-generation-runner.js";
 import { createSubagentTools } from "./subagent-tools.js";
 import type { SubagentSelection } from "./subagent-selection.js";
 import { googleMediaContent, googleStreamSimple } from "./google-media.js";
@@ -39,14 +36,10 @@ import { anthropicMediaStreamSimple } from "./anthropic-media.js";
 import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
 import { canProcessMediaAttachment, configuredCapabilities, mediaCapabilitiesContext } from "./media-capabilities.js";
 import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
-import { createAttachmentAudioTool, createAttachmentFrameTool, createVideoDownloadTool, createVideoFallbackTools } from "./media-tool.js";
-import { downloadDouyinVideo } from "./video-download.js";
 import type { DouyinBridge } from "./douyin-bridge.js";
-import { createDouyinTools } from "./douyin-tools.js";
 import { extractTextContent, splitModelName } from "./pi-message-utils.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
 import type { AppMediaService } from "./app-media-service.js";
-import { createAppMediaTools } from "./app-media-tools.js";
 import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 import { withMediaPhaseReporter } from "./media-phase.js";
 
@@ -153,6 +146,7 @@ export class PiAdapter {
     directories.add(directory);
     this.videoTempDirs.set(runId, directories);
   }
+
   private rememberVideoAttachments(runId: string, attachments: readonly MessageAttachmentInfo[] | undefined): string {
     const refs = this.mediaAttachmentRefs.get(runId) ?? new Map<string, MessageAttachmentInfo>();
     const notice = videoAttachmentNotice(attachments, refs);
@@ -599,68 +593,19 @@ export class PiAdapter {
       permissionMode: () => this.runModes.get(sessionId) ?? "ask",
       mediaMimeType: (runId, mediaPath) => this.downloadedVideoPaths.get(runId)?.get(mediaPath),
     });
-    const mediaToolOptions = {
-      active: () => {
-        const runId = this.activeRunIds.get(sessionId);
-        const model = this.sessions.get(sessionId)?.agent.state.model;
-        return runId && model ? { runId, model } : undefined;
-      },
-      configs: () => this.configuredModelConfigs,
-      registerMedia: (runId: string, mediaPath: string, mimeType: string, directory?: string) => {
-        if (directory) this.registerMediaDirectory(runId, directory);
-        const paths = this.downloadedVideoPaths.get(runId) ?? new Map<string, string>();
-        paths.set(mediaPath, mimeType);
-        this.downloadedVideoPaths.set(runId, paths);
-      },
-      registerDirectory: (runId: string, directory: string) => this.registerMediaDirectory(runId, directory),
-      attachment: (runId: string, attachmentId: string) => this.mediaAttachmentRefs.get(runId)?.get(attachmentId),
-      hasMedia: (runId: string, mediaPath: string) => this.downloadedVideoPaths.get(runId)?.has(mediaPath) ?? false,
-      isTemporary: (runId: string, filePath: string) => [...this.videoTempDirs.get(runId) ?? []].some((directory) => {
-        const relative = path.relative(directory, filePath);
-        return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-      }),
-      douyinDownload: this.douyinBridge
-        ? (url: string, signal?: AbortSignal) => downloadDouyinVideo(url, (target, requestSignal) => this.douyinBridge!.request(target, requestSignal), signal)
-        : undefined,
-      bilibiliDownload: this.appMediaService
-        ? async (url: string, mode: "video" | "audio", signal?: AbortSignal) => {
-          const result = await this.appMediaService!.download("bilibili", url, mode, undefined, signal);
-          const file = result.files[0];
-          if (!file) throw runtimeError("app-media.no_output", {});
-          return file;
-        }
-        : undefined,
+    const mediaTools = createMediaTools(mediaToolHostFor({
+      activeRunIds: this.activeRunIds,
+      sessions: this.sessions as never,
+      configuredModelConfigs: this.configuredModelConfigs,
+      downloadedVideoPaths: this.downloadedVideoPaths,
+      mediaAttachmentRefs: this.mediaAttachmentRefs,
+      videoTempDirs: this.videoTempDirs,
+      douyinBridge: this.douyinBridge,
+      appMediaService: this.appMediaService,
       openCli: this.openCli,
-    };
-    const modelCapabilities = modelName
-      ? configuredCapabilities(this.configuredModelConfigs, modelName)
-      : configuredCapabilities([], "");
-    const mediaTools = [
-      ...(modelCapabilities.video.native || modelCapabilities.video.frames || modelCapabilities.audio.native ? [createVideoDownloadTool(mediaToolOptions)] : []),
-      ...(modelCapabilities.audio.extract ? [createAttachmentAudioTool(mediaToolOptions)] : []),
-      ...(modelCapabilities.video.frames ? [createAttachmentFrameTool(mediaToolOptions)] : []),
-      ...(modelCapabilities.video.frames || modelCapabilities.audio.extract ? createVideoFallbackTools(mediaToolOptions) : []),
-      ...(this.douyinBridge ? createDouyinTools(this.douyinBridge, workspacePath) : []),
-      ...(this.appMediaService && this.openCli ? createAppMediaTools(this.appMediaService, workspacePath, this.openCli) : []),
-    ];
-    const goalTools: ToolDefinition[] = goalId && goalEpoch !== undefined && goalRunId && this.goalBridge ? [{
-      name: "get_goal", label: "Get goal", description: "Read the current goal and its execution state.",
-      parameters: Type.Object({}),
-      execute: async () => ({ content: [{ type: "text", text: JSON.stringify(this.goalBridge!.get(eventSessionId, goalId, goalEpoch, goalRunId)) }], details: {} }),
-    }, {
-      name: "goal_complete", label: "Complete goal", description: "Mark the current goal complete only after the requested work and verification are finished.",
-      parameters: Type.Object({ summary: Type.String({ minLength: 1 }) }),
-      execute: async (_toolCallId, params) => ({ content: [{ type: "text", text: JSON.stringify(this.goalBridge!.complete(eventSessionId, goalId, goalEpoch, goalRunId, (params as { summary: string }).summary)) }], details: {} }),
-    }, {
-      name: "goal_blocked", label: "Block goal", description: "Report a real external or technical blocker with evidence.",
-      parameters: Type.Object({ reason: Type.String({ minLength: 1 }), evidence: Type.String({ minLength: 1 }) }),
-      execute: async (_toolCallId, params) => { const input = params as { reason: string; evidence: string }; return { content: [{ type: "text", text: JSON.stringify(this.goalBridge!.blocked(eventSessionId, goalId, goalEpoch, goalRunId, input.reason, input.evidence)) }], details: {} }; },
-    }, {
-      name: "goal_wait", label: "Wait for goal event", description: "Wait for an external event before continuing the goal.",
-      parameters: Type.Object({ reason: Type.String({ minLength: 1 }), resume_after_ms: Type.Optional(Type.Number({ minimum: 1 })) }),
-      execute: async (_toolCallId, params) => { const input = params as { reason: string; resume_after_ms?: number }; return { content: [{ type: "text", text: JSON.stringify(this.goalBridge!.wait(eventSessionId, goalId, goalEpoch, goalRunId, input.reason, input.resume_after_ms)) }], details: {} }; },
-    }] : [];
-    const internalTools = [createActivityTitleTool(), ...goalTools];
+      registerMediaDirectory: (runId, directory) => this.registerMediaDirectory(runId, directory),
+    }, sessionId), workspacePath, modelName);
+    const internalTools = createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId);
     const internalToolNames = new Set(internalTools.map((tool) => tool.name));
     internalToolNames.add("finalize_response");
     const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...internalTools].map((t) =>
@@ -733,28 +678,12 @@ export class PiAdapter {
       thinkingLevel: thinking,
     });
     await session.bindExtensions({});
-    const previousFinishTurn = session.agent.finishTurn;
-    session.agent.finishTurn = (async (turn, signal) => {
-      const previous = await previousFinishTurn?.(turn, signal);
-      const runId = this.activeRunIds.get(sessionId);
-      if (!runId || !this.subagentController || turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return previous;
-      let dependencies = this.subagentController.dependencyStatus?.(runId);
-      if (!dependencies || (!dependencies.blocking.length && !dependencies.unacknowledged.length && dependencies.authorized !== false)) return previous;
-      const active = () => dependencies!.blocking.filter((child) => ["created", "running", "waiting_approval", "paused"].includes(child.status));
-      if (active().length) {
-        this.push("agent.waiting_subagents", { subagents: active().map((child) => ({ runId: child.id, title: child.title })) }, eventSessionId, runId);
-        await this.subagentController.waitForDependencyChange(runId, signal);
-        dependencies = this.subagentController.dependencyStatus(runId);
-      }
-      const ids = dependencies.blocking.map((child) => child.id);
-      const instruction = ids.length
-        ? `Required subagent results remain unresolved: ${ids.join(", ")}. Confirm the actual state, inspect each compact result, continue retryable failures with the same runId using follow_up, then call finalize_response before the final answer.`
-        : "All required subagent results have been processed, but finalization has not been authorized. Call finalize_response with the handled run IDs before the final answer.";
-      if (!session.agent.hasQueuedMessages()) {
-        session.agent.steer({ role: "user", content: [{ type: "text", text: `[QONE_SUBAGENT_LEDGER]\n${instruction}` }], timestamp: Date.now() });
-      }
-      return { action: "continue" };
-    }) as NonNullable<typeof session.agent.finishTurn>;
+    installSubagentFinalizationGuard(session, {
+      runId: () => this.activeRunIds.get(sessionId),
+      controller: () => this.subagentController,
+      push: (type, payload, fromSessionId, runId) => this.push(type, payload, fromSessionId ?? sessionId, runId),
+      eventSessionId,
+    });
     try {
       assertModelToolNames(session.getActiveToolNames());
     } catch (error) {
@@ -762,117 +691,15 @@ export class PiAdapter {
       throw error;
     }
 
-    let lastToolDeltaAt = 0;
-    const responseTiming = new ModelResponseTiming();
     if (eventSessionId === sessionId) subscribeContextUsage(session, (usage) => {
       const activeModel = session.model;
       const model = this.configuredModelConfigs.find((config) => config.provider === activeModel?.provider && config.model === activeModel?.id)?.id;
       if (model) this.push("context.usage", { model, ...usage }, sessionId, this.activeRunIds.get(sessionId));
     });
-    session.subscribe((e) => {
-      const candidateRunId = this.activeRunIds.get(sessionId);
-      const runId = candidateRunId && this.runs.get(candidateRunId) === session ? candidateRunId : undefined;
-      const raw = e as unknown as Record<string, unknown>;
-      const messageEvent = raw.assistantMessageEvent as { type?: string; delta?: string; contentIndex?: number; toolCall?: unknown } | undefined;
-      const normalized = messageEvent?.delta
-        ? { ...raw, delta: messageEvent.delta }
-        : raw;
-      let protocolType: string = e.type;
-      let protocolPayload = normalized;
-      if (e.type === "message_start") {
-        lastToolDeltaAt = 0;
-        protocolType = "message.started";
-      }
-      else if (e.type === "message_update") {
-        const content = (raw.message as { content?: unknown } | undefined)?.content;
-        const block = Array.isArray(content) && typeof messageEvent?.contentIndex === "number"
-          ? content[messageEvent.contentIndex] as { id?: string; name?: string; arguments?: unknown } | undefined
-          : undefined;
-        if (messageEvent?.type === "thinking_delta") {
-          protocolType = "message.reasoning.delta";
-          protocolPayload = { delta: messageEvent.delta ?? "", contentIndex: messageEvent.contentIndex };
-        } else if (messageEvent?.type === "text_delta") {
-          protocolType = "message.delta";
-          protocolPayload = { delta: messageEvent.delta ?? "", contentIndex: messageEvent.contentIndex };
-        } else if (messageEvent?.type === "thinking_start" || messageEvent?.type === "text_start" || messageEvent?.type === "toolcall_start") {
-          protocolType = "message.block.started";
-          protocolPayload = messageEvent.type !== "toolcall_start"
-            ? { blockType: messageEvent.type === "thinking_start" ? "reasoning" : "text", contentIndex: messageEvent.contentIndex }
-            : {
-                blockType: "tool-call", contentIndex: messageEvent.contentIndex,
-                toolCallId: block?.id,
-                toolName: toolNameByModelName.get(String(block?.name ?? "")) ?? block?.name,
-                args: block?.arguments,
-              };
-        } else if (messageEvent?.type === "toolcall_delta") {
-          // Pi has already parsed the partial JSON. Send snapshots at ~30fps;
-          // block.completed always delivers the final arguments without throttling.
-          const now = Date.now();
-          if (now - lastToolDeltaAt < 32) return;
-          lastToolDeltaAt = now;
-          protocolType = "message.delta";
-          protocolPayload = {
-            blockType: "tool-call", contentIndex: messageEvent.contentIndex,
-            toolCallId: block?.id,
-            toolName: toolNameByModelName.get(String(block?.name ?? "")) ?? block?.name,
-            args: block?.arguments,
-          };
-        } else if (messageEvent?.type === "thinking_end") {
-          protocolType = "message.block.completed";
-          protocolPayload = { blockType: "reasoning", contentIndex: messageEvent.contentIndex };
-        } else if (messageEvent?.type === "toolcall_end") {
-          const toolCall = messageEvent.toolCall as { id?: string; name?: string; arguments?: unknown } | undefined ?? block;
-          protocolType = "message.block.completed";
-          protocolPayload = {
-            blockType: "tool-call", contentIndex: messageEvent.contentIndex,
-            toolCallId: toolCall?.id,
-            toolName: toolNameByModelName.get(String(toolCall?.name ?? "")) ?? toolCall?.name,
-            args: toolCall?.arguments,
-          };
-        } else return;
-      } else if (e.type === "message_end") protocolType = "message.completed";
-      else if (e.type === "turn_start") protocolType = "model.request.started";
-      else if (e.type === "tool_execution_start") {
-        protocolType = "tool.started";
-        protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, args: raw.args ?? raw.input };
-      } else if (e.type === "tool_execution_update") {
-        protocolType = "tool.updated";
-        protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, update: raw.partialResult ?? raw.update };
-      } else if (e.type === "tool_execution_end") {
-        const result = raw.result as { isError?: boolean } | undefined;
-        const isError = e.isError || result?.isError === true;
-        protocolType = isError ? "tool.failed" : "tool.completed";
-        protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: isError ? { ...result, isError: true } : raw.result, isError, durationMs: e.durationMs };
-      } else if (e.type === "agent_start") protocolType = "turn.started";
-      else if (e.type === "agent_end") protocolType = "turn.completed";
-      else if (e.type === "entry_appended") {
-        protocolType = "session.entry.appended";
-        protocolPayload = { entry: raw.entry };
-        this.hooks.onCustomEntry?.(eventSessionId, raw.entry);
-      }
-      this.push(protocolType, protocolPayload, eventSessionId, runId);
-      const timing = responseTiming.record(protocolType, protocolPayload);
-      if (timing) {
-        this.push("model.response.timing", timing, eventSessionId, runId);
-        log.info("model response timing", { sessionId: eventSessionId, runId, ...timing });
-      }
-      if (!runId) return;
-      const p = normalized as { type?: string; assistantMessageEvent?: { type?: string; delta?: string }; message?: unknown; toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
-      const toolPayload = protocolPayload as { toolName?: string; toolCallId?: string; args?: unknown; result?: unknown };
-      const delta = p.assistantMessageEvent?.delta;
-      if (p.assistantMessageEvent?.type === "text_delta" && typeof delta === "string" && delta) this.hooks.onMessage?.(eventSessionId, runId, "assistant", delta);
-      if (e.type === "message_end" && e.message.role === "assistant" && e.message.stopReason !== "error" && e.message.stopReason !== "aborted") {
-        const finalText = extractTextContent(raw.message);
-        if (finalText) this.hooks.onAssistantFinal?.(eventSessionId, runId, finalText);
-      }
-      if (e.type === "tool_execution_start") {
-        const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
-        this.hooks.onTool?.(eventSessionId, runId, "start", name, toolPayload.args, undefined, toolPayload.toolCallId, String((toolPayload as { parentToolCallId?: unknown }).parentToolCallId ?? "") || undefined);
-      }
-      if (e.type === "tool_execution_end") {
-        const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
-        this.hooks.onTool?.(eventSessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId, String((toolPayload as { parentToolCallId?: unknown }).parentToolCallId ?? "") || undefined, typeof e.durationMs === "number" ? e.durationMs : undefined);
-      }
+    subscribeSessionEvents({
+      sessionId, eventSessionId, session, runs: this.runs, activeRunIds: this.activeRunIds,
+      toolNameByModelName, hooks: this.hooks,
+      push: (type, payload, fromSessionId, runId) => this.push(type, payload, fromSessionId, runId),
     });
 
     this.sessions.set(sessionId, session);
@@ -1040,67 +867,26 @@ export class PiAdapter {
     }
   }
 
-  private async runImageGeneration(sessionId: string, runId: string, prompt: string, attachments: MessageAttachmentInfo[] | undefined, config: ModelConfigInfo): Promise<void> {
-    const rawConfig = config.config && typeof config.config === "object" ? config.config : {};
-    const detected = detectImageModel({
-      model: config.model,
-      provider: config.provider,
-      apiType: typeof rawConfig.apiType === "string" ? rawConfig.apiType : undefined,
-      imageApiFormat: typeof rawConfig.imageApiFormat === "string" ? rawConfig.imageApiFormat as ImageApiFormat : undefined,
-      input: Array.isArray(rawConfig.input) ? rawConfig.input as string[] : undefined,
-      output: Array.isArray(rawConfig.output) ? rawConfig.output as string[] : undefined,
-      manualInput: Boolean(rawConfig.metadataOverrides && typeof rawConfig.metadataOverrides === "object" && (rawConfig.metadataOverrides as Record<string, unknown>).input === true),
-      manualOutput: Boolean(rawConfig.metadataOverrides && typeof rawConfig.metadataOverrides === "object" && (rawConfig.metadataOverrides as Record<string, unknown>).output === true),
-      metadata: rawConfig.modelMetadata && typeof rawConfig.modelMetadata === "object" ? rawConfig.modelMetadata as ModelMetadata : undefined,
-    });
-    if (!detected.isImageModel || !detected.format) throw new Error("Image model format could not be determined");
-    const apiKey = this.modelApiKeys.get(config.provider);
-    if (!apiKey) throw new Error(`No API key configured for image provider ${config.provider}`);
-    const controller = new AbortController();
-    this.generationRunControllers.set(runId, controller);
-    this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
-    try {
-      const parts = await generateImage({ config, format: detected.format, prompt, attachments, apiKey, signal: controller.signal });
-      this.push("message.completed", { message: { role: "assistant", content: parts } }, sessionId, runId);
-    } finally {
-      this.generationRunControllers.delete(runId);
-    }
+  private generationContext(): GenerationContext {
+    return {
+      apiKeyFor: (provider) => this.modelApiKeys.get(provider),
+      push: (type, payload, sessionId, runId) => this.push(type, payload, sessionId, runId),
+      onGeneratedMedia: this.hooks.onGeneratedMedia,
+      trackController: (runId, controller) => this.generationRunControllers.set(runId, controller),
+      releaseController: (runId) => this.generationRunControllers.delete(runId),
+    };
   }
 
-  private async runSpeechGeneration(sessionId: string, runId: string, text: string, config: ModelConfigInfo): Promise<void> {
-    const apiKey = this.modelApiKeys.get(config.provider);
-    if (!apiKey) throw runtimeError("pi-adapter.no_api_key_configured_for_speech_provider", { p0: config.provider });
-    if (!this.hooks.onGeneratedMedia) throw runtimeError("pi-adapter.speech_result_storage_is_not_initialized", {});
-    const controller = new AbortController();
-    this.generationRunControllers.set(runId, controller);
-    this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
-    try {
-      const speech = await generateSpeech({ config, text, apiKey, signal: controller.signal });
-      controller.signal.throwIfAborted();
-      const savedPath = await this.hooks.onGeneratedMedia(sessionId, runId, speech.bytes, speech.mimeType, speech.extension, controller.signal);
-      controller.signal.throwIfAborted();
-      this.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: runtimeText("pi-adapter.speech_generated", { p0: savedPath }) }] } }, sessionId, runId);
-    } finally {
-      this.generationRunControllers.delete(runId);
-    }
+  private runImageGeneration(sessionId: string, runId: string, prompt: string, attachments: MessageAttachmentInfo[] | undefined, config: ModelConfigInfo) {
+    return runImageGeneration(this.generationContext(), sessionId, runId, prompt, attachments, config);
   }
 
-  private async runVideoGeneration(sessionId: string, runId: string, prompt: string, config: ModelConfigInfo): Promise<void> {
-    const apiKey = this.modelApiKeys.get(config.provider);
-    if (!apiKey) throw runtimeError("pi-adapter.no_api_key_configured_for_video_provider", { p0: config.provider });
-    if (!this.hooks.onGeneratedMedia) throw runtimeError("pi-adapter.video_result_storage_is_not_initialized", {});
-    const controller = new AbortController();
-    this.generationRunControllers.set(runId, controller);
-    this.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
-    try {
-      const video = await generateVideo({ config, prompt, apiKey, signal: controller.signal });
-      controller.signal.throwIfAborted();
-      const savedPath = await this.hooks.onGeneratedMedia(sessionId, runId, video.stream, video.mimeType, video.extension, controller.signal);
-      controller.signal.throwIfAborted();
-      this.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: runtimeText("pi-adapter.video_generated", { p0: savedPath }) }] } }, sessionId, runId);
-    } finally {
-      this.generationRunControllers.delete(runId);
-    }
+  private runSpeechGeneration(sessionId: string, runId: string, text: string, config: ModelConfigInfo) {
+    return runSpeechGeneration(this.generationContext(), sessionId, runId, text, config);
+  }
+
+  private runVideoGeneration(sessionId: string, runId: string, prompt: string, config: ModelConfigInfo) {
+    return runVideoGeneration(this.generationContext(), sessionId, runId, prompt, config);
   }
 
   stopAll(): string[] {
