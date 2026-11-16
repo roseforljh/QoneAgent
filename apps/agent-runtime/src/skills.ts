@@ -8,10 +8,11 @@ import {
   createToolSearchExtension,
   type Skill,
   type ResourceLoader,
+  type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { readSystemPrompt } from "./system-prompt.js";
-import { qonePiStateDir, qoneSkillsDir, qoneBuiltinSkillsDir, qoneSkillCacheDir } from "@qone/shared";
-import { readGlobalInstructions } from "./global-instructions.js";
+import { qonePiStateDir, qoneSkillsDir, qoneBuiltinSkillsDir, qoneSkillCacheDir, qoneSettingsPath } from "@qone/shared";
+import { globalInstructionsPath, readGlobalInstructions } from "./global-instructions.js";
 import { workspaceInstructions } from "./workspace-instructions.js";
 import { toolPromptContextExtension } from "./tool-prompt-context.js";
 import { assertUserSkillName, isBuiltinSkillName } from "./builtin-skills/identity.js";
@@ -19,6 +20,7 @@ import { SKILL_PUBLISHER_FILE } from "./skill-catalog.js";
 import { listBuiltinSkills } from "./builtin-skills/manager.js";
 import { syncPonytailProjectInstructions } from "./project-instructions.js";
 import eccResources from "./builtin-subagents/ecc-resources.json";
+import { syncedSkills, saveSyncedSkills } from "./claude-code/skills";
 import type { SkillInfo } from "@qone/protocol";
 export type { SkillInfo } from "@qone/protocol";
 
@@ -40,6 +42,23 @@ async function ensureEccReferenceSkills(): Promise<string[]> {
     if (relative.startsWith("skills/") && relative.endsWith("/SKILL.md")) paths.add(path.dirname(destination));
   }
   return [...paths];
+}
+
+export async function deleteLocalSkill(skillId: string): Promise<void> {
+  assertUserSkillName(skillId);
+  const imported = syncedSkills();
+  const { skills } = await createResourceLoader(process.cwd());
+  const skill = skills.find(skill => skill.id === skillId && !skill.builtin);
+  if (!skill) throw new Error(`Unknown skill: ${skillId}`);
+  if (imported.some(item => item.path === skill.path)) {
+    // Imported resources belong to Claude Code; remove Qone's registration only.
+    saveSyncedSkills(imported.filter(item => item.path !== skill.path));
+    return;
+  }
+  const root = path.resolve(qoneSkillsDir());
+  const directory = path.dirname(path.resolve(skill.path));
+  if (path.dirname(directory) !== root || path.basename(skill.path) !== "SKILL.md") throw new Error("Skill is outside the installed skills directory");
+  await rm(directory, { recursive: true });
 }
 
 export async function installLocalSkill(content: string): Promise<SkillInfo> {
@@ -106,6 +125,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
   const ponytail = builtinSkills.find((skill) => skill.id === "ponytail");
   if (ponytail) await syncPonytailProjectInstructions(cwd, ponytail.enabled !== false, ponytail.path);
   const eccReferencePaths = includeEccReferences ? await ensureEccReferenceSkills() : [];
+  const importedSkills = syncedSkills().filter(skill => existsSync(skill.path));
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir,
@@ -122,6 +142,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
     additionalSkillPaths: [
       ...builtinSkills.filter((skill) => skill.enabled).map((skill) => path.dirname(skill.path)),
       ...(existsSync(ownSkills) ? [ownSkills] : []),
+      ...importedSkills.filter(skill => !isBuiltinSkillName(skill.name)).map(skill => skill.path),
       ...eccReferencePaths,
     ],
     // A manually copied user skill cannot override a reserved built-in name,
@@ -137,14 +158,30 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
     appendSystemPromptOverride: () => {
       const instructions = readGlobalInstructions().trim();
       return [
+        qoneConfigurationGuide(),
         ...(instructions ? [`## Qone.md\n\n${instructions}`] : []),
         ...(additionalInstructions ? [additionalInstructions] : []),
+        ...importedSkills.filter(skill => skill.pluginRoot).map(skill => `For the imported skill "${skill.name}", resolve \${CLAUDE_PLUGIN_ROOT} as ${JSON.stringify(skill.pluginRoot)}. Relative resources stay in its original directory.`),
         ...builtinSkills.filter((skill) => !skill.enabled).map((skill) => `The built-in skill "${skill.name}" is disabled. Do not apply its instructions, including its section in Qone.md and instructions previously loaded in conversation history.`),
       ];
     },
   });
   await loader.reload();
   return { loader, skills: [...builtinSkills, ...loader.getSkills().skills.filter((skill) => !isBuiltinSkillName(skill.name)).map(toInfo)] };
+}
+
+/** Tells the agent it configures Qone by editing files, which the app applies the moment they are saved. */
+export function qoneConfigurationGuide(): string {
+  return [
+    "## Configuring Qone",
+    "When the user asks you to install, change or remove an MCP service, a skill or a Qone setting, edit these files directly with your file tools. Qone applies every save immediately and updates its interface; never ask the user to restart or to open Settings.",
+    `- ${qoneSettingsPath()}: JSON object. "mcpServers" maps an id to { "name", "command", "args", "env" } for local services or { "type": "http" | "sse", "url", "headers" } for remote ones (Claude Code's mcpServers shape); "disabled": true keeps a service configured but off. Saving a new or changed entry connects it; deleting an entry removes the service. Write API keys as plain values in "env"/"headers": Qone moves them into encrypted storage and leaves "$mcp.env:..." references, which you must keep unchanged. "models", "permissions" and "preferences" hold the other settings; keep keys you are not changing.`,
+    '- "models" maps "provider/model" to { "provider", "model", "apiType", "baseUrl", ...model options }; model API keys must use the existing encrypted Models settings, never put them in this object. "permissions" maps a subject ("builtin" or "mcp:<id>") to permission decisions ("allow", "ask", "deny").',
+    '- "preferences" supports "compaction.settings": { "autoCompactionEnabled": boolean, "compactionThreshold": 50–95 }, "memory.enabled": boolean, "skills.builtin.<name>": { "enabled": boolean, "revision": existing revision }, and "subagents.config" (profiles/routing/runtime such as maxConcurrent, timeoutMs, tokenBudget, allowNested, maxDepth, backgroundEnabled). Inspect the current file before changing a setting; do not invent option names.',
+    `- ${qoneSkillsDir()}/<name>/SKILL.md (frontmatter "name" and "description", then the instructions, plus any files it needs): the skill is available at once. Delete the folder to uninstall.`,
+    `- ${globalInstructionsPath()}: the user's global instructions (Qone.md).`,
+    "Edit only what was asked, keep the JSON valid (an invalid file is ignored until fixed), and read the file back afterwards to confirm the change.",
+  ].join("\n");
 }
 
 function extensionFactories(enableCodemode: boolean) {
@@ -157,10 +194,10 @@ function extensionFactories(enableCodemode: boolean) {
  * and codemode act on another session's tools. Each session gets its own
  * extensions; skills, prompts and instructions stay shared.
  */
-export async function sessionResourceLoader(shared: ResourceLoader, cwd: string, enableCodemode = true): Promise<ResourceLoader> {
+export async function sessionResourceLoader(shared: ResourceLoader, cwd: string, enableCodemode = true, extensions: ExtensionFactory[] = []): Promise<ResourceLoader> {
   const own = new DefaultResourceLoader({
     cwd, agentDir: qoneAgentDir(), noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true,
-    noExtensions: true, systemPrompt: "", appendSystemPrompt: [], extensionFactories: extensionFactories(enableCodemode),
+    noExtensions: true, systemPrompt: "", appendSystemPrompt: [], extensionFactories: [...extensionFactories(enableCodemode), ...extensions],
   });
   await own.reload();
   return {

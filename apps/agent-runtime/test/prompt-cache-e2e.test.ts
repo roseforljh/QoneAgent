@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { closeDb, ModelConfigRepo, openDb, SessionRepo, WorkspaceRepo } from "@qone/database";
+import { closeDb, ConfigFile, ModelConfigRepo, openDb, SessionRepo, WorkspaceRepo } from "@qone/database";
 import type { RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 
 // Real runtime process + local HTTP/SSE servers for the four wire formats. No
@@ -108,7 +108,7 @@ test("all four provider formats keep a byte-stable cached prefix and cache ident
   const sessions = APIS.map((api) => new SessionRepo(db).create(`cache-${api}`, workspace.id));
   const base = `http://127.0.0.1:${server.port}`;
   const baseUrls: Record<string, string> = { "openai-compatible": `${base}/openai-compatible/v1`, codex: `${base}/codex/v1`, claude: `${base}/claude`, google: `${base}/google/v1beta` };
-  for (const api of APIS) new ModelConfigRepo(db).upsert({ provider: `cache-${api}`, model: "m", enabled: true, config: {
+  for (const api of APIS) new ModelConfigRepo(new ConfigFile(path.join(directory, "settings.json"))).upsert({ provider: `cache-${api}`, model: "m", enabled: true, config: {
     apiType: api, baseUrl: baseUrls[api], thinking: "none", autoMetadata: false,
     contextWindow: 128000, maxTokens: 4096, input: ["text"], output: ["text"],
   } });

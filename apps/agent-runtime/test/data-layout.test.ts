@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { ArtifactRepo, McpServerRepo, closeDb, openDb } from "@qone/database";
+import { ArtifactRepo, ConfigFile, McpServerRepo, closeDb, openDb } from "@qone/database";
 import { qoneProjectDir, qoneSessionDir } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 
@@ -73,8 +73,10 @@ test("the real sidecar creates, restores and deletes project/session resources w
     await request({ type: "session.rename", requestId: "rename", sessionId: session.id, title: "Renamed" }, "session.renamed");
     expect(JSON.parse(readFileSync(path.join(directory, "session.json"), "utf8")).title).toBe("Renamed");
     expect(existsSync(path.join(data, "Qone.md"))).toBe(true);
-    expect(existsSync(path.join(data, "config", "settings.db"))).toBe(true);
-    expect(existsSync(path.join(data, "mcp", "servers.db"))).toBe(true);
+    // Configuration is a plain file now; no configuration databases are created.
+    expect(existsSync(path.join(data, "settings.json"))).toBe(true);
+    expect(existsSync(path.join(data, "config", "settings.db"))).toBe(false);
+    expect(existsSync(path.join(data, "mcp"))).toBe(false);
     expect(existsSync(path.join(data, "agent.db"))).toBe(false);
     await stop();
     const db = openDb(dbPath);
@@ -82,7 +84,7 @@ test("the real sidecar creates, restores and deletes project/session resources w
       const media = path.join(directory, "artifacts", "saved.mp3");
       writeFileSync(media, new Uint8Array([1]));
       new ArtifactRepo(db).add({ sessionId: session.id, type: "audio", name: "saved.mp3", path: media });
-      new McpServerRepo(db).upsert({ id: "fixture", name: "Fixture", command: "unused-test-tool" });
+      new McpServerRepo(new ConfigFile(path.join(data, "settings.json"))).upsert({ id: "fixture", name: "Fixture", command: "unused-test-tool", disabled: true });
     } finally { closeDb(db); }
     child = start(); reader = child.stdout.getReader(); buffer = "";
     const restoredSkills = await request({ type: "skills.list", requestId: "restored-skills", cwd: source }, "skills.list");

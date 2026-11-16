@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { SettingsRepo } from "@qone/database";
+import type { PreferenceStore } from "@qone/database";
 import type { SkillInfo } from "@qone/protocol";
 import { qoneBuiltinSkillsDir, qoneSkillCacheDir } from "@qone/shared";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
@@ -11,11 +11,11 @@ import { builtinSkillBundles } from "./identity.js";
 import { runtimeError } from "../runtime-localization.js";
 
 type BuiltinState = { enabled: boolean; revision: string };
-let preferences: Pick<SettingsRepo, "get" | "set"> | undefined;
+let preferences: PreferenceStore | undefined;
 let pending: Promise<unknown> = Promise.resolve();
 const installations = new Map<string, Promise<SkillInfo>>();
 
-export function configureBuiltinSkills(repo?: Pick<SettingsRepo, "get" | "set">): void {
+export function configureBuiltinSkills(repo?: PreferenceStore): void {
   preferences = repo;
 }
 
@@ -86,7 +86,7 @@ async function restoreSkill(id: string): Promise<SkillInfo> {
   }
   state.revision = bundle.revision;
   const skill = describe(id, state);
-  preferences?.set(`skills.builtin.${id}`, state);
+  if (!preferences?.error) preferences?.set(`skills.builtin.${id}`, state);
   return skill;
 }
 

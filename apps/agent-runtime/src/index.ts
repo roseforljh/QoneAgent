@@ -1,16 +1,21 @@
+import { connectMcp, mcpServerList, restoreMcpCredentials } from "./mcp-connections";
 import { handleSessionCommand } from "./session-commands.js";
 import { handleRuntimeCommand } from "./runtime-commands.js";
+import { claudeMcpToken } from "./claude-code/mcp-auth";
+import { sendMcpIcons } from "./mcp-icons";
+import { prepareMcpConfiguration, watchConfiguration } from "./config-watch";
+import { validateSettings } from "./config-validation";
 import { configureBuiltinSkills } from "./builtin-skills/manager.js";
 import { withRuntimeLocale, runtimeErrorInfo } from "./runtime-localization";
 import { CompactionPositions } from "./compaction-position.js";
 import { handleRuntimeEvent, NOT_REPLAYED, type RuntimeBusEvent } from "./runtime-event-subscriber.js";
 import { SideConversationService } from "./side-conversation.js";
 
-import { createLogger, EventBus, qoneDatabasePath, qoneConfigDatabasePath, qoneMcpDatabasePath, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, AgentCommunicationInfo, SessionSearchResult } from "@qone/protocol";
+import { createLogger, EventBus, qoneDatabasePath, qoneSettingsPath, qoneStatePath, SequencedEventJournal } from "@qone/shared";
+import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, AgentCommunicationInfo, SessionSearchResult, McpServerInfo } from "@qone/protocol";
 import { decodeCommand, REMOVED_BUILTIN_SUBAGENT_IDS, serverOperationInfo, serverOperationCancelled } from "@qone/protocol";
-import { openDb, openConfigDb, openMcpDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
-import { McpManager, type McpServerConfig } from "@qone/mcp";
+import { openDb, ConfigFile, mcpServersFrom, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, PreferencesRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
+import { McpManager } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
@@ -18,7 +23,6 @@ import { mkdirSync } from "node:fs";
 import { GeneratedArtifacts } from "./generated-artifacts.js";
 import { FileDelivery } from "./file-delivery.js";
 import { ProjectResources } from "./project-resources.js";
-import { moveDomainData } from "./domain-data.js";
 
 
 
@@ -55,7 +59,11 @@ const eventBus = new EventBus<RuntimeBusEvent>();
 // NDJSON over stdio: one JSON object per line on stdout.
 // stderr is reserved for logs.
 const output = createRuntimeOutput({ write: (line) => { process.stdout.write(line); }, intervalMs: 8, maxEvents: 32 });
-const send = output.send;
+// Every MCP list update also delivers official icons, resolved in the background.
+const send: typeof output.send = (event) => {
+  output.send(event);
+  if (event.type === "mcp.list") void sendMcpIcons(event.servers, stateRepo, output.send).catch((error) => log.warn("mcp icon resolution failed", { err: String(error) }));
+};
 const douyinBridge = new DouyinBridge((event) => send(event));
 const appOpenCliBridge = new AppOpenCliBridge((event) => send(event));
 const embeddedOpenCli = createEmbeddedOpenCliRunner(appOpenCliBridge);
@@ -72,9 +80,13 @@ const dbPath =
 const dbDir = path.dirname(dbPath);
 if (dbDir !== ".") mkdirSync(dbDir, { recursive: true });
 const db = openDb(dbPath);
-const configDb = openConfigDb(dbPath === ":memory:" ? ":memory:" : qoneConfigDatabasePath());
-const mcpDb = openMcpDb(dbPath === ":memory:" ? ":memory:" : qoneMcpDatabasePath());
-moveDomainData(db, configDb, mcpDb);
+// Configuration lives in editable JSON files; SQLite keeps only conversation and runtime data.
+const settingsFile = new ConfigFile(qoneSettingsPath(), validateSettings);
+const stateFile = new ConfigFile(qoneStatePath());
+if (settingsFile.error) log.warn("settings.json is invalid; configuration changes wait until it is fixed", { err: settingsFile.error.message });
+else {
+  for (const section of ["mcpServers", "models", "permissions", "preferences"]) if (!settingsFile.read(section)) settingsFile.write(section, {});
+}
 const sessionRepo = new SessionRepo(db);
 const messageRepo = new MessageRepo(db);
 const runRepo = new RunRepo(db);
@@ -85,13 +97,14 @@ const subagentNotificationRepo = new SubagentNotificationRepo(db);
 const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
 const toolCallRepo = new ToolCallRepo(db);
-const mcpServerRepo = new McpServerRepo(mcpDb);
-const modelConfigRepo = new ModelConfigRepo(configDb);
+const mcpServerRepo = new McpServerRepo(settingsFile);
+const modelConfigRepo = new ModelConfigRepo(settingsFile);
 const runtimeSecrets = new Map<string, string>();
 const settingsMetadataResolver = new ModelMetadataResolver();
 const settingsRepo = new SettingsRepo(db);
 const webAccessMemory = new WebAccessMemory(settingsRepo);
-const preferencesRepo = new SettingsRepo(configDb);
+const preferencesRepo = new PreferencesRepo(settingsFile);
+const stateRepo = new PreferencesRepo(stateFile, "cache");
 configureBuiltinSkills(preferencesRepo);
 const queueRepo = new QueueRepo(settingsRepo);
 const sideConversations = new SideConversationService(db);
@@ -113,6 +126,11 @@ const memory: MemoryService = new MemoryService({
   onChange: (state) => send({ type: "memory.state", state }),
   onError: (error) => log.warn("memory consolidation skipped", { err: String(error) }),
 });
+if (!settingsFile.error) {
+  const enabled = preferencesRepo.get<boolean>("memory.enabled");
+  if (enabled === undefined) preferencesRepo.set("memory.enabled", memory.store.settings().enabled);
+  else memory.store.setEnabled(enabled);
+}
 const compactionPreferences: PiCompactionPreferences = normalizePiCompactionPreferences(
   preferencesRepo.get("compaction.settings") ?? DEFAULT_PI_COMPACTION_PREFERENCES,
 );
@@ -134,7 +152,7 @@ const generatedArtifacts = new GeneratedArtifacts(
 );
 // Files are referenced where the agent made them; events go through the shared bus.
 const fileDelivery = new FileDelivery(artifactRepo, (type, payload, sessionId, runId) => emit(type, payload, sessionId, runId), (event) => send(event));
-const permissionRepo = new PermissionRepo(configDb);
+const permissionRepo = new PermissionRepo(settingsFile);
 const skillRepo = new SkillRepo(db);
 const eventJournal = new SequencedEventJournal<AgentEvent>(settingsRepo.get<number>("event.sequence") ?? 0);
 eventJournal.restore(eventRepo.list());
@@ -327,6 +345,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   serverTools: (workspacePath, serverIds) => servers.tools(workspacePath, serverIds),
   deliveryTools: (sessionId, workspacePath, activeRunId) => [fileDelivery.tool(sessionId, workspacePath, activeRunId)],
   serverSummary: (serverIds) => servers.summary(serverIds),
+  serverTargets: (serverIds) => servers.executionTargets(serverIds),
   onAssistantFinal: (_sessionId, runId, content) => {
     if (content.trim()) assistantBuffers.set(runId, content);
   },
@@ -493,14 +512,10 @@ const mcp = new McpManager(async (serverId, token) => {
     runtimeSecrets.set(key, token);
     send({ type: "mcp.oauth.token", requestId: "oauth-callback", serverId, key, accessToken: token });
   }
-  if (config) {
+  if (config && !config.disabled) {
     await mcp.disconnect(serverId);
     try {
-      const tools = await mcp.connect(config);
-      await refreshCustomTools();
-      send({ type: "mcp.connected", serverId, toolCount: tools.length });
-      send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
-      pendingMcpAuthRequests.delete(serverId);
+      await connectMcp(config, runtimeCommandServices());
     } catch (error) {
       log.warn("MCP OAuth reconnect failed", { serverId, err: String(error) });
       const requestId = pendingMcpAuthRequests.get(serverId);
@@ -509,9 +524,12 @@ const mcp = new McpManager(async (serverId, token) => {
     }
   }
 }, (serverId, kind, value) => {
-  send({ type: "mcp.oauth.credential", serverId, key: `mcp.oauth:${serverId}.${kind}`, value });
+  const key = `mcp.oauth:${serverId}.${kind}`;
+  runtimeSecrets.set(key, value);
+  send({ type: "mcp.oauth.credential", serverId, key, value });
 }, (serverId, authorization) => {
-  send({ type: "mcp.oauth.authorization", requestId: pendingMcpAuthRequests.get(serverId) ?? crypto.randomUUID(), serverId, ...authorization });
+  const requestId = pendingMcpAuthRequests.get(serverId);
+  if (requestId) send({ type: "mcp.oauth.authorization", requestId, serverId, ...authorization });
 }, (serverId, error) => {
   const requestId = pendingMcpAuthRequests.get(serverId);
   pendingMcpAuthRequests.delete(serverId);
@@ -521,7 +539,7 @@ const mcp = new McpManager(async (serverId, token) => {
   runtimeSecrets.delete(key);
   send({ type: "mcp.oauth.invalidated", serverId: config.id, key });
   await refreshCustomTools();
-  send({ type: "mcp.list", servers: mcpServerRepo.list().map((server) => ({ ...server, connected: mcp.isConnected(server.id), toolCount: mcp.toolCount(server.id) })) });
+  send({ type: "mcp.list", servers: mcpServerList({ mcp, mcpServerRepo, pendingMcpAuthRequests }) });
 }, (config, credential) => {
   // Rotated tokens replace the persisted pair; the old refresh token is already spent.
   const key = config.oauth?.tokenSecretKey ?? `mcp.oauth:${config.id}`;
@@ -534,6 +552,8 @@ const mcp = new McpManager(async (serverId, token) => {
   const key = `mcp.oauth:${serverId}.${kind}`;
   runtimeSecrets.delete(key);
   send({ type: "mcp.oauth.invalidated", serverId, key });
+}, claudeMcpToken, (config, signal) => restoreMcpCredentials(config, { send, runtimeSecrets, mcp }, signal), () => {
+  send({ type: "mcp.list", servers: mcpServerList({ mcp, mcpServerRepo, pendingMcpAuthRequests }) });
 });
 async function releaseBrowserSession() {
   if (adapter.getSessions().some(session => !session.isIdle)) return;
@@ -569,28 +589,26 @@ async function initializeOptionalIntegrations() {
     log.warn("browser initialization failed", { err: String(error) });
   });
 
-  for (const config of [...mcpServerRepo.list(), ...loadMcpConfigs()] as McpServerConfig[]) {
-    // Playwright remains available as a manually enabled fallback. OpenCLI is
-    // the default browser channel, so starting Playwright here would launch a
-    // second browser and compete with the shared built-in browser session.
-    if (config.id === "mcp-playwright") continue;
-    const subjectId = `mcp:${config.id}`;
-    permissionRepo.ensure(subjectId, "mcp.connect", "ask");
-    if (permissionRepo.get(subjectId, "mcp.connect") !== "allow") continue;
+  await Promise.all([...mcpServersFrom(settingsFile.read("mcpServers")), ...loadMcpConfigs()].map(async (entry: McpServerInfo) => {
+    // OpenCLI owns the browser; Playwright is an explicitly enabled fallback.
+    if (entry.id === "mcp-playwright" || entry.disabled) return;
+    const stored = mcpServerRepo.list().some(server => server.id === entry.id);
+    const subjectId = `mcp:${entry.id}`;
+    permissionRepo.ensure(subjectId, "mcp.connect", "allow");
+    if (permissionRepo.get(subjectId, "mcp.connect") !== "allow") return;
     try {
-      await mcp.connect(config);
+      const config = stored && (entry.env || entry.headers) ? await prepareMcpConfiguration(entry, runtimeCommandServices()) : entry;
+      if (!config) return;
+      await connectMcp(config, runtimeCommandServices());
       log.info("mcp connected", { serverId: config.id });
     } catch (err) {
-      log.warn("mcp connection failed", { serverId: config.id, err: String(err) });
+      log.warn("mcp connection failed", { serverId: entry.id, err: String(err) });
     }
-  }
+  }));
   await browserReady;
   await refreshCustomTools();
 }
 
-void initializeOptionalIntegrations().catch((error) => {
-  log.error("optional integration initialization failed", { err: String(error) });
-});
 
 function loadMcpConfigs() {
   const raw = process.env.QONE_MCP_SERVERS;
@@ -780,6 +798,8 @@ export function runtimeCommandServices() {
     pendingSteers,
     permissionRepo,
     preferencesRepo,
+    stateRepo,
+    settingsFile,
     persistPartialAssistant,
     publishGoal,
     handle,
@@ -830,6 +850,11 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
   send({ type: "error", requestId: cmd.requestId, message: `unhandled command ${cmd.type}` });
 }
 
+void initializeOptionalIntegrations().catch((error) => {
+  log.error("optional integration initialization failed", { err: String(error) });
+});
+const stopConfigurationWatch = watchConfiguration(settingsFile, runtimeCommandServices);
+
 // Read NDJSON commands from stdin.
 const decoder = new TextDecoder();
 const reader = Bun.stdin.stream().getReader();
@@ -860,6 +885,7 @@ while (true) {
   }
 }
 
+stopConfigurationWatch();
 await mcp.disconnectAll();
 for (const session of adapter.getSessions()) {
   try { await session.dispose(); } catch (error) { log.warn("Pi session dispose failed", { err: String(error) }); }

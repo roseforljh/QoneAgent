@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { closeDb, openDb, SessionRepo, MessageRepo, RunRepo, SkillRepo, TurnRepo, ToolCallRepo, McpServerRepo } from "@qone/database";
+import { closeDb, openDb, ConfigFile, SessionRepo, MessageRepo, RunRepo, SkillRepo, TurnRepo, ToolCallRepo, McpServerRepo } from "@qone/database";
 import { ApprovalQueue, decide, evaluatePermission, permissionProfile, withPermission } from "../src/permissions.js";
 import { createPiSessionEntries } from "../src/pi-adapter.js";
 import { loadPlugins } from "../src/plugin-runtime.js";
@@ -12,16 +12,17 @@ import { Type } from "typebox";
 
 describe("runtime persistence and permissions", () => {
   test("persists MCP API key references without persisting the API key", () => {
-    const db = openDb(":memory:");
+    const file = path.join(process.cwd(), ".test-data", `settings-${crypto.randomUUID()}.json`);
     try {
-      const repo = new McpServerRepo(db);
+      const repo = new McpServerRepo(new ConfigFile(file));
       repo.upsert({ id: "mcp-firecrawl", name: "Firecrawl", command: "npx", env: {
         FIRECRAWL_API_KEY: "$mcp.env:mcp-firecrawl/FIRECRAWL_API_KEY",
         UNSAFE_KEY: "private-test-key",
       } });
       expect(repo.list()[0]?.env).toEqual({ FIRECRAWL_API_KEY: "$mcp.env:mcp-firecrawl/FIRECRAWL_API_KEY" });
+      expect(readFileSync(file, "utf8")).not.toContain("private-test-key");
     } finally {
-      closeDb(db);
+      rmSync(file, { force: true });
     }
   });
   test("persists sessions, messages and interrupted runs across reopen", () => {

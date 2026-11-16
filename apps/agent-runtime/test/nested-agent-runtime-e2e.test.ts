@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { closeDb, ModelConfigRepo, openDb, SessionRepo, WorkspaceRepo } from "@qone/database";
+import { closeDb, ConfigFile, ModelConfigRepo, openDb, SessionRepo, WorkspaceRepo } from "@qone/database";
 import type { RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 
 // Real runtime, SQLite restart and local SSE provider. A single scheduler permit
@@ -96,7 +96,7 @@ test("nested agents preserve live and idle communication exactly across runtime 
   const db = openDb(database);
   const workspace = new WorkspaceRepo(db).upsert("Nested E2E", directory);
   const session = new SessionRepo(db).create("Nested root", workspace.id);
-  new ModelConfigRepo(db).upsert({ provider: "nested-e2e", model: "model", enabled: true, config: {
+  new ModelConfigRepo(new ConfigFile(path.join(directory, "settings.json"))).upsert({ provider: "nested-e2e", model: "model", enabled: true, config: {
     apiType: "openai-compatible", baseUrl: `http://127.0.0.1:${server.port}/v1`, thinking: "none",
     contextWindow: 128000, maxTokens: 8192, input: ["text"], output: ["text"],
   } });

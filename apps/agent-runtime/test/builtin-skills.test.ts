@@ -2,11 +2,10 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { openConfigDb, SettingsRepo } from "@qone/database";
-import { decodeCommand } from "@qone/protocol";
+import { ConfigFile, PreferencesRepo } from "@qone/database";
 import { configureBuiltinSkills, listBuiltinSkills, setBuiltinSkillEnabled, updateBuiltinSkill } from "../src/builtin-skills/manager.js";
 import { builtinSkillBundles } from "../src/builtin-skills/identity.js";
-import { createLocalSkill, createResourceLoader, installLocalSkill } from "../src/skills.js";
+import { createLocalSkill, createResourceLoader, deleteLocalSkill, installLocalSkill } from "../src/skills.js";
 import { installCloudSkill } from "../src/skill-catalog.js";
 import { ensureGlobalInstructions, readGlobalInstructions, writeGlobalInstructions } from "../src/global-instructions.js";
 import { readSystemPrompt } from "../src/system-prompt.js";
@@ -14,19 +13,15 @@ import { readSystemPrompt } from "../src/system-prompt.js";
 const previousRoot = process.env.QONE_DATA_DIR;
 const expectedSkills = ["ponytail", "ponytail-review", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help"];
 let root: string;
-let db: ReturnType<typeof openConfigDb>;
+let settings: ConfigFile;
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), "qone-builtin-skills-"));
   process.env.QONE_DATA_DIR = root;
-  db = openConfigDb(path.join(root, "config", "settings.db"));
-  configureBuiltinSkills(new SettingsRepo(db));
+  settings = new ConfigFile(path.join(root, "settings.json"));
+  configureBuiltinSkills(new PreferencesRepo(settings));
 });
 afterEach(() => {
   configureBuiltinSkills();
-  // Drizzle prepares transient statements; finalize them before closing SQLite
-  // so Windows can release the database and remove the test directory.
-  Bun.gc(true);
-  db.$client.close(true);
   if (previousRoot === undefined) delete process.env.QONE_DATA_DIR;
   else process.env.QONE_DATA_DIR = previousRoot;
   if (path.dirname(path.resolve(root)) !== path.resolve(tmpdir())) throw new Error("Unsafe test cleanup");
@@ -63,10 +58,9 @@ test("offline installation loads the bundle and license; disabling survives reop
   expect(readFileSync(path.join(path.dirname(builtin!.path), "LICENSE"), "utf8")).toContain("MIT License");
   expect((await createResourceLoader(root)).loader.getSkills().skills.map((skill) => skill.name)).toContain("ponytail");
   await setBuiltinSkillEnabled("ponytail", false);
-  Bun.gc(true);
-  db.$client.close(true);
-  db = openConfigDb(path.join(root, "config", "settings.db"));
-  configureBuiltinSkills(new SettingsRepo(db));
+  // Reopening the file stands in for restarting the app.
+  settings = new ConfigFile(path.join(root, "settings.json"));
+  configureBuiltinSkills(new PreferencesRepo(settings));
   const disabled = await createResourceLoader(root);
   expect(disabled.skills.find((skill) => skill.id === "ponytail")?.enabled).toBe(false);
   expect(disabled.loader.getSkills().skills.map((skill) => skill.name)).toEqual(expectedSkills.slice(1));
@@ -88,7 +82,7 @@ test("reserved identity blocks creation/import/cloud installs and manually copie
   expect(enabled.loader.getSkills().skills[0]!.filePath).toBe(enabled.skills[0]!.path);
   await setBuiltinSkillEnabled("ponytail", false);
   expect((await createResourceLoader(root)).loader.getSkills().skills.map((skill) => skill.name)).toEqual(expectedSkills.slice(1));
-  expect(decodeCommand(JSON.stringify({ type: "skills.delete", requestId: "delete", skillId: "ponytail" }))).toBeNull();
+  await expect(deleteLocalSkill("ponytail")).rejects.toThrow("是内置技能");
   await expect(setBuiltinSkillEnabled("../outside", false)).rejects.toThrow("未知的内置技能");
 });
 
@@ -97,7 +91,7 @@ test("existing main-skill preferences survive adding the rest of the upstream co
   const directory = path.join(root, "skills", "builtin", main.id, main.revision);
   mkdirSync(directory, { recursive: true });
   for (const [file, content] of Object.entries(main.files)) writeFileSync(path.join(directory, file), content);
-  new SettingsRepo(db).set("skills.builtin.ponytail", { enabled: false, revision: main.revision });
+  new PreferencesRepo(settings).set("skills.builtin.ponytail", { enabled: false, revision: main.revision });
   const skills = await listBuiltinSkills();
   expect(skills.map((skill) => skill.id)).toEqual(expectedSkills);
   expect(skills[0]).toMatchObject({ enabled: false, revision: main.revision });
