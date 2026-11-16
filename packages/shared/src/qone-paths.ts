@@ -15,7 +15,10 @@ export function qoneDataDir(): string {
 
 export const qoneConfigDir = () => path.join(qoneDataDir(), "config");
 export const qoneSystemPromptsDir = () => path.join(qoneDataDir(), "system-prompts");
-export const qoneConfigDatabasePath = () => path.join(qoneConfigDir(), "settings.db");
+/** User- and agent-editable configuration (models, permissions, MCP, preferences), like Claude Code's settings.json. */
+export const qoneSettingsPath = () => path.join(qoneDataDir(), "settings.json");
+/** Qone's own caches that must not clutter settings.json. */
+export const qoneStatePath = () => path.join(qoneConfigDir(), "state.json");
 export const qoneRuntimeDir = () => path.join(qoneDataDir(), "runtime");
 export const qoneAuthDir = () => path.join(qoneDataDir(), "auth");
 export const qoneDatabasePath = () => path.join(qoneRuntimeDir(), "qone.db");
@@ -27,8 +30,6 @@ export const qoneSkillCacheDir = () => path.join(qoneDataDir(), "skills", "cache
 export const qonePluginsDir = () => path.join(qoneDataDir(), "plugins", "installed");
 export const qonePluginCacheDir = () => path.join(qoneDataDir(), "plugins", "cache");
 export const qonePluginDataDir = () => path.join(qoneDataDir(), "plugins", "data");
-export const qoneMcpDir = () => path.join(qoneDataDir(), "mcp");
-export const qoneMcpDatabasePath = () => path.join(qoneMcpDir(), "servers.db");
 export const qoneProjectsDir = () => path.join(qoneDataDir(), "projects");
 export const qoneLogsDir = () => path.join(qoneDataDir(), "logs");
 export const qoneCacheDir = () => path.join(qoneDataDir(), "cache");
@@ -44,7 +45,7 @@ export function qoneTemporaryDir(): string {
 export function ensureQoneLayout(): string {
   const directories = [
     qoneConfigDir(), qoneRuntimeDir(), qoneWebviewDir(), qoneAuthDir(), qoneSkillsDir(), qoneSkillCacheDir(),
-    qonePluginsDir(), qonePluginCacheDir(), qonePluginDataDir(), qoneMcpDir(), qoneProjectsDir(), qoneLogsDir(), qoneCacheDir(),
+    qonePluginsDir(), qonePluginCacheDir(), qonePluginDataDir(), qoneProjectsDir(), qoneLogsDir(), qoneCacheDir(),
   ];
   for (const directory of directories) mkdirSync(directory, { recursive: true });
   return qoneDataDir();

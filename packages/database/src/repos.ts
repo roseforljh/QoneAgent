@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { sessions, messages, runs, subagentRuns, subagentNotifications, subagentMessages, turns, toolCalls, workspaces, settings, mcpServers, modelConfigs, events, artifacts, permissionRules, plugins, skills, goals, goalEvents } from "./schema.js";
+import { sessions, messages, runs, subagentRuns, subagentNotifications, subagentMessages, turns, toolCalls, workspaces, settings, events, artifacts, plugins, skills, goals, goalEvents } from "./schema.js";
 import type { Db } from "./index.js";
 import { persistedToolResult, type AgentCommunicationInfo, type CompactionMarkerInfo, type AssistantMessagePart, type GoalInfo, type GoalStatus, type MessageAttachmentInfo, type QueueItemInfo, type RunPermissionMode, type RunThinkingLevel, type SubagentNotificationInfo, type SubagentDependencyState, type SubagentFailureKind } from "@qone/protocol";
 
@@ -728,66 +728,6 @@ export class QueueRepo {
   }
 }
 
-export class McpServerRepo {
-  constructor(private db: Db) {}
-
-  upsert(config: { id: string; name: string; command?: string; url?: string; tokenEnv?: string; args?: string[]; env?: Record<string, string>; authMode?: "oauth" | "github-device"; oauthClientId?: string; oauth?: { authorizationUrl: string; tokenUrl: string; clientId: string; scopes?: string[]; redirectUri?: string; tokenSecretKey?: string } }) {
-    const now = Date.now();
-    // Environment values may contain API keys. Persist only explicit $ENV
-    // references; the live connection may still use the supplied value once.
-    const persisted = config.env
-      ? { ...config, env: Object.fromEntries(Object.entries(config.env).filter(([, value]) => value.startsWith("$"))) }
-      : config;
-    const row = { id: config.id, name: config.name, config: JSON.stringify(persisted), enabled: true, updatedAt: now };
-    this.db.insert(mcpServers).values(row).onConflictDoUpdate({
-      target: mcpServers.id,
-      set: { name: row.name, config: row.config, enabled: true, updatedAt: now },
-    }).run();
-    return row;
-  }
-
-  list() {
-    return this.db.select().from(mcpServers).where(eq(mcpServers.enabled, true)).all().flatMap((row) => {
-      try { return [JSON.parse(row.config) as { id: string; name: string; command?: string; url?: string; tokenEnv?: string; args?: string[]; env?: Record<string, string>; authMode?: "oauth" | "github-device"; oauthClientId?: string; oauth?: { authorizationUrl: string; tokenUrl: string; clientId: string; scopes?: string[]; redirectUri?: string; tokenSecretKey?: string } }]; }
-      catch { return []; }
-    });
-  }
-
-  delete(id: string) {
-    this.db.delete(mcpServers).where(eq(mcpServers.id, id)).run();
-  }
-}
-
-export class ModelConfigRepo {
-  constructor(private db: Db) {}
-
-  list() {
-    return this.db.select().from(modelConfigs).where(eq(modelConfigs.enabled, true)).orderBy(desc(modelConfigs.updatedAt)).all().map((row) => ({
-      id: row.id,
-      provider: row.provider,
-      model: row.model,
-      config: JSON.parse(row.config) as Record<string, unknown>,
-      enabled: row.enabled,
-      updatedAt: row.updatedAt,
-    }));
-  }
-
-  upsert(config: { id?: string; provider: string; model: string; config?: Record<string, unknown> }) {
-    const id = config.id ?? `${config.provider}/${config.model}`;
-    const now = Date.now();
-    const row = { id, provider: config.provider, model: config.model, config: JSON.stringify(config.config ?? {}), enabled: true, updatedAt: now };
-    this.db.insert(modelConfigs).values(row).onConflictDoUpdate({
-      target: modelConfigs.id,
-      set: { provider: row.provider, model: row.model, config: row.config, enabled: true, updatedAt: now },
-    }).run();
-    return { ...row, config: config.config ?? {} };
-  }
-
-  delete(id: string) {
-    this.db.delete(modelConfigs).where(eq(modelConfigs.id, id)).run();
-  }
-}
-
 export interface StoredEvent {
   eventId: string;
   sessionId?: string;
@@ -912,35 +852,6 @@ export class ArtifactRepo {
 
 export type PermissionDecision = "allow" | "ask" | "deny";
 
-export class PermissionRepo {
-  constructor(private db: Db) {}
-
-  list() {
-    return this.db.select().from(permissionRules).orderBy(permissionRules.subjectId, permissionRules.permission).all();
-  }
-
-  get(subjectId: string, permission: string): PermissionDecision | undefined {
-    return this.db.select().from(permissionRules)
-      .where(eq(permissionRules.subjectId, subjectId))
-      .all()
-      .find((row) => row.permission === permission)?.decision as PermissionDecision | undefined;
-  }
-
-  set(subjectId: string, permission: string, decision: PermissionDecision) {
-    const row = { subjectId, permission, decision, updatedAt: Date.now() };
-    this.db.insert(permissionRules).values(row).onConflictDoUpdate({
-      target: [permissionRules.subjectId, permissionRules.permission],
-      set: { decision, updatedAt: row.updatedAt },
-    }).run();
-    return row;
-  }
-
-  ensure(subjectId: string, permission: string, decision: PermissionDecision) {
-    if (this.get(subjectId, permission) === undefined) return this.set(subjectId, permission, decision);
-    return undefined;
-  }
-}
-
 export class PluginRepo {
   constructor(private db: Db) {}
 
@@ -983,5 +894,6 @@ export class SkillRepo {
     return row;
   }
 
+  delete(id: string) { this.db.delete(skills).where(eq(skills.id, id)).run(); }
   list() { return this.db.select().from(skills).where(eq(skills.enabled, true)).orderBy(skills.name).all(); }
 }

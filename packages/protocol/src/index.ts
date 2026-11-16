@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { mcpCredentialsRestoredSchema, type McpCredentialsRestored, type McpCredentialsRequest } from "./mcp-credentials";
+export { mcpCredentialKeys } from "./mcp-credentials";
+import type { ClaudeCodeSyncResult, ClaudeCodeSyncTarget } from "./claude-code-sync";
+export type { ClaudeCodeSyncResult, ClaudeCodeSyncTarget, ClaudeCodeSyncIssue } from "./claude-code-sync";
+export { mcpValueSecretKeys, mcpServerIdentity, mcpPackage } from "./mcp-config";
 import { MEDIA_APP_IDS } from "./app-media";
 import type { MediaAppId } from "./app-media";
 export { MEDIA_APP_IDS, mediaAppFromUrl, mediaAppHostIsAlias, mediaAppContentId, mediaAppProfile, isAppMediaList } from "./app-media";
@@ -120,6 +125,8 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "file.preview"; requestId: string; workspaceId?: string; path: string; full?: boolean }
   | { type: "global-prompt.get"; requestId: string }
   | { type: "global-prompt.set"; requestId: string; content: string }
+  | { type: "claude-code.sync"; requestId: string; target: ClaudeCodeSyncTarget; apply?: boolean; revision?: string; remove?: boolean }
+  | { type: "claude-code.credentials.saved"; requestId: string; saved: boolean }
   | { type: "memory.get"; requestId: string }
   | { type: "memory.enabled.set"; requestId: string; enabled: boolean }
   | { type: "memory.note.save"; requestId: string; id?: string; content: string }
@@ -128,6 +135,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "skills.list"; requestId: string; cwd?: string }
   | { type: "skills.cloud.list"; requestId: string; collection: "popular" | "trending" | "official"; page: number; query?: string }
   | { type: "skills.cloud.install"; requestId: string; source: string; skillId: string }
+  | { type: "skills.delete"; requestId: string; skillId: string }
   | { type: "skills.import"; requestId: string; content: string }
   | { type: "skills.create"; requestId: string; name: string; description: string; instructions: string }
   | { type: "skills.builtin.set-enabled"; requestId: string; skillId: string; enabled: boolean }
@@ -145,9 +153,10 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "subagent.sync"; requestId: string; config: SubagentConfigInfo }
   | { type: "subagent.query"; requestId: string; runId: string }
   | { type: "subagent.control"; requestId: string; runId: string; action: SubagentControlAction; message?: string }
+  | McpCredentialsRestored
   | { type: "mcp.list"; requestId: string }
   | { type: "mcp.connect"; requestId: string; config: McpServerInfo }
-  | { type: "mcp.delete"; requestId: string; serverId: string }
+  | { type: "mcp.delete"; requestId: string; serverId: string } | { type: "mcp.disconnect"; requestId: string; serverId: string }
   | { type: "mcp.oauth.begin"; requestId: string; serverId: string }
   | { type: "mcp.oauth.complete"; requestId: string; serverId: string; code: string; state: string; iss?: string }
   | { type: "permission.list"; requestId: string }
@@ -268,8 +277,11 @@ export type RuntimeEvent =
   | { type: "workspace.files"; requestId?: string; workspaceId: string; path?: string; files: WorkspaceFileInfo[] }
   | { type: "workspace.git"; requestId?: string; workspaceId: string; status: string; entries?: WorkspaceGitEntry[] }
   | { type: "skills.list"; skills: SkillInfo[] }
+  | { type: "claude-code.synced"; requestId: string; result: ClaudeCodeSyncResult }
+  | { type: "claude-code.credentials"; requestId: string; serverId: string; values: Record<string, string>; removeKeys: string[] }
   | { type: "skills.cloud.list"; requestId: string; skills: CloudSkillInfo[]; page: number; total: number; pageSize: number; hasMore: boolean }
   | { type: "skills.cloud.installed"; requestId: string; skill: SkillInfo }
+  | { type: "skills.deleted"; requestId: string; skillId: string }
   | { type: "skills.imported"; requestId: string; skill: SkillInfo }
   | { type: "skills.created"; requestId: string; skill: SkillInfo }
   | { type: "skills.builtin.changed"; requestId: string; skill: SkillInfo; updated?: boolean }
@@ -284,7 +296,8 @@ export type RuntimeEvent =
   | { type: "subagent.list"; requestId?: string; config: SubagentConfigInfo }
   | { type: "subagent.query"; requestId: string; subagent: SubagentRunInfo }
   | { type: "subagent.controlled"; requestId: string; subagent: SubagentRunInfo }
-  | { type: "mcp.list"; servers: McpServerInfo[] }
+  | McpCredentialsRequest
+  | { type: "mcp.list"; servers: McpServerInfo[] } | { type: "mcp.icons"; icons: Record<string, string> }
   | { type: "mcp.connected"; serverId: string; toolCount: number }
   | { type: "mcp.oauth.authorization"; requestId: string; serverId: string; url: string; state: string }
   | { type: "mcp.oauth.token"; requestId: string; serverId: string; key: string; accessToken: string }
@@ -584,15 +597,20 @@ export interface McpServerInfo {
   id: string;
   name: string;
   connected?: boolean;
+  connecting?: boolean;
   toolCount?: number;
   command?: string;
   url?: string;
+  transport?: "http" | "sse";
+  headers?: Record<string, string>;
   tokenEnv?: string;
   args?: string[];
   env?: Record<string, string>;
   oauth?: McpOAuthInfo;
   authMode?: "oauth" | "github-device";
   oauthClientId?: string;
+  /** Configured but switched off: not connected or started with the app. */
+  disabled?: boolean;
 }
 
 export function parseMcpCommand(message: string): { serverId: string; text: string } | undefined {
@@ -822,6 +840,7 @@ const secretKey = z.string().regex(/^[A-Za-z][A-Za-z0-9.-]{0,63}:[A-Za-z0-9._/-]
 const decision = z.enum(["allow", "ask", "deny"]);
 const mcpConfig = z.object({
   id, name: id, command: z.string().min(1).optional(), url: secureUrl.optional(),
+  transport: z.enum(["http", "sse"]).optional(), headers: z.record(z.string(), z.string()).optional(),
   tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   authMode: z.enum(["oauth", "github-device"]).optional(),
@@ -908,8 +927,11 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "file.read": z.object({ type: z.literal("file.read"), ...request, workspaceId: id, path: id }),
   "file.preview": z.object({ type: z.literal("file.preview"), ...request, workspaceId: id.optional(), path: id, full: z.boolean().optional() }),
   "skills.list": z.object({ type: z.literal("skills.list"), ...request, cwd: z.string().optional() }),
+  "claude-code.credentials.saved": z.object({ type: z.literal("claude-code.credentials.saved"), ...request, saved: z.boolean() }),
+  "claude-code.sync": z.object({ type: z.literal("claude-code.sync"), ...request, target: z.enum(["prompt", "mcp", "skills"]), apply: z.boolean().optional(), revision: z.string().optional(), remove: z.boolean().optional() }),
   "skills.cloud.list": z.object({ type: z.literal("skills.cloud.list"), ...request, collection: z.enum(["popular", "trending", "official"]), page: z.number().int().min(1).max(200), query: z.string().max(100).optional() }),
   "skills.cloud.install": z.object({ type: z.literal("skills.cloud.install"), ...request, source: z.string().max(200), skillId: z.string().max(64) }),
+  "skills.delete": z.object({ type: z.literal("skills.delete"), ...request, skillId: z.string().min(1) }),
   "skills.import": z.object({ type: z.literal("skills.import"), ...request, content: z.string().min(1).max(2_097_152) }),
   "skills.create": z.object({ type: z.literal("skills.create"), ...request, name: z.string().max(64), description: z.string().max(500), instructions: z.string().min(1).max(2_000_000) }),
   "skills.builtin.set-enabled": z.object({ type: z.literal("skills.builtin.set-enabled"), ...request, skillId: z.string().min(1).max(64), enabled: z.boolean() }),
@@ -927,9 +949,10 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "subagent.sync": z.object({ type: z.literal("subagent.sync"), ...request, config: subagentConfig }),
   "subagent.query": z.object({ type: z.literal("subagent.query"), ...request, runId: id }),
   "subagent.control": z.object({ type: z.literal("subagent.control"), ...request, runId: id, action: z.enum(["stop", "resume", "retry", "steer", "follow_up"]), message: z.string().max(32_000).optional() }),
+  "mcp.credentials.restored": mcpCredentialsRestoredSchema,
   "mcp.list": z.object({ type: z.literal("mcp.list"), ...request }),
   "mcp.connect": z.object({ type: z.literal("mcp.connect"), ...request, config: mcpConfig }),
-  "mcp.delete": z.object({ type: z.literal("mcp.delete"), ...request, serverId: id }),
+  "mcp.delete": z.object({ type: z.literal("mcp.delete"), ...request, serverId: id }), "mcp.disconnect": z.object({ type: z.literal("mcp.disconnect"), ...request, serverId: id }),
   "mcp.oauth.begin": z.object({ type: z.literal("mcp.oauth.begin"), ...request, serverId: id }),
   "mcp.oauth.complete": z.object({ type: z.literal("mcp.oauth.complete"), ...request, serverId: id, code: id, state: id, iss: secureUrl.optional() }),
   "model.list": z.object({ type: z.literal("model.list"), ...request }),

@@ -1,9 +1,9 @@
-import { CONFIG_SCHEMA, MCP_SCHEMA } from "./domain-schema.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import * as schema from "./schema.js";
 
 export * from "./repos.js";
+export * from "./config-file.js";
 export {
   sessions,
   messages,
@@ -17,11 +17,8 @@ export {
   artifacts,
   plugins,
   pluginPermissions,
-  permissionRules,
-  mcpServers,
   skills,
   settings,
-  modelConfigs,
   events,
   goals,
   goalEvents,
@@ -43,13 +40,6 @@ export function openDb(path: string, driver: SqliteDriver = bunSqliteDriver) {
   return openDatabase(path, driver, migrate);
 }
 
-export function openConfigDb(path: string) {
-  return openDatabase(path, bunSqliteDriver, (sqlite) => sqlite.exec(CONFIG_SCHEMA));
-}
-
-export function openMcpDb(path: string) {
-  return openDatabase(path, bunSqliteDriver, (sqlite) => sqlite.exec(MCP_SCHEMA));
-}
 
 function openDatabase(path: string, driver: SqliteDriver, initialize: (sqlite: Database) => void) {
   const dir = path.replace(/[/\\][^/\\]+$/, "");
@@ -152,7 +142,11 @@ function migrate(sqlite: Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id);
 
-    ${CONFIG_SCHEMA}
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
 
     CREATE TABLE IF NOT EXISTS turns (
       id TEXT PRIMARY KEY,
@@ -180,8 +174,6 @@ function migrate(sqlite: Database) {
       PRIMARY KEY (plugin_id, permission)
     );
     CREATE INDEX IF NOT EXISTS idx_plugin_permissions_plugin ON plugin_permissions(plugin_id);
-
-    ${MCP_SCHEMA}
 
     CREATE TABLE IF NOT EXISTS skills (
       id TEXT PRIMARY KEY,

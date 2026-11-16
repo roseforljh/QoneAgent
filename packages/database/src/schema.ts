@@ -212,46 +212,11 @@ export const pluginPermissions = sqliteTable(
   ]
 );
 
-// Product-level permission overrides. subjectId is stable and namespaced:
-// builtin, plugin:<id>, or mcp:<id>. Keeping this separate from the legacy
-// plugin_permissions table also lets MCP and built-in tools be managed without
-// inventing a fake plugin row.
-export const permissionRules = sqliteTable(
-  "permission_rules",
-  {
-    subjectId: text("subject_id").notNull(),
-    permission: text("permission").notNull(),
-    decision: text("decision").notNull().default("ask"),
-    updatedAt: integer("updated_at").notNull(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.subjectId, t.permission] }),
-    index("idx_permission_rules_subject").on(t.subjectId),
-  ],
-);
-
-export const mcpServers = sqliteTable("mcp_servers", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  config: text("config").notNull(),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  updatedAt: integer("updated_at").notNull(),
-});
-
 export const skills = sqliteTable("skills", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   path: text("path").notNull().unique(),
   description: text("description"),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  updatedAt: integer("updated_at").notNull(),
-});
-
-export const modelConfigs = sqliteTable("model_configs", {
-  id: text("id").primaryKey(),
-  provider: text("provider").notNull(),
-  model: text("model").notNull(),
-  config: text("config").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   updatedAt: integer("updated_at").notNull(),
 });

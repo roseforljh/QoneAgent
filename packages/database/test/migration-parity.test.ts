@@ -38,6 +38,8 @@ describe("drizzle migration chain", () => {
     try {
       const fromChain = describeSchema(chain);
       const fromBootstrap = describeSchema(boot.$client as unknown as { query(sql: string): { all(): unknown[] } });
+      expect(fromBootstrap.has("settings")).toBe(true);
+      expect([...fromBootstrap.keys()].filter(table => ["model_configs", "permission_rules", "mcp_servers"].includes(table))).toEqual([]);
 
       const missingTables = [...fromBootstrap.keys()].filter((table) => !fromChain.has(table)).sort();
       expect(missingTables).toEqual([]);
