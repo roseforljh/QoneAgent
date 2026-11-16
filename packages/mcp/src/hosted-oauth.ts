@@ -1,5 +1,7 @@
 import { auth, type AuthProvider, type FetchLike, type OAuthClientMetadata, type OAuthClientProvider, type OAuthDiscoveryState, type StoredOAuthClientInformation, type StoredOAuthTokens } from "@modelcontextprotocol/client";
 
+import { McpAccountLoginRequiredError } from "./auth-error";
+
 export type HostedOAuthCredential = "client" | "tokens";
 export type HostedOAuthAuthorization = { url: string; state: string };
 
@@ -21,11 +23,25 @@ export function boundedFetch(timeoutMs = OAUTH_FETCH_TIMEOUT_MS): FetchLike {
 export class HostedMcpOAuth implements OAuthClientProvider {
   private client?: StoredOAuthClientInformation;
   private tokenSet?: StoredOAuthTokens;
+  private importedExpiresAt?: number;
   private discovery?: OAuthDiscoveryState;
   private verifier?: string;
   private pendingState?: string;
+  private authorizationStartedAt = 0;
   private authorizationUrl?: URL;
-  private fetchFn: FetchLike = boundedFetch();
+  private refreshFailure?: unknown;
+  private readonly timedFetch = boundedFetch();
+  private fetchFn: FetchLike = async (url, init) => {
+    const refreshing = init?.body instanceof URLSearchParams && init.body.get("grant_type") === "refresh_token";
+    try {
+      const response = await this.timedFetch(url, init);
+      // The SDK otherwise converts a refresh outage into a new interactive login.
+      if (refreshing && !response.ok && (response.status === 429 || response.status >= 500)) {
+        throw new Error(`MCP OAuth token refresh failed: HTTP ${response.status}`);
+      }
+      return response;
+    } catch (error) { if (refreshing) this.refreshFailure = error; throw error; }
+  };
 
   constructor(
     private readonly serverUrl: string,
@@ -33,6 +49,7 @@ export class HostedMcpOAuth implements OAuthClientProvider {
     private readonly onAuthorizationRequired: (authorization: HostedOAuthAuthorization) => void,
     /** Told when the SDK rejects a persisted credential, so the disk copy is deleted too. */
     private readonly onInvalidate?: (kind: "client" | "tokens") => void | Promise<void>,
+    private readonly refreshImportedToken?: () => Promise<string | undefined>,
   ) {}
 
   get redirectUrl() { return "http://127.0.0.1:17891/mcp/oauth/callback"; }
@@ -46,18 +63,23 @@ export class HostedMcpOAuth implements OAuthClientProvider {
     };
   }
 
-  state() { return this.pendingState = crypto.randomUUID(); }
+  state() { this.authorizationStartedAt = Date.now(); return this.pendingState = crypto.randomUUID(); }
   clientInformation() { return this.client; }
   async saveClientInformation(info: StoredOAuthClientInformation) {
     this.client = info;
     await this.persist("client", JSON.stringify(info));
   }
-  tokens() { return this.tokenSet; }
+  tokens() { return this.importedExpiresAt !== undefined && this.importedExpiresAt <= Date.now() ? undefined : this.tokenSet; }
   async saveTokens(tokens: StoredOAuthTokens) {
+    this.importedExpiresAt = undefined;
     this.tokenSet = tokens;
+    this.authorizationUrl = undefined;
     await this.persist("tokens", JSON.stringify(tokens));
   }
-  redirectToAuthorization(url: URL) { this.authorizationUrl = url; }
+  redirectToAuthorization(url: URL) {
+    if (this.refreshFailure) throw this.refreshFailure;
+    this.authorizationUrl = url;
+  }
   saveCodeVerifier(verifier: string) { this.verifier = verifier; }
   codeVerifier() {
     if (!this.verifier) throw new Error("MCP OAuth verifier is unavailable");
@@ -75,13 +97,16 @@ export class HostedMcpOAuth implements OAuthClientProvider {
     } else {
       if (typeof (parsed as { access_token?: unknown }).access_token !== "string") throw new Error("Invalid stored MCP OAuth token");
       this.tokenSet = parsed as StoredOAuthTokens;
+      const expiresAt = (parsed as { qone_import_expires_at?: unknown }).qone_import_expires_at;
+      this.importedExpiresAt = typeof expiresAt === "number" ? expiresAt : undefined;
     }
   }
 
-  hasToken() { return Boolean(this.tokenSet?.access_token); }
+  hasToken() { return Boolean(this.tokens()?.access_token); }
   clear() {
     this.client = undefined;
     this.tokenSet = undefined;
+    this.importedExpiresAt = undefined;
     this.discovery = undefined;
     this.verifier = undefined;
     this.pendingState = undefined;
@@ -94,7 +119,7 @@ export class HostedMcpOAuth implements OAuthClientProvider {
    * retries the same rejected registration.
    */
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery") {
-    if (scope === "all" || scope === "tokens") this.tokenSet = undefined;
+    if (scope === "all" || scope === "tokens") { this.tokenSet = undefined; this.importedExpiresAt = undefined; }
     if (scope === "all" || scope === "client") this.client = undefined;
     if (scope === "all" || scope === "discovery") this.discovery = undefined;
     if (scope === "all" || scope === "verifier") this.verifier = undefined;
@@ -106,6 +131,11 @@ export class HostedMcpOAuth implements OAuthClientProvider {
   }
 
   async begin(): Promise<HostedOAuthAuthorization | undefined> {
+    if (await this.refreshImported()) return undefined;
+    if (this.authorizationUrl && this.pendingState && Date.now() - this.authorizationStartedAt < 10 * 60_000) {
+      return { url: this.authorizationUrl.toString(), state: this.pendingState };
+    }
+    this.refreshFailure = undefined;
     const result = await auth(this, { serverUrl: this.serverUrl, fetchFn: this.fetchFn });
     if (result === "AUTHORIZED") return undefined;
     if (!this.authorizationUrl || !this.pendingState) throw new Error("MCP OAuth did not provide an authorization URL");
@@ -120,15 +150,29 @@ export class HostedMcpOAuth implements OAuthClientProvider {
     this.authorizationUrl = undefined;
   }
 
+  private async refreshImported() {
+    if (!(this.tokenSet as { qone_claude_source?: boolean } | undefined)?.qone_claude_source) return false;
+    const value = await this.refreshImportedToken?.();
+    if (!value) return false;
+    this.restore("tokens", value);
+    if (!this.hasToken()) return false;
+    await this.persist("tokens", value);
+    return true;
+  }
+
   /** Current bearer token plus one refresh attempt when the MCP server rejects it. */
   bearerProvider(): AuthProvider {
     return {
-      token: async () => this.tokenSet?.access_token,
+      token: async () => {
+        if (!this.hasToken()) await this.refreshImported();
+        return this.tokens()?.access_token;
+      },
       onUnauthorized: async () => {
         const authorization = await this.begin();
         if (authorization) {
+          // The runtime only forwards this authorization for a user-requested login.
           this.onAuthorizationRequired(authorization);
-          throw new Error("MCP account login is required");
+          throw new McpAccountLoginRequiredError(new URL(this.serverUrl).hostname);
         }
       },
     };

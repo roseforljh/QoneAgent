@@ -1,4 +1,6 @@
-import { Client, StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
+import { Client, StreamableHTTPClientTransport, SSEClientTransport, UnauthorizedError, DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/client";
+import { isDeepStrictEqual } from "node:util";
+import { homedir } from "node:os";
 import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import { TreeKillingStdioTransport } from "./stdio-transport";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -15,6 +17,8 @@ export interface McpServerConfig {
   name: string;
   command?: string;
   url?: string;
+  transport?: "http" | "sse";
+  headers?: Record<string, string>;
   tokenEnv?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -40,7 +44,7 @@ export function resolveMcpEnvironment(
   return Object.fromEntries(Object.entries(env).map(([key, value]) => {
     if (value.startsWith("$mcp.env:")) {
       const restored = secret(value.slice(1));
-      if (!restored) throw new Error(`MCP API key is unavailable for ${key}`);
+      if (restored === undefined) throw new Error(`MCP API key is unavailable for ${key}`);
       return [key, restored];
     }
     return [key, value.startsWith("$") ? process.env[value.slice(1)] ?? "" : value];
@@ -103,6 +107,9 @@ export class McpManager {
   private deviceAuthGenerations = new Map<string, string>();
   private deviceAuthSessions = new Map<string, { userCode: string; verificationUri: string; expiresAt: number; completion: Promise<void> }>();
   private connecting = new Map<string, Promise<ToolDefinition[]>>();
+  private staleConnections = new Set<string>();
+  private connectionConfigs = new Map<string, McpServerConfig>();
+  private connectControllers = new Map<string, AbortController>();
   // Bumped by disconnect/delete so an in-flight connect cannot register itself
   // after the server was removed.
   private connectionGenerations = new Map<string, number>();
@@ -118,6 +125,9 @@ export class McpManager {
     private readonly onAccessTokenRefreshed?: (config: McpServerConfig, credential: string) => void | Promise<void>,
     /** Fires when the OAuth SDK rejects a stored client/token, so the disk copy can go too. */
     private readonly onOAuthInvalidate?: (serverId: string, kind: "client" | "tokens") => void | Promise<void>,
+    private readonly refreshImportedToken?: (config: McpServerConfig) => Promise<string | undefined>,
+    private readonly beforeConnect?: (config: McpServerConfig, signal: AbortSignal) => Promise<void>,
+    private readonly onConnectionChange?: () => void,
   ) {}
 
   private validateConfig(config: McpServerConfig) {
@@ -150,7 +160,8 @@ export class McpManager {
           this.ensureOAuthCallbackServer("http://127.0.0.1:17891/mcp/oauth/callback");
           this.onOAuthAuthorization?.(config.id, authorization);
         },
-        (scope) => this.onOAuthInvalidate?.(config.id, scope));
+        (scope) => this.onOAuthInvalidate?.(config.id, scope),
+        () => this.refreshImportedToken?.(config) ?? Promise.resolve(undefined));
       this.hostedOAuth.set(config.id, provider);
     }
     return provider;
@@ -194,7 +205,8 @@ export class McpManager {
       if (token && this.accessTokens.get(config.id) === token) {
         this.accessTokens.delete(config.id);
         this.refreshTokens.delete(config.id);
-        await this.disconnect(config.id).catch(() => {});
+        // A failed handshake is already unwinding; aborting it would hide login-required as cancellation.
+        if (this.conns.has(config.id)) await this.disconnect(config.id).catch(() => {});
         await this.onAccessTokenInvalidated?.(config);
       }
       throw new McpAccountLoginRequiredError(config.name);
@@ -395,38 +407,67 @@ export class McpManager {
 
   async connect(config: McpServerConfig): Promise<ToolDefinition[]> {
     this.validateConfig(config);
+    // Compare transport/auth configuration, never transient UI flags.
+    const { id, name, command, args, env, headers, url, transport, tokenEnv, cwd, oauth, authMode, oauthClientId } = config;
+    config = { id, name, command, args, env, headers, url, transport, tokenEnv, cwd, oauth, authMode, oauthClientId };
+    const previous = this.connectionConfigs.get(config.id);
+    const closing = previous && (this.staleConnections.has(config.id) || !isDeepStrictEqual(previous, config))
+      ? this.disconnect(config.id) : Promise.resolve();
     const existing = this.conns.get(config.id);
     if (existing) return existing.tools;
     const pending = this.connecting.get(config.id);
     if (pending) return pending;
     const generation = this.connectionGenerations.get(config.id) ?? 0;
-    const operation = this.connectOnce(config, generation);
+    const controller = new AbortController();
+    this.connectControllers.set(config.id, controller);
+    this.connectionConfigs.set(config.id, structuredClone(config));
+    // Include teardown in the new flight so a concurrent edit/disable owns cancellation too.
+    const operation = closing.then(() => this.connectOnce(config, generation, controller));
     this.connecting.set(config.id, operation);
+    this.onConnectionChange?.();
     try { return await operation; }
-    finally { if (this.connecting.get(config.id) === operation) this.connecting.delete(config.id); }
+    finally {
+      if (this.connecting.get(config.id) === operation) this.connecting.delete(config.id);
+      if (this.connectControllers.get(config.id) === controller) this.connectControllers.delete(config.id);
+      this.onConnectionChange?.();
+    }
   }
 
-  private async connectOnce(config: McpServerConfig, generation: number): Promise<ToolDefinition[]> {
+  private async connectOnce(config: McpServerConfig, generation: number, controller: AbortController): Promise<ToolDefinition[]> {
+    controller.signal.throwIfAborted();
+    await this.beforeConnect?.(config, controller.signal);
+    controller.signal.throwIfAborted();
     const resolvedEnv = resolveMcpEnvironment(config.env, this.resolveSecret);
+    const headers = resolveMcpEnvironment(config.headers, this.resolveSecret);
     const token = this.accessTokens.get(config.id) ?? (config.tokenEnv ? process.env[config.tokenEnv] : undefined);
-    if (config.authMode === "oauth" && !this.hosted(config).hasToken()) throw new Error("MCP account login is required");
-    if (config.authMode === "github-device" && !token) throw new Error("GitHub account login is required");
+    const hostedToken = config.authMode === "oauth" ? await this.hosted(config).bearerProvider().token() : undefined;
+    controller.signal.throwIfAborted();
+    if (config.authMode === "oauth" && !hostedToken) throw new McpAccountLoginRequiredError(config.name);
+    if ((config.authMode === "github-device" || (config.oauth && config.authMode !== "oauth")) && !token) throw new McpAccountLoginRequiredError(config.name);
     const authProvider = config.authMode === "oauth"
       ? this.hosted(config).bearerProvider()
       : token ? {
         token: async () => this.accessTokens.get(config.id) ?? (config.tokenEnv ? process.env[config.tokenEnv] : undefined),
         ...(config.authMode === "github-device" ? { onUnauthorized: () => this.refreshGitHubToken(config) } : {}),
       } : undefined;
+    controller.signal.throwIfAborted();
     const launch = config.command ? resolveStdioLaunch(config.command, config.args ?? []) : undefined;
+    const httpOptions = { ...(authProvider ? { authProvider } : {}), requestInit: { ...(headers ? { headers } : {}), signal: controller.signal } };
     const transport = config.url
-      ? new StreamableHTTPClientTransport(new URL(config.url), authProvider ? { authProvider } : undefined)
+      ? config.transport === "sse" ? new SSEClientTransport(new URL(config.url), httpOptions) : new StreamableHTTPClientTransport(new URL(config.url), httpOptions)
       : new TreeKillingStdioTransport({ command: launch!.command, args: launch!.args,
-        env: resolvedEnv ? { ...getDefaultEnvironment(), ...resolvedEnv } : undefined, cwd: config.cwd });
+        env: resolvedEnv ? { ...getDefaultEnvironment(), ...resolvedEnv } : undefined,
+        // Do not let npm prepend the app workspace's node_modules/.bin (and its bundled Node).
+        cwd: config.cwd ?? homedir() });
     const client = new Client({ name: "qone-agent", version: "0.0.1" }, { capabilities: {} });
+    const timer = setTimeout(() => controller.abort(new Error(`MCP connection timed out: ${config.name}`)), DEFAULT_REQUEST_TIMEOUT_MSEC);
+    const close = () => { void client.close().catch(() => {}); };
+    controller.signal.addEventListener("abort", close, { once: true });
     try {
+      controller.signal.throwIfAborted();
       const { tools } = await this.authenticated(config, async () => {
-        await client.connect(transport);
-        return client.listTools();
+        await client.connect(transport, { signal: controller.signal });
+        return client.listTools(undefined, { signal: controller.signal });
       });
       // A disconnect/delete during the handshake owns the teardown; never let
       // this late connection re-register itself as live.
@@ -439,7 +480,10 @@ export class McpManager {
       return defs;
     } catch (error) {
       await client.close().catch(() => {});
-      throw error;
+      throw controller.signal.aborted ? controller.signal.reason : error;
+    } finally {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", close);
     }
   }
 
@@ -492,6 +536,11 @@ export class McpManager {
     return [...this.conns.values()].flatMap((c) => c.tools);
   }
 
+  /** Secret edits take effect on the next explicit connect, not once per restored field. */
+  invalidateConnection(id: string) { if (this.connectionConfigs.has(id)) this.staleConnections.add(id); }
+
+  isConnecting(id: string): boolean { return this.connecting.has(id); }
+
   isConnected(id: string): boolean {
     return this.conns.has(id);
   }
@@ -517,20 +566,18 @@ export class McpManager {
     // Invalidate any connect that is still negotiating before tearing down, so
     // a late handshake cannot revive a deleted server.
     this.connectionGenerations.set(id, (this.connectionGenerations.get(id) ?? 0) + 1);
+    this.connectControllers.get(id)?.abort(new Error(`MCP server ${id} was disconnected during connect`));
     this.connecting.delete(id);
+    this.connectionConfigs.delete(id);
+    this.staleConnections.delete(id);
     const c = this.conns.get(id);
-    if (!c) return;
-    await c.client.close();
     this.conns.delete(id);
+    this.onConnectionChange?.();
+    if (c) await c.client.close();
   }
 
   async disconnectAll() {
-    // In-flight handshakes are not in `conns` yet; invalidate them too.
-    for (const id of this.connecting.keys()) this.connectionGenerations.set(id, (this.connectionGenerations.get(id) ?? 0) + 1);
-    this.connecting.clear();
-    for (const id of [...this.conns.keys()]) {
-      await this.disconnect(id).catch(() => {});
-    }
+    await Promise.all([...new Set([...this.connecting.keys(), ...this.conns.keys()])].map(id => this.disconnect(id).catch(() => {})));
     for (const server of this.oauthCallbackServers.values()) server.stop();
     this.oauthCallbackServers.clear();
     this.pendingOAuth.clear();

@@ -13,11 +13,16 @@ import { StdioClientTransport, type StdioServerParameters } from "@modelcontextp
  * POSIX server is observed leaking children.
  */
 export class TreeKillingStdioTransport extends StdioClientTransport {
+  private closing?: Promise<void>;
   constructor(server: StdioServerParameters) {
     super(server);
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    return this.closing ??= this.closeTree();
+  }
+
+  private async closeTree(): Promise<void> {
     const pid = this.pid;
     if (pid && process.platform === "win32") {
       await killWindowsTree(pid);
@@ -36,7 +41,9 @@ function killWindowsTree(pid: number): Promise<void> {
       return resolve();
     }
     // A failed taskkill must never block the transport teardown.
-    killer.once("error", () => resolve());
-    killer.once("close", () => resolve());
+    const timer = setTimeout(() => { killer.kill(); resolve(); }, 5_000);
+    const finish = () => { clearTimeout(timer); resolve(); };
+    killer.once("error", finish);
+    killer.once("close", finish);
   });
 }

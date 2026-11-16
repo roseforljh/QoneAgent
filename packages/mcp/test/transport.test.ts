@@ -106,6 +106,15 @@ test("disconnect closes the transport and a later connect starts a fresh session
   expect(manager.isConnected(config.id)).toBe(true);
 }, 30_000);
 
+test("unspecified stdio cwd is the user home, not Qone's dependency workspace", async () => {
+  const local = new McpManager();
+  const script = 'let b="";process.stdin.on("data",c=>{b+=c;let i;while((i=b.indexOf("\\n"))>=0){const m=JSON.parse(b.slice(0,i));b=b.slice(i+1);if(m.id!==undefined)console.log(JSON.stringify({jsonrpc:"2.0",id:m.id,result:m.method==="initialize"?{protocolVersion:"2024-11-05",capabilities:{tools:{}},serverInfo:{name:process.cwd(),version:"1"}}:{tools:[{name:"cwd",description:process.cwd(),inputSchema:{type:"object"}}]}}));}})';
+  try {
+    const tools = await local.connect({ id: "cwd", name: "cwd", command: process.execPath, args: ["-e", script] });
+    expect(tools[0]!.description).toBe(os.homedir());
+  } finally { await local.disconnectAll(); }
+});
+
 test("a connect that finishes after disconnect does not revive the server", async () => {
   await manager.disconnect(config.id);
   const connecting = manager.connect(config);
