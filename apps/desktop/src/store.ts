@@ -1,4 +1,5 @@
 import { localizeError } from "./lib/error-localization";
+import { alignToolCallIds } from "./lib/tool-call-alignment";
 import { initRuntimeBridge } from "./store-bridge";
 import { repeatedUserMessageId } from "@qone/protocol";
 import { sessionStore, switchSessionState, type SessionExecutionState } from "./lib/session-execution-state";
@@ -21,6 +22,7 @@ export function hasDesktopBridge() {
 }
 
 export interface ChatMessage {
+  communication?: import("@qone/protocol").AgentCommunicationInfo;
   id: string;
   role: string;
   content: string;
@@ -66,26 +68,6 @@ export interface ExecutionPhaseState {
   phase: ExecutionPhase;
   startedAt: number;
   toolName?: string;
-}
-
-function alignToolCallIds(calls: readonly ToolCall[], messages: readonly ChatMessage[]): ToolCall[] {
-  const partsByRun = new Map<string, Extract<AssistantMessagePart, { type: "tool-call" }>[] >();
-  for (const message of messages) {
-    if (!message.runId || !message.parts) continue;
-    const parts = message.parts.filter((part): part is Extract<AssistantMessagePart, { type: "tool-call" }> => part.type === "tool-call");
-    if (parts.length > 0) partsByRun.set(message.runId, [...(partsByRun.get(message.runId) ?? []), ...parts]);
-  }
-  const used = new Map<string, Set<string>>();
-  return calls.map((call) => {
-    const runParts = partsByRun.get(call.runId) ?? [];
-    const runUsed = used.get(call.runId) ?? new Set<string>();
-    const exact = runParts.find((part) => part.toolCallId === call.toolCallId);
-    const match = exact ?? runParts.find((part) => part.toolName === call.toolName && !runUsed.has(part.toolCallId));
-    if (!match) return call;
-    runUsed.add(match.toolCallId);
-    used.set(call.runId, runUsed);
-    return match.toolCallId === call.toolCallId ? call : { ...call, toolCallId: match.toolCallId };
-  });
 }
 
 export interface AgentState {

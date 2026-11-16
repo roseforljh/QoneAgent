@@ -1,4 +1,5 @@
 import { handleAgentEvent } from "./store/agent-events";
+import { lastUserTurn } from "./lib/agent-communication";
 import { translateCurrent as t } from "./localization";
 import { localizeError } from "./lib/error-localization";
 import { invoke, listen, openUrl } from "./lib/desktop-bridge";
@@ -7,6 +8,9 @@ import { DEFAULT_RUN_PERMISSION_MODE, saveNewSessionRunOptions, saveRunOptions, 
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
 import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
+import { dispatchMemoryError, dispatchMemoryState } from "./lib/memory-state";
+import { dispatchServerError, dispatchServerEvent } from "./lib/server-state";
+import { dispatchServerTerminal, dispatchServerTerminalError } from "./lib/server-terminal";
 import {
   clearTrackedWorkspaceRequests,
   dispatchFileRead,
@@ -122,7 +126,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       disconnectFilePreviews();
       for (const request of metadataRequests.values()) request.reject(new Error(t("error.runtimeExited")));
       useStore.setState((st) => {
-        const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
+        const userMessage = lastUserTurn(st.messages);
         return {
           connected: false,
           // Capabilities belong to one runtime process. Keeping them across a
@@ -233,7 +237,21 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         s.send({ type: "permission.list", requestId: rid() });
         s.send({ type: "global-prompt.get", requestId: rid() });
+        s.send({ type: "servers.list", requestId: rid() });
         s.send({ type: "events.replay", requestId: rid(), sessionId: eventStore.getState().currentSessionId, afterSequence: lastSequence });
+        break;
+      case "memory.state":
+        dispatchMemoryState(msg);
+        break;
+      case "servers.state":
+      case "servers.setup":
+      case "servers.discovered":
+        dispatchServerEvent(msg);
+        break;
+      case "server.terminal.data":
+      case "server.terminal.exit":
+      case "server.terminal.opened":
+        dispatchServerTerminal(msg);
         break;
       case "global-prompt":
         eventStore.setState({ globalPrompt: msg.content, globalPromptPath: msg.path, globalPromptDirectory: msg.directory, globalPromptLoaded: true });
@@ -307,6 +325,20 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         const runOptionsBySession = selected && selectedOptions && needsDefaults
           ? { ...state.runOptionsBySession, [selected.id]: selectedOptions }
           : state.runOptionsBySession;
+        // The authoritative list is the only proof a conversation is gone.
+        // Prune after computing the switch, so a session deleted while selected
+        // is not snapshotted back into the cache by switchSessionState.
+        const liveIds = new Set([...msg.sessions.map((session) => session.id),
+          ...(msg.sideChats ?? Object.values(state.sideChats)).map((session) => session.id)]);
+        const switchState = selectionChanged ? switchSessionState(state, selected?.id) : undefined;
+        const cachedIds = Object.keys(switchState?.backgroundSessions ?? state.backgroundSessions);
+        const staleIds = cachedIds.filter((id) => !liveIds.has(id));
+        const backgroundSessions = staleIds.length === 0 ? undefined
+          : Object.fromEntries(Object.entries((switchState?.backgroundSessions ?? state.backgroundSessions))
+              .filter(([id]) => liveIds.has(id)));
+        const staleOptions = Object.keys(runOptionsBySession).filter((id) => !liveIds.has(id));
+        const prunedRunOptions = staleOptions.length === 0 ? runOptionsBySession
+          : Object.fromEntries(Object.entries(runOptionsBySession).filter(([id]) => liveIds.has(id)));
         eventStore.setState({
           sessions: msg.sessions,
           ...(msg.sideChats ? { sideChats: Object.fromEntries(msg.sideChats.map((session) => [session.id, session])) } : {}),
@@ -315,7 +347,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           currentWorkspaceId: selected?.workspaceId ?? state.currentWorkspaceId,
           ...(selected?.workspaceId && selected.workspaceId !== state.currentWorkspaceId ? { workspaceLoadingId: selected.workspaceId } : {}),
           selectedModelId: selectedOptions?.modelId ?? (state.modelConfigs.some((config) => config.id === state.selectedModelId) ? state.selectedModelId : undefined),
-          runOptionsBySession,
+          runOptionsBySession: prunedRunOptions,
           ...(selectionChanged ? {
             messages: [],
             compactions: [],
@@ -332,10 +364,11 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             subagents: [],
             subagentNotifications: [],
             artifacts: [],
-            ...switchSessionState(state, selected?.id),
+            ...switchState,
           } : {}),
+          ...(backgroundSessions ? { backgroundSessions } : {}),
         });
-        if (needsDefaults) saveRunOptions(runOptionsBySession);
+        if (needsDefaults || staleOptions.length) saveRunOptions(prunedRunOptions);
         if (selected) {
           requestSessionMessages(selected.id);
           s.send({ type: "goal.get", requestId: rid(), sessionId: selected.id });
@@ -412,6 +445,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             runId: m.runId,
             createdAt: m.createdAt,
             goalId: m.goalId,
+            communication: m.communication,
           }));
           const queue = getQoneMessageQueue(msg.sessionId);
           const deliveredSteer = messages.some((message) => message.role === "user"
@@ -427,7 +461,11 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           eventStore.setState((st) => {
             const pendingIds = new Set([...pendingAgentRuns.values()].filter((pending) => pending.sessionId === msg.sessionId).map((pending) => pending.userMessageId));
             if (st.chatRunError) pendingIds.add(st.chatRunError.userMessageId);
-            const merged = [...messages, ...st.messages.filter((message) => pendingIds.has(message.id) && !messages.some((saved) => saved.id === message.id))];
+            // A long history must not compare every live row against every
+            // saved row; one id set makes the merge linear.
+            const savedIds = new Set(messages.map((message) => message.id));
+            const merged = pendingIds.size === 0 ? messages
+              : [...messages, ...st.messages.filter((message) => pendingIds.has(message.id) && !savedIds.has(message.id))];
             return { messagesLoadingSessionId: undefined, messages: merged, compactions: msg.compactions ?? [], toolCalls: alignToolCallIds(st.toolCalls, merged),
               ...(live ? {
                 streaming: live.content,
@@ -472,7 +510,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
               } satisfies ToolCall));
             const live = new Map(st.toolCalls.filter((call) => call.runId === st.activeRunId).map((call) => [call.toolCallId, call]));
             const merged = calls.map((call) => live.get(call.toolCallId) ?? call);
-            for (const call of live.values()) if (!merged.some((saved) => saved.toolCallId === call.toolCallId)) merged.push(call);
+            const mergedIds = new Set(merged.map((call) => call.toolCallId));
+            for (const call of live.values()) if (!mergedIds.has(call.toolCallId)) merged.push(call);
             return { toolCalls: alignToolCallIds(merged, st.messages) };
           });
         }
@@ -770,6 +809,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           break;
         }
         if (dispatchFilePreviewError(msg.requestId, msg.message)) break;
+        if (dispatchMemoryError(msg.requestId, msg.message)) break;
+        if (dispatchServerError(msg.requestId, msg.message) || dispatchServerTerminalError(msg.requestId, msg.message)) break;
         if (msg.requestId && stopRequests.has(msg.requestId)) {
           const request = stopRequests.get(msg.requestId)!;
           stopRequests.delete(msg.requestId);

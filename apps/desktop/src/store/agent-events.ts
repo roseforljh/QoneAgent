@@ -3,9 +3,10 @@
 
 
 
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type RunInfo } from "@qone/protocol";
+import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type AgentCommunicationInfo, type ArtifactInfo, type CompactionMarkerInfo, type RunInfo } from "@qone/protocol";
 
 import { getQoneMessageQueue } from "../lib/qone-message-queue";
+import { lastUserTurn } from "../lib/agent-communication";
 import { sessionStore } from "../lib/session-execution-state";
 
 
@@ -56,20 +57,35 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
           }
         }
         if (ev.runId && ev.type === "agent.started") {
-          eventStore.setState((st) => ({
-            messages: ev.sessionId === st.currentSessionId
-              ? st.messages.map((message) => [...pendingAgentRuns.values()].some((pending) => pending.sessionId === ev.sessionId && pending.userMessageId === message.id)
-                ? { ...message, persisted: true } : message)
-              : st.messages,
-            activeRunId: ev.runId,
-            executionPhase: { runId: ev.runId!, phase: "preparing", startedAt: ev.timestamp },
-            running: true,
-            runningSessionIds: ev.sessionId && !st.runningSessionIds.includes(ev.sessionId) ? [...st.runningSessionIds, ev.sessionId] : st.runningSessionIds,
-            completedSessionIds: ev.sessionId ? st.completedSessionIds.filter((id) => id !== ev.sessionId) : st.completedSessionIds,
-            runs: st.runs.some((run) => run.id === ev.runId)
-              ? st.runs
-              : [{ id: ev.runId!, sessionId: ev.sessionId ?? st.currentSessionId ?? "", status: "running", startedAt: ev.timestamp }, ...st.runs],
-          }));
+          eventStore.setState((st) => {
+            const persistedIds = new Set<string>();
+            for (const pending of pendingAgentRuns.values()) {
+              if (pending.sessionId === ev.sessionId) persistedIds.add(pending.userMessageId);
+            }
+            // Only rebuild the history when one of its rows actually changes;
+            // an unchanged array keeps every downstream selector stable.
+            let messages = st.messages;
+            if (ev.sessionId === st.currentSessionId && persistedIds.size > 0) {
+              let changed = false;
+              const next = st.messages.map((message) => {
+                if (!persistedIds.has(message.id) || message.persisted !== false) return message;
+                changed = true;
+                return { ...message, persisted: true };
+              });
+              if (changed) messages = next;
+            }
+            return {
+              messages,
+              activeRunId: ev.runId,
+              executionPhase: { runId: ev.runId!, phase: "preparing", startedAt: ev.timestamp },
+              running: true,
+              runningSessionIds: ev.sessionId && !st.runningSessionIds.includes(ev.sessionId) ? [...st.runningSessionIds, ev.sessionId] : st.runningSessionIds,
+              completedSessionIds: ev.sessionId ? st.completedSessionIds.filter((id) => id !== ev.sessionId) : st.completedSessionIds,
+              runs: st.runs.some((run) => run.id === ev.runId)
+                ? st.runs
+                : [{ id: ev.runId!, sessionId: ev.sessionId ?? st.currentSessionId ?? "", status: "running", startedAt: ev.timestamp }, ...st.runs],
+            };
+          });
           if (ev.sessionId && stopRequestedSessionIds.has(ev.sessionId)) stopRun(ev.sessionId, ev.runId);
         }
         const p = ev.payload as Record<string, unknown> | undefined;
@@ -212,7 +228,10 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
         else if (ev.type === "tool.started") {
           const toolCallId = typeof p?.toolCallId === "string" && p.toolCallId ? p.toolCallId : rid();
           const toolPayload: Record<string, unknown> & { toolCallId: string } = { ...(p ?? {}), toolCallId };
-          const activeRun = ev.runId === eventStore.getState().activeRunId;
+          // A script's nested call (codemode) is listed inside its parent's card,
+          // not as a transcript part of its own and not as the run's current phase.
+          const nested = typeof p?.parentToolCallId === "string" && p.parentToolCallId.length > 0;
+          const activeRun = ev.runId === eventStore.getState().activeRunId && !nested;
           if (activeRun) flushNow(ev.sessionId);
           const tc: ToolCall = {
             toolCallId,
@@ -233,7 +252,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
               ?? (lastPart?.type === "tool-call" ? lastPart.messageSequence : ev.sequence);
             const existing = st.toolCalls.find((t) => t.toolCallId === toolCallId);
             return {
-              executionPhase: ev.runId === st.activeRunId
+              executionPhase: ev.runId === st.activeRunId && !nested
                 ? { runId: ev.runId!, phase: executionPhaseForTool(tc.toolName), startedAt: ev.timestamp, toolName: tc.toolName }
                 : st.executionPhase,
               toolCalls: existing
@@ -242,7 +261,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
                     : t)
                 : [...st.toolCalls, tc],
               preparedToolCallIds: st.preparedToolCallIds.filter((id) => id !== toolCallId),
-              ...(ev.runId === st.activeRunId ? {
+              ...(ev.runId === st.activeRunId && !nested ? {
                 streaming: "",
                 streamingParts: ensureStreamingToolPart(
                   st.streaming
@@ -322,7 +341,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
             typeof (completedMessage as { id?: unknown }).id === "string" &&
             typeof (completedMessage as { content?: unknown }).content === "string"
           ) {
-            const message = completedMessage as { id: string; role?: string; content: string; parts?: AssistantMessagePart[]; runId?: string; createdAt?: number };
+            const message = completedMessage as { id: string; role?: string; content: string; parts?: AssistantMessagePart[]; runId?: string; createdAt?: number; communication?: AgentCommunicationInfo };
             eventStore.setState((st) => ({
               messages: st.messages.some((item) => item.id === message.id)
                 ? st.messages
@@ -333,12 +352,13 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
                     parts: message.parts,
                     runId: message.runId,
                     createdAt: message.createdAt,
+                    communication: message.communication,
                   }],
             }));
           }
           if (ev.type === "agent.failed" && isActiveRun) {
             eventStore.setState((st) => {
-              const userMessage = st.messages.slice().reverse().find((message) => message.role === "user");
+              const userMessage = lastUserTurn(st.messages);
               return userMessage && st.currentSessionId ? {
                 chatRunError: {
                   sessionId: st.currentSessionId,
