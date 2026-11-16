@@ -1,10 +1,12 @@
+import { useMcpIcons } from "./lib/mcp-icons";
+import { dispatchClaudeSync, dispatchClaudeSyncError, disconnectClaudeSync } from "./lib/claude-code-sync";
 import { handleAgentEvent } from "./store/agent-events";
 import { lastUserTurn } from "./lib/agent-communication";
 import { translateCurrent as t } from "./localization";
 import { localizeError } from "./lib/error-localization";
 import { invoke, listen, openUrl } from "./lib/desktop-bridge";
 import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
-import { DEFAULT_RUN_PERMISSION_MODE, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults } from "./lib/run-options";
+import { DEFAULT_RUN_PERMISSION_MODE, pruneRunOptionServers, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults } from "./lib/run-options";
 import { getQoneMessageQueue, prunePausedQueues } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
 import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
@@ -24,10 +26,7 @@ import { handleSideConversationEvent, retrySideConversationTransfers } from "./l
 import { applySubagentPatch, applySubagentStreaming, mergeSubagentSnapshots, updateSubagent } from "./lib/subagent-state";
 import type { AgentState } from "./store";
 import { runtimeEvents } from "./lib/runtime-event-payload";
-import { resolveDouyinPage } from "./lib/douyin-page-bridge";
-import { resolveDouyinAuthorPage } from "./lib/douyin-author-page";
-import { DouyinPageError } from "./lib/douyin-video-page";
-import { BACKGROUND_BROWSER_BOUNDS } from "./lib/background-browser";
+import { douyinRequests, appOpenCliRequests, serveDouyinBridgeRequest, serveAppOpenCliRequest } from "./store/app-bridge";
 import { restoreProviderProfilesFromModelConfigs } from "./lib/model-picker-data";
 
 function subagentChange(state: AgentState, subagents: AgentState["subagents"]): Partial<AgentState> {
@@ -38,54 +37,6 @@ const rid = () => crypto.randomUUID();
 const SUBAGENTS_STORAGE_KEY = "qone-subagents";
 const CAPABILITY_ROUTING_STORAGE_KEY = "qone-capability-routing";
 const SUBAGENT_RUNTIME_STORAGE_KEY = "qone-subagent-runtime";
-const douyinRequests = new Map<string, AbortController>();
-const appOpenCliRequests = new Map<string, string>();
-
-async function serveDouyinBridgeRequest(
-  request: Extract<RuntimeEvent, { type: "douyin.bridge.request" }>,
-  send: (command: Extract<import("@qone/protocol").RuntimeCommand, { type: "douyin.bridge.response" }>) => Promise<boolean>,
-): Promise<void> {
-  if (douyinRequests.has(request.requestId)) return;
-  const controller = new AbortController();
-  douyinRequests.set(request.requestId, controller);
-  try {
-    const result = await (request.operation === "author" ? resolveDouyinAuthorPage : resolveDouyinPage)(invoke, request, controller.signal);
-    if (!controller.signal.aborted) await send({ type: "douyin.bridge.response", requestId: request.requestId, ok: true, result });
-  } catch (error) {
-    if (!controller.signal.aborted) await send({ type: "douyin.bridge.response", requestId: request.requestId, ok: false,
-      failure: error instanceof DouyinPageError ? error.failure : "page_unavailable",
-      message: error instanceof Error ? error.message : String(error) });
-  } finally {
-    douyinRequests.delete(request.requestId);
-  }
-}
-
-async function serveAppOpenCliRequest(
-  request: Extract<RuntimeEvent, { type: "apps.opencli.request" }>,
-  send: (command: Extract<import("@qone/protocol").RuntimeCommand, { type: "apps.opencli.response" }>) => Promise<boolean>,
-): Promise<void> {
-  if (appOpenCliRequests.has(request.requestId)) return;
-  const browserId = `opencli-${request.site}-${request.requestId}`;
-  appOpenCliRequests.set(request.requestId, browserId);
-  try {
-    await invoke("browser_open", { browserId, url: request.url, ...BACKGROUND_BROWSER_BOUNDS });
-    // A release can arrive while browser_open is still preparing WebView2.
-    // Do not publish a target after that release; close the late-created child
-    // immediately instead of leaving an orphaned hidden browser behind.
-    if (appOpenCliRequests.get(request.requestId) !== browserId) {
-      await invoke("browser_close", { browserId }).catch(() => undefined);
-      return;
-    }
-    const endpoint = await invoke<string>("opencli_cdp_endpoint", { browserId });
-    await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint });
-  } catch (error) {
-    const ownsRequest = appOpenCliRequests.get(request.requestId) === browserId;
-    if (ownsRequest) appOpenCliRequests.delete(request.requestId);
-    await invoke("browser_close", { browserId }).catch(() => undefined);
-    if (ownsRequest) await send({ type: "apps.opencli.response", requestId: request.requestId, ok: false, message: error instanceof Error ? error.message : String(error) });
-  }
-}
-
 function mergeSessionActivity(previous: SessionInfo, next: SessionInfo): SessionInfo {
   const lastUserMessageAt = Math.max(previous.lastUserMessageAt ?? 0, next.lastUserMessageAt ?? 0);
   return {
@@ -98,7 +49,7 @@ let wired = false;
 let lastSequence = -1;
 const lastRunSequences = new Map<string, number>();
 export function initRuntimeBridge(dependencies: ReturnType<typeof import("./store").bridgeDependencies>) {
-  const { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
+  const { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
   if (wired) return;
   if (!hasDesktopBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
@@ -122,8 +73,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       browserUrlRequests.clear();
       latestSessionMessageRequest.clear();
       mcpConnectRequests.clear();
-      restoredMcpSecrets.clear();
       clearTrackedWorkspaceRequests();
+      disconnectClaudeSync();
       disconnectFilePreviews();
       for (const request of metadataRequests.values()) request.reject(new Error(t("error.runtimeExited")));
       useStore.setState((st) => {
@@ -142,6 +93,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           browserStatus: st.browserStatus ? { ...st.browserStatus, targetConnected: false, phase: "error", lastError: t("browser.runtimeExited") } : undefined,
           mcpConnectingIds: [],
           githubDeviceAuthorization: undefined,
+          oauthAuthorization: undefined,
           running: false,
           titleGeneratingSessionIds: [],
           activeRunId: undefined,
@@ -208,6 +160,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     const s = eventStore.getState();
     switch (msg.type) {
       case "pong":
+        if (msg.compaction) useStore.setState(msg.compaction);
         if (stopRequests.has(msg.requestId)) break;
         if (steerRequests.has(msg.requestId)) {
           steerRequests.get(msg.requestId)?.resolve(true);
@@ -245,7 +198,21 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       case "memory.state":
         dispatchMemoryState(msg);
         break;
-      case "servers.state":
+      case "servers.state": {
+        const liveIds = new Set(msg.servers.map(server => server.id));
+        useStore.setState(state => {
+          const draftRunOptions = pruneRunOptionServers(state.draftRunOptions, liveIds);
+          const entries = Object.entries(state.runOptionsBySession).map(([id, options]) => [id, pruneRunOptionServers(options, liveIds)] as const);
+          const changed = entries.some(([id, options]) => options !== state.runOptionsBySession[id]);
+          if (draftRunOptions !== state.draftRunOptions) saveNewSessionRunOptions(draftRunOptions);
+          if (!changed && draftRunOptions === state.draftRunOptions) return state;
+          const runOptionsBySession = changed ? Object.fromEntries(entries) : state.runOptionsBySession;
+          if (changed) saveRunOptions(runOptionsBySession);
+          return { draftRunOptions, runOptionsBySession };
+        });
+        dispatchServerEvent(msg);
+        break;
+      }
       case "servers.setup":
       case "servers.discovered":
         dispatchServerEvent(msg);
@@ -254,6 +221,9 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       case "server.terminal.exit":
       case "server.terminal.opened":
         dispatchServerTerminal(msg);
+        break;
+      case "claude-code.synced":
+        dispatchClaudeSync(msg);
         break;
       case "global-prompt":
         eventStore.setState({ globalPrompt: msg.content, globalPromptPath: msg.path, globalPromptDirectory: msg.directory, globalPromptLoaded: true });
@@ -709,6 +679,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           saveNewSessionRunOptions(draftRunOptions);
           return { modelConfigs, selectedModelId: msg.config.id, draftRunOptions };
         });
+        restoreProviderProfilesFromModelConfigs(eventStore.getState().modelConfigs);
         break;
       case "skills.list":
         eventStore.setState({ skills: msg.skills });
@@ -719,6 +690,10 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       case "skills.cloud.installed":
         eventStore.setState((state) => ({ skills: [...state.skills.filter((skill) => skill.id !== msg.skill.id), msg.skill] }));
         cloudRequests.get(msg.requestId)?.resolve(msg);
+        break;
+      case "skills.deleted":
+        eventStore.setState((state) => ({ skills: state.skills.filter((skill) => skill.id !== msg.skillId) }));
+        skillMutationRequests.get(msg.requestId)?.resolve(msg);
         break;
       case "skills.imported":
       case "skills.created":
@@ -749,34 +724,21 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           console.error("subagent configuration cache failed", error);
         }
         break;
+      case "mcp.icons":
+        useMcpIcons.setState(msg.icons, true);
+        break;
       case "mcp.list":
-        eventStore.setState({ mcpServers: msg.servers });
-        for (const server of msg.servers) {
-          const oauthKeys = server.authMode === "oauth"
-            ? [`mcp.oauth:${server.id}.client`, `mcp.oauth:${server.id}.tokens`]
-            : [server.oauth?.tokenSecretKey ?? `mcp.oauth:${server.id}`];
-          const keys = [...oauthKeys, ...Object.values(server.env ?? {})
-            .filter((value) => value.startsWith("$mcp.env:"))
-            .map((value) => value.slice(1))];
-          void (async () => {
-            for (const key of keys) {
-              if (restoredMcpSecrets.has(key)) continue;
-              restoredMcpSecrets.add(key);
-              try {
-                const value = await invoke<string | null>("secret_get", { key });
-                if (value) await eventStore.getState().send({ type: "secret.set", requestId: rid(), key, value });
-              } catch (error) {
-                restoredMcpSecrets.delete(key);
-                console.error("MCP credential restore failed", error);
-              }
-            }
-          })();
-        }
+        for (const server of msg.servers) if (server.disabled || server.connected) finishMcpConnection(server.id);
+        eventStore.setState(st => ({ mcpServers: msg.servers,
+          mcpConnectingIds: [...new Set([...st.mcpConnectingIds.filter(id => [...mcpConnectRequests.values()].includes(id)), ...msg.servers.filter(server => server.connecting).map(server => server.id)])],
+          oauthAuthorization: msg.servers.some(server => server.id === st.oauthAuthorization?.serverId && !server.disabled && !server.connected) ? st.oauthAuthorization : undefined,
+          githubDeviceAuthorization: msg.servers.some(server => server.id === st.githubDeviceAuthorization?.serverId && !server.disabled && !server.connected) ? st.githubDeviceAuthorization : undefined,
+        }));
         break;
       case "mcp.connected":
         finishMcpConnection(msg.serverId);
         eventStore.setState((st) => ({
-          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connected: true, toolCount: msg.toolCount } : server),
+          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connecting: false, connected: true, toolCount: msg.toolCount } : server),
           githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === msg.serverId ? undefined : st.githubDeviceAuthorization,
           oauthAuthorization: st.oauthAuthorization?.serverId === msg.serverId ? undefined : st.oauthAuthorization,
         }));
@@ -800,8 +762,6 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (msg.key.endsWith(".tokens") || !msg.key.endsWith(".client")) eventStore.setState({ oauthAuthorization: undefined });
         break;
       case "mcp.oauth.invalidated":
-        // Do not restore a rejected token while native deletion/list updates arrive.
-        restoredMcpSecrets.add(msg.key);
         eventStore.setState((st) => ({
           mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connected: false, toolCount: 0 } : server),
         }));
@@ -816,6 +776,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         eventStore.setState((st) => ({ permissionRules: [msg.rule, ...st.permissionRules.filter((r) => !(r.subjectId === msg.rule.subjectId && r.permission === msg.rule.permission))] }));
         break;
       case "error":
+        if (dispatchClaudeSyncError(msg.requestId, msg.message)) break;
         // Notification snapshots are an optional UI enhancement. A sidecar
         // from before this command was added must not turn that compatibility
         // gap into a visible red error; the next handshake will advertise the

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { RuntimeCommand, RuntimeEvent, ServerCandidate, ServerGroupInfo, ServerInfo, ServerSetupStage, ServerTunnelInfo } from "@qone/protocol";
 import { localizeError } from "./error-localization";
+import { useDockState } from "./dock-state";
 
 type ServerCommandInput<C = Extract<RuntimeCommand, { type: `servers.${string}` }>> = C extends unknown ? Omit<C, "requestId"> : never;
 
@@ -49,7 +50,10 @@ function finish(requestId: string | undefined, error?: string): boolean {
 export function dispatchServerEvent(message: Extract<RuntimeEvent, { type: "servers.state" | "servers.setup" | "servers.discovered" }>): void {
   if (message.type === "servers.setup") { useServerStore.setState({ setup: { requestId: message.requestId, stage: message.stage } }); return; }
   if (message.type === "servers.discovered") useServerStore.setState({ candidates: message.candidates });
-  else useServerStore.setState({ loaded: true, servers: message.servers, groups: message.groups, tunnels: message.tunnels, ...(message.createdGroupId ? { editingGroupId: message.createdGroupId } : {}) });
+  else {
+    useDockState.getState().pruneServers(new Set(message.servers.map(server => server.id)));
+    useServerStore.setState({ loaded: true, servers: message.servers, groups: message.groups, tunnels: message.tunnels, ...(message.createdGroupId ? { editingGroupId: message.createdGroupId } : {}) });
+  }
   finish(message.requestId);
 }
 

@@ -6,7 +6,7 @@ import { toolCallById, subagentsForTree } from "../../lib/store-indexes";
 import { useLocale, type MessageKey } from "../../localization";
 import type { ToolCall as Operation } from "../../store";
 import { formatDuration } from "../../lib/utils";
-import { CodexArrowLeftIcon, CodexCheckIcon, CodexChevronRightIcon, CodexClock3Icon, CodexLoader2Icon, CodexTerminalIcon, CodexXIcon } from "./execution-icons";
+import { CodexArrowLeftIcon, CodexCheckIcon, CodexChevronRightIcon, CodexClock3Icon, CodexLoader2Icon, CodexServerIcon, CodexTerminalIcon, CodexXIcon } from "./execution-icons";
 import { ToolCall } from "./elements/tool-call";
 import { ToolResultView } from "./elements/tool-result";
 import { FadeScroll } from "./elements/surfaces";
@@ -62,7 +62,7 @@ export function ServerOperationsPanel({ onClose }: { onClose: () => void }) {
   return <section className="q-subagent-panel q-server-panel" aria-label={t("servers.title")}>
     <header className="q-subagent-panel-header">
       {selectedId !== undefined && ids.length > 1 && <button type="button" onClick={() => setSelected(undefined)} aria-label={t("servers.view.back")}><CodexArrowLeftIcon size={16} /></button>}
-      <CodexTerminalIcon className="size-4 text-sky-600 dark:text-sky-300" /><strong>{t("servers.title")}</strong>
+      <CodexServerIcon className="size-4 text-sky-600 dark:text-sky-300" /><strong>{t("servers.title")}</strong>
       {canStop && <button type="button" className="q-server-stop ms-auto" title={t("servers.view.stopHint")} onClick={stopTurn}>
         {(stopping || stoppingChildren) && <CodexLoader2Icon className="size-3 animate-spin motion-reduce:animate-none" />}{t(stopping || stoppingChildren ? "servers.view.forceStop" : "servers.view.stop")}
       </button>}
@@ -80,7 +80,7 @@ const ServerRow = memo(function ServerRow({ id, onSelect }: { id: string; onSele
   const selector = useMemo(createServerSummarySelector, []);
   const summary = useConversationStore(state => selector(state.toolCalls, servers, id));
   return <button type="button" className="q-subagent-row q-server-row" onClick={() => onSelect(id)}>
-    <span className="q-server-avatar"><CodexTerminalIcon className="size-4" /></span>
+    <span className="q-server-avatar"><CodexServerIcon className="size-4" /></span>
     <span className="min-w-0 flex-1 text-start"><span className="block truncate">{summary.name ?? (id === UNRESOLVED_SERVER ? t("servers.view.unknown") : id)}</span>
       <span className="mt-1 flex items-center gap-1.5 text-[11px] text-foreground/45"><StatusIcon status={summary.status} />{summary.status ? t(statusKeys[summary.status]) : t("servers.view.selected")}<span>·</span>{t("servers.view.count", { count: summary.count })}</span>
     </span><CodexChevronRightIcon size={14} />

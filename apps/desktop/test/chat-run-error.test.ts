@@ -88,7 +88,7 @@ test("MCP loading survives the saved list and clears on success or failure", asy
     emit({ type: "mcp.connected", serverId: "preset", toolCount: 3 });
     expect(useStore.getState().mcpConnectingIds).toEqual([]);
     expect(useStore.getState().mcpServers).toEqual([
-      { id: "preset", name: "Preset", connected: true, toolCount: 3 },
+      { id: "preset", name: "Preset", connected: true, connecting: false, toolCount: 3 },
       { id: "other", name: "Other", connected: false },
     ]);
 
@@ -101,16 +101,17 @@ test("MCP loading survives the saved list and clears on success or failure", asy
   }
 });
 
-test("restores a key preset credential when the saved MCP list arrives", async () => {
+test("uses runtime connection snapshots without restoring credentials from the renderer", async () => {
   const start = commands.length;
   emit({ type: "mcp.list", servers: [{
-    id: "mcp-key-restore", name: "Key test", command: "npx", connected: false,
+    id: "mcp-key-restore", name: "Key test", command: "npx", connected: false, connecting: true,
     env: { TEST_API_KEY: "$mcp.env:mcp-key-restore/TEST_API_KEY" },
   }] });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(commands.slice(start)).toContainEqual(expect.objectContaining({
-    type: "secret.set", key: "mcp.env:mcp-key-restore/TEST_API_KEY", value: "restored-test-key",
-  }));
+  expect(commands.slice(start).some(cmd => cmd.type === "secret.set")).toBe(false);
+  expect(useStore.getState().mcpConnectingIds).toContain("mcp-key-restore");
+  emit({ type: "mcp.list", servers: [{ id: "mcp-key-restore", name: "Key test", command: "npx", connected: false, connecting: false }] });
+  expect(useStore.getState().mcpConnectingIds).not.toContain("mcp-key-restore");
 });
 
 test("shows an install hint when an MCP preset cannot find Node.js/npm", async () => {

@@ -24,6 +24,7 @@ interface DockStore {
   update: (key: string, owner: Pick<DockScope, "sessionId" | "workspaceId">, change: (scope: DockScope) => DockScope) => void;
   remove: (key: string) => void;
   reconcile: (sessions?: readonly { id: string }[], workspaces?: readonly { id: string }[]) => void;
+  pruneServers: (liveIds: ReadonlySet<string>) => void;
 }
 type DockPersistedState = Pick<DockStore, "scopes">;
 export function createDockStateStore(storage = createJSONStorage<DockPersistedState>(() => localStorage)) {
@@ -35,6 +36,16 @@ export function createDockStateStore(storage = createJSONStorage<DockPersistedSt
     const scopes = { ...state.scopes };
     delete scopes[key];
     return { scopes };
+  }),
+  pruneServers: (liveIds) => set((state) => {
+    let changed = false;
+    const scopes = Object.fromEntries(Object.entries(state.scopes).map(([key, scope]) => {
+      let next = scope;
+      for (const tab of scope.openTabs) if (tab.serverId && !liveIds.has(tab.serverId)) next = removeDockTab(next, tab.id);
+      changed ||= next !== scope;
+      return [key, next];
+    }));
+    return changed ? { scopes } : state;
   }),
   reconcile: (sessions, workspaces) => set((state) => {
     const sessionIds = sessions && new Set(sessions.map((item) => item.id));

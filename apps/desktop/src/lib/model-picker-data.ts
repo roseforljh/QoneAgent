@@ -87,19 +87,24 @@ export function readCurrentProvider(): PickerProvider | undefined {
   } catch { return; }
 }
 
-/** Recreate origin-scoped picker data from the durable runtime model records. */
+/** File-backed runtime models are authoritative; origin storage keeps only picker names and selection. */
 export function restoreProviderProfilesFromModelConfigs(configs: ModelConfigInfo[]): PickerProvider | undefined {
-  const current = readCurrentProvider();
-  if (current) return current;
-  const profiles = providerProfilesFromModelConfigs(configs);
-  const first = profiles[0];
-  if (!first) return undefined;
+  const recovered = providerProfilesFromModelConfigs(configs);
   try {
-    window.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify(profiles));
-    window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, first.id);
-    window.dispatchEvent(new Event(MODEL_CONFIG_CHANGE_EVENT));
-  } catch { /* Restricted previews may not expose persistent storage. */ }
-  return { id: first.id, name: first.name, models: first.models.map((model) => ({ id: model.id, label: model.label })) };
+    const saved: unknown = JSON.parse(window.localStorage.getItem(PROVIDERS_STORAGE_KEY) ?? "[]");
+    const existing = Array.isArray(saved) ? saved.filter((item): item is ProviderProfile => item && typeof item.id === "string" && typeof item.name === "string") : [];
+    const profiles: ProviderProfile[] = existing.map(profile => ({ ...profile, ...(recovered.find(item => item.id === profile.id) ?? { models: [] }), name: profile.name, logoUrl: profile.logoUrl }));
+    profiles.push(...recovered.filter(profile => !existing.some(item => item.id === profile.id)));
+    const active = window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY);
+    const selected = profiles.find(profile => profile.id === active) ?? profiles[0];
+    const text = JSON.stringify(profiles);
+    if (text !== window.localStorage.getItem(PROVIDERS_STORAGE_KEY)) {
+      window.localStorage.setItem(PROVIDERS_STORAGE_KEY, text);
+      if (selected) window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, selected.id);
+      window.dispatchEvent(new window.Event(MODEL_CONFIG_CHANGE_EVENT));
+    }
+    return selected && { id: selected.id, name: selected.name, models: selected.models.map(model => ({ id: model.id, label: model.label })) };
+  } catch { return readCurrentProvider(); }
 }
 
 export function getPickerModels(provider: PickerProvider | undefined, configs: ModelConfigInfo[]): PickerModel[] {

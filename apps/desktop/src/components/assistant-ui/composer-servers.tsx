@@ -4,7 +4,7 @@ import { useConversationStore } from "../../lib/conversation-context";
 import { useServerStore } from "../../lib/server-state";
 import { useLocale } from "../../localization";
 import { NestedDialog } from "../settings/nested-dialog";
-import { CodexTerminalIcon } from "../ui/CodexIcon";
+import { CodexServerIcon } from "../ui/CodexIcon";
 
 export function ComposerServers({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useLocale();
@@ -18,7 +18,7 @@ export function ComposerServers({ open, onOpenChange }: { open: boolean; onOpenC
   return <>
     {ids.length > 0 && <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-sky-500/25 bg-sky-500/10 px-2 text-sky-700 transition-colors dark:text-sky-300">
       <button type="button" onClick={() => onOpenChange(true)} className="inline-flex items-center gap-1.5 text-xs font-medium" title={servers.filter(server => ids.includes(server.id)).map(server => server.name).join("、")}>
-        <CodexTerminalIcon className="size-3.5" /><span>{t("servers.title")}</span>{ids.length > 1 && <span className="rounded-full bg-sky-500/15 px-1.5 text-[10px] tabular-nums">{ids.length}</span>}
+        <CodexServerIcon className="size-3.5" /><span>{t("servers.title")}</span>{ids.length > 1 && <span className="rounded-full bg-sky-500/15 px-1.5 text-[10px] tabular-nums">{ids.length}</span>}
       </button>
       <button type="button" onClick={() => setServerIds([])} className="ml-0.5 rounded-full p-0.5 opacity-65 hover:opacity-100" aria-label={t("composer.removeServer", { name: t("servers.title") })}><X size={12} /></button>
     </span>}
@@ -27,7 +27,7 @@ export function ComposerServers({ open, onOpenChange }: { open: boolean; onOpenC
       <input className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring" value={search} onChange={event => setSearch(event.target.value)} placeholder={t("composer.searchServers")} aria-label={t("composer.searchServers")} />
       <div className="mt-2 flex max-h-80 flex-col gap-1 overflow-y-auto" role="group" aria-label={t("servers.title")}>
         {visible.map(server => <button key={server.id} type="button" role="checkbox" aria-checked={ids.includes(server.id)} onClick={() => toggle(server.id)} className="flex items-center gap-3 rounded-lg p-3 text-left hover:bg-foreground/5">
-          <CodexTerminalIcon className="size-4 shrink-0" />
+          <CodexServerIcon className="size-4 shrink-0" />
           <span className="min-w-0 flex-1"><strong className="block truncate text-sm font-medium">{server.name}</strong><small className="block truncate text-muted-foreground">{server.username}@{server.host} · {t(`servers.status.${server.status}`)}</small></span>
           {ids.includes(server.id) && <Check size={16} />}
         </button>)}

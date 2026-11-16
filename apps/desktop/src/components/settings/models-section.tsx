@@ -250,6 +250,14 @@ export function ModelsSection() {
     window.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify(recovered));
     window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, nextSelected);
   }, [modelConfigs, profiles.length]);
+  useEffect(() => {
+    const refresh = () => {
+      setProfiles(loadProviderProfiles());
+      setSelectedProviderId(window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY) ?? "");
+    };
+    window.addEventListener(MODEL_CONFIG_CHANGE_EVENT, refresh);
+    return () => window.removeEventListener(MODEL_CONFIG_CHANGE_EVENT, refresh);
+  }, []);
   const provider = profiles.find((item) => item.id === selectedProviderId) ?? profiles[0];
   const models = provider?.models ?? modelConfigs.filter((config) => config.provider === provider?.id).map((config) => ({ id: config.model, label: config.model, settings: config.config as unknown as ModelSettings }));
   const saveModel = async (model: ProviderModel, previousId?: string) => {

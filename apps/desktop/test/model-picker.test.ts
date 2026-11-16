@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { ModelConfigInfo } from "@qone/protocol";
-import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, filterPickerModels, getPickerModels, providerProfilesFromModelConfigs, readCurrentProvider } from "../src/lib/model-picker-data";
+import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, filterPickerModels, getPickerModels, providerProfilesFromModelConfigs, readCurrentProvider, restoreProviderProfilesFromModelConfigs } from "../src/lib/model-picker-data";
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 afterEach(() => {
@@ -9,7 +9,7 @@ afterEach(() => {
 });
 function seed(profiles: unknown, active = "b") {
   const saved = new Map([[PROVIDERS_STORAGE_KEY, JSON.stringify(profiles)], [ACTIVE_PROVIDER_STORAGE_KEY, active]]);
-  Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: (key: string) => saved.get(key) ?? null } } });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) }, dispatchEvent: () => true, Event } });
   return saved;
 }
 const a = { id: "a", name: "Provider A", models: [{ id: "shared", label: "A model" }] };
@@ -83,6 +83,17 @@ test("recovers a provider profile from durable runtime model configs", () => {
       { id: "beta", settings: { apiType: "claude" } },
     ],
   }]);
+});
+
+test("runtime file edits replace cached models without losing provider names or selection", () => {
+  seed([{ ...b, apiType: "openai-compatible", baseUrl: "https://old.dev" }]);
+  restoreProviderProfilesFromModelConfigs([{ ...config("b"), model: "new", id: "b/new", config: { baseUrl: "https://new.dev", displayName: "New label" } }]);
+  expect(readCurrentProvider()).toEqual({ id: "b", name: "Provider B", apiType: "openai-compatible", baseUrl: "https://new.dev", models: [{ id: "new", label: "New label" }], updatedAt: 0 });
+  restoreProviderProfilesFromModelConfigs([]);
+  expect(readCurrentProvider()?.models).toEqual([]);
+  restoreProviderProfilesFromModelConfigs([config("added")]);
+  expect(readCurrentProvider()?.id).toBe("b");
+  expect(JSON.parse(window.localStorage.getItem(PROVIDERS_STORAGE_KEY)!).some((profile: { id: string }) => profile.id === "added")).toBe(true);
 });
 
 test("durable runtime models remain available without picker storage", () => {

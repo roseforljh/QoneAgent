@@ -223,6 +223,14 @@ export function ConfigurationSection() {
     window.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify(recovered));
     window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, nextSelected);
   }, [modelConfigs, profiles.length]);
+  useEffect(() => {
+    const refresh = () => {
+      setProfiles(loadProviderProfiles());
+      setSelectedProviderId(window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY) ?? "");
+    };
+    window.addEventListener(MODEL_CONFIG_CHANGE_EVENT, refresh);
+    return () => window.removeEventListener(MODEL_CONFIG_CHANGE_EVENT, refresh);
+  }, []);
   const saveProfile = (profile: ProviderProfile) => {
     const next = [...profiles.filter((item) => item.id !== profile.id), profile];
     setProfiles(next);

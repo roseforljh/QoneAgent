@@ -55,6 +55,11 @@ export function loadRunOptions(): Record<string, SessionRunOptions> {
   } catch { return {}; }
 }
 
+export function pruneRunOptionServers(options: SessionRunOptions, liveIds: ReadonlySet<string>): SessionRunOptions {
+  if (!options.serverIds?.some(id => !liveIds.has(id))) return options;
+  return { ...options, serverIds: options.serverIds.filter(id => liveIds.has(id)) };
+}
+
 export function saveRunOptions(options: Record<string, SessionRunOptions>): void {
   try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(options)); } catch { /* unavailable storage */ }
 }

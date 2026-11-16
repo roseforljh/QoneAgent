@@ -6,7 +6,7 @@ import { SkillIcon } from "../skills/SkillIcon";
 import { useLocale } from "../../localization";
 import { useStore } from "../../store";
 import type { ComposerToolId } from "../../lib/composer-tool-editor";
-import { CodexDocumentTextIcon, CodexFolderIcon, CodexPlusIcon, CodexTargetIcon, CodexTextSelectIcon, CodexTerminalIcon } from "../ui/CodexIcon";
+import { CodexDocumentTextIcon, CodexFolderIcon, CodexPlusIcon, CodexServerIcon, CodexTargetIcon, CodexTextSelectIcon } from "../ui/CodexIcon";
 import "./composer-tools.css";
 
 type ToolIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
@@ -16,7 +16,7 @@ export function getComposerTools(t: ReturnType<typeof useLocale>["t"]): Composer
   return [
     { id: "attachment", label: t("composer.toolAttachment"), description: t("composer.toolAttachmentDescription"), icon: CodexDocumentTextIcon },
     { id: "folder", label: t("composer.toolFolder"), description: t("composer.toolFolderDescription"), icon: CodexFolderIcon },
-    { id: "servers", label: t("servers.title"), description: t("composer.toolServersDescription"), icon: CodexTerminalIcon },
+    { id: "servers", label: t("servers.title"), description: t("composer.toolServersDescription"), icon: CodexServerIcon },
     { id: "compact", label: t("composer.toolCompact"), description: t("composer.toolCompactDescription"), icon: CodexTextSelectIcon },
     { id: "goal", label: t("composer.toolGoal"), description: t("composer.toolGoalDescription"), icon: CodexTargetIcon },
   ];

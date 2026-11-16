@@ -4,6 +4,7 @@ import documentText from "../../assets/codex-icons/document-text-light-16.svg";
 import target from "../../assets/codex-icons/target-light-16.svg";
 import plus from "../../assets/codex-icons/plus-md-light-16.svg";
 import terminal from "../../assets/codex-icons/terminal-light-16.svg";
+import desktop from "../../assets/codex-icons/desktop-light-16.svg";
 import folder from "../../assets/codex-icons/folder-light-16.svg";
 
 type CodexIconProps = HTMLAttributes<HTMLSpanElement> & { src: string };
@@ -52,6 +53,10 @@ export function CodexPlusIcon(props: Omit<CodexIconProps, "src">) {
 
 export function CodexTerminalIcon(props: Omit<CodexIconProps, "src">) {
   return <CodexIcon src={terminal} {...props} />;
+}
+
+export function CodexServerIcon(props: Omit<CodexIconProps, "src">) {
+  return <CodexIcon src={desktop} {...props} />;
 }
 
 export function CodexFolderIcon(props: Omit<CodexIconProps, "src">) {

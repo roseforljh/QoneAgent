@@ -6,6 +6,7 @@ import fileSearch from "../../assets/codex-icons/document-badge-magnifyingglass-
 import penLine from "../../assets/codex-icons/pencil-light-16.svg";
 import search from "../../assets/codex-icons/magnifying-glass-lg-light-16.svg";
 import terminal from "../../assets/codex-icons/terminal-light-16.svg";
+import desktop from "../../assets/codex-icons/desktop-light-16.svg";
 import wrench from "../../assets/codex-icons/toolbox-light-16.svg";
 import clock3 from "../../assets/codex-icons/clock-light-16.svg";
 import x from "../../assets/codex-icons/xmark-md-light-16.svg";
@@ -30,6 +31,7 @@ export const CodexFileSearchIcon = icon(fileSearch);
 export const CodexPenLineIcon = icon(penLine);
 export const CodexSearchIcon = icon(search);
 export const CodexTerminalIcon = icon(terminal);
+export const CodexServerIcon = icon(desktop);
 export const CodexWrenchIcon = icon(wrench);
 export const CodexClock3Icon = icon(clock3);
 export const CodexXIcon = icon(x);

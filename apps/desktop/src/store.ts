@@ -262,8 +262,8 @@ const metadataRequests = new Map<string, { resolve: (value: Extract<RuntimeEvent
 type CloudResponse = Extract<RuntimeEvent, { type: "skills.cloud.list" | "skills.cloud.installed" }>;
 type CloudCommand = Extract<RuntimeCommand, { type: "skills.cloud.list" | "skills.cloud.install" }>;
 type CloudInput = CloudCommand extends infer Command ? Command extends CloudCommand ? Omit<Command, "requestId"> : never : never;
-type SkillMutationResponse = Extract<RuntimeEvent, { type: "skills.imported" | "skills.created" | "skills.builtin.changed" }>;
-type SkillMutationCommand = Extract<RuntimeCommand, { type: "skills.import" | "skills.create" | "skills.builtin.set-enabled" | "skills.builtin.update" }>;
+type SkillMutationResponse = Extract<RuntimeEvent, { type: "skills.deleted" | "skills.imported" | "skills.created" | "skills.builtin.changed" }>;
+type SkillMutationCommand = Extract<RuntimeCommand, { type: "skills.delete" | "skills.import" | "skills.create" | "skills.builtin.set-enabled" | "skills.builtin.update" }>;
 type SkillMutationInput = SkillMutationCommand extends infer Command ? Command extends SkillMutationCommand ? Omit<Command, "requestId"> : never : never;
 const cloudRequests = new Map<string, { resolve: (response: CloudResponse) => void; reject: (error: Error) => void }>();
 const skillMutationRequests = new Map<string, { resolve: (response: SkillMutationResponse) => void; reject: (error: Error) => void }>();
@@ -271,7 +271,6 @@ const browserUrlRequests = new Map<string, { resolve: (url: string) => void; rej
 const cloudInFlight = new Map<string, Promise<CloudResponse>>();
 const workspaceRequests = new Map<string, RuntimeCommand["type"]>();
 const mcpConnectRequests = new Map<string, string>();
-const restoredMcpSecrets = new Set<string>();
 
 function finishMcpConnection(serverId: string) {
   for (const [requestId, id] of mcpConnectRequests) if (id === serverId) mcpConnectRequests.delete(requestId);
@@ -439,16 +438,8 @@ export const useStore = create<AgentState>((set, get, api) => {
       mcpConnectRequests.set(cmd.requestId, cmd.config.id);
       set((st) => ({ mcpConnectingIds: st.mcpConnectingIds.includes(cmd.config.id) ? st.mcpConnectingIds : [...st.mcpConnectingIds, cmd.config.id] }));
     }
-    if (cmd.type === "secret.set" && cmd.key.startsWith("mcp.env:")) restoredMcpSecrets.add(cmd.key);
-    if (cmd.type === "mcp.delete") {
+    if (cmd.type === "mcp.delete" || cmd.type === "mcp.disconnect") {
       finishMcpConnection(cmd.serverId);
-      restoredMcpSecrets.delete(`mcp.oauth:${cmd.serverId}`);
-      restoredMcpSecrets.delete(`mcp.oauth:${cmd.serverId}.client`);
-      restoredMcpSecrets.delete(`mcp.oauth:${cmd.serverId}.tokens`);
-      const server = get().mcpServers.find((item) => item.id === cmd.serverId);
-      for (const value of Object.values(server?.env ?? {})) {
-        if (value.startsWith("$mcp.env:")) restoredMcpSecrets.delete(value.slice(1));
-      }
       set((st) => ({
         oauthAuthorization: st.oauthAuthorization?.serverId === cmd.serverId ? undefined : st.oauthAuthorization,
         githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === cmd.serverId ? undefined : st.githubDeviceAuthorization,
@@ -457,7 +448,6 @@ export const useStore = create<AgentState>((set, get, api) => {
     return invoke("runtime_send", { cmd: JSON.stringify({ ...cmd, locale: resolveLocale(getLanguageSetting()) }) }).then(() => true).catch((error) => {
       console.error("runtime_send failed", error);
       if (cmd.type === "mcp.connect") finishMcpConnection(cmd.config.id);
-      if (cmd.type === "secret.set" && cmd.key.startsWith("mcp.env:")) restoredMcpSecrets.delete(cmd.key);
       if (cmd.type === "agent.run" || cmd.type === "goal.start") {
         if (!cmd.messageId || !pendingAgentRuns.has(cmd.requestId)) return false;
         const pending = pendingAgentRuns.get(cmd.requestId)!;
@@ -988,7 +978,7 @@ function clearSessionMessageRequests(sessionId: string) {
 }
 
 export function bridgeDependencies() {
-  return { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, queueToolUpdate, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
+  return { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, queueToolUpdate, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
 }
 
 export function initBridge() { initRuntimeBridge(bridgeDependencies()); }

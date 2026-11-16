@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ClaudeCodeSyncButton } from "./ClaudeCodeSyncButton";
 import { useStore } from "../../store";
 import { revealItemInDir } from "../../lib/desktop-bridge";
 import { useLocale } from "../../localization";
@@ -37,18 +38,26 @@ export function PersonalizationSection() {
   const globalPromptLoaded = useStore((state) => state.globalPromptLoaded);
   const send = useStore((state) => state.send);
   const [globalPromptDraft, setGlobalPromptDraft] = useState(globalPrompt);
+  const [syncing, setSyncing] = useState(false);
+  const syncingRef = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const setSyncBusy = (busy: boolean) => {
+    syncingRef.current = busy;
+    setSyncing(busy);
+    if (busy) clearTimeout(saveTimer.current);
+  };
 
   useEffect(() => {
     if (globalPromptLoaded) setGlobalPromptDraft(globalPrompt);
   }, [globalPrompt, globalPromptLoaded]);
 
   useEffect(() => {
-    if (!globalPromptLoaded || globalPromptDraft === globalPrompt) return;
-    const timer = window.setTimeout(() => {
-      void send({ type: "global-prompt.set", requestId: crypto.randomUUID(), content: globalPromptDraft });
+    if (!globalPromptLoaded || syncing || globalPromptDraft === globalPrompt) return;
+    saveTimer.current = setTimeout(() => {
+      if (!syncingRef.current) void send({ type: "global-prompt.set", requestId: crypto.randomUUID(), content: globalPromptDraft });
     }, 350);
-    return () => window.clearTimeout(timer);
-  }, [globalPrompt, globalPromptDraft, globalPromptLoaded, send]);
+    return () => clearTimeout(saveTimer.current);
+  }, [globalPrompt, globalPromptDraft, globalPromptLoaded, send, syncing]);
 
   // revealItemInDir is covered by opener:default; openPath would need an extra opener:allow-open-path scope.
   const openGlobalPromptDirectory = () => {
@@ -85,15 +94,15 @@ export function PersonalizationSection() {
         className="mb-4 max-w-none"
       />}
       <section className="settings-global-prompt-section">
-        <div className="settings-global-prompt-heading">
+        <div className="settings-global-prompt-heading flex-wrap">
           <div><h3>{t("personalization.globalPrompt")}</h3><p>{t("personalization.globalPromptDescription")}</p></div>
-          <button type="button" className="settings-global-prompt-link" onClick={openGlobalPromptDirectory} disabled={!globalPromptPath} title={globalPromptPath}>Qone.md</button>
+          <div className="settings-toolbar-actions flex-wrap"><ClaudeCodeSyncButton target="prompt" disabled={!globalPromptLoaded} onBusyChange={setSyncBusy} onSynced={() => setGlobalPromptDraft(useStore.getState().globalPrompt)} /><button type="button" className="settings-global-prompt-link" onClick={openGlobalPromptDirectory} disabled={!globalPromptPath} title={globalPromptPath}>Qone.md</button></div>
         </div>
         <textarea
           className="settings-global-prompt-input"
           rows={7}
           value={globalPromptDraft}
-          disabled={!globalPromptLoaded}
+          disabled={!globalPromptLoaded || syncing}
           onChange={(event) => setGlobalPromptDraft(event.target.value)}
           placeholder={t("personalization.globalPromptPlaceholder")}
           aria-label={t("personalization.globalPrompt")}

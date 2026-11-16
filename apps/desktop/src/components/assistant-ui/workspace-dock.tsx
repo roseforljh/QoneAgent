@@ -34,7 +34,7 @@ import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { onOpenBrowserInDock, type BrowserDockRequest } from "../../lib/browser-dock";
 import { ServerOperationsPanel } from "./server-operations-panel";
-import { CodexTerminalIcon } from "./execution-icons";
+import { CodexServerIcon } from "./execution-icons";
 import { SubagentPanel } from "./subagent-view";
 import { OPEN_SUBAGENT_EVENT } from "./subagent-navigation";
 import { OPEN_WORKSPACE_FILE_EVENT, resolveFileReferencePath, type WorkspaceFileTarget } from "../../lib/workspace-file-navigation";
@@ -89,6 +89,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
   const workspaces = useStore((state) => state.workspaces);
   const sideChats = useStore((state) => state.sideChats);
   const servers = useServerStore((state) => state.servers);
+  const serversLoaded = useServerStore((state) => state.loaded);
   const storedScope = useDockState((state) => state.scopes[scopeKey]);
   const updateDock = useDockState((state) => state.update);
   const [openTabs, setOpenTabs] = useState<DockTab[]>(() => storedScope?.openTabs ?? []);
@@ -106,6 +107,15 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
   openTabsRef.current = openTabs;
   useEffect(() => onViewChange?.(view), [view, onViewChange]);
   useEffect(() => onTabsChange?.(openTabs.length > 0), [openTabs.length, onTabsChange]);
+  useEffect(() => {
+    if (!serversLoaded) return;
+    const removed = openTabsRef.current.filter(tab => tab.serverId && !servers.some(server => server.id === tab.serverId));
+    if (!removed.length) return;
+    const ids = new Set(removed.map(tab => tab.id));
+    for (const tab of removed) closeDockTerminalResource(tab.id);
+    setOpenTabs(tabs => tabs.filter(tab => !ids.has(tab.id)));
+    setActiveTabId(id => id && ids.has(id) ? openTabsRef.current.find(tab => !ids.has(tab.id))?.id : id);
+  }, [servers, serversLoaded]);
   useEffect(() => () => {
     for (const tab of openTabsRef.current) if (tab.view === "terminal") closeDockTerminalResource(tab.id);
   }, []);
@@ -426,7 +436,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     };
   }, [activeTabId, openTabs, collapsed, scopeActive, workspaceId]);
 
-  const tabMeta: Record<DockView, { icon: LucideIcon | typeof CodexTerminalIcon; label: string }> = {
+  const tabMeta: Record<DockView, { icon: LucideIcon | typeof CodexServerIcon; label: string }> = {
     sideChat: { icon: BotMessageSquareIcon, label: t("chat.sideChat") },
     session: { icon: ListTodoIcon, label: t("dock.session") },
     terminal: { icon: SquareTerminalIcon, label: t("dock.terminal") },
@@ -438,7 +448,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     mcp: { icon: PlugIcon, label: t("dock.mcp") },
     skills: { icon: WandSparklesIcon, label: t("dock.skills") },
     subagents: { icon: BotMessageSquareIcon, label: t("nav.subagents") },
-    servers: { icon: CodexTerminalIcon, label: t("servers.title") },
+    servers: { icon: CodexServerIcon, label: t("servers.title") },
   };
 
   return (
@@ -639,7 +649,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
               { view: "mcp", icon: PlugIcon, label: t("dock.mcp"), detail: t("dock.mcpDescription") },
               { view: "skills", icon: WandSparklesIcon, label: t("dock.skills"), detail: t("dock.skillsDescription") },
               { view: "subagents", icon: BotMessageSquareIcon, label: t("nav.subagents"), detail: t("dock.subagentsDescription") },
-              { view: "servers", icon: CodexTerminalIcon, label: t("servers.title"), detail: t("servers.view.operations") },
+              { view: "servers", icon: CodexServerIcon, label: t("servers.title"), detail: t("servers.view.operations") },
             ] as const).map(({ view: name, icon: Icon, label, detail }) => (
               <button
                 key={name}

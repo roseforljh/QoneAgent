@@ -1,4 +1,19 @@
 import type { CSSProperties } from "react";
+import { mcpServerIdentity, type McpServerInfo } from "@qone/protocol";
+
+/**
+ * A preset owns its own id, or the single configured server that is the same service (e.g. synced
+ * from Claude Code): same launch identity first, then the same name when the launcher is a script.
+ */
+export function presetServer(servers: McpServerInfo[], preset: { id: string; name: string; config?: { command?: string; args?: string[]; url?: string }; prefill?: { command: string; args: string } }) {
+  const exact = servers.find(server => server.id === preset.id);
+  if (exact) return exact;
+  const config = preset.config ?? (preset.prefill && { command: preset.prefill.command, args: preset.prefill.args.trim().split(/\s+/) });
+  const identity = config && mcpServerIdentity(config);
+  const unique = (matches: McpServerInfo[]) => matches.length === 1 ? matches[0] : undefined;
+  return (identity ? unique(servers.filter(server => mcpServerIdentity(server) === identity)) : undefined)
+    ?? unique(servers.filter(server => server.name.toLowerCase() === preset.name.toLowerCase()));
+}
 import type { MessageKey } from "../../localization";
 import mcpLogo from "@lobehub/icons-static-svg/icons/mcp.svg";
 import cloudflareLogo from "@lobehub/icons-static-svg/icons/cloudflare-color.svg";
@@ -18,7 +33,7 @@ import braveLogo from "@lobehub/icons-static-svg/icons/brave-color.svg";
 import perplexityLogo from "@lobehub/icons-static-svg/icons/perplexity-color.svg";
 import { Mail } from "lucide-react";
 
-// 官方 MCP 预设：stdio 走 npx、远程走 Streamable HTTP，点开关即启用（关闭 = mcp.delete 移除）。
+// 官方 MCP 预设：stdio 走 npx、远程走 Streamable HTTP，点开关即启用（关闭只禁用，保留配置和凭据）。
 // 带 tokenEnv/env 的项需要对应环境变量存在才能连上，描述里已注明。
 export const MCP_PRESETS: { id: string; name: string; descKey: MessageKey; logo: string; mono?: boolean; lightBadge?: boolean; config: { command?: string; args?: string[]; url?: string; tokenEnv?: string; env?: Record<string, string>; authMode?: "oauth" } }[] = [
   { id: "mcp-playwright", name: "Playwright", descKey: "mcp.presetPlaywright", logo: playwrightLogo, lightBadge: true, config: { command: "npx", args: ["-y", "@playwright/mcp@latest"] } },

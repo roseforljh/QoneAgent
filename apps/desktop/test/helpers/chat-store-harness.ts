@@ -17,7 +17,6 @@ mock.module("../../src/lib/desktop-bridge", () => ({
       commands.push(parsed);
       await sendFailure?.(parsed);
     }
-    if (command === "secret_get" && args?.key === "mcp.env:mcp-key-restore/TEST_API_KEY") return "restored-test-key";
     return undefined;
   },
   listen: async (_name: string, listener: typeof onRuntimeEvent) => {

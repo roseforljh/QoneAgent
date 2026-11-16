@@ -120,6 +120,13 @@ export interface UpdateResult {
   downloadAndInstall: () => Promise<void>;
 }
 
-export async function check(_options?: { timeout?: number }): Promise<UpdateResult | null> {
-  return null;
+export async function check(options?: { timeout?: number }): Promise<UpdateResult | null> {
+  const result = await invoke<{ version: string } | null>("update_check", { timeout: options?.timeout });
+  if (!result?.version) return null;
+  return {
+    version: result.version,
+    downloadAndInstall: async () => {
+      await invoke("update_download_and_install", { version: result.version });
+    },
+  };
 }
