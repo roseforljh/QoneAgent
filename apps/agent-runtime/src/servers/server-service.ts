@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import type { SettingsRepo } from "@qone/database";
+import type { PreferenceStore } from "@qone/database";
 import type { RuntimeCommand, RuntimeEvent, ServerCommand } from "@qone/protocol";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { agentPath, SshPool } from "./ssh.js";
@@ -7,6 +7,7 @@ import { ServerRegistry } from "./server-registry.js";
 import { ServerSessions, createServerTools } from "./server-tools.js";
 import { discoverServers } from "./server-discovery.js";
 import { runtimeError } from "../runtime-localization.js";
+import type { ServerExecutionTarget } from "../execution-context.js";
 
 const availableAgent = () => { const value = agentPath(); return value && existsSync(value) ? value : undefined; };
 
@@ -17,7 +18,7 @@ export class ServerService {
   private lastActivity = new Map<string, number>();
 
   /** `onToolsChanged` rebuilds agent sessions so their tool list names the current servers. */
-  constructor(repo: SettingsRepo, private send: (event: RuntimeEvent) => void, private onToolsChanged: () => Promise<void>) {
+  constructor(repo: PreferenceStore, private send: (event: RuntimeEvent) => void, private onToolsChanged: () => Promise<void>) {
     this.pool = new SshPool((serverId, presented) => {
       this.registry.update(serverId, { status: "host-key-changed", statusDetail: presented });
       this.broadcast();
@@ -32,8 +33,14 @@ export class ServerService {
 
   broadcast(requestId?: string, createdGroupId?: string) { this.send(this.state(requestId, createdGroupId)); }
 
+  executionTargets(serverIds: readonly string[] = []): ServerExecutionTarget[] {
+    return this.registry.list().filter(server => serverIds.includes(server.id)).map(({ id, name, host, port, username, system, status }) => ({
+      id, name, host, port, username, system, lastKnownStatus: status,
+    }));
+  }
+
   summary(serverIds: readonly string[] = []): string {
-    const list = this.registry.list().filter(server => serverIds.includes(server.id));
+    const list = this.executionTargets(serverIds);
     return list.length ? `The user's SSH servers: ${list.map((server) => `${server.name} (${server.username}@${server.host}${server.system ? `, ${server.system}` : ""})`).join("; ")}` : "SSH servers";
   }
 
@@ -67,8 +74,9 @@ export class ServerService {
         await this.onToolsChanged();
         return this.broadcast(cmd.requestId);
       case "servers.delete":
-        this.sessions.closeServer(cmd.id);
         await this.registry.delete(cmd.id);
+        this.sessions.closeServer(cmd.id);
+        this.lastActivity.delete(cmd.id);
         await this.onToolsChanged();
         return this.broadcast(cmd.requestId);
       case "servers.move":

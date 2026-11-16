@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { utils } from "ssh2";
 import { qoneAuthDir } from "@qone/shared";
-import type { SettingsRepo } from "@qone/database";
+import type { PreferenceStore } from "@qone/database";
 import type { ServerGroupInfo, ServerInfo, ServerSetupStage } from "@qone/protocol";
 import { runtimeError } from "../runtime-localization.js";
 import { agentPath, connect, credentialsFor, exec, HostKeyChangedError, shQuote, type Credentials, type SshPool } from "./ssh.js";
@@ -20,9 +20,9 @@ export interface AddServerInput {
   password?: string; keyPath?: string; useAgent?: boolean;
 }
 
-/** Saved servers live in the config database; the only secret is a key file in Qone's auth directory. */
+/** Saved servers live in settings.json; the only secret is a key file in Qone's auth directory. */
 export class ServerRegistry {
-  constructor(private repo: SettingsRepo, private pool: SshPool) {}
+  constructor(private repo: PreferenceStore, private pool: SshPool) {}
 
   list(): ServerInfo[] { return this.repo.get<ServerInfo[]>(KEY) ?? []; }
 
@@ -138,14 +138,17 @@ export class ServerRegistry {
     return this.test(id);
   }
 
-  /** Removes the dedicated key from the server when reachable, then locally. */
+  /** Revoke the dedicated key before discarding the only credential that can clean it up. */
   async delete(id: string): Promise<void> {
     const server = this.get(id);
     if (!server) return;
     if (server.auth.kind === "key" && server.auth.dedicated) {
       try {
-        await exec(await this.pool.get(server), `sed -i ${shQuote(`/ ${dedicatedComment(id)}$/d`)} ~/.ssh/authorized_keys`, { timeoutMs: 10_000 });
-      } catch { /* offline: the server keeps an unused public key only */ }
+        const result = await exec(await this.pool.get(server), `sed -i ${shQuote(`/ ${dedicatedComment(id)}$/d`)} ~/.ssh/authorized_keys && ! grep -qF ${shQuote(dedicatedComment(id))} ~/.ssh/authorized_keys`, { timeoutMs: 10_000 });
+        if (result.exit_code !== 0 || result.timed_out || result.signal) throw new Error(result.stderr.trim() || `exit ${result.exit_code}`);
+      } catch (error) {
+        throw runtimeError("servers.key_remove_failed", { p0: error instanceof Error ? error.message : String(error) });
+      }
       rmSync(server.auth.keyPath, { force: true });
     }
     this.pool.drop(id);

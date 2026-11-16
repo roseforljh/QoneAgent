@@ -2,6 +2,13 @@ import { expect, test } from "bun:test";
 import { isReadOnlyServerCommand } from "../src/servers/server-command-policy";
 import { parseKnownHosts, parseSshConfig } from "../src/servers/server-discovery";
 import { decide } from "../src/permissions";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { ServerRegistry } from "../src/servers/server-registry";
+import { ServerService } from "../src/servers/server-service";
+import type { ServerInfo } from "@qone/protocol";
 
 test("only provably read-only server commands skip approval", () => {
   for (const command of ["uptime", "uname -a", "df -h", "free -m", "systemctl status nginx", "docker ps", "ps -eo pid,comm,%cpu --sort=-%cpu", "du -sh /var/log 2>/dev/null | sort -rh | head -n 5", "uname -a && uptime", "cat /etc/os-release"]) {
@@ -44,4 +51,53 @@ test("groups are optional folders; deleting one ungroups its servers", () => {
   registry.deleteGroup(web.id);
   expect(registry.groups()).toEqual([]);
   expect(registry.list().map((server) => server.groupId)).toEqual([undefined, undefined]);
+});
+
+test("deleting a dedicated server verifies revocation, retains retry credentials on failures and closes only its resources", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "qone-server-delete-"));
+  const keyPath = path.join(directory, "dedicated");
+  const server: ServerInfo = { id: "delete-me", name: "Delete me", host: "example.test", port: 22, username: "root", status: "ready", createdAt: 0,
+    auth: { kind: "key", keyPath, dedicated: true } };
+  const other: ServerInfo = { ...server, id: "keep", auth: { kind: "agent" } };
+  const values = new Map<string, unknown>([["servers.list", [server, other]]]);
+  const repo = { get: (key: string) => structuredClone(values.get(key)), set: (key: string, value: unknown) => values.set(key, value) } as never;
+  let mode: "offline" | "failure" | "timeout" | "success" = "offline", command = "", dropped = "";
+  const pool = { get: async () => {
+    if (mode === "offline") throw new Error("offline");
+    return { exec(script: string, callback: Function) {
+      command = script;
+      const channel = new EventEmitter() as any;
+      channel.stderr = new EventEmitter();
+      queueMicrotask(() => { if (mode === "failure") channel.stderr.emit("data", Buffer.from("permission denied")); channel.emit("close", mode === "success" ? 0 : mode === "timeout" ? null : 1); });
+      callback(null, channel);
+    } };
+  }, drop: (id: string) => { dropped = id; }, dropAll() {} };
+  const registry = new ServerRegistry(repo, pool as never);
+  writeFileSync(keyPath, "fixture");
+  try {
+    for (mode of ["offline", "failure", "timeout"] as const) {
+      await expect(registry.delete(server.id)).rejects.toThrow();
+      expect(existsSync(keyPath)).toBe(true);
+      expect(registry.list()).toHaveLength(2);
+      expect(dropped).toBe("");
+    }
+    mode = "success";
+    const changed: string[] = [];
+    const service = new ServerService(repo, () => {}, async () => { changed.push("tools"); });
+    Object.assign(service, { pool, registry });
+    const closed: string[] = [];
+    service.sessions.closeServer = id => { closed.push(id); };
+    (service as any).lastActivity.set(server.id, 1);
+    await service.handle({ type: "servers.delete", id: server.id, requestId: "delete" });
+    expect(command).toContain(`qone:${server.id}`);
+    expect(command).toContain("&& ! grep -qF");
+    expect(existsSync(keyPath)).toBe(false);
+    expect(registry.list()).toEqual([other]);
+    expect(dropped).toBe(server.id);
+    expect(closed).toEqual([server.id]);
+    expect(changed).toEqual(["tools"]);
+    expect((service as any).lastActivity.has(server.id)).toBe(false);
+    await registry.delete(server.id);
+    expect(registry.list()).toEqual([other]);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

@@ -42,6 +42,7 @@ import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePi
 import type { AppMediaService } from "./app-media-service.js";
 import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 import { promptPiRun } from "./pi-run-prompt.js";
+import { executionContextExtension, type ServerExecutionTarget } from "./execution-context.js";
 
 const log = createLogger("pi-adapter");
 export const PI_REQUEST_OVERRIDES = { httpIdleTimeoutMs: 0 } as const;
@@ -78,8 +79,8 @@ interface PiAdapterHooks {
   deliveryTools?: (sessionId: string, workspacePath: string, activeRunId: () => string | undefined) => ToolDefinition[];
   /** The user's SSH servers; they go through the normal approval wrapper. */
   serverTools?: (workspacePath: string, serverIds: readonly string[]) => ToolDefinition[];
-  /** One line naming the user's servers, for the on-demand tool catalog. */
   serverSummary?: (serverIds: readonly string[]) => string;
+  serverTargets?: (serverIds: readonly string[]) => ServerExecutionTarget[];
   onCustomEntry?: (sessionId: string, entry: unknown) => void;
   onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
 }
@@ -691,11 +692,9 @@ export class PiAdapter {
     const { session } = await createAgentSession({
       cwd: workspacePath,
       sessionManager,
-      // Wrapped built-ins and custom tools share the same permission boundary.
-      noTools: "builtin",
-      tools: ["+codemode", "+tool_search"],
+      noTools: "builtin", tools: ["+codemode", "+tool_search"],
       customTools: loadout.tools,
-      resourceLoader: await sessionResourceLoader(resourceLoader, workspacePath),
+      resourceLoader: await sessionResourceLoader(resourceLoader, workspacePath, true, [executionContextExtension({ localTools: builtinTools.map(tool => tool.name), serverTools: serverTools.map(tool => tool.name), servers: () => mcpServerId ? [] : this.hooks.serverTargets?.(scope) ?? [] })]),
       modelRuntime,
       settingsManager: sessionSettings,
       model,
