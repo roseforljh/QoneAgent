@@ -1,7 +1,8 @@
 import { useLocale } from "../../../localization";
 "use client";
 
-import type { FC } from "react";
+import { lazy, Suspense, type FC } from "react";
+import { Check, CircleSlash, LoaderCircle, X } from "lucide-react";
 import { Image } from "./image";
 import { cn } from "../../../lib/utils";
 import { DiffViewer } from "./diff-viewer";
@@ -90,6 +91,52 @@ function ImageResult({ presentation }: { presentation: Extract<ToolPresentation,
   );
 }
 
+const Highlighter = lazy(async () => ({ default: (await import("./shiki-highlighter")).SyntaxHighlighter }));
+const STATUS_ICON = { running: LoaderCircle, ok: Check, error: X, cancelled: CircleSlash } as const;
+
+/** codemode: the script, a live list of the tools it called, then its output. */
+function ScriptResult({ presentation, running }: { presentation: Extract<ToolPresentation, { kind: "script" }>; running?: boolean }) {
+  const { t } = useLocale();
+  const output = presentation.output.trim();
+  return (
+    <div data-slot="tool-script-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/45">
+      {presentation.code && (
+        <details className="group border-b border-foreground/10" open={!output && !presentation.calls.length}>
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-foreground/50 hover:text-foreground/75">
+            <span className="font-mono text-[11px] uppercase tracking-wide">JavaScript</span>
+            <span className="truncate font-mono text-foreground/40 group-open:hidden">{presentation.code.split("\n").find((line) => line.trim() && !line.startsWith("// @options"))?.trim()}</span>
+          </summary>
+          <div className="max-h-72 overflow-auto px-3 pb-2.5 text-xs [&_pre]:!m-0 [&_pre]:!bg-transparent [&_pre]:!p-0">
+            <Suspense fallback={<pre className="font-mono">{presentation.code}</pre>}><Highlighter code={presentation.code} language="javascript" /></Suspense>
+          </div>
+        </details>
+      )}
+      {presentation.calls.length > 0 && (
+        <ol className="divide-y divide-foreground/[0.06] border-b border-foreground/10">
+          {presentation.calls.map((call) => {
+            const Icon = STATUS_ICON[call.status];
+            return (
+              <li key={call.id} className="flex min-w-0 items-center gap-2 px-3 py-1.5" title={call.error ?? call.args}>
+                <Icon size={12} className={cn("shrink-0", call.status === "running" && "animate-spin text-foreground/45", call.status === "ok" && "text-emerald-500", call.status === "error" && "text-destructive", call.status === "cancelled" && "text-foreground/35")} />
+                <span className="shrink-0 font-mono text-foreground/80">{call.name}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-foreground/40">{call.error ?? call.args}</span>
+                {call.durationMs !== undefined && <span className="shrink-0 tabular-nums text-foreground/35">{call.durationMs < 1000 ? `${call.durationMs}ms` : `${(call.durationMs / 1000).toFixed(1)}s`}</span>}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {output ? <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground/75 [overflow-wrap:anywhere]">{presentation.output}</pre>
+        : running && <div role="status" className="flex items-center gap-1 px-3 py-2.5 text-foreground/45">{t("tool.scriptRunning")}<EllipsisDots /></div>}
+      {presentation.images.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-3 pb-3">
+          {presentation.images.map((item, index) => <div key={index} className="max-w-full overflow-hidden rounded-lg border border-foreground/10"><ToolImage image={item.src} /></div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TextResult({ presentation }: { presentation: Extract<ToolPresentation, { kind: "text" }> }) {
   return (
     <p data-slot="tool-text-result" className="whitespace-pre-wrap break-words px-1 py-1 leading-relaxed text-foreground/80 [overflow-wrap:anywhere]">
@@ -120,6 +167,7 @@ export function ToolResultView({ presentation, className, emptyText, running = f
       {presentation.kind === "search" && <SearchResult presentation={presentation} />}
       {presentation.kind === "image" && <ImageResult presentation={presentation} />}
       {presentation.kind === "text" && <TextResult presentation={presentation} />}
+      {presentation.kind === "script" && <ScriptResult presentation={presentation} running={running} />}
       {presentation.kind === "unknown" && <ToolFallback presentation={presentation} />}
     </ResultFrame>
   );

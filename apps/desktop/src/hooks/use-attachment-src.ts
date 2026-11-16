@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuiState } from "@assistant-ui/react";
 import { useShallow } from "zustand/react/shallow";
-import { localImagePreview } from "../lib/local-image-preview";
+import { localImagePreview, retainLocalImagePreview, releaseLocalImagePreview } from "../lib/local-image-preview";
 
 const useFileSrc = (file: File | undefined) => {
   const [entry, setEntry] = useState<{ file: File; url: string } | undefined>(
@@ -56,10 +56,11 @@ export const useAttachmentPreviewSrc = ({ file, src, localPath }: AttachmentPrev
   useEffect(() => {
     if (!localPath) return;
     let active = true;
+    retainLocalImagePreview(localPath);
     void localImagePreview(localPath).then((url) => {
       if (active) setPreview({ path: localPath, url });
     }).catch(() => undefined);
-    return () => { active = false; };
+    return () => { active = false; releaseLocalImagePreview(localPath); };
   }, [localPath]);
 
   return useFileSrc(file) ?? (preview && preview.path === localPath ? preview.url : undefined) ?? src;

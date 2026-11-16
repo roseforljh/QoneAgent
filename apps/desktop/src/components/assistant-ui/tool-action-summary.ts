@@ -73,7 +73,7 @@ export function toolPreparationLabel(part: ToolActionPart, step: { verb: string;
 export function commandForTool(part: ToolActionPart, call?: ToolCall): string | undefined {
   if (!isCommandTool(part)) return undefined;
   const args = { ...asObject(part.args), ...asObject(call?.args) };
-  const command = firstString([args.command, args.cmd, args.script, args.shellCommand]);
+  const command = firstString([args.command, args.cmd, args.script, args.code, args.shellCommand]);
   if (command) return command;
   return firstString([call?.args, part.args]);
 }

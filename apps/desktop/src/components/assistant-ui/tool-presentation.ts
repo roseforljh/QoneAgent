@@ -24,6 +24,8 @@ export interface ToolSearchItem {
   text: string;
 }
 
+export interface ScriptCall { id: string; name: string; args: string; status: "running" | "ok" | "error" | "cancelled"; durationMs?: number; error?: string }
+
 export type ToolPresentation =
   | {
       kind: "diff";
@@ -57,6 +59,14 @@ export type ToolPresentation =
   | {
       kind: "text";
       text: string;
+    }
+  | {
+      /** Pi codemode: the script, every tool call it made, and its text and image output. */
+      kind: "script";
+      code: string;
+      calls: ScriptCall[];
+      output: string;
+      images: { src: string; mimeType?: string }[];
     }
   | {
       kind: "unknown";
@@ -137,11 +147,20 @@ function resultText(result: unknown, tail = false): string | undefined {
   return tail && text.length > MAX_TEXT_LENGTH ? `…${text.slice(-MAX_TEXT_LENGTH)}` : limitText(text);
 }
 
-function resultImage(result: unknown): { src: string; mimeType?: string } | undefined {
-  const block = contentBlocks(result).find((item) => item.type === "image" && typeof item.data === "string" && item.data);
-  if (!block) return undefined;
+/** Pi image blocks carry raw base64; image views need a data URL. */
+function imageFromBlock(block: RecordValue): { src: string; mimeType?: string } | undefined {
+  if (block.type !== "image" || typeof block.data !== "string" || !block.data) return undefined;
   const mimeType = typeof block.mimeType === "string" ? block.mimeType : undefined;
-  return { src: block.data as string, ...(mimeType ? { mimeType } : {}) };
+  const src = block.data.startsWith("data:") ? block.data : `data:${mimeType ?? "image/png"};base64,${block.data}`;
+  return { src, ...(mimeType ? { mimeType } : {}) };
+}
+
+function resultImage(result: unknown): { src: string; mimeType?: string } | undefined {
+  for (const block of contentBlocks(result)) {
+    const image = imageFromBlock(block);
+    if (image) return image;
+  }
+  return undefined;
 }
 
 /** Pi's grep prints `path:line: text`; only parsed for the grep tool itself. */
@@ -152,6 +171,28 @@ function grepItems(text: string): ToolSearchItem[] {
       ? { path: match[1], line: Number(match[2]), text: match[3] ?? "" }
       : { text: line };
   }).filter((item) => item.text.trim().length > 0 || item.path !== undefined);
+}
+
+/** Running results arrive as partial updates with the same shape: `{ content, details: { calls } }`. */
+function scriptPresentation(result: unknown, args: unknown): Extract<ToolPresentation, { kind: "script" }> {
+  const parsed = parseJson(result);
+  const calls = asRecord(asRecord(parsed)?.details)?.calls;
+  const blocks = contentBlocks(parsed);
+  return {
+    kind: "script",
+    code: toolArg(args, "code") ?? "",
+    calls: Array.isArray(calls) ? calls.flatMap((call) => {
+      const item = asRecord(call);
+      return item && typeof item.name === "string" ? [{
+        id: String(item.id ?? item.name), name: item.name, args: typeof item.args === "string" ? item.args : "",
+        status: (["running", "ok", "error", "cancelled"].includes(String(item.status)) ? item.status : "running") as ScriptCall["status"],
+        ...(typeof item.durationMs === "number" ? { durationMs: item.durationMs } : {}),
+        ...(typeof item.error === "string" ? { error: item.error } : {}),
+      }] : [];
+    }) : [],
+    output: typeof parsed === "string" ? limitText(parsed) : limitText(blocks.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n")),
+    images: blocks.flatMap((block) => imageFromBlock(block) ?? []),
+  };
 }
 
 /**
@@ -168,6 +209,7 @@ export function detectToolPresentation(toolName: string, result: unknown, args?:
       ? { kind: "diff", patch: change.patch, name: change.path }
       : { kind: "diff", name: change.path, oldFile: { content: change.oldContent ?? "", name: change.path }, newFile: { content: change.newContent ?? "", name: change.path } };
   }
+  if (toolName === "codemode") return scriptPresentation(result, args);
   const commandTool = isCommandTool({ toolName });
   const text = resultText(result, commandTool);
   const path = toolArg(args, "path");
@@ -270,6 +312,8 @@ export function toolPresentationSummary(presentation: ToolPresentation, locale: 
       return presentation.name ?? translate(locale, "tool.imageResult");
     case "text":
       return presentation.text;
+    case "script":
+      return presentation.output || presentation.code;
     case "unknown":
       return presentation.text ?? translate(locale, "tool.debugResult");
   }

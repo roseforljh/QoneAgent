@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage, ChatRunError, ToolCall } from "../store";
 import type { AssistantMessagePart, ModelConfigInfo } from "@qone/protocol";
+import { memoizeConvertedMessages, type ConversionMemo } from "./conversation-message-conversion";
 import { useLocale } from "../localization";
 import { createMessageConverter } from "./runtime-message-converter";
 import { insertChatRunErrorMessage } from "./chat-run-error-message";
 import { isImageModel } from "./image-model-config";
-import { localImagePreview } from "./local-image-preview";
+import { localImagePreview, releaseLocalImagePreview, retainLocalImagePreview } from "./local-image-preview";
 import { appendSteeringMessages } from "./use-steering-messages";
 import type { subagentImagesByRun } from "./subagent-images";
 
@@ -33,15 +34,36 @@ export function useConversationMessages({ messages, streaming, streamingParts, r
   }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError, answerError, submittedSteers, t]);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const imageAttachmentMessages = useMemo(() => appendSteeringMessages(messages, submittedSteers), [messages, submittedSteers]);
+  // Paths this mounted conversation currently holds. A run that ends while its
+  // request is in flight still applies its result: the request is keyed by path,
+  // not by the effect run that started it, so a re-render cannot lose a preview.
+  const heldPreviews = useRef(new Set<string>());
   useEffect(() => {
-    const paths = [...new Set(imageAttachmentMessages.flatMap((message) => message.attachments?.flatMap((attachment) =>
-      attachment.type === "image" && attachment.localPath ? [attachment.localPath] : []) ?? []))];
-    let active = true;
-    void Promise.all(paths.map(async (path) => {
+    const paths = new Set<string>();
+    for (const message of imageAttachmentMessages) {
+      for (const attachment of message.attachments ?? []) {
+        if (attachment.type === "image" && attachment.localPath) paths.add(attachment.localPath);
+      }
+    }
+    const held = heldPreviews.current;
+    for (const path of paths) if (!held.has(path)) { held.add(path); retainLocalImagePreview(path); }
+    const dropped = [...held].filter((path) => !paths.has(path));
+    for (const path of dropped) { held.delete(path); releaseLocalImagePreview(path); }
+    if (dropped.length > 0) {
+      setImagePreviews((current) => {
+        if (!dropped.some((path) => path in current)) return current;
+        const next = { ...current };
+        for (const path of dropped) delete next[path];
+        return next;
+      });
+    }
+    if (paths.size === 0) return;
+    let cancelled = false;
+    void Promise.all([...paths].map(async (path) => {
       try { return [path, await localImagePreview(path)] as const; }
       catch { return undefined; }
     })).then((entries) => {
-      if (!active) return;
+      if (cancelled) return;
       setImagePreviews((current) => {
         const next = { ...current };
         let changed = false;
@@ -52,8 +74,13 @@ export function useConversationMessages({ messages, streaming, streamingParts, r
         return changed ? next : current;
       });
     });
-    return () => { active = false; };
+    return () => { cancelled = true; };
   }, [imageAttachmentMessages]);
+  // The conversation unmounts: hand every path back so the cache tracks owners.
+  useEffect(() => () => {
+    for (const path of heldPreviews.current) releaseLocalImagePreview(path);
+    heldPreviews.current.clear();
+  }, []);
   const imageWindows = useMemo(() => {
     const windows = new Map<string, { after?: number; through?: number }>();
     const lastAssistantByRun = new Map<string, number>();
@@ -79,12 +106,16 @@ export function useConversationMessages({ messages, streaming, streamingParts, r
   }, [toolCalls]);
 
   const convertMessage = useMemo(createMessageConverter, []);
+  const convertedCache = useRef<ConversionMemo | undefined>(undefined);
   const convertedMessages = useMemo(() => {
     const context = {
       imagePreviews, toolCallsByRun, imageWindows, childImagesByRun, running,
       imageModel: isImageModel(selectedModel), imageGenerationError, chatRunErrorDetail: chatRunError?.detail,
     };
-    return runtimeMessages.map((message) => convertMessage(message, context));
+    return memoizeConvertedMessages(runtimeMessages, context, [
+      imagePreviews, toolCallsByRun, imageWindows, childImagesByRun, running,
+      context.imageModel, imageGenerationError, context.chatRunErrorDetail,
+    ], convertMessage, convertedCache);
   }, [runtimeMessages, convertMessage, imagePreviews, toolCallsByRun, imageWindows, childImagesByRun, running, selectedModel, imageGenerationError, chatRunError?.detail]);
 
   return convertedMessages;

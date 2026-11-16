@@ -63,9 +63,28 @@ test("other tools are never guessed into diffs, file writes, searches or termina
 
 test("image blocks, text and unknown data", () => {
   expect(detectToolPresentation("mcp:img:render", { content: [{ type: "image", data: "aGk=", mimeType: "image/png" }] }))
-    .toEqual({ kind: "image", src: "aGk=", mimeType: "image/png" });
+    .toEqual({ kind: "image", src: "data:image/png;base64,aGk=", mimeType: "image/png" });
   expect(detectToolPresentation("mcp:x:y", "plain result")).toEqual({ kind: "text", text: "plain result" });
   const unknown = detectToolPresentation("mcp:x:y", { value: 1 });
   expect(unknown.kind).toBe("unknown");
   expect(toolPresentationSummary(unknown)).not.toContain("value");
+});
+
+test("codemode shows its script, nested calls and every output block", () => {
+  const result = {
+    content: [{ type: "text", text: "Script completed in 1.2s\nfound 2" }, { type: "image", data: "aGk=", mimeType: "image/png" }],
+    details: { calls: [
+      { id: "c1/1", name: "grep", args: "{\"pattern\":\"x\"}", status: "ok", durationMs: 12 },
+      { id: "c1/2", name: "read", args: "{}", status: "error", error: "ENOENT" },
+      { name: 7 },
+    ] },
+  };
+  expect(detectToolPresentation("codemode", result, { code: "return 1" })).toEqual({
+    kind: "script", code: "return 1", output: "Script completed in 1.2s\nfound 2",
+    images: [{ src: "data:image/png;base64,aGk=", mimeType: "image/png" }],
+    calls: [
+      { id: "c1/1", name: "grep", args: "{\"pattern\":\"x\"}", status: "ok", durationMs: 12 },
+      { id: "c1/2", name: "read", args: "{}", status: "error", error: "ENOENT" },
+    ],
+  });
 });
