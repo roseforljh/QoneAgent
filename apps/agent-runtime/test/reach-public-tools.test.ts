@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { createReachPublicTools, parseFeed } from "../src/reach-public-tools";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import * as dns from "node:dns/promises";
+
+// fetch is mocked per test; the SSRF guard's DNS lookup must not hit the real network either.
+mock.module("node:dns/promises", () => ({ ...dns, lookup: async () => [{ address: "140.82.112.6", family: 4 }] }));
+const { createReachPublicTools, parseFeed } = await import("../src/reach-public-tools");
 import { listReachChannels } from "../src/reach-channels";
 import { browserScreenshotResult } from "../src/web-image";
 

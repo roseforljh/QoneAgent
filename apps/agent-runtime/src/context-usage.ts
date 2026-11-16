@@ -17,14 +17,20 @@ export function subscribeContextUsage(
 ): () => void {
   let baseTokens: number | undefined;
   let previous: { tokens: number; contextWindow: number } | undefined;
+  let nextStreamingUpdate = 0;
   return session.subscribe((event) => {
     let tokens: number;
     if (event.type === "message_update") {
-      // Reuse the history total while streaming; only estimate the current message.
+      // Match the existing 32 ms tool/UI cadence. Per-token context events would
+      // force runtime-output to flush every text delta before its batch is ready.
+      const now = performance.now();
+      if (now < nextStreamingUpdate) return;
+      nextStreamingUpdate = now + 32;
       baseTokens ??= storedContextTokens(session);
       tokens = baseTokens + estimateTokens(event.message);
     } else if (event.type === "message_start" || event.type === "message_end"
       || event.type === "agent_start" || event.type === "agent_end" || event.type === "compaction_end") {
+      nextStreamingUpdate = 0;
       baseTokens = storedContextTokens(session);
       tokens = baseTokens + (event.type === "message_start" ? estimateTokens(event.message) : 0);
       if (event.type === "agent_start") previous = undefined;

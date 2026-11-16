@@ -15,7 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { rm } from "node:fs/promises";
-import { detectImageModel, modelListUrl, normalizeThinkingLevelForApi, type AgentEvent, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { detectImageModel, normalizeThinkingLevelForApi, type AgentEvent, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { subscribeSessionEvents } from "./pi-session-events.js";
 import { installSubagentFinalizationGuard } from "./subagent-finalization-guard.js";
@@ -33,53 +33,31 @@ import { googleMediaContent, googleStreamSimple } from "./google-media.js";
 import { openAICompletionsStreamSimple } from "./openai-audio.js";
 import { codexResponsesMediaStreamSimple, openAIResponsesMediaStreamSimple } from "./openai-responses-media.js";
 import { anthropicMediaStreamSimple } from "./anthropic-media.js";
-import { ModelMetadataResolver, providerBaseUrl } from "./model-resolver.js";
+import { ModelMetadataResolver } from "./model-resolver.js";
 import { canProcessMediaAttachment, configuredCapabilities, mediaCapabilitiesContext } from "./media-capabilities.js";
 import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
 import type { DouyinBridge } from "./douyin-bridge.js";
-import { extractTextContent, splitModelName } from "./pi-message-utils.js";
+import { assertModelToolNames, extractTextContent, fetchProviderModels, parseAutomaticMediaDelegation, splitModelName } from "./pi-message-utils.js";
+import { applyToolExposure, usedToolNames } from "./tool-exposure.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
 import type { AppMediaService } from "./app-media-service.js";
 import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 import { withMediaPhaseReporter } from "./media-phase.js";
 
 const log = createLogger("pi-adapter");
-const MODEL_TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
 export const PI_REQUEST_OVERRIDES = { httpIdleTimeoutMs: 0 } as const;
 export { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences } from "./pi-compaction.js";
 export type { PiCompactionPreferences } from "./pi-compaction.js";
 
-function assertModelToolNames(names: Iterable<string>): void {
-  const seen = new Set<string>();
-  for (const name of names) {
-    if (!MODEL_TOOL_NAME.test(name) || name.length > 64) throw new Error(`Invalid model tool name: ${name}`);
-    if (seen.has(name)) throw new Error(`Duplicate model tool name: ${name}`);
-    seen.add(name);
-  }
-}
+const isOfficialAnthropic = (model: { api: string; baseUrl: string }) =>
+  model.api === "anthropic-messages" && model.baseUrl.includes("api.anthropic.com");
 
 type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
 type DelegateSubagent = (input: SubagentSelection & { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; reason: string; expectedResult: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
 type SubagentController = import("./subagent-runner.js").SubagentController;
 
-type AutomaticMediaDelegation = {
-  result: string;
-  status: string;
-};
-
-function parseAutomaticMediaDelegation(value: string): AutomaticMediaDelegation | undefined {
-  try {
-    const parsed = JSON.parse(value) as { status?: unknown; result?: unknown; error?: unknown };
-    if (typeof parsed !== "object" || parsed === null || typeof parsed.status !== "string") return undefined;
-    const result = typeof parsed.result === "string" && parsed.result.trim()
-      ? parsed.result.trim()
-      : typeof parsed.error === "string" && parsed.error.trim() ? parsed.error.trim() : "";
-    return result ? { result, status: parsed.status } : undefined;
-  } catch {
-    return undefined;
-  }
-}
+type AutomaticMediaDelegation = NonNullable<ReturnType<typeof parseAutomaticMediaDelegation>>;
 
 export interface GoalRuntimeBridge {
   get(sessionId: string, goalId: string, epoch: number, runId: string): unknown;
@@ -96,6 +74,13 @@ interface PiAdapterHooks {
   onAssistantFinal?: (sessionId: string, runId: string, content: string) => void;
   onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string, durationMs?: number) => void;
   webAccessContext?: (sessionId: string, task?: string) => string;
+  /** Long-term memory for top-level conversations only; side chats and subagents never read or write it. */
+  memoryContext?: (sessionId: string, message: string, modelName?: string) => string;
+  memoryTools?: (sessionId: string) => ToolDefinition[];
+  /** The user's SSH servers; they go through the normal approval wrapper. */
+  serverTools?: (workspacePath: string) => ToolDefinition[];
+  /** One line naming the user's servers, for the on-demand tool catalog. */
+  serverSummary?: () => string;
   onCustomEntry?: (sessionId: string, entry: unknown) => void;
   onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
 }
@@ -118,6 +103,9 @@ export class PiAdapter {
   private stoppedRuns = new Set<string>();
   private seq = 0;
   private customTools: ToolDefinition[] = [];
+  /** On-demand tool catalog of each live session, and the copy its model has already seen. */
+  private toolCatalogs = new WeakMap<AgentSession, string>();
+  private sentToolCatalogs = new WeakMap<AgentSession, string>();
   private staleSessions = new Set<string>();
   private approvals = new ApprovalQueue();
   private pendingApprovalIds = new Map<string, Set<string>>();
@@ -126,7 +114,16 @@ export class PiAdapter {
   private subagentController?: SubagentController;
   private subagentPolicy?: () => { allowNested: boolean; maxDepth: number; maxConcurrent: number };
   private resourceLoaders = new Map<string, ResourceLoader>();
+  private resourceLoaderLoads = new Map<string, Promise<ResourceLoader>>();
+  private sessionResourceKeys = new Map<string, string>();
   private modelRuntime?: ModelRuntime;
+  private modelRuntimeLoad?: Promise<ModelRuntime>;
+  private async ensureModelRuntime(): Promise<ModelRuntime> {
+    if (this.modelRuntime) return this.modelRuntime;
+    const loading = this.modelRuntimeLoad ??= ModelRuntime.create({ allowModelNetwork: false });
+    try { return this.modelRuntime ??= await loading; }
+    finally { if (this.modelRuntimeLoad === loading) this.modelRuntimeLoad = undefined; }
+  }
   private thinkingLevels = new Map<string, ThinkingLevel>();
   private modelApiTypes = new Map<string, ProviderApiType>();
   private modelApiKeys = new Map<string, string>();
@@ -158,34 +155,7 @@ export class PiAdapter {
   private readonly sessionSettingsManagers = new Map<string, SettingsManager>();
   private readonly compactingSessions = new Set<string>();
   private compactionPreferences: PiCompactionPreferences;
-  private modelMetadataResolver = new ModelMetadataResolver({
-    providerModelsFetcher: async ({ provider, apiType, piApi, baseUrl, catalogBaseUrl, apiKey }) => {
-      // Use the catalog URL for `/models`; the runtime URL is intentionally
-      // query-free for the private Codex adapter.
-      const endpointBase = catalogBaseUrl || providerBaseUrl(apiType, piApi, baseUrl);
-      if (!endpointBase) return [];
-      const headers: Record<string, string> = { Accept: "application/json" };
-      if (apiType === "claude") {
-        if (apiKey) headers["x-api-key"] = apiKey;
-        headers["anthropic-version"] = "2023-06-01";
-      } else if (apiType !== "google" && apiKey) {
-        headers.Authorization = `Bearer ${apiKey}`;
-      }
-      const url = modelListUrl(apiType, endpointBase);
-      if (!url) return [];
-      const requestUrl = new URL(url);
-      if (apiType === "google" && apiKey) requestUrl.searchParams.set("key", apiKey);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2_500);
-      try {
-        const response = await fetch(requestUrl, { headers, signal: controller.signal });
-        if (!response.ok) throw new Error(`provider models HTTP ${response.status}`);
-        return await response.json();
-      } finally {
-        clearTimeout(timer);
-      }
-    },
-  });
+  private modelMetadataResolver = new ModelMetadataResolver({ providerModelsFetcher: fetchProviderModels });
 
   constructor(
     emit: EmitFn,
@@ -243,9 +213,7 @@ export class PiAdapter {
     this.customTools = tools;
     for (const [sessionId, session] of this.sessions) {
       if (session.isIdle) {
-        await session.dispose();
-        this.sessions.delete(sessionId);
-        this.sessionSettingsManagers.delete(sessionId);
+        await this.disposeSession(sessionId);
       } else {
         // Do not interrupt an active run. It will be recreated after settling.
         this.staleSessions.add(sessionId);
@@ -292,11 +260,15 @@ export class PiAdapter {
 
   async refreshSkills(): Promise<void> {
     this.resourceLoaders.clear();
+    this.resourceLoaderLoads.clear();
+    await this.invalidateSessions();
+  }
+
+  /** Rebuild sessions on their next run, e.g. after their tool set changes. Active runs are not interrupted. */
+  async invalidateSessions(): Promise<void> {
     for (const [sessionId, session] of this.sessions) {
       if (session.isIdle) {
-        await session.dispose();
-        this.sessions.delete(sessionId);
-        this.sessionSettingsManagers.delete(sessionId);
+        await this.disposeSession(sessionId);
       } else {
         this.staleSessions.add(sessionId);
       }
@@ -304,7 +276,7 @@ export class PiAdapter {
   }
 
   private async applyModelConfiguration(configs: ModelConfigInfo[]): Promise<void> {
-    this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+    this.modelRuntime = await this.ensureModelRuntime();
     this.configuredModelConfigs = configs;
     this.imageModelConfigs = new Map();
     this.speechModelConfigs = new Map();
@@ -377,7 +349,9 @@ export class PiAdapter {
             contextWindow: model.contextWindow,
             maxTokens: model.maxTokens,
             ...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
-            ...(model.compat ? { compat: model.compat } : {}),
+            // Pi enables Anthropic message threads only for its own "anthropic" provider id;
+            // Qone provider ids are user-defined, so opt in for the official endpoint here.
+            ...(model.compat || isOfficialAnthropic(model) ? { compat: { ...(isOfficialAnthropic(model) ? { supportsMessageThreads: true } : {}), ...model.compat } } : {}),
             ...(model.samplingParams ? { samplingParams: model.samplingParams } : {}),
           };
         }),
@@ -395,19 +369,20 @@ export class PiAdapter {
   }
 
   async disposeSession(sessionId: string): Promise<void> {
-    this.resourceLoaders.delete(`side-chat:${sessionId}`);
     const session = this.sessions.get(sessionId);
-    if (session) {
-      await session.dispose();
-      this.sessions.delete(sessionId);
-    }
+    this.sessions.delete(sessionId);
     this.sessionSettingsManagers.delete(sessionId);
     this.staleSessions.delete(sessionId);
+    const key = this.sessionResourceKeys.get(sessionId);
+    this.sessionResourceKeys.delete(sessionId);
+    if (key && ![...this.sessionResourceKeys.values()].includes(key)) {
+      this.resourceLoaders.delete(key);
+      this.resourceLoaderLoads.delete(key);
+    }
+    if (session) await session.dispose();
   }
 
-  getSessions(): AgentSession[] {
-    return [...this.sessions.values()];
-  }
+  getSessions(): AgentSession[] { return [...this.sessions.values()]; }
 
   /** Store credentials only in the live process and hand them to Pi's
    * provider runtime. The desktop persists the same value in Credential
@@ -415,7 +390,7 @@ export class PiAdapter {
   async setSecret(key: string, value: string): Promise<void> {
     const provider = key.startsWith("model.apiKey:") ? key.slice("model.apiKey:".length) : key;
     if (key.startsWith("model.apiKey:")) this.modelApiKeys.set(provider, value);
-    this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+    this.modelRuntime = await this.ensureModelRuntime();
     await this.modelRuntime.setRuntimeApiKey(provider, value);
     if (key.startsWith("model.apiKey:") && this.configuredModelConfigs.length > 0) {
       this.modelMetadataResolver.invalidateProviderCatalog(provider);
@@ -456,12 +431,13 @@ export class PiAdapter {
       }
     } finally {
       this.compactingSessions.delete(sessionId);
+      if (this.restoreMessages && !this.isRunning(sessionId)) await this.disposeSession(sessionId);
     }
   }
 
   async getContextUsage(sessionId: string, cwd: string, modelName: string): Promise<{ tokens: number; contextWindow: number }> {
     const [provider, modelId] = splitModelName(modelName);
-    this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+    this.modelRuntime = await this.ensureModelRuntime();
     const model = this.modelRuntime.getModel(provider, modelId);
     if (!model) throw new Error(`configured model not found: ${modelName}`);
     const existing = this.sessions.get(sessionId);
@@ -469,10 +445,11 @@ export class PiAdapter {
     const session = existing && !(this.staleSessions.has(sessionId) && existing.isIdle)
       ? existing
       : await this.getSession(sessionId, cwd, modelName);
-    return {
-      tokens: contextTokens(session),
-      contextWindow: model.contextWindow,
-    };
+    try {
+      return { tokens: contextTokens(session), contextWindow: model.contextWindow };
+    } finally {
+      if (this.restoreMessages && session.isIdle && !this.isRunning(sessionId)) await this.disposeSession(sessionId);
+    }
   }
 
   async deleteSecret(key: string): Promise<void> {
@@ -488,7 +465,7 @@ export class PiAdapter {
   }
 
   async generateTitle(prompt: string, modelName?: string, signal?: AbortSignal): Promise<string> {
-    this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+    this.modelRuntime = await this.ensureModelRuntime();
     const model = modelName
       ? this.modelRuntime.getModel(...splitModelName(modelName))
       : this.modelRuntime.getModels()[0];
@@ -506,6 +483,20 @@ export class PiAdapter {
     return title.slice(0, 80);
   }
 
+  /** One tool-free completion with the given (or first configured) model, for background tasks. */
+  async completeText(modelName: string | undefined, systemPrompt: string, prompt: string, maxTokens: number): Promise<{ text: string; tokens: number }> {
+    this.modelRuntime = await this.ensureModelRuntime();
+    const model = (modelName ? this.modelRuntime.getModel(...splitModelName(modelName)) : undefined) ?? this.modelRuntime.getModels()[0];
+    if (!model) throw new Error("no configured model available");
+    const response = await this.modelRuntime.completeSimple(model, {
+      systemPrompt,
+      messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+    }, { maxTokens, signal: AbortSignal.timeout(90_000) });
+    if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(response.errorMessage || "model request failed");
+    const usage = response.usage;
+    return { text: extractTextContent(response), tokens: usage.totalTokens || usage.input + usage.output };
+  }
+
   private push(type: string, payload: unknown, sessionId: string, runId?: string) {
     this.emit({
       eventId: crypto.randomUUID(),
@@ -518,7 +509,12 @@ export class PiAdapter {
     });
   }
 
-  private async getSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, goalId?: string, goalEpoch?: number, goalRunId?: string): Promise<AgentSession> {
+  private getSession(...args: Parameters<PiAdapter["createSession"]>): Promise<AgentSession> {
+    return this.sessionInputs.run(args[0], () => this.createSession(...args).catch(async error => {
+      if (!this.sessions.has(args[0])) await this.disposeSession(args[0]); throw error;
+    }));
+  }
+  private async createSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, goalId?: string, goalEpoch?: number, goalRunId?: string): Promise<AgentSession> {
     const modelKey = modelName ? splitModelName(modelName).join("/") : undefined;
     const apiType = modelKey ? this.modelApiTypes.get(modelKey) : undefined;
     const override = thinkingOverride ? normalizeThinkingLevelForApi(thinkingOverride, apiType) : undefined;
@@ -527,22 +523,17 @@ export class PiAdapter {
     if (existing) {
       if (mcpServerId && !existing.isIdle) throw new Error("session is busy");
       if ((mcpServerId || this.staleSessions.has(sessionId)) && existing.isIdle) {
-        await existing.dispose();
-        this.sessions.delete(sessionId);
-        this.sessionSettingsManagers.delete(sessionId);
-        this.staleSessions.delete(sessionId);
+        await this.disposeSession(sessionId);
       } else {
       if (modelName) {
-        this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+        this.modelRuntime = await this.ensureModelRuntime();
         const [provider, modelId] = splitModelName(modelName);
         const nextModel = this.modelRuntime.getModel(provider, modelId);
         if (!nextModel) throw new Error(`configured model not found: ${modelName}`);
         const currentModel = existing.agent.state.model;
         if (currentModel && `${currentModel.provider}/${currentModel.id}` !== modelName && existing.isIdle) {
-          await existing.dispose();
-          this.sessions.delete(sessionId);
-          this.sessionSettingsManagers.delete(sessionId);
-          return this.getSession(sessionId, cwd, modelName, thinkingOverride, eventSessionId, mcpServerId, subagentDepth, subagentRunId, goalId, goalEpoch, goalRunId);
+          await this.disposeSession(sessionId);
+          return this.createSession(sessionId, cwd, modelName, thinkingOverride, eventSessionId, mcpServerId, subagentDepth, subagentRunId, goalId, goalEpoch, goalRunId);
         }
         await existing.setModel(nextModel);
          if (thinking) existing.setThinkingLevel(thinking);
@@ -556,9 +547,21 @@ export class PiAdapter {
     const resourceKey = sideConversation
       ? `${subagentDepth > 0 ? "subagent-side-chat" : "side-chat"}:${sessionId}`
       : subagentDepth > 0 ? `subagent:${workspacePath}` : workspacePath;
-    if (!this.resourceLoaders.has(resourceKey)) {
-      const { loader } = await createResourceLoader(workspacePath, sideConversation ? SIDE_CHAT_INSTRUCTIONS : undefined, true, subagentDepth > 0);
-      this.resourceLoaders.set(resourceKey, loader);
+    this.sessionResourceKeys.set(sessionId, resourceKey);
+    let resourceLoader = this.resourceLoaders.get(resourceKey);
+    if (!resourceLoader) {
+      let loading = this.resourceLoaderLoads.get(resourceKey);
+      if (!loading) {
+        loading = createResourceLoader(workspacePath, sideConversation ? SIDE_CHAT_INSTRUCTIONS : undefined, true, subagentDepth > 0)
+          .then(({ loader }) => loader);
+        this.resourceLoaderLoads.set(resourceKey, loading);
+      }
+      try {
+        resourceLoader = await loading;
+        if (this.resourceLoaderLoads.get(resourceKey) === loading) this.resourceLoaders.set(resourceKey, resourceLoader);
+      } finally {
+        if (this.resourceLoaderLoads.get(resourceKey) === loading) this.resourceLoaderLoads.delete(resourceKey);
+      }
     }
     const powershell = createPowerShellTool(workspacePath, {
       // PowerShell 7 can emit ANSI color codes for formatted objects. The
@@ -605,10 +608,12 @@ export class PiAdapter {
       openCli: this.openCli,
       registerMediaDirectory: (runId, directory) => this.registerMediaDirectory(runId, directory),
     }, sessionId), workspacePath, modelName);
-    const internalTools = createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId);
+    const memoryTools = sideConversation || subagentDepth > 0 || mcpServerId ? [] : this.hooks.memoryTools?.(sessionId) ?? [];
+    const internalTools = [...createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId), ...memoryTools];
     const internalToolNames = new Set(internalTools.map((tool) => tool.name));
     internalToolNames.add("finalize_response");
-    const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...internalTools].map((t) =>
+    const serverTools = mcpServerId ? [] : this.hooks.serverTools?.(workspacePath) ?? [];
+    const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...serverTools, ...internalTools].map((t) =>
       withPermission(t, {
         queue: this.approvals,
         workspacePath,
@@ -628,17 +633,20 @@ export class PiAdapter {
       })
     );
     assertModelToolNames(wrapped.map((tool) => tool.name));
+    // Integrations load on demand (tool_search / codemode); see tool-exposure.ts.
+    // A session bound to one MCP server exists to call exactly those tools: keep them declared.
+    const loadout = mcpServerId ? { tools: wrapped, catalog: "" }
+      : applyToolExposure(wrapped, { name: "servers", description: this.hooks.serverSummary?.() ?? "SSH servers" });
 
     const toolNameByModelName = new Map(wrapped.map((tool) => [
       tool.name,
       (tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? tool.name,
     ]));
 
-    const resourceLoader = this.resourceLoaders.get(resourceKey);
     let modelRuntime: ModelRuntime | undefined;
     let model: ReturnType<ModelRuntime["getModel"]> | undefined;
     if (modelName) {
-      this.modelRuntime ??= await ModelRuntime.create({ allowModelNetwork: false });
+      this.modelRuntime = await this.ensureModelRuntime();
       modelRuntime = this.modelRuntime;
       const [provider, modelId] = splitModelName(modelName);
       model = modelRuntime.getModel(provider, modelId);
@@ -659,7 +667,6 @@ export class PiAdapter {
     );
     const sessionSettings = SettingsManager.inMemory();
     sessionSettings.applyOverrides(this.compactionOverrides());
-    sessionSettings.applyOverrides({ defaultTools: ["+codemode"] });
     // Let the provider and SDK decide when a request has failed. A value of 0
     // disables pi-coding-agent's HTTP idle timeout; local tool timeouts stay
     // independent of model request lifetime.
@@ -669,15 +676,24 @@ export class PiAdapter {
       sessionManager,
       // Built-ins are supplied as wrapped definitions so every tool goes through
       // the same permission boundary. Bash is intentionally omitted on Windows.
-      tools: [...wrapped.map((tool) => tool.name), "codemode"],
-      customTools: wrapped,
+      // Not an allowlist: Pi's own built-ins are replaced by the wrapped ones, every
+      // custom tool is registered, and only `direct` ones start declared. Deferred
+      // integrations stay registered for tool_search and codemode scripts.
+      noTools: "builtin",
+      tools: ["+codemode", "+tool_search"],
+      customTools: loadout.tools,
       resourceLoader,
       modelRuntime,
       settingsManager: sessionSettings,
       model,
       thinkingLevel: thinking,
     });
-    await session.bindExtensions({});
+    await session.bindExtensions({}).catch(async (error) => { await session.dispose(); throw error; });
+    // Qone rebuilds sessions from its own message store, which does not keep Pi's
+    // loadout entries. Re-declare on-demand tools the restored history already used.
+    const used = usedToolNames(restoredMessages.map((message) => message.rawMessage));
+    const reload = loadout.tools.filter((tool) => (tool as { exposure?: string }).exposure === "deferred" && used.has(tool.name)).map((tool) => tool.name);
+    if (reload.length) session.setActiveToolsByName([...session.getActiveToolNames(), ...reload]);
     installSubagentFinalizationGuard(session, {
       runId: () => this.activeRunIds.get(sessionId),
       controller: () => this.subagentController,
@@ -704,6 +720,8 @@ export class PiAdapter {
 
     this.sessions.set(sessionId, session);
     this.sessionSettingsManagers.set(sessionId, sessionSettings);
+    this.toolCatalogs.set(session, loadout.catalog);
+    if (loadout.catalog && restoredMessages.some(message => extractTextContent(message.rawMessage).includes(loadout.catalog))) this.sentToolCatalogs.set(session, loadout.catalog);
     return session;
   }
 
@@ -828,9 +846,18 @@ export class PiAdapter {
           : "");
       const modelInputs = await materializeModelInputs(modelAttachments, isGoogle, capabilities?.input);
       const webAccessContext = this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "";
+      // Appended after the user text: earlier history stays byte-identical for provider prefix caches.
+      // Like Pi's own MCP section: announce on-demand tools only when the set changed for this
+      // session object, so earlier messages stay byte-identical and the prompt cache holds.
+      const catalog = this.toolCatalogs.get(session) ?? "";
+      const toolCatalog = catalog && this.sentToolCatalogs.get(session) !== catalog ? catalog : "";
+      if (toolCatalog) this.sentToolCatalogs.set(session, catalog);
+      const memoryContext = opts.subagentRunId || opts.mcpServerId || this.isSideConversation(sessionId)
+        ? "" : this.hooks.memoryContext?.(sessionId, message, opts.model) ?? "";
+      if (mediaController.signal.aborted) throw mediaController.signal.reason;
       await withMediaPhaseReporter((phase) => {
         if (isGoogle) this.push("media.phase", { phase: "provider-processing", status: phase }, opts.eventSessionId ?? sessionId, runId);
-      }, () => activeSession.prompt([webAccessContext, capabilities ? mediaCapabilitiesContext(capabilities) : "", routingNotice, automaticMediaDelegation ? "" : videoAttachmentNotice, promptWithAttachments(message, modelAttachments, Boolean(capabilities?.input.includes("video") || capabilities?.input.includes("audio")), capabilities?.input)].filter(Boolean).join("\n"), {
+      }, () => activeSession.prompt([webAccessContext, capabilities ? mediaCapabilitiesContext(capabilities) : "", routingNotice, automaticMediaDelegation ? "" : videoAttachmentNotice, promptWithAttachments(message, modelAttachments, Boolean(capabilities?.input.includes("video") || capabilities?.input.includes("audio")), capabilities?.input), toolCatalog, memoryContext].filter(Boolean).join("\n"), {
         images: isGoogle ? googleMediaContent(modelInputs, capabilities?.input)
           : [...imageContent(modelInputs, capabilities?.input), ...(isCompletions ? googleMediaContent(modelInputs?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
       }));
@@ -854,15 +881,12 @@ export class PiAdapter {
       this.runs.delete(runId);
       this.runModes.delete(sessionId);
       this.pendingApprovalIds.delete(sessionId);
-      this.stoppedRuns.delete(runId);
-      if (this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
-      if (session && opts.mcpServerId) {
-        await this.disposeSession(sessionId);
-      } else if (session && this.staleSessions.has(sessionId) && session.isIdle) {
-        await session.dispose();
-        this.sessions.delete(sessionId);
-        this.sessionSettingsManagers.delete(sessionId);
-        this.staleSessions.delete(sessionId);
+      try {
+        // Keep ownership until disposal settles, so a replacement run cannot reuse a closing session.
+        if (!session || opts.mcpServerId || ((this.restoreMessages || this.staleSessions.has(sessionId)) && session.isIdle)) await this.disposeSession(sessionId);
+      } finally {
+        this.stoppedRuns.delete(runId);
+        if (this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
       }
     }
   }
@@ -906,9 +930,7 @@ export class PiAdapter {
     return true;
   }
 
-  hasSession(sessionId: string): boolean {
-    return this.sessions.has(sessionId);
-  }
+  hasSession(sessionId: string): boolean { return this.sessions.has(sessionId); }
 
   async waitForRun(runId: string, timeoutMs = 10_000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;

@@ -58,7 +58,7 @@ test("live context updates during streaming and tool execution before the run en
   try {
     await session.prompt("read my context");
     const streaming = updates.filter((update) => update.phase === "message_update");
-    expect(streaming.length).toBeGreaterThan(1);
+    expect(streaming.length).toBeGreaterThan(0);
     expect(streaming.every((update) => !update.ended && update.tokens > 0)).toBe(true);
     expect(updates.some((update) => update.phase === "message_end" && update.tokens >= estimateTokens({ role: "user", content: "tool result ".repeat(100), timestamp: 1 }))).toBe(true);
     expect(updates.at(-1)?.tokens).toBe(contextTokens(session));
@@ -91,6 +91,29 @@ test("adapter publishes live context for the owning conversation and excludes ch
     await adapter.disposeSession("parent");
     await adapter.disposeSession("child");
   }
+});
+
+test("ten thousand streamed deltas do not emit ten thousand context flushes and final usage stays exact", () => {
+  let listener: Parameters<AgentSession["subscribe"]>[0] = () => {};
+  let tokens = 100;
+  const session = {
+    getContextUsage: () => ({ tokens }), messages: [], model: { contextWindow: 128000 },
+    subscribe: (callback: typeof listener) => { listener = callback; return () => {}; },
+  } as unknown as AgentSession;
+  const updates: number[] = [];
+  subscribeContextUsage(session, usage => updates.push(usage.tokens));
+  listener({ type: "agent_start" });
+  const message = fauxAssistantMessage(fauxText("text"));
+  const start = performance.now();
+  for (let index = 1; index <= 10000; index++) {
+    message.content = [fauxText("text".repeat(index))];
+    listener({ type: "message_update", message } as never);
+  }
+  const elapsed = performance.now() - start;
+  expect(updates.length).toBeLessThanOrEqual(2 + Math.ceil(elapsed / 32));
+  tokens = 10100;
+  listener({ type: "agent_end", messages: [] });
+  expect(updates.at(-1)).toBe(10100);
 });
 
 test("compaction replaces the old context baseline before streaming resumes", () => {

@@ -130,6 +130,7 @@ describe("Pi 1.5 pi-schema compatibility", () => {
     const { tool, calls } = mcpTool(searchSchema);
     const faux = fauxProvider({ provider: "qone-schema", models: [{ id: "test-model" }] });
     faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("tool_search", { query: "MCP demo search" })),
       fauxAssistantMessage(fauxToolCall(tool.name, { query: "x", nested: { deep: "y" }, limit: "3" })),
       fauxAssistantMessage(fauxToolCall(tool.name, { query: "x", bogus: true })),
       fauxAssistantMessage(fauxText("done")),
@@ -157,8 +158,9 @@ describe("Pi 1.5 pi-schema compatibility", () => {
     try {
       await adapter.run("schema", "go", { cwd: process.cwd(), model: "qone-schema/test-model", permissionMode: "full" }, () => {});
       expect(calls).toEqual([{ name: "search", arguments: { query: "x", nested: { deep: "y" }, limit: 3 } }]);
-      expect(toolEvents.map((event) => event.type)).toEqual(["tool.completed", "tool.failed"]);
-      expect(toolEvents[1].text).toContain("unknown field");
+      const mcpEvents = toolEvents.filter(event => event.name === "mcp:demo:search");
+      expect(mcpEvents.map((event) => event.type)).toEqual(["tool.completed", "tool.failed"]);
+      expect(mcpEvents[1]!.text).toContain("unknown field");
     } finally {
       await adapter.disposeSession("schema");
     }

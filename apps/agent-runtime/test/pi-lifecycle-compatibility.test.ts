@@ -26,20 +26,25 @@ test("Pi custom turns, MCP tool reloads and model switches retain Qone prompt an
     { id: "old-user", role: "user", content: "RESTORED_USER_CONTEXT", createdAt: 1 },
     { id: "old-answer", role: "assistant", content: "Restored answer", createdAt: 2 },
   ]);
+  // Production releases idle sessions; explicitly prepare the SDK session for
+  // this direct custom-turn check instead of relying on post-run retention.
+  const prepare = (model: string) => (adapter as unknown as { getSession: (id: string, cwd: string, model: string, thinking: string) => Promise<import("@earendil-works/pi-coding-agent").AgentSession> })
+    .getSession("lifecycle", process.cwd(), model, "high");
   Object.assign(adapter, { modelRuntime: runtime });
   const options = { cwd: process.cwd(), model: "qone-lifecycle/first", permissionMode: "full" as const, thinking: "high" as const };
   try {
     await adapter.setCustomTools([probe("mcp_lifecycle_old")]);
     await adapter.run("lifecycle", "first request", options, () => {});
-    const first = adapter.getSessions()[0]!;
+    expect(adapter.getSessions()).toHaveLength(0);
+    const first = await prepare(options.model);
     await first.sendCustomMessage({ customType: "compatibility", content: "CUSTOM_TURN_CONTEXT", display: false }, { triggerTurn: true });
     expect(requests[1]!.messages).toContain("CUSTOM_TURN_CONTEXT");
     await adapter.setCustomTools([probe("mcp_lifecycle_new")]);
     await adapter.run("lifecycle", "after MCP reload", options, () => {});
-    const rebuilt = adapter.getSessions()[0]!;
+    const rebuilt = await prepare(options.model);
     expect(rebuilt).not.toBe(first);
     await adapter.run("lifecycle", "after model switch", { ...options, model: "qone-lifecycle/second" }, () => {});
-    const switched = adapter.getSessions()[0]!;
+    const switched = await prepare("qone-lifecycle/second");
     expect(switched).not.toBe(rebuilt);
     expect(switched.model?.id).toBe("second");
     expect(switched.thinkingLevel).toBe("high");

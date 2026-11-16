@@ -98,7 +98,7 @@ describe("manual session compaction", () => {
         expect(tools).toContain("read");
         expect(tools).toContain("powershell");
         expect(tools).toContain("codemode");
-        expect(tools).not.toContain("tool_search");
+        expect(tools).toContain("tool_search");
       }
       // Pi can retain the tail of a split turn. Reopening must preserve exactly
       // that compacted history, without reviving the summarized user request.

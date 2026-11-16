@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   DefaultResourceLoader,
   createCodemodeExtension,
+  createToolSearchExtension,
   type Skill,
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
@@ -130,7 +131,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
       skills: base.skills.filter((skill) => !isBuiltinSkillName(skill.name) || builtinSkills.some((builtin) => builtin.enabled && builtin.path === skill.filePath)),
     }),
     noExtensions: true,
-    extensionFactories: [toolPromptContextExtension, ...(enableCodemode ? [createCodemodeExtension({ models: false })] : [])],
+    extensionFactories: [toolPromptContextExtension, ...(enableCodemode ? [createCodemodeExtension({ models: false }), createToolSearchExtension()] : [])],
     // Qone.md is user-level global guidance. It stays separate from Qone's
     // built-in rules so updating the file never replaces product behavior.
     appendSystemPromptOverride: () => {

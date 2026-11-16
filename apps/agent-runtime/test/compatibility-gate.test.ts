@@ -41,8 +41,8 @@ describe("Pi model tool compatibility", () => {
       await adapter.run("compatibility", "ping", {
         cwd: process.cwd(), model: "qone-compat/test-model", permissionMode: "full",
       }, () => {});
-      const expected = ["read", "powershell", "edit", "write", "grep", "find", "ls", "mcp_demo_search",
-        "qone_video_download", "qone_media_extract_audio", "qone_media_extract_frames", "qone_video_staging_dir", "qone_video_use_file", "qone_set_activity_title", "codemode"];
+      const expected = ["codemode", "tool_search", "read", "powershell", "edit", "write", "grep", "find", "ls",
+        "qone_video_download", "qone_media_extract_audio", "qone_media_extract_frames", "qone_video_staging_dir", "qone_video_use_file", "qone_set_activity_title"];
       expect(adapter.getSessions()[0]?.getActiveToolNames()).toEqual(expected);
       expect(sentNames).toEqual(expected);
       expect(sentNames.every((name) => /^[a-zA-Z0-9_-]+$/.test(name))).toBe(true);
