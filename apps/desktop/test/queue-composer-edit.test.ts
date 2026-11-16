@@ -8,9 +8,10 @@ import { bindComposerDrafts, ComposerDraftStore } from "../src/lib/composer-draf
 import { serializeMessageAttachments } from "../src/lib/message-attachments";
 import { QoneAttachmentAdapter } from "../src/lib/file-attachment-adapter";
 
-const reactDist = dirname(Bun.resolveSync("@assistant-ui/react", import.meta.dir));
-const { ExternalStoreRuntimeCore } = await import(join(reactDist, "legacy-runtime/runtime-cores/external-store/ExternalStoreRuntimeCore.js"));
-const { AssistantRuntimeImpl } = await import(join(reactDist, "legacy-runtime/runtime/AssistantRuntime.js"));
+// Resolve core through react so the classes match the runtime the UI actually uses.
+const coreDist = dirname(Bun.resolveSync("@assistant-ui/core", dirname(Bun.resolveSync("@assistant-ui/react", import.meta.dir))));
+const { ExternalStoreRuntimeCore } = await import(join(coreDist, "runtimes/internal.js"));
+const { AssistantRuntimeImpl } = await import(join(coreDist, "internal.js"));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 test("editing restores every native attachment atomically and keeps changed chips across a session switch", async () => {

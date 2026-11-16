@@ -1,0 +1,570 @@
+diff --git a/dist/LexicalComposerInput.d.ts b/dist/LexicalComposerInput.d.ts
+index d932879..cad637d 100644
+--- a/dist/LexicalComposerInput.d.ts
++++ b/dist/LexicalComposerInput.d.ts
+@@ -1,5 +1,6 @@
+ import { type ComponentPropsWithoutRef, type FC, type ReactNode } from "react";
+ import type { Unstable_DirectiveFormatter } from "@assistant-ui/core";
++import type { Klass, LexicalNode } from "lexical";
+ import { type DirectiveChipProps } from "./nodes/DirectiveNode.js";
+ import type { DirectivePluginProps } from "./plugins/DirectivePlugin.js";
+ export type LexicalComposerInputProps = Omit<ComponentPropsWithoutRef<"div">, "autoFocus" | "children"> & {
+@@ -17,6 +18,8 @@ export type LexicalComposerInputProps = Omit<ComponentPropsWithoutRef<"div">, "a
+     directiveChip?: FC<DirectiveChipProps> | undefined;
+     /** Custom formatter for serializing/parsing directives. */
+     formatter?: Unstable_DirectiveFormatter | undefined;
++    /** Additional Lexical nodes used by the host composer. */
++    nodes?: readonly Klass<LexicalNode>[] | undefined;
+     /** Custom Lexical plugins rendered inside the composer context, after the built-in plugins. */
+     children?: ReactNode | undefined;
+ };
+@@ -36,6 +39,8 @@ export declare const LexicalComposerInput: import("react").ForwardRefExoticCompo
+     directiveChip?: FC<DirectiveChipProps> | undefined;
+     /** Custom formatter for serializing/parsing directives. */
+     formatter?: Unstable_DirectiveFormatter | undefined;
++    /** Additional Lexical nodes used by the host composer. */
++    nodes?: readonly Klass<LexicalNode>[] | undefined;
+     /** Custom Lexical plugins rendered inside the composer context, after the built-in plugins. */
+     children?: ReactNode | undefined;
+ } & import("react").RefAttributes<HTMLDivElement>>;
+diff --git a/dist/LexicalComposerInput.js b/dist/LexicalComposerInput.js
+index 8a72f30..1e135dd 100644
+--- a/dist/LexicalComposerInput.js
++++ b/dist/LexicalComposerInput.js
+@@ -1,194 +1,279 @@
+ "use client";
+-import { DirectiveChipProvider, DirectiveNode } from "./nodes/DirectiveNode.js";
+-import { $getCollapsedRuntimeOffset } from "./runtimeOffset.js";
+-import { SyncPlugin } from "./plugins/SyncPlugin.js";
+-import { DirectivePlugin } from "./plugins/DirectivePlugin.js";
+-import { forwardRef, useEffect } from "react";
++import { jsx, jsxs } from "react/jsx-runtime";
++import {
++  forwardRef,
++  useEffect,
++  useMemo
++} from "react";
+ import { LexicalExtensionComposer } from "@lexical/react/LexicalExtensionComposer";
+ import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+ import { HistoryExtension } from "@lexical/history";
+ import { PlainTextExtension } from "@lexical/plain-text";
+-import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_HIGH, KEY_ARROW_DOWN_COMMAND, KEY_ARROW_UP_COMMAND, KEY_BACKSPACE_COMMAND, KEY_ENTER_COMMAND, KEY_ESCAPE_COMMAND, KEY_TAB_COMMAND, configExtension, defineExtension } from "lexical";
++import {
++  $getSelection,
++  $isRangeSelection,
++  COMMAND_PRIORITY_HIGH,
++  configExtension,
++  defineExtension,
++  KEY_ARROW_DOWN_COMMAND,
++  KEY_ARROW_UP_COMMAND,
++  KEY_BACKSPACE_COMMAND,
++  KEY_ENTER_COMMAND,
++  KEY_ESCAPE_COMMAND,
++  KEY_TAB_COMMAND
++} from "lexical";
+ import { mergeRegister } from "@lexical/utils";
+ import { useAui, useAuiState } from "@assistant-ui/store";
+ import { unstable_defaultDirectiveFormatter } from "@assistant-ui/core";
+-import { INTERNAL, unstable_useComposerRunStartFocusGuard, unstable_useTriggerPopoverAriaProps } from "@assistant-ui/react";
+-import { jsx, jsxs } from "react/jsx-runtime";
+-// src/LexicalComposerInput.tsx
+-const composerExtension = defineExtension({
+-	name: "@assistant-ui/react-lexical",
+-	namespace: "aui-lexical-composer",
+-	nodes: [DirectiveNode],
+-	dependencies: [PlainTextExtension, configExtension(HistoryExtension, { delay: 1e3 })],
+-	onError: (error) => {
+-		console.error("[LexicalComposerInput]", error);
+-	}
++import {
++  INTERNAL,
++  unstable_useComposerRunStartFocusGuard,
++  unstable_useTriggerPopoverAriaProps
++} from "@assistant-ui/react";
++import {
++  DirectiveNode,
++  DirectiveChipProvider
++} from "./nodes/DirectiveNode.js";
++import { SyncPlugin } from "./plugins/SyncPlugin.js";
++import { DirectivePlugin } from "./plugins/DirectivePlugin.js";
++import { $getCollapsedRuntimeOffset } from "./runtimeOffset.js";
++const createComposerExtension = (extraNodes) => defineExtension({
++  name: "@assistant-ui/react-lexical",
++  namespace: "aui-lexical-composer",
++  nodes: [DirectiveNode, ...extraNodes],
++  dependencies: [
++    PlainTextExtension,
++    configExtension(HistoryExtension, { delay: 1e3 })
++  ],
++  onError: (error) => {
++    console.error("[LexicalComposerInput]", error);
++  }
+ });
+-function KeyboardPlugin({ submitMode, cancelOnEscape }) {
+-	const [editor] = useLexicalComposerContext();
+-	const aui = useAui();
+-	const pluginRegistry = INTERNAL.useComposerInputPluginRegistryOptional();
+-	useEffect(() => {
+-		const delegateToPlugins = (event) => {
+-			if (!pluginRegistry) return false;
+-			for (const plugin of pluginRegistry.getPlugins()) if (plugin.handleKeyDown(event)) return true;
+-			return false;
+-		};
+-		return mergeRegister(editor.registerCommand(KEY_ENTER_COMMAND, (event) => {
+-			if (!event) return false;
+-			if (event.isComposing || event.keyCode === 229) return false;
+-			if (event.shiftKey) return false;
+-			if (delegateToPlugins(event)) return true;
+-			if (submitMode === "none") return false;
+-			const threadState = aui.thread.getState();
+-			if (threadState.isRunning && !threadState.capabilities.queue && threadState.voice === void 0) return false;
+-			let shouldSubmit = false;
+-			if (submitMode === "ctrlEnter") shouldSubmit = event.ctrlKey || event.metaKey;
+-			else if (submitMode === "enter") shouldSubmit = !event.ctrlKey && !event.metaKey;
+-			if (shouldSubmit) {
+-				event.preventDefault();
+-				aui.composer.send();
+-				return true;
+-			}
+-			return false;
+-		}, COMMAND_PRIORITY_HIGH), editor.registerCommand(KEY_ESCAPE_COMMAND, (event) => {
+-			if (event && delegateToPlugins(event)) return true;
+-			if (!cancelOnEscape) return false;
+-			const composer = aui.composer;
+-			if (composer.getState().canCancel) {
+-				composer.cancel();
+-				event?.preventDefault();
+-				return true;
+-			}
+-			return false;
+-		}, COMMAND_PRIORITY_HIGH), editor.registerCommand(KEY_ARROW_DOWN_COMMAND, (event) => {
+-			if (event && delegateToPlugins(event)) return true;
+-			return false;
+-		}, COMMAND_PRIORITY_HIGH), editor.registerCommand(KEY_ARROW_UP_COMMAND, (event) => {
+-			if (event && delegateToPlugins(event)) return true;
+-			return false;
+-		}, COMMAND_PRIORITY_HIGH), editor.registerCommand(KEY_BACKSPACE_COMMAND, (event) => {
+-			if (event && delegateToPlugins(event)) return true;
+-			return false;
+-		}, COMMAND_PRIORITY_HIGH), editor.registerCommand(KEY_TAB_COMMAND, (event) => {
+-			if (event && delegateToPlugins(event)) return true;
+-			return false;
+-		}, COMMAND_PRIORITY_HIGH));
+-	}, [
+-		editor,
+-		submitMode,
+-		cancelOnEscape,
+-		aui,
+-		pluginRegistry
+-	]);
+-	return null;
++const defaultComposerExtension = createComposerExtension([]);
++function KeyboardPlugin({
++  submitMode,
++  cancelOnEscape
++}) {
++  const [editor] = useLexicalComposerContext();
++  const aui = useAui();
++  const pluginRegistry = INTERNAL.useComposerInputPluginRegistryOptional();
++  useEffect(() => {
++    const delegateToPlugins = (event) => {
++      if (!pluginRegistry) return false;
++      for (const plugin of pluginRegistry.getPlugins()) {
++        if (plugin.handleKeyDown(event)) return true;
++      }
++      return false;
++    };
++    return mergeRegister(
++      editor.registerCommand(
++        KEY_ENTER_COMMAND,
++        (event) => {
++          if (!event) return false;
++          if (event.isComposing || event.keyCode === 229) return false;
++          if (event.shiftKey) return false;
++          if (delegateToPlugins(event)) return true;
++          if (submitMode === "none") return false;
++          const threadState = aui.thread.getState();
++          if (threadState.isRunning && !threadState.capabilities.queue && threadState.voice === void 0)
++            return false;
++          let shouldSubmit = false;
++          if (submitMode === "ctrlEnter") {
++            shouldSubmit = event.ctrlKey || event.metaKey;
++          } else if (submitMode === "enter") {
++            shouldSubmit = !event.ctrlKey && !event.metaKey;
++          }
++          if (shouldSubmit) {
++            event.preventDefault();
++            aui.composer.send();
++            return true;
++          }
++          return false;
++        },
++        COMMAND_PRIORITY_HIGH
++      ),
++      editor.registerCommand(
++        KEY_ESCAPE_COMMAND,
++        (event) => {
++          if (event && delegateToPlugins(event)) return true;
++          if (!cancelOnEscape) return false;
++          const composer = aui.composer;
++          if (composer.getState().canCancel) {
++            composer.cancel();
++            event?.preventDefault();
++            return true;
++          }
++          return false;
++        },
++        COMMAND_PRIORITY_HIGH
++      ),
++      editor.registerCommand(
++        KEY_ARROW_DOWN_COMMAND,
++        (event) => {
++          if (event && delegateToPlugins(event)) return true;
++          return false;
++        },
++        COMMAND_PRIORITY_HIGH
++      ),
++      editor.registerCommand(
++        KEY_ARROW_UP_COMMAND,
++        (event) => {
++          if (event && delegateToPlugins(event)) return true;
++          return false;
++        },
++        COMMAND_PRIORITY_HIGH
++      ),
++      editor.registerCommand(
++        KEY_BACKSPACE_COMMAND,
++        (event) => {
++          if (event && delegateToPlugins(event)) return true;
++          return false;
++        },
++        COMMAND_PRIORITY_HIGH
++      ),
++      editor.registerCommand(
++        KEY_TAB_COMMAND,
++        (event) => {
++          if (event && delegateToPlugins(event)) return true;
++          return false;
++        },
++        COMMAND_PRIORITY_HIGH
++      )
++    );
++  }, [editor, submitMode, cancelOnEscape, aui, pluginRegistry]);
++  return null;
+ }
+ function CursorPlugin() {
+-	const [editor] = useLexicalComposerContext();
+-	const pluginRegistry = INTERNAL.useComposerInputPluginRegistryOptional();
+-	useEffect(() => {
+-		if (!pluginRegistry) return void 0;
+-		let lastAnchorKey = null;
+-		let lastAnchorOffset = -1;
+-		const broadcastCursor = (pos) => {
+-			for (const plugin of pluginRegistry.getPlugins()) plugin.setCursorPosition(pos);
+-		};
+-		return editor.registerUpdateListener((update) => {
+-			const { editorState, dirtyElements, dirtyLeaves } = update;
+-			if (dirtyElements.size > 0 || dirtyLeaves.size > 0) lastAnchorKey = null;
+-			editorState.read(() => {
+-				const selection = $getSelection();
+-				if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+-					lastAnchorKey = null;
+-					broadcastCursor(0);
+-					return;
+-				}
+-				const anchor = selection.anchor;
+-				if (anchor.key === lastAnchorKey && anchor.offset === lastAnchorOffset) return;
+-				lastAnchorKey = anchor.key;
+-				lastAnchorOffset = anchor.offset;
+-				broadcastCursor($getCollapsedRuntimeOffset() ?? 0);
+-			});
+-		});
+-	}, [editor, pluginRegistry]);
+-	return null;
++  const [editor] = useLexicalComposerContext();
++  const pluginRegistry = INTERNAL.useComposerInputPluginRegistryOptional();
++  useEffect(() => {
++    if (!pluginRegistry) return void 0;
++    let lastAnchorKey = null;
++    let lastAnchorOffset = -1;
++    const broadcastCursor = (pos) => {
++      for (const plugin of pluginRegistry.getPlugins()) {
++        plugin.setCursorPosition(pos);
++      }
++    };
++    return editor.registerUpdateListener((update) => {
++      const { editorState, dirtyElements, dirtyLeaves } = update;
++      if (dirtyElements.size > 0 || dirtyLeaves.size > 0) lastAnchorKey = null;
++      editorState.read(() => {
++        const selection = $getSelection();
++        if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
++          lastAnchorKey = null;
++          broadcastCursor(0);
++          return;
++        }
++        const anchor = selection.anchor;
++        if (anchor.key === lastAnchorKey && anchor.offset === lastAnchorOffset)
++          return;
++        lastAnchorKey = anchor.key;
++        lastAnchorOffset = anchor.offset;
++        broadcastCursor($getCollapsedRuntimeOffset() ?? 0);
++      });
++    });
++  }, [editor, pluginRegistry]);
++  return null;
+ }
+ function FocusPlugin({ autoFocus }) {
+-	const [editor] = useLexicalComposerContext();
+-	const aui = useAui();
+-	const canTakeFocusOnRunStart = unstable_useComposerRunStartFocusGuard();
+-	useEffect(() => {
+-		if (autoFocus) editor.focus();
+-	}, [editor, autoFocus]);
+-	useEffect(() => {
+-		if (aui.composer.getState().type !== "thread") return void 0;
+-		return aui.on("thread.runStart", () => {
+-			if (canTakeFocusOnRunStart(editor.getRootElement())) editor.focus();
+-		});
+-	}, [
+-		editor,
+-		aui,
+-		canTakeFocusOnRunStart
+-	]);
+-	return null;
++  const [editor] = useLexicalComposerContext();
++  const aui = useAui();
++  const canTakeFocusOnRunStart = unstable_useComposerRunStartFocusGuard();
++  useEffect(() => {
++    if (autoFocus) editor.focus();
++  }, [editor, autoFocus]);
++  useEffect(() => {
++    if (aui.composer.getState().type !== "thread") return void 0;
++    return aui.on("thread.runStart", () => {
++      if (canTakeFocusOnRunStart(editor.getRootElement())) editor.focus();
++    });
++  }, [editor, aui, canTakeFocusOnRunStart]);
++  return null;
+ }
+-/** Lexical-based composer input with inline directive chips and runtime sync. */
+-const LexicalComposerInput = forwardRef(({ submitMode = "enter", cancelOnEscape = true, placeholder, autoFocus = false, directivePluginProps, directiveChip, formatter: formatterProp, "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, "aria-describedby": ariaDescribedBy, className, children, ...rest }, ref) => {
+-	const isDisabled = useAuiState((s) => s.thread.isDisabled || s.composer.dictation?.inputDisabled);
+-	const resolvedFormatter = formatterProp ?? unstable_defaultDirectiveFormatter;
+-	const { "aria-expanded": _, ...popoverAria } = unstable_useTriggerPopoverAriaProps();
+-	return /* @__PURE__ */ jsx(DirectiveChipProvider, {
+-		value: directiveChip ?? null,
+-		children: /* @__PURE__ */ jsx(LexicalExtensionComposer, {
+-			extension: composerExtension,
+-			contentEditable: null,
+-			children: /* @__PURE__ */ jsxs("div", {
+-				ref,
+-				className: className ? `aui-lexical-editor ${className}` : "aui-lexical-editor",
+-				...rest,
+-				style: {
+-					overflowY: "auto",
+-					...rest.style
+-				},
+-				children: [
+-					/* @__PURE__ */ jsx(ContentEditable, {
+-						className: "aui-lexical-input",
+-						"aria-label": ariaLabel ?? (ariaLabelledBy ? void 0 : placeholder),
+-						"aria-labelledby": ariaLabelledBy,
+-						"aria-describedby": ariaDescribedBy,
+-						...placeholder ? {
+-							placeholder: /* @__PURE__ */ jsx("div", {
+-								className: "aui-lexical-placeholder",
+-								children: placeholder
+-							}),
+-							"aria-placeholder": placeholder
+-						} : {},
+-						...popoverAria
+-					}),
+-					/* @__PURE__ */ jsx(SyncPlugin, { formatter: resolvedFormatter }),
+-					/* @__PURE__ */ jsx(DirectivePlugin, { ...directivePluginProps }),
+-					/* @__PURE__ */ jsx(KeyboardPlugin, {
+-						submitMode,
+-						cancelOnEscape
+-					}),
+-					/* @__PURE__ */ jsx(CursorPlugin, {}),
+-					/* @__PURE__ */ jsx(FocusPlugin, { autoFocus }),
+-					/* @__PURE__ */ jsx(EditablePlugin, { isDisabled: !!isDisabled }),
+-					children
+-				]
+-			})
+-		})
+-	});
+-});
++const EMPTY_NODES = [];
++const LexicalComposerInput = forwardRef(
++  ({
++    submitMode = "enter",
++    cancelOnEscape = true,
++    placeholder,
++    autoFocus = false,
++    directivePluginProps,
++    directiveChip,
++    formatter: formatterProp,
++    nodes: extraNodes = EMPTY_NODES,
++    "aria-label": ariaLabel,
++    "aria-labelledby": ariaLabelledBy,
++    "aria-describedby": ariaDescribedBy,
++    className,
++    children,
++    ...rest
++  }, ref) => {
++    const composerExtension = useMemo(
++      () => extraNodes === EMPTY_NODES ? defaultComposerExtension : createComposerExtension(extraNodes),
++      [extraNodes]
++    );
++    const isDisabled = useAuiState(
++      (s) => s.thread.isDisabled || s.composer.dictation?.inputDisabled
++    );
++    const resolvedFormatter = formatterProp ?? unstable_defaultDirectiveFormatter;
++    const { "aria-expanded": _, ...popoverAria } = unstable_useTriggerPopoverAriaProps();
++    return /* @__PURE__ */ jsx(DirectiveChipProvider, { value: directiveChip ?? null, children: /* @__PURE__ */ jsx(
++      LexicalExtensionComposer,
++      {
++        extension: composerExtension,
++        contentEditable: null,
++        children: /* @__PURE__ */ jsxs(
++          "div",
++          {
++            ref,
++            className: className ? `aui-lexical-editor ${className}` : "aui-lexical-editor",
++            ...rest,
++            style: { overflowY: "auto", ...rest.style },
++            children: [
++              /* @__PURE__ */ jsx(
++                ContentEditable,
++                {
++                  className: "aui-lexical-input",
++                  "aria-label": ariaLabel ?? (ariaLabelledBy ? void 0 : placeholder),
++                  "aria-labelledby": ariaLabelledBy,
++                  "aria-describedby": ariaDescribedBy,
++                  ...placeholder ? {
++                    placeholder: /* @__PURE__ */ jsx("div", { className: "aui-lexical-placeholder", children: placeholder }),
++                    "aria-placeholder": placeholder
++                  } : {},
++                  ...popoverAria
++                }
++              ),
++              /* @__PURE__ */ jsx(SyncPlugin, { formatter: resolvedFormatter }),
++              /* @__PURE__ */ jsx(DirectivePlugin, { ...directivePluginProps }),
++              /* @__PURE__ */ jsx(
++                KeyboardPlugin,
++                {
++                  submitMode,
++                  cancelOnEscape
++                }
++              ),
++              /* @__PURE__ */ jsx(CursorPlugin, {}),
++              /* @__PURE__ */ jsx(FocusPlugin, { autoFocus }),
++              /* @__PURE__ */ jsx(EditablePlugin, { isDisabled: !!isDisabled }),
++              children
++            ]
++          }
++        )
++      }
++    ) });
++  }
++);
+ LexicalComposerInput.displayName = "LexicalComposerInput";
+ function EditablePlugin({ isDisabled }) {
+-	const [editor] = useLexicalComposerContext();
+-	useEffect(() => {
+-		editor.setEditable(!isDisabled);
+-	}, [editor, isDisabled]);
+-	return null;
++  const [editor] = useLexicalComposerContext();
++  useEffect(() => {
++    editor.setEditable(!isDisabled);
++  }, [editor, isDisabled]);
++  return null;
+ }
+-export { LexicalComposerInput };
+-
+-//# sourceMappingURL=LexicalComposerInput.js.map
+\ No newline at end of file
++export {
++  LexicalComposerInput
++};
+diff --git a/src/LexicalComposerInput.tsx b/src/LexicalComposerInput.tsx
+index 7d8e645..ed77f49 100644
+--- a/src/LexicalComposerInput.tsx
++++ b/src/LexicalComposerInput.tsx
+@@ -6,6 +6,7 @@ import {
+   type ReactNode,
+   forwardRef,
+   useEffect,
++  useMemo,
+ } from "react";
+ import { LexicalExtensionComposer } from "@lexical/react/LexicalExtensionComposer";
+ import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+@@ -24,6 +25,8 @@ import {
+   KEY_ENTER_COMMAND,
+   KEY_ESCAPE_COMMAND,
+   KEY_TAB_COMMAND,
++  type Klass,
++  type LexicalNode,
+ } from "lexical";
+ import { mergeRegister } from "@lexical/utils";
+ import { useAui, useAuiState } from "@assistant-ui/store";
+@@ -44,10 +47,10 @@ import { DirectivePlugin } from "./plugins/DirectivePlugin";
+ import type { DirectivePluginProps } from "./plugins/DirectivePlugin";
+ import { $getCollapsedRuntimeOffset } from "./runtimeOffset";
+ 
+-const composerExtension = defineExtension({
++const createComposerExtension = (extraNodes: ReadonlyArray<Klass<LexicalNode>>) => defineExtension({
+   name: "@assistant-ui/react-lexical",
+   namespace: "aui-lexical-composer",
+-  nodes: [DirectiveNode],
++  nodes: [DirectiveNode, ...extraNodes],
+   dependencies: [
+     PlainTextExtension,
+     configExtension(HistoryExtension, { delay: 1000 }),
+@@ -57,6 +60,8 @@ const composerExtension = defineExtension({
+   },
+ });
+ 
++const defaultComposerExtension = createComposerExtension([]);
++
+ export type LexicalComposerInputProps = Omit<
+   ComponentPropsWithoutRef<"div">,
+   "autoFocus" | "children"
+@@ -75,6 +80,8 @@ export type LexicalComposerInputProps = Omit<
+   directiveChip?: FC<DirectiveChipProps> | undefined;
+   /** Custom formatter for serializing/parsing directives. */
+   formatter?: Unstable_DirectiveFormatter | undefined;
++  /** Additional Lexical nodes used by the host composer. */
++  nodes?: readonly Klass<LexicalNode>[] | undefined;
+   /** Custom Lexical plugins rendered inside the composer context, after the built-in plugins. */
+   children?: ReactNode | undefined;
+ };
+@@ -256,6 +263,8 @@ function FocusPlugin({ autoFocus }: { autoFocus: boolean }) {
+   return null;
+ }
+ 
++const EMPTY_NODES: readonly Klass<LexicalNode>[] = [];
++
+ /** Lexical-based composer input with inline directive chips and runtime sync. */
+ export const LexicalComposerInput = forwardRef<
+   HTMLDivElement,
+@@ -270,6 +279,7 @@ export const LexicalComposerInput = forwardRef<
+       directivePluginProps,
+       directiveChip,
+       formatter: formatterProp,
++      nodes: extraNodes = EMPTY_NODES,
+       "aria-label": ariaLabel,
+       "aria-labelledby": ariaLabelledBy,
+       "aria-describedby": ariaDescribedBy,
+@@ -279,6 +289,10 @@ export const LexicalComposerInput = forwardRef<
+     },
+     ref,
+   ) => {
++    const composerExtension = useMemo(
++      () => extraNodes === EMPTY_NODES ? defaultComposerExtension : createComposerExtension(extraNodes),
++      [extraNodes],
++    );
+     const isDisabled = useAuiState(
+       (s) => s.thread.isDisabled || s.composer.dictation?.inputDisabled,
+     );

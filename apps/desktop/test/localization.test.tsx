@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readdirSync, readFileSync } from "node:fs";
-import ts from "typescript";
+import ts from "typescript-ast";
 import { en } from "../src/i18n/en";
 import { zh, type MessageKey } from "../src/i18n/zh-CN";
 import { GENERAL_SETTINGS_KEY, getLanguageSetting, initLocale, resolveLocale, saveLanguageSetting, subscribeLanguage, translate, translateCurrent } from "../src/localization";
@@ -52,15 +52,17 @@ test("both dictionaries have exactly the same keys, interpolation parameters and
 });
 
 test("dictionary source never silently overwrites duplicate keys", () => {
-  for (const name of ["en", "zh-CN"]) {
-    const source = ts.createSourceFile(name + ".ts", readFileSync(new URL(`../src/i18n/${name}.ts`, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
-    const keys: string[] = [];
+  const directory = new URL("../src/i18n/", import.meta.url);
+  for (const name of readdirSync(directory).filter(name => name.endsWith(".ts"))) {
+    const source = ts.createSourceFile(name, readFileSync(new URL(name, directory), "utf8"), ts.ScriptTarget.Latest, true);
     const visit = (node: ts.Node) => {
-      if (ts.isPropertyAssignment(node) && ts.isStringLiteral(node.name)) keys.push(node.name.text);
+      if (ts.isObjectLiteralExpression(node)) {
+        const keys = node.properties.flatMap(property => ts.isPropertyAssignment(property) && ts.isStringLiteral(property.name) ? [property.name.text] : []);
+        expect(new Set(keys).size, name).toBe(keys.length);
+      }
       ts.forEachChild(node, visit);
     };
     visit(source);
-    expect(new Set(keys).size, name).toBe(keys.length);
   }
 });
 

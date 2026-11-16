@@ -32,7 +32,7 @@ test("JavaScript and TypeScript run in a separate browser document", async () =>
 test("React TSX compiles standard React imports and a default component", async () => {
   const html = (await createCodePreviewHtml("tsx", 'import React from "react"; export default function App() { return <h1>Hello</h1> }'))!;
   expect(html).toContain("window.__qonePreview.mount");
-  expect(html).toContain('require(\\"react\\")');
+  expect(html).toContain("require('react')");
   expect(html).toContain("exports.default = App");
   expect(html).not.toContain("<h1>Hello</h1>");
 });

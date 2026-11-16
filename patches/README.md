@@ -1,7 +1,9 @@
-# assistant-ui viewport restoration
+# assistant-ui patches
 
-`@assistant-ui/react@0.15.21` is patched through Bun's `patchedDependencies`.
-Run `bun install` to apply it; do not manually edit the installed package.
+Applied through Bun's `patchedDependencies`; run `bun install`. Do not edit the
+installed packages by hand.
+
+## Viewport restoration — `@assistant-ui/react@0.15.36`
 
 The additive `ThreadPrimitive.Viewport.scrollRestoration` prop accepts a stable
 per-conversation mutable snapshot (`current: null` on first entry). It saves the
@@ -10,37 +12,39 @@ offset instantly after the official reserve and message refs are registered.
 Restoring a running turn marks its initial anchor as already placed. Later new
 user anchors still use the original smooth-placement logic. A saved streaming
 target can resolve to its persisted adjacent assistant message on re-entry.
+Completed history (no active anchor) restores from both no-anchor branches of
+`mountTopAnchorReserve`; upstream's own range-clamp restoration is untouched.
 
 Qone retains these UI-only snapshots in memory, keyed by session ID, and prunes
-deleted sessions. They are not persisted across application restarts. Project
-file loading no longer replaces the conversation viewport with a skeleton.
+deleted sessions. They are not persisted across application restarts.
 
-The patch changes the package source, runtime JS and declarations. The modified
-runtime modules are transpiled without the upstream React compiler memoization;
-unchanged modules retain their original build. No new runtime dependencies or
-application scroll listeners, timers, or follow-state machines are introduced.
+## Composer link nodes — `@assistant-ui/react-lexical@0.2.23`
 
-When upgrading assistant-ui, review whether it has a native restoration API
-before porting this patch. Regression verification:
+Accepts additional Lexical `nodes`. Upstream builds the composer with Lexical's
+extension API, so the patch derives a memoized extension per `nodes` array
+(Qone passes a module-level constant, so the editor is never rebuilt).
 
-```sh
-bun test apps/desktop/test/thread-scroll-restoration.test.ts
-bun x tsc --noEmit -p apps/desktop/tsconfig.json
-```
+## Detached uploads — `@assistant-ui/core@0.3.36`
 
-The tests execute the installed package with synthetic DOM geometry; they do not
-replace user validation of WebView layout, focus and animation behavior.
+A thread switch disposes the outgoing composer, and upstream cancels its
+in-flight attachment uploads there. Qone keeps those uploads running and
+mirrors their completion into the outgoing session's draft
+(`src/lib/composer-draft-binding.ts`), so `__internal_dispose` no longer calls
+`_cancelAllAttachmentAdds`. Sends are still aborted.
 
-## Composer link nodes
+## Porting to a new version
 
-`@assistant-ui/react-lexical@0.2.14` is patched to accept additional `nodes`.
-Qone registers `ComposerLinkNode` through that prop while keeping the built-in
-directive node, runtime sync, history and keyboard plugins. The patch updates
-the source, runtime JS and declarations only. It introduces no new dependency.
+1. Unpack the new package, apply the old patch's `src/` hunks and fix rejects.
+2. Rebuild the changed `dist` modules from the patched sources:
+   `bun apps/desktop/scripts/transpile-aui.ts <packageRoot> <src files...>`
+   (plain `react` imports, no React-compiler memoization — as before).
+3. Update the matching `dist/*.d.ts` declarations by hand.
+4. `git diff` the package root into `patches/`, update `patchedDependencies`.
 
 Regression verification:
 
 ```sh
-bun test apps/desktop/test/composer-link.test.ts apps/desktop/test/long-paste.test.ts apps/desktop/test/composer-tool-editor.test.ts
-bun x tsc --noEmit -p apps/desktop/tsconfig.json
+bun test apps/desktop/test/thread-scroll-restoration.test.ts apps/desktop/test/thread-scroll-follower.test.tsx
+bun test apps/desktop/test/composer-drafts.test.ts apps/desktop/test/composer-link.test.ts apps/desktop/test/long-paste.test.ts
+apps/desktop/node_modules/.bin/tsc --noEmit -p apps/desktop
 ```

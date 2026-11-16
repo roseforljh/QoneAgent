@@ -26,6 +26,9 @@ class ElementStub {
   get previousElementSibling() { return this.parentElement?.children[this.parentElement.children.indexOf(this) - 1] ?? null; }
   get lastElementChild() { return this.children.at(-1) ?? null; }
   setAttribute() {}
+  // Upstream listens for scroll to restore range clamps; a stub that never scrolls natively needs no events.
+  addEventListener() {}
+  removeEventListener() {}
   append(child: ElementStub) { child.remove(); child.parentElement = this; this.children.push(child); }
   after(child: ElementStub) {
     child.remove();

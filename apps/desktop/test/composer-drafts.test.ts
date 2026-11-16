@@ -8,9 +8,10 @@ import { serializeMessageAttachments } from "../src/lib/message-attachments";
 
 // Exercise the installed external-store runtime: a switch really replaces the
 // main composer, including its nested subscriptions and memoized public state.
-const reactDist = dirname(Bun.resolveSync("@assistant-ui/react", import.meta.dir));
-const { ExternalStoreRuntimeCore } = await import(join(reactDist, "legacy-runtime/runtime-cores/external-store/ExternalStoreRuntimeCore.js"));
-const { AssistantRuntimeImpl } = await import(join(reactDist, "legacy-runtime/runtime/AssistantRuntime.js"));
+// Resolve core through react so the classes match the runtime the UI actually uses.
+const coreDist = dirname(Bun.resolveSync("@assistant-ui/core", dirname(Bun.resolveSync("@assistant-ui/react", import.meta.dir))));
+const { ExternalStoreRuntimeCore } = await import(join(coreDist, "runtimes/internal.js"));
+const { AssistantRuntimeImpl } = await import(join(coreDist, "internal.js"));
 
 const localAttachments = () => new QoneAttachmentAdapter();
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));

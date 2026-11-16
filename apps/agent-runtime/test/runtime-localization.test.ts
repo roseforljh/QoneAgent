@@ -9,7 +9,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import ts from "typescript";
+import ts from "typescript-ast";
 import { normalizeSubagentConfig, subagentCatalog } from "../src/subagents";
 
 test("runtime copy is complete, English contains no fixed Chinese, and parameters match", () => {
@@ -122,7 +122,7 @@ test("media generation validation reports the requested language before any netw
 test("runtime errors cannot reintroduce untranslated Chinese literals", () => {
   const root = new URL("../src/", import.meta.url);
   const errors: string[] = [];
-  for (const file of readdirSync(root).filter((name) => name.endsWith(".ts"))) {
+  for (const file of (readdirSync(root, { recursive: true }) as string[]).filter((name) => name.endsWith(".ts"))) {
     const source = ts.createSourceFile(file, readFileSync(new URL(file, root), "utf8"), ts.ScriptTarget.Latest, true);
     const visit = (node: ts.Node) => {
       if (ts.isNewExpression(node) && node.expression.getText(source) === "Error" && /\p{Script=Han}/u.test(node.arguments?.[0]?.getText(source) ?? "")) errors.push(`${file}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`);

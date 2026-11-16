@@ -38,8 +38,8 @@ test("official assistant elements render their real data slots", () => {
   expect(sourcesMarkup).toContain("https://www.google.com/s2/favicons?domain=example.com&amp;sz=64");
   const streaming = render(createElement(StreamingText, { segments: [{ text: "正在生成" }], count: 1, streaming: true }));
   expect(streaming).not.toContain("w-0.5");
-  expect(render(createElement(GenerativeUIBlock, { code: '{"$type":"Text","children":"result"}', language: "generative-ui" } as never))).toContain('data-slot="generative-ui-block"');
-  expect(render(createElement(GenerativeUISurface, { spec: { $type: "Card", title: "Summary", children: [{ $type: "Text", children: "Ready" }] } }))).toContain("Ready");
+  expect(render(createElement(GenerativeUIBlock, { code: '{"_type":"Text","children":"result"}', language: "generative-ui" } as never))).toContain('data-slot="generative-ui-block"');
+  expect(render(createElement(GenerativeUISurface, { spec: { _type: "Card", title: "Summary", children: [{ _type: "Text", children: "Ready" }] } }))).toContain("Ready");
 });
 
 test("failed tool cards expose the same disclosure state as other tool rows", () => {

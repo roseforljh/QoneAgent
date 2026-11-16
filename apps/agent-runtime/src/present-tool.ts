@@ -18,7 +18,7 @@ const parameters = Type.Unsafe<Record<string, unknown>>(
 export const presentTool: ToolDefinition<typeof parameters> = {
   name: "present",
   label: "Present UI",
-  description: "Present a read-only structured UI card to the user. Select a component with `$type`, provide its props inline, and nest components with `children`. Use it when a visual result is clearer than plain text.",
+  description: "Present a read-only structured UI card to the user. Select a component with `_type`, provide its props inline, and nest components with `children`. Use it when a visual result is clearer than plain text.",
   promptSnippet: "present: show a structured UI card in the conversation",
   parameters,
   async execute() {

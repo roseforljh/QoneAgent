@@ -66,20 +66,14 @@ export async function createCodePreviewHtml(language: string | undefined, code: 
     return htmlDocument(markup);
   }
 
-  const ts = await import("typescript");
+  const { transform } = await import("sucrase");
   const isReact = kind === "jsx" || kind === "tsx";
-  const result = ts.transpileModule(code, {
-    fileName: isReact ? `preview.${kind}` : kind === "typescript" ? "preview.ts" : "preview.js",
-    reportDiagnostics: true,
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2022,
-      module: isReact ? ts.ModuleKind.CommonJS : ts.ModuleKind.None,
-      jsx: ts.JsxEmit.React,
-    },
-  });
-  const error = result.diagnostics?.find((item) => item.category === ts.DiagnosticCategory.Error);
-  if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
-
+  // Sucrase only strips types and lowers JSX/imports; like transpileModule, syntax errors throw.
+  const result = { outputText: transform(code, {
+    transforms: [...(kind === "typescript" || kind === "tsx" ? ["typescript" as const] : []), ...(isReact ? ["jsx" as const, "imports" as const] : [])],
+    jsxRuntime: "classic",
+    production: true,
+  }).code };
   if (!isReact) return scriptDocument(result.outputText);
 
   const { default: runtime } = await import("virtual:qone-react-preview-runtime");

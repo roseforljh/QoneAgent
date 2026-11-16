@@ -1,0 +1,1601 @@
+diff --git a/dist/primitives/message/MessageRoot.js b/dist/primitives/message/MessageRoot.js
+index 82f51c9..c5e6fe3 100644
+--- a/dist/primitives/message/MessageRoot.js
++++ b/dist/primitives/message/MessageRoot.js
+@@ -51,7 +51,7 @@ const useIsTopAnchorUser = () => {
+ 	const activeAnchorId = useThreadViewport(_temp);
+ 	let t0;
+ 	if ($[0] !== activeAnchorId) {
+-		t0 = (s_0) => s_0.message.role === "user" && s_0.message.index > 0 && s_0.message.index === s_0.thread.messages.length - 2 && s_0.thread.messages.at(-1)?.role === "assistant" && (s_0.message.id === activeAnchorId || s_0.thread.isRunning);
++		t0 = (s_0) => s_0.message.role === "user" && s_0.message.index >= 0 && s_0.message.index === s_0.thread.messages.length - 2 && s_0.thread.messages.at(-1)?.role === "assistant" && (s_0.message.id === activeAnchorId || s_0.thread.isRunning);
+ 		$[0] = activeAnchorId;
+ 		$[1] = t0;
+ 	} else t0 = $[1];
+diff --git a/dist/primitives/thread/ThreadViewport.d.ts b/dist/primitives/thread/ThreadViewport.d.ts
+index eb86914..e6b72fe 100644
+--- a/dist/primitives/thread/ThreadViewport.d.ts
++++ b/dist/primitives/thread/ThreadViewport.d.ts
+@@ -1,5 +1,16 @@
+ import { Primitive } from "../../utils/Primitive.js";
+ import { type ComponentRef, type ComponentPropsWithoutRef } from "react";
++export type ViewportScrollRestoration = {
++    current: {
++        scrollTop: number;
++        /** Native distance from the scrollable tail, stable when history grows. */
++        distanceFromBottomPx?: number;
++        topAnchorTurn: {
++            anchorId: string;
++            targetId: string;
++        } | null;
++    } | null;
++};
+ export declare namespace ThreadPrimitiveViewport {
+     type Element = ComponentRef<typeof Primitive.div>;
+     type Props = ComponentPropsWithoutRef<typeof Primitive.div> & {
+@@ -10,6 +21,8 @@ export declare namespace ThreadPrimitiveViewport {
+          * Default false if `turnAnchor` is "top", otherwise defaults to true.
+          */
+         autoScroll?: boolean | undefined;
++        /** Mutable per-thread snapshot. Restore instantly without replaying turn placement. */
++        scrollRestoration?: ViewportScrollRestoration;
+         /**
+          * Controls scroll anchoring behavior for new messages.
+          * - "bottom" (default): Messages anchor at the bottom, classic chat behavior.
+@@ -83,6 +96,8 @@ export declare const ThreadPrimitiveViewport: import("react").ForwardRefExoticCo
+      * Default false if `turnAnchor` is "top", otherwise defaults to true.
+      */
+     autoScroll?: boolean | undefined;
++    /** Mutable per-thread snapshot. Restore instantly without replaying turn placement. */
++    scrollRestoration?: ViewportScrollRestoration;
+     /**
+      * Controls scroll anchoring behavior for new messages.
+      * - "bottom" (default): Messages anchor at the bottom, classic chat behavior.
+diff --git a/dist/primitives/thread/ThreadViewport.js b/dist/primitives/thread/ThreadViewport.js
+index 02a371b..2f96ebe 100644
+--- a/dist/primitives/thread/ThreadViewport.js
++++ b/dist/primitives/thread/ThreadViewport.js
+@@ -1,266 +1,124 @@
+ "use client";
+-import { useThreadViewport, useThreadViewportStore } from "../../context/react/ThreadViewportContext.js";
+-import { ThreadPrimitiveViewportProvider } from "../../context/providers/ThreadViewportProvider.js";
+-import { useIsomorphicLayoutEffect } from "../../utils/useIsomorphicLayoutEffect.js";
+-import { Primitive as Primitive$1 } from "../../utils/Primitive.js";
++import { jsx } from "react/jsx-runtime";
++import { useComposedRefs } from "radix-ui/internal";
++import { Primitive } from "../../utils/Primitive.js";
++import {
++  forwardRef,
++  useCallback,
++  useMemo
++} from "react";
++import { useAuiState } from "@assistant-ui/store";
+ import { useManagedRef } from "../../utils/hooks/useManagedRef.js";
+ import { useThreadViewportAutoScroll } from "./useThreadViewportAutoScroll.js";
++import { ThreadPrimitiveViewportProvider } from "../../context/providers/ThreadViewportProvider.js";
+ import { useSizeHandle } from "../../utils/hooks/useSizeHandle.js";
++import {
++  useThreadViewport,
++  useThreadViewportStore
++} from "../../context/react/ThreadViewportContext.js";
+ import { useTopAnchorReserve } from "./topAnchor/useTopAnchorReserve.js";
+-import { getActiveTopAnchorAnchorId, getActiveTopAnchorTargetId, isTopAnchorTurnValid } from "./topAnchor/topAnchorTurn.js";
+-import { c } from "@assistant-ui/tap/react-shim/compiler-runtime";
+-import { forwardRef } from "@assistant-ui/tap/react-shim";
+-import { useAuiState } from "@assistant-ui/store";
+-import { jsx } from "react/jsx-runtime";
+-import { useComposedRefs } from "radix-ui/internal";
+-// src/primitives/thread/ThreadViewport.tsx
++import { useIsomorphicLayoutEffect } from "../../utils/useIsomorphicLayoutEffect.js";
++import {
++  getActiveTopAnchorAnchorId,
++  getActiveTopAnchorTargetId,
++  isTopAnchorTurnValid
++} from "./topAnchor/topAnchorTurn.js";
+ const useViewportSizeRef = () => {
+-	const register = useThreadViewport(_temp);
+-	return useSizeHandle(register, _temp2);
++  const register = useThreadViewport((s) => s.registerViewport);
++  const getHeight = useCallback((el) => el.clientHeight, []);
++  return useSizeHandle(register, getHeight);
+ };
+ const useViewportElementRef = () => {
+-	const registerViewportElement = useThreadViewport(_temp3);
+-	return useManagedRef(registerViewportElement);
++  const registerViewportElement = useThreadViewport(
++    (s) => s.registerViewportElement
++  );
++  return useManagedRef(registerViewportElement);
+ };
+-const useTopAnchorTurn = (enabled) => {
+-	const $ = c(19);
+-	const threadViewportStore = useThreadViewportStore();
+-	let t0;
+-	if ($[0] !== enabled) {
+-		t0 = (s) => {
+-			if (!enabled) return;
+-			return getActiveTopAnchorAnchorId(s.thread);
+-		};
+-		$[0] = enabled;
+-		$[1] = t0;
+-	} else t0 = $[1];
+-	const activeAnchorId = useAuiState(t0);
+-	let t1;
+-	if ($[2] !== enabled) {
+-		t1 = (s_0) => {
+-			if (!enabled) return;
+-			return getActiveTopAnchorTargetId(s_0.thread);
+-		};
+-		$[2] = enabled;
+-		$[3] = t1;
+-	} else t1 = $[3];
+-	const activeTargetId = useAuiState(t1);
+-	const topAnchorTurn = useThreadViewport(_temp4);
+-	let t2;
+-	bb0: {
+-		if (!activeAnchorId || !activeTargetId) {
+-			t2 = null;
+-			break bb0;
+-		}
+-		let t3;
+-		if ($[4] !== activeAnchorId || $[5] !== activeTargetId) {
+-			t3 = {
+-				anchorId: activeAnchorId,
+-				targetId: activeTargetId
+-			};
+-			$[4] = activeAnchorId;
+-			$[5] = activeTargetId;
+-			$[6] = t3;
+-		} else t3 = $[6];
+-		t2 = t3;
+-	}
+-	const activeTurn = t2;
+-	let t3;
+-	if ($[7] !== enabled || $[8] !== topAnchorTurn) {
+-		t3 = (s_2) => enabled && !!topAnchorTurn && isTopAnchorTurnValid(topAnchorTurn, s_2.thread.messages);
+-		$[7] = enabled;
+-		$[8] = topAnchorTurn;
+-		$[9] = t3;
+-	} else t3 = $[9];
+-	const topAnchorTurnIsValid = useAuiState(t3);
+-	let t4;
+-	let t5;
+-	if ($[10] !== threadViewportStore || $[11] !== topAnchorTurn || $[12] !== topAnchorTurnIsValid) {
+-		t4 = () => {
+-			if (!topAnchorTurn || topAnchorTurnIsValid) return;
+-			threadViewportStore.getState().setTopAnchorTurn(null);
+-		};
+-		t5 = [
+-			threadViewportStore,
+-			topAnchorTurn,
+-			topAnchorTurnIsValid
+-		];
+-		$[10] = threadViewportStore;
+-		$[11] = topAnchorTurn;
+-		$[12] = topAnchorTurnIsValid;
+-		$[13] = t4;
+-		$[14] = t5;
+-	} else {
+-		t4 = $[13];
+-		t5 = $[14];
+-	}
+-	useIsomorphicLayoutEffect(t4, t5);
+-	let t6;
+-	let t7;
+-	if ($[15] !== activeTurn || $[16] !== threadViewportStore) {
+-		t6 = () => {
+-			if (!activeTurn) return;
+-			const state = threadViewportStore.getState();
+-			const current = state.topAnchorTurn;
+-			if (current?.anchorId === activeTurn.anchorId && current.targetId === activeTurn.targetId) return;
+-			state.setTopAnchorTurn(activeTurn);
+-		};
+-		t7 = [activeTurn, threadViewportStore];
+-		$[15] = activeTurn;
+-		$[16] = threadViewportStore;
+-		$[17] = t6;
+-		$[18] = t7;
+-	} else {
+-		t6 = $[17];
+-		t7 = $[18];
+-	}
+-	useIsomorphicLayoutEffect(t6, t7);
++const useTopAnchorTurn = (enabled, restoration) => {
++  const threadViewportStore = useThreadViewportStore();
++  const activeAnchorId = useAuiState((s) => {
++    if (!enabled) return void 0;
++    return getActiveTopAnchorAnchorId(s.thread);
++  });
++  const activeTargetId = useAuiState((s) => {
++    if (!enabled) return void 0;
++    return getActiveTopAnchorTargetId(s.thread);
++  });
++  const restoredTurn = useAuiState((s) => {
++    const saved = restoration?.current?.topAnchorTurn;
++    if (!enabled || !saved) return null;
++    const index = s.thread.messages.findIndex((message) => message.id === saved.anchorId);
++    const target = s.thread.messages[index + 1];
++    return index >= 0 && target?.role === "assistant" && s.thread.messages.slice(index + 2).every((message) => message.role === "user") ? target.id : null;
++  });
++  const topAnchorTurn = useThreadViewport((s) => s.topAnchorTurn);
++  const activeTurn = useMemo(() => {
++    if (!activeAnchorId || !activeTargetId) {
++      const saved = restoration?.current?.topAnchorTurn;
++      return saved && restoredTurn ? { anchorId: saved.anchorId, targetId: restoredTurn } : null;
++    }
++    return { anchorId: activeAnchorId, targetId: activeTargetId };
++  }, [activeAnchorId, activeTargetId, restoration, restoredTurn]);
++  const topAnchorTurnIsValid = useAuiState(
++    (s) => enabled && !!topAnchorTurn && isTopAnchorTurnValid(topAnchorTurn, s.thread.messages)
++  );
++  useIsomorphicLayoutEffect(() => {
++    if (!topAnchorTurn || topAnchorTurnIsValid) return;
++    threadViewportStore.getState().setTopAnchorTurn(null);
++  }, [threadViewportStore, topAnchorTurn, topAnchorTurnIsValid]);
++  useIsomorphicLayoutEffect(() => {
++    if (!activeTurn) return;
++    const state = threadViewportStore.getState();
++    const current = state.topAnchorTurn;
++    if (current?.anchorId === activeTurn.anchorId && current.targetId === activeTurn.targetId) {
++      return;
++    }
++    state.setTopAnchorTurn(activeTurn);
++  }, [activeTurn, threadViewportStore]);
+ };
+-const ThreadPrimitiveViewportScrollable = forwardRef((t0, forwardedRef) => {
+-	const $ = c(18);
+-	let autoScroll;
+-	let children;
+-	let rest;
+-	let scrollToBottomOnInitialize;
+-	let scrollToBottomOnRunStart;
+-	let scrollToBottomOnThreadSwitch;
+-	if ($[0] !== t0) {
+-		({autoScroll, scrollToBottomOnRunStart, scrollToBottomOnInitialize, scrollToBottomOnThreadSwitch, children, ...rest} = t0);
+-		$[0] = t0;
+-		$[1] = autoScroll;
+-		$[2] = children;
+-		$[3] = rest;
+-		$[4] = scrollToBottomOnInitialize;
+-		$[5] = scrollToBottomOnRunStart;
+-		$[6] = scrollToBottomOnThreadSwitch;
+-	} else {
+-		autoScroll = $[1];
+-		children = $[2];
+-		rest = $[3];
+-		scrollToBottomOnInitialize = $[4];
+-		scrollToBottomOnRunStart = $[5];
+-		scrollToBottomOnThreadSwitch = $[6];
+-	}
+-	let t1;
+-	if ($[7] !== autoScroll || $[8] !== scrollToBottomOnInitialize || $[9] !== scrollToBottomOnRunStart || $[10] !== scrollToBottomOnThreadSwitch) {
+-		t1 = {
+-			autoScroll,
+-			scrollToBottomOnRunStart,
+-			scrollToBottomOnInitialize,
+-			scrollToBottomOnThreadSwitch
+-		};
+-		$[7] = autoScroll;
+-		$[8] = scrollToBottomOnInitialize;
+-		$[9] = scrollToBottomOnRunStart;
+-		$[10] = scrollToBottomOnThreadSwitch;
+-		$[11] = t1;
+-	} else t1 = $[11];
+-	const autoScrollRef = useThreadViewportAutoScroll(t1);
+-	const viewportSizeRef = useViewportSizeRef();
+-	const viewportElementRef = useViewportElementRef();
+-	const threadViewportStore = useThreadViewportStore();
+-	let t2;
+-	if ($[12] !== threadViewportStore) {
+-		t2 = threadViewportStore.getState();
+-		$[12] = threadViewportStore;
+-		$[13] = t2;
+-	} else t2 = $[13];
+-	const topAnchorEnabled = t2.turnAnchor === "top";
+-	useTopAnchorTurn(topAnchorEnabled);
+-	useTopAnchorReserve(topAnchorEnabled);
+-	const ref = useComposedRefs(forwardedRef, autoScrollRef, viewportSizeRef, viewportElementRef);
+-	let t3;
+-	if ($[14] !== children || $[15] !== ref || $[16] !== rest) {
+-		t3 = /* @__PURE__ */ jsx(Primitive$1.div, {
+-			...rest,
+-			ref,
+-			children
+-		});
+-		$[14] = children;
+-		$[15] = ref;
+-		$[16] = rest;
+-		$[17] = t3;
+-	} else t3 = $[17];
+-	return t3;
+-});
++const ThreadPrimitiveViewportScrollable = forwardRef(
++  ({
++    autoScroll,
++    scrollRestoration,
++    scrollToBottomOnRunStart,
++    scrollToBottomOnInitialize,
++    scrollToBottomOnThreadSwitch,
++    children,
++    ...rest
++  }, forwardedRef) => {
++    const autoScrollRef = useThreadViewportAutoScroll({
++      autoScroll,
++      scrollToBottomOnRunStart,
++      scrollToBottomOnInitialize,
++      scrollToBottomOnThreadSwitch
++    });
++    const viewportSizeRef = useViewportSizeRef();
++    const viewportElementRef = useViewportElementRef();
++    const threadViewportStore = useThreadViewportStore();
++    const turnAnchor = threadViewportStore.getState().turnAnchor;
++    const topAnchorEnabled = turnAnchor === "top";
++    useTopAnchorTurn(topAnchorEnabled, scrollRestoration);
++    useTopAnchorReserve(topAnchorEnabled, scrollRestoration);
++    const ref = useComposedRefs(
++      forwardedRef,
++      autoScrollRef,
++      viewportSizeRef,
++      viewportElementRef
++    );
++    return /* @__PURE__ */ jsx(Primitive.div, { ...rest, ref, children });
++  }
++);
+ ThreadPrimitiveViewportScrollable.displayName = "ThreadPrimitive.ViewportScrollable";
+-/**
+-* A scrollable viewport container for thread messages.
+-*
+-* This component provides a scrollable area for displaying thread messages with
+-* automatic scrolling capabilities. It manages the viewport state and provides
+-* context for child components to access viewport-related functionality.
+-*
+-* @example
+-* ```tsx
+-* <ThreadPrimitive.Viewport turnAnchor="top">
+-*   <ThreadPrimitive.Messages>
+-*     {() => <MyMessage />}
+-*   </ThreadPrimitive.Messages>
+-* </ThreadPrimitive.Viewport>
+-* ```
+-*/
+-const ThreadPrimitiveViewport = forwardRef((t0, ref) => {
+-	const $ = c(13);
+-	let props;
+-	let topAnchorMessageClamp;
+-	let turnAnchor;
+-	if ($[0] !== t0) {
+-		({turnAnchor, topAnchorMessageClamp, ...props} = t0);
+-		$[0] = t0;
+-		$[1] = props;
+-		$[2] = topAnchorMessageClamp;
+-		$[3] = turnAnchor;
+-	} else {
+-		props = $[1];
+-		topAnchorMessageClamp = $[2];
+-		turnAnchor = $[3];
+-	}
+-	let t1;
+-	if ($[4] !== topAnchorMessageClamp || $[5] !== turnAnchor) {
+-		t1 = {
+-			turnAnchor,
+-			topAnchorMessageClamp
+-		};
+-		$[4] = topAnchorMessageClamp;
+-		$[5] = turnAnchor;
+-		$[6] = t1;
+-	} else t1 = $[6];
+-	let t2;
+-	if ($[7] !== props || $[8] !== ref) {
+-		t2 = /* @__PURE__ */ jsx(ThreadPrimitiveViewportScrollable, {
+-			...props,
+-			ref
+-		});
+-		$[7] = props;
+-		$[8] = ref;
+-		$[9] = t2;
+-	} else t2 = $[9];
+-	let t3;
+-	if ($[10] !== t1 || $[11] !== t2) {
+-		t3 = /* @__PURE__ */ jsx(ThreadPrimitiveViewportProvider, {
+-			options: t1,
+-			children: t2
+-		});
+-		$[10] = t1;
+-		$[11] = t2;
+-		$[12] = t3;
+-	} else t3 = $[12];
+-	return t3;
++const ThreadPrimitiveViewport = forwardRef(({ turnAnchor, topAnchorMessageClamp, ...props }, ref) => {
++  return /* @__PURE__ */ jsx(
++    ThreadPrimitiveViewportProvider,
++    {
++      options: { turnAnchor, topAnchorMessageClamp },
++      children: /* @__PURE__ */ jsx(ThreadPrimitiveViewportScrollable, { ...props, ref })
++    }
++  );
+ });
+ ThreadPrimitiveViewport.displayName = "ThreadPrimitive.Viewport";
+-function _temp(s) {
+-	return s.registerViewport;
+-}
+-function _temp2(el) {
+-	return el.clientHeight;
+-}
+-function _temp3(s) {
+-	return s.registerViewportElement;
+-}
+-function _temp4(s_1) {
+-	return s_1.topAnchorTurn;
+-}
+-export { ThreadPrimitiveViewport };
+-
+-//# sourceMappingURL=ThreadViewport.js.map
+\ No newline at end of file
++export {
++  ThreadPrimitiveViewport
++};
+diff --git a/dist/primitives/thread/topAnchor/computeTopAnchorSlack.js b/dist/primitives/thread/topAnchor/computeTopAnchorSlack.js
+index 6785248..77d7db6 100644
+--- a/dist/primitives/thread/topAnchor/computeTopAnchorSlack.js
++++ b/dist/primitives/thread/topAnchor/computeTopAnchorSlack.js
+@@ -1,51 +1,57 @@
+ "use client";
+-// src/primitives/thread/topAnchor/computeTopAnchorSlack.ts
+ const getDocumentOffsetTop = (element) => {
+-	let top = 0;
+-	let current = element;
+-	while (current) {
+-		top += current.offsetTop;
+-		current = current.offsetParent;
+-	}
+-	return top;
++  let top = 0;
++  let current = element;
++  while (current) {
++    top += current.offsetTop;
++    current = current.offsetParent;
++  }
++  return top;
+ };
+ const getLayoutOffsetTop = (element, ancestor) => {
+-	let top = 0;
+-	let current = element;
+-	while (current && current !== ancestor) {
+-		top += current.offsetTop;
+-		current = current.offsetParent;
+-	}
+-	if (current === ancestor) return top;
+-	return getDocumentOffsetTop(element) - getDocumentOffsetTop(ancestor);
++  let top = 0;
++  let current = element;
++  while (current && current !== ancestor) {
++    top += current.offsetTop;
++    current = current.offsetParent;
++  }
++  if (current === ancestor) return top;
++  return getDocumentOffsetTop(element) - getDocumentOffsetTop(ancestor);
+ };
+-/**
+-* Compute the scroll position that pins the anchor (last user message) to the
+-* top of the viewport. For tall user messages the anchor is intentionally
+-* over-scrolled so only `visibleHeight` of it remains visible, leaving room
+-* for the assistant message below.
+-*
+-* Depends only on the anchor's offset within the scroll content; never reads
+-* `viewport.scrollHeight` (which is volatile while the assistant message
+-* streams in).
+-*/
+-const computeTopAnchorTargetScrollTop = ({ viewport, anchor, tallerThan, visibleHeight }) => {
+-	const anchorTop = getLayoutOffsetTop(anchor, viewport);
+-	const anchorHeight = anchor.offsetHeight;
+-	return anchorTop + Math.max(0, anchorHeight - (anchorHeight <= tallerThan ? anchorHeight : visibleHeight));
++const computeTopAnchorTargetScrollTop = ({
++  viewport,
++  anchor,
++  tallerThan,
++  visibleHeight
++}) => {
++  const anchorTop = getLayoutOffsetTop(anchor, viewport);
++  const anchorHeight = anchor.offsetHeight;
++  const visibleAnchorHeight = anchorHeight <= tallerThan ? anchorHeight : visibleHeight;
++  const padding = viewport.ownerDocument?.defaultView?.getComputedStyle(viewport).scrollPaddingTop;
++  const topInset = (Number.parseFloat(padding ?? "") || 0) * (padding?.endsWith("%") ? viewport.clientHeight / 100 : 1);
++  return Math.max(0, anchorTop + Math.max(0, anchorHeight - visibleAnchorHeight) - topInset);
+ };
+-const computeTopAnchorSlack = ({ scrollHeight, ...targetOptions }) => {
+-	const { viewport } = targetOptions;
+-	const targetScrollHeight = computeTopAnchorTargetScrollTop(targetOptions) + viewport.clientHeight;
+-	return Math.max(0, targetScrollHeight - scrollHeight);
++const computeTopAnchorSlack = ({
++  scrollHeight,
++  ...targetOptions
++}) => {
++  const { viewport } = targetOptions;
++  const targetScrollTop = computeTopAnchorTargetScrollTop(targetOptions);
++  const targetScrollHeight = targetScrollTop + viewport.clientHeight;
++  return Math.max(0, targetScrollHeight - scrollHeight);
+ };
+-const computeTopAnchorReserve = ({ viewport, reserve, ...targetOptions }) => {
+-	return computeTopAnchorSlack({
+-		viewport,
+-		...targetOptions,
+-		scrollHeight: viewport.scrollHeight - reserve.offsetHeight
+-	});
++const computeTopAnchorReserve = ({
++  viewport,
++  reserve,
++  ...targetOptions
++}) => {
++  return computeTopAnchorSlack({
++    viewport,
++    ...targetOptions,
++    scrollHeight: viewport.scrollHeight - reserve.offsetHeight
++  });
++};
++export {
++  computeTopAnchorReserve,
++  computeTopAnchorTargetScrollTop
+ };
+-export { computeTopAnchorReserve, computeTopAnchorTargetScrollTop };
+-
+-//# sourceMappingURL=computeTopAnchorSlack.js.map
+\ No newline at end of file
+diff --git a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.d.ts b/dist/primitives/thread/topAnchor/mountTopAnchorReserve.d.ts
+index 7719169..145e6e2 100644
+--- a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.d.ts
++++ b/dist/primitives/thread/topAnchor/mountTopAnchorReserve.d.ts
+@@ -1,26 +1,27 @@
+-/**
+- * Minimal slice of `ThreadViewportStore` that the top-anchor reserve needs.
+- * Decoupling from the full store keeps `mountTopAnchorReserve` testable in
+- * isolation and re-usable from any consumer that can adapt to this shape.
+- */
+-export type TopAnchorStore = {
+-    getState(): {
+-        turnAnchor: "top" | "bottom";
+-        element: {
+-            viewport: HTMLElement | null;
+-            anchor: HTMLElement | null;
+-            target: HTMLElement | null;
+-        };
+-        targetConfig: {
+-            tallerThan: number;
+-            visibleHeight: number;
+-        } | null;
+-        topAnchorTurn: {
+-            readonly anchorId: string;
+-            readonly targetId: string;
+-        } | null;
+-    };
+-    subscribe(fn: () => void): () => void;
+-};
+-export declare const mountTopAnchorReserve: (store: TopAnchorStore) => () => void;
++/**
++ * Minimal slice of `ThreadViewportStore` that the top-anchor reserve needs.
++ * Decoupling from the full store keeps `mountTopAnchorReserve` testable in
++ * isolation and re-usable from any consumer that can adapt to this shape.
++ */
++import type { ViewportScrollRestoration } from "../ThreadViewport.js";
++export type TopAnchorStore = {
++    getState(): {
++        turnAnchor: "top" | "bottom";
++        element: {
++            viewport: HTMLElement | null;
++            anchor: HTMLElement | null;
++            target: HTMLElement | null;
++        };
++        targetConfig: {
++            tallerThan: number;
++            visibleHeight: number;
++        } | null;
++        topAnchorTurn: {
++            readonly anchorId: string;
++            readonly targetId: string;
++        } | null;
++    };
++    subscribe(fn: () => void): () => void;
++};
++export declare const mountTopAnchorReserve: (store: TopAnchorStore, restoration?: ViewportScrollRestoration) => () => void;
+ //# sourceMappingURL=mountTopAnchorReserve.d.ts.map
+\ No newline at end of file
+diff --git a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js b/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js
+index d054826..b49c1ab 100644
+--- a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js
++++ b/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js
+@@ -1,139 +1,178 @@
+ "use client";
+-import { createReserveElement, getAnchorId, setReserveHeight, snapScrollTop } from "./topAnchorUtils.js";
+-import { computeTopAnchorReserve, computeTopAnchorTargetScrollTop } from "./computeTopAnchorSlack.js";
++import {
++  computeTopAnchorReserve,
++  computeTopAnchorTargetScrollTop
++} from "./computeTopAnchorSlack.js";
+ import { createReserveObservers } from "./createReserveObservers.js";
+-// src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
++import {
++  createReserveElement,
++  getAnchorId,
++  setReserveHeight,
++  snapScrollTop
++} from "./topAnchorUtils.js";
+ const createFrameScheduler = (fn) => {
+-	let frame = null;
+-	return {
+-		schedule: () => {
+-			if (frame !== null) return;
+-			frame = requestAnimationFrame(() => {
+-				frame = null;
+-				fn();
+-			});
+-		},
+-		cancel: () => {
+-			if (frame !== null) {
+-				cancelAnimationFrame(frame);
+-				frame = null;
+-			}
+-		}
+-	};
++  let frame = null;
++  return {
++    schedule: () => {
++      if (frame !== null) return;
++      frame = requestAnimationFrame(() => {
++        frame = null;
++        fn();
++      });
++    },
++    cancel: () => {
++      if (frame !== null) {
++        cancelAnimationFrame(frame);
++        frame = null;
++      }
++    }
++  };
+ };
+-const mountTopAnchorReserve = (store) => {
+-	let reserve = null;
+-	let lastScrolledAnchorId;
+-	let listenedViewport = null;
+-	let lastScrollTop = 0;
+-	let restoreScrollTop = null;
+-	let restoredThisTurn = false;
+-	let lastAppliedTarget = null;
+-	const clearRestore = () => {
+-		restoreScrollTop = null;
+-		lastAppliedTarget = null;
+-	};
+-	const wasPinnedAtLastScroll = () => lastAppliedTarget !== null && Math.abs(lastScrollTop - lastAppliedTarget) <= 1;
+-	const handleScroll = () => {
+-		const viewport = listenedViewport;
+-		if (!viewport) return;
+-		const scrollTop = viewport.scrollTop;
+-		const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+-		if (scrollTop < lastScrollTop && lastScrollTop > maxScrollTop + 1 && Math.abs(scrollTop - maxScrollTop) <= 1 && wasPinnedAtLastScroll() && !restoredThisTurn) {
+-			restoreScrollTop ??= lastScrollTop;
+-			scheduler.schedule();
+-		}
+-		lastScrollTop = scrollTop;
+-	};
+-	const listenViewport = (viewport) => {
+-		if (listenedViewport === viewport) return;
+-		if (listenedViewport) listenedViewport.removeEventListener("scroll", handleScroll);
+-		listenedViewport = viewport;
+-		restoredThisTurn = false;
+-		clearRestore();
+-		if (viewport) {
+-			viewport.addEventListener("scroll", handleScroll, { passive: true });
+-			lastScrollTop = viewport.scrollTop;
+-		}
+-	};
+-	function apply() {
+-		const state = store.getState();
+-		const { viewport, anchor, target } = state.element;
+-		const clamp = state.targetConfig;
+-		listenViewport(state.turnAnchor === "top" ? viewport : null);
+-		if (state.turnAnchor !== "top" || !viewport) {
+-			observers.disconnect();
+-			clearRestore();
+-			if (reserve) {
+-				setReserveHeight(reserve, 0);
+-				reserve.remove();
+-			}
+-			return;
+-		}
+-		if (!anchor && !target && !clamp && state.topAnchorTurn) {
+-			observers.disconnect();
+-			clearRestore();
+-			if (reserve?.parentElement && reserve.parentElement.lastElementChild !== reserve) reserve.parentElement.append(reserve);
+-			return;
+-		}
+-		if (!anchor || !target || !clamp) {
+-			observers.disconnect();
+-			clearRestore();
+-			if (reserve) {
+-				setReserveHeight(reserve, 0);
+-				reserve.remove();
+-			}
+-			return;
+-		}
+-		reserve ??= createReserveElement();
+-		if (reserve.parentElement !== target.parentElement || reserve.previousElementSibling !== target) target.after(reserve);
+-		observers.target(viewport, anchor, target);
+-		if (setReserveHeight(reserve, computeTopAnchorReserve({
+-			viewport,
+-			anchor,
+-			reserve,
+-			...clamp
+-		}))) {
+-			scheduler.schedule();
+-			return;
+-		}
+-		const anchorId = getAnchorId(anchor);
+-		const targetScrollTop = snapScrollTop(computeTopAnchorTargetScrollTop({
+-			viewport,
+-			anchor,
+-			...clamp
+-		}));
+-		if (anchorId === void 0 || anchorId !== lastScrolledAnchorId) {
+-			restoreScrollTop = null;
+-			restoredThisTurn = false;
+-			if (Math.abs(viewport.scrollTop - targetScrollTop) > 1) viewport.scrollTo({
+-				top: targetScrollTop,
+-				behavior: "smooth"
+-			});
+-			if (anchorId !== void 0) lastScrolledAnchorId = anchorId;
+-		} else if (restoreScrollTop !== null && lastAppliedTarget !== null) {
+-			const desired = snapScrollTop(restoreScrollTop + (targetScrollTop - lastAppliedTarget));
+-			restoreScrollTop = null;
+-			restoredThisTurn = true;
+-			if (Math.abs(viewport.scrollTop - desired) > 1) viewport.scrollTo({
+-				top: desired,
+-				behavior: "instant"
+-			});
+-		}
+-		lastAppliedTarget = targetScrollTop;
+-	}
+-	const scheduler = createFrameScheduler(apply);
+-	const observers = createReserveObservers(scheduler.schedule);
+-	scheduler.schedule();
+-	const unsubscribe = store.subscribe(scheduler.schedule);
+-	return () => {
+-		scheduler.cancel();
+-		unsubscribe();
+-		observers.disconnect();
+-		listenViewport(null);
+-		reserve?.remove();
+-	};
++const mountTopAnchorReserve = (store, restoration) => {
++  let reserve = null;
++  const saved = restoration?.current;
++  let pendingRestore = saved ?? null;
++  let lastScrolledAnchorId = saved ? store.getState().topAnchorTurn?.anchorId : void 0;
++  const viewportAtMount = store.getState().element.viewport;
++  const restore = () => {
++    const viewport = store.getState().element.viewport;
++    if (!pendingRestore || !viewport) return;
++    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
++    const top = pendingRestore.distanceFromBottomPx === void 0 ? pendingRestore.scrollTop : maxScrollTop - pendingRestore.distanceFromBottomPx;
++    viewport.scrollTo({ top: Math.max(0, top), behavior: "instant" });
++    pendingRestore = null;
++  };
++  let listenedViewport = null;
++  let lastScrollTop = 0;
++  let restoreScrollTop = null;
++  let restoredThisTurn = false;
++  let lastAppliedTarget = null;
++  const clearRestore = () => {
++    restoreScrollTop = null;
++    lastAppliedTarget = null;
++  };
++  const wasPinnedAtLastScroll = () => lastAppliedTarget !== null && Math.abs(lastScrollTop - lastAppliedTarget) <= 1;
++  const handleScroll = () => {
++    const viewport = listenedViewport;
++    if (!viewport) return;
++    const scrollTop = viewport.scrollTop;
++    const maxScrollTop = Math.max(
++      0,
++      viewport.scrollHeight - viewport.clientHeight
++    );
++    const isRangeClamp = scrollTop < lastScrollTop && lastScrollTop > maxScrollTop + 1 && Math.abs(scrollTop - maxScrollTop) <= 1;
++    if (isRangeClamp && wasPinnedAtLastScroll() && !restoredThisTurn) {
++      restoreScrollTop ??= lastScrollTop;
++      scheduler.schedule();
++    }
++    lastScrollTop = scrollTop;
++  };
++  const listenViewport = (viewport) => {
++    if (listenedViewport === viewport) return;
++    if (listenedViewport) {
++      listenedViewport.removeEventListener("scroll", handleScroll);
++    }
++    listenedViewport = viewport;
++    restoredThisTurn = false;
++    clearRestore();
++    if (viewport) {
++      viewport.addEventListener("scroll", handleScroll, { passive: true });
++      lastScrollTop = viewport.scrollTop;
++    }
++  };
++  function apply() {
++    const state = store.getState();
++    const { viewport, anchor, target } = state.element;
++    const clamp = state.targetConfig;
++    listenViewport(state.turnAnchor === "top" ? viewport : null);
++    if (state.turnAnchor !== "top" || !viewport) {
++      observers.disconnect();
++      clearRestore();
++      if (reserve) {
++        setReserveHeight(reserve, 0);
++        reserve.remove();
++      }
++      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
++      return;
++    }
++    if (!anchor && !target && !clamp && state.topAnchorTurn) {
++      observers.disconnect();
++      clearRestore();
++      if (reserve?.parentElement && reserve.parentElement.lastElementChild !== reserve) {
++        reserve.parentElement.append(reserve);
++      }
++      return;
++    }
++    if (!anchor || !target || !clamp) {
++      observers.disconnect();
++      clearRestore();
++      if (reserve) {
++        setReserveHeight(reserve, 0);
++        reserve.remove();
++      }
++      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
++      return;
++    }
++    reserve ??= createReserveElement();
++    if (reserve.parentElement !== target.parentElement || reserve.previousElementSibling !== target) {
++      target.after(reserve);
++    }
++    observers.target(viewport, anchor, target);
++    const reserveChanged = setReserveHeight(
++      reserve,
++      computeTopAnchorReserve({ viewport, anchor, reserve, ...clamp })
++    );
++    if (reserveChanged) {
++      scheduler.schedule();
++      if (!pendingRestore) return;
++    }
++    if (pendingRestore) {
++      lastScrolledAnchorId = getAnchorId(anchor);
++      restore();
++    }
++    const anchorId = getAnchorId(anchor);
++    const targetScrollTop = snapScrollTop(
++      computeTopAnchorTargetScrollTop({ viewport, anchor, ...clamp })
++    );
++    if (anchorId === void 0 || anchorId !== lastScrolledAnchorId) {
++      restoreScrollTop = null;
++      restoredThisTurn = false;
++      if (Math.abs(viewport.scrollTop - targetScrollTop) > 1) {
++        viewport.scrollTo({ top: targetScrollTop, behavior: "smooth" });
++      }
++      if (anchorId !== void 0) lastScrolledAnchorId = anchorId;
++    } else if (restoreScrollTop !== null && lastAppliedTarget !== null) {
++      const desired = snapScrollTop(
++        restoreScrollTop + (targetScrollTop - lastAppliedTarget)
++      );
++      restoreScrollTop = null;
++      restoredThisTurn = true;
++      if (Math.abs(viewport.scrollTop - desired) > 1) {
++        viewport.scrollTo({ top: desired, behavior: "instant" });
++      }
++    }
++    lastAppliedTarget = targetScrollTop;
++  }
++  const scheduler = createFrameScheduler(apply);
++  const observers = createReserveObservers(scheduler.schedule);
++  if (pendingRestore) apply();
++  else scheduler.schedule();
++  const unsubscribe = store.subscribe(scheduler.schedule);
++  return () => {
++    if (restoration && viewportAtMount) {
++      restoration.current = {
++        scrollTop: viewportAtMount.scrollTop,
++        distanceFromBottomPx: Math.max(0, viewportAtMount.scrollHeight - viewportAtMount.clientHeight - viewportAtMount.scrollTop),
++        topAnchorTurn: store.getState().topAnchorTurn
++      };
++    }
++    scheduler.cancel();
++    unsubscribe();
++    observers.disconnect();
++    listenViewport(null);
++    reserve?.remove();
++  };
++};
++export {
++  mountTopAnchorReserve
+ };
+-export { mountTopAnchorReserve };
+-
+-//# sourceMappingURL=mountTopAnchorReserve.js.map
+\ No newline at end of file
+diff --git a/dist/primitives/thread/topAnchor/useTopAnchorReserve.d.ts b/dist/primitives/thread/topAnchor/useTopAnchorReserve.d.ts
+index c6ea7e2..19a7b8b 100644
+--- a/dist/primitives/thread/topAnchor/useTopAnchorReserve.d.ts
++++ b/dist/primitives/thread/topAnchor/useTopAnchorReserve.d.ts
+@@ -3,5 +3,5 @@
+  * `ThreadViewport` store. Call this from inside the scrollable viewport so
+  * the reserve `<div>` is appended next to the streaming assistant message.
+  */
+-export declare const useTopAnchorReserve: (enabled: boolean) => void;
++export declare const useTopAnchorReserve: (enabled: boolean, restoration?: import("../ThreadViewport.js").ViewportScrollRestoration) => void;
+ //# sourceMappingURL=useTopAnchorReserve.d.ts.map
+\ No newline at end of file
+diff --git a/dist/primitives/thread/topAnchor/useTopAnchorReserve.js b/dist/primitives/thread/topAnchor/useTopAnchorReserve.js
+index c3cdf1d..8250bbd 100644
+--- a/dist/primitives/thread/topAnchor/useTopAnchorReserve.js
++++ b/dist/primitives/thread/topAnchor/useTopAnchorReserve.js
+@@ -1,35 +1,14 @@
+ "use client";
+-import { useThreadViewportStore } from "../../../context/react/ThreadViewportContext.js";
+ import { useIsomorphicLayoutEffect } from "../../../utils/useIsomorphicLayoutEffect.js";
++import { useThreadViewportStore } from "../../../context/react/ThreadViewportContext.js";
+ import { mountTopAnchorReserve } from "./mountTopAnchorReserve.js";
+-import { c } from "@assistant-ui/tap/react-shim/compiler-runtime";
+-// src/primitives/thread/topAnchor/useTopAnchorReserve.ts
+-/**
+-* Mounts the top-turn-anchor reserve element against the active
+-* `ThreadViewport` store. Call this from inside the scrollable viewport so
+-* the reserve `<div>` is appended next to the streaming assistant message.
+-*/
+-const useTopAnchorReserve = (enabled) => {
+-	const $ = c(4);
+-	const threadViewportStore = useThreadViewportStore();
+-	let t0;
+-	let t1;
+-	if ($[0] !== enabled || $[1] !== threadViewportStore) {
+-		t0 = () => {
+-			if (!enabled) return;
+-			return mountTopAnchorReserve(threadViewportStore);
+-		};
+-		t1 = [enabled, threadViewportStore];
+-		$[0] = enabled;
+-		$[1] = threadViewportStore;
+-		$[2] = t0;
+-		$[3] = t1;
+-	} else {
+-		t0 = $[2];
+-		t1 = $[3];
+-	}
+-	useIsomorphicLayoutEffect(t0, t1);
++const useTopAnchorReserve = (enabled, restoration) => {
++  const threadViewportStore = useThreadViewportStore();
++  useIsomorphicLayoutEffect(() => {
++    if (!enabled) return;
++    return mountTopAnchorReserve(threadViewportStore, restoration);
++  }, [enabled, threadViewportStore, restoration]);
++};
++export {
++  useTopAnchorReserve
+ };
+-export { useTopAnchorReserve };
+-
+-//# sourceMappingURL=useTopAnchorReserve.js.map
+\ No newline at end of file
+diff --git a/src/primitives/message/MessageRoot.tsx b/src/primitives/message/MessageRoot.tsx
+index 0b9f8f2..21ccf94 100644
+--- a/src/primitives/message/MessageRoot.tsx
++++ b/src/primitives/message/MessageRoot.tsx
+@@ -63,7 +63,7 @@ const useIsTopAnchorUser = () => {
+   return useAuiState(
+     (s) =>
+       s.message.role === "user" &&
+-      s.message.index > 0 &&
++      s.message.index >= 0 &&
+       s.message.index === s.thread.messages.length - 2 &&
+       s.thread.messages.at(-1)?.role === "assistant" &&
+       (s.message.id === activeAnchorId || s.thread.isRunning),
+diff --git a/src/primitives/thread/ThreadViewport.tsx b/src/primitives/thread/ThreadViewport.tsx
+index e4be094..4f63c84 100644
+--- a/src/primitives/thread/ThreadViewport.tsx
++++ b/src/primitives/thread/ThreadViewport.tsx
+@@ -26,6 +26,15 @@ import {
+   isTopAnchorTurnValid,
+ } from "./topAnchor/topAnchorTurn";
+ 
++export type ViewportScrollRestoration = {
++  current: {
++    scrollTop: number;
++    /** Native distance from the scrollable tail, stable when history grows. */
++    distanceFromBottomPx?: number;
++    topAnchorTurn: { anchorId: string; targetId: string } | null;
++  } | null;
++};
++
+ export namespace ThreadPrimitiveViewport {
+   export type Element = ComponentRef<typeof Primitive.div>;
+   export type Props = ComponentPropsWithoutRef<typeof Primitive.div> & {
+@@ -36,6 +45,8 @@ export namespace ThreadPrimitiveViewport {
+      * Default false if `turnAnchor` is "top", otherwise defaults to true.
+      */
+     autoScroll?: boolean | undefined;
++    /** Mutable per-thread snapshot. Restore instantly without replaying turn placement. */
++    scrollRestoration?: ViewportScrollRestoration;
+ 
+     /**
+      * Controls scroll anchoring behavior for new messages.
+@@ -101,7 +112,7 @@ const useViewportElementRef = () => {
+   return useManagedRef(registerViewportElement);
+ };
+ 
+-const useTopAnchorTurn = (enabled: boolean) => {
++const useTopAnchorTurn = (enabled: boolean, restoration?: ViewportScrollRestoration) => {
+   const threadViewportStore = useThreadViewportStore();
+   const activeAnchorId = useAuiState((s) => {
+     if (!enabled) return undefined;
+@@ -111,11 +122,24 @@ const useTopAnchorTurn = (enabled: boolean) => {
+     if (!enabled) return undefined;
+     return getActiveTopAnchorTargetId(s.thread);
+   });
++  const restoredTurn = useAuiState((s) => {
++    const saved = restoration?.current?.topAnchorTurn;
++    if (!enabled || !saved) return null;
++    // A streaming placeholder may have been replaced by its persisted reply.
++    const index = s.thread.messages.findIndex((message) => message.id === saved.anchorId);
++    const target = s.thread.messages[index + 1];
++    return index >= 0 && target?.role === "assistant" &&
++      s.thread.messages.slice(index + 2).every((message) => message.role === "user")
++      ? target.id : null;
++  });
+   const topAnchorTurn = useThreadViewport((s) => s.topAnchorTurn);
+   const activeTurn = useMemo(() => {
+-    if (!activeAnchorId || !activeTargetId) return null;
++    if (!activeAnchorId || !activeTargetId) {
++      const saved = restoration?.current?.topAnchorTurn;
++      return saved && restoredTurn ? { anchorId: saved.anchorId, targetId: restoredTurn } : null;
++    }
+     return { anchorId: activeAnchorId, targetId: activeTargetId };
+-  }, [activeAnchorId, activeTargetId]);
++  }, [activeAnchorId, activeTargetId, restoration, restoredTurn]);
+ 
+   const topAnchorTurnIsValid = useAuiState(
+     (s) =>
+@@ -153,6 +177,7 @@ const ThreadPrimitiveViewportScrollable = forwardRef<
+   (
+     {
+       autoScroll,
++      scrollRestoration,
+       scrollToBottomOnRunStart,
+       scrollToBottomOnInitialize,
+       scrollToBottomOnThreadSwitch,
+@@ -172,8 +197,8 @@ const ThreadPrimitiveViewportScrollable = forwardRef<
+     const threadViewportStore = useThreadViewportStore();
+     const turnAnchor = threadViewportStore.getState().turnAnchor;
+     const topAnchorEnabled = turnAnchor === "top";
+-    useTopAnchorTurn(topAnchorEnabled);
+-    useTopAnchorReserve(topAnchorEnabled);
++    useTopAnchorTurn(topAnchorEnabled, scrollRestoration);
++    useTopAnchorReserve(topAnchorEnabled, scrollRestoration);
+     const ref = useComposedRefs(
+       forwardedRef,
+       autoScrollRef,
+diff --git a/src/primitives/thread/topAnchor/computeTopAnchorSlack.ts b/src/primitives/thread/topAnchor/computeTopAnchorSlack.ts
+index 4468828..b139232 100644
+--- a/src/primitives/thread/topAnchor/computeTopAnchorSlack.ts
++++ b/src/primitives/thread/topAnchor/computeTopAnchorSlack.ts
+@@ -67,7 +67,12 @@ export const computeTopAnchorTargetScrollTop = ({
+   const visibleAnchorHeight =
+     anchorHeight <= tallerThan ? anchorHeight : visibleHeight;
+ 
+-  return anchorTop + Math.max(0, anchorHeight - visibleAnchorHeight);
++  // scrollTo does not apply CSS scroll-padding. Use the same inset for both
++  // the placement target and its reserve, including clamped tall messages.
++  const padding = viewport.ownerDocument?.defaultView?.getComputedStyle(viewport).scrollPaddingTop;
++  const topInset = (Number.parseFloat(padding ?? "") || 0) *
++    (padding?.endsWith("%") ? viewport.clientHeight / 100 : 1);
++  return Math.max(0, anchorTop + Math.max(0, anchorHeight - visibleAnchorHeight) - topInset);
+ };
+ 
+ const computeTopAnchorSlack = ({
+diff --git a/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts b/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
+index 7877546..0455546 100644
+--- a/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
++++ b/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
+@@ -1,221 +1,254 @@
+-"use client";
+-
+-import {
+-  computeTopAnchorReserve,
+-  computeTopAnchorTargetScrollTop,
+-} from "./computeTopAnchorSlack";
+-import { createReserveObservers } from "./createReserveObservers";
+-import {
+-  createReserveElement,
+-  getAnchorId,
+-  setReserveHeight,
+-  snapScrollTop,
+-} from "./topAnchorUtils";
+-
+-/**
+- * Minimal slice of `ThreadViewportStore` that the top-anchor reserve needs.
+- * Decoupling from the full store keeps `mountTopAnchorReserve` testable in
+- * isolation and re-usable from any consumer that can adapt to this shape.
+- */
+-export type TopAnchorStore = {
+-  getState(): {
+-    turnAnchor: "top" | "bottom";
+-    element: {
+-      viewport: HTMLElement | null;
+-      anchor: HTMLElement | null;
+-      target: HTMLElement | null;
+-    };
+-    targetConfig: {
+-      tallerThan: number;
+-      visibleHeight: number;
+-    } | null;
+-    topAnchorTurn: {
+-      readonly anchorId: string;
+-      readonly targetId: string;
+-    } | null;
+-  };
+-  subscribe(fn: () => void): () => void;
+-};
+-
+-const createFrameScheduler = (fn: () => void) => {
+-  let frame: number | null = null;
+-
+-  return {
+-    schedule: () => {
+-      if (frame !== null) return;
+-      frame = requestAnimationFrame(() => {
+-        frame = null;
+-        fn();
+-      });
+-    },
+-    cancel: () => {
+-      if (frame !== null) {
+-        cancelAnimationFrame(frame);
+-        frame = null;
+-      }
+-    },
+-  };
+-};
+-
+-export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+-  let reserve: HTMLElement | null = null;
+-  let lastScrolledAnchorId: string | undefined;
+-
+-  let listenedViewport: HTMLElement | null = null;
+-  let lastScrollTop = 0;
+-  let restoreScrollTop: number | null = null;
+-  let restoredThisTurn = false;
+-  let lastAppliedTarget: number | null = null;
+-
+-  const clearRestore = () => {
+-    restoreScrollTop = null;
+-    lastAppliedTarget = null;
+-  };
+-
+-  const wasPinnedAtLastScroll = () =>
+-    lastAppliedTarget !== null &&
+-    Math.abs(lastScrollTop - lastAppliedTarget) <= 1;
+-
+-  const handleScroll = () => {
+-    const viewport = listenedViewport;
+-    if (!viewport) return;
+-    const scrollTop = viewport.scrollTop;
+-    const maxScrollTop = Math.max(
+-      0,
+-      viewport.scrollHeight - viewport.clientHeight,
+-    );
+-    // A range clamp starts beyond the new maximum and lands on it.
+-    const isRangeClamp =
+-      scrollTop < lastScrollTop &&
+-      lastScrollTop > maxScrollTop + 1 &&
+-      Math.abs(scrollTop - maxScrollTop) <= 1;
+-
+-    if (isRangeClamp && wasPinnedAtLastScroll() && !restoredThisTurn) {
+-      restoreScrollTop ??= lastScrollTop;
+-      scheduler.schedule();
+-    }
+-
+-    lastScrollTop = scrollTop;
+-  };
+-
+-  const listenViewport = (viewport: HTMLElement | null) => {
+-    if (listenedViewport === viewport) return;
+-    if (listenedViewport) {
+-      listenedViewport.removeEventListener("scroll", handleScroll);
+-    }
+-    listenedViewport = viewport;
+-    restoredThisTurn = false;
+-    clearRestore();
+-    if (viewport) {
+-      viewport.addEventListener("scroll", handleScroll, { passive: true });
+-      lastScrollTop = viewport.scrollTop;
+-    }
+-  };
+-
+-  function apply() {
+-    const state = store.getState();
+-    const { viewport, anchor, target } = state.element;
+-    const clamp = state.targetConfig;
+-
+-    listenViewport(state.turnAnchor === "top" ? viewport : null);
+-
+-    if (state.turnAnchor !== "top" || !viewport) {
+-      observers.disconnect();
+-      clearRestore();
+-      if (reserve) {
+-        setReserveHeight(reserve, 0);
+-        reserve.remove();
+-      }
+-      return;
+-    }
+-
+-    if (!anchor && !target && !clamp && state.topAnchorTurn) {
+-      // ThreadViewport clears this state once the stored pair stops being the
+-      // trailing turn (followed at most by pending user messages), so reaching
+-      // here means the anchor gap is transient and the next run is imminent.
+-      observers.disconnect();
+-      clearRestore();
+-      if (
+-        reserve?.parentElement &&
+-        reserve.parentElement.lastElementChild !== reserve
+-      ) {
+-        reserve.parentElement.append(reserve);
+-      }
+-      return;
+-    }
+-
+-    if (!anchor || !target || !clamp) {
+-      observers.disconnect();
+-      clearRestore();
+-      if (reserve) {
+-        setReserveHeight(reserve, 0);
+-        reserve.remove();
+-      }
+-      return;
+-    }
+-
+-    reserve ??= createReserveElement();
+-
+-    if (
+-      reserve.parentElement !== target.parentElement ||
+-      reserve.previousElementSibling !== target
+-    ) {
+-      target.after(reserve);
+-    }
+-
+-    observers.target(viewport, anchor, target);
+-
+-    const reserveChanged = setReserveHeight(
+-      reserve,
+-      computeTopAnchorReserve({ viewport, anchor, reserve, ...clamp }),
+-    );
+-
+-    if (reserveChanged) {
+-      scheduler.schedule();
+-      return;
+-    }
+-
+-    const anchorId = getAnchorId(anchor);
+-    const targetScrollTop = snapScrollTop(
+-      computeTopAnchorTargetScrollTop({ viewport, anchor, ...clamp }),
+-    );
+-
+-    if (anchorId === undefined || anchorId !== lastScrolledAnchorId) {
+-      restoreScrollTop = null;
+-      restoredThisTurn = false;
+-      if (Math.abs(viewport.scrollTop - targetScrollTop) > 1) {
+-        viewport.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+-      }
+-      if (anchorId !== undefined) lastScrolledAnchorId = anchorId;
+-    } else if (restoreScrollTop !== null && lastAppliedTarget !== null) {
+-      // Restore the anchor-relative position: if content above the anchor
+-      // changed height and the browser already adjusted scrollTop to match
+-      // (scroll anchoring), the desired offset equals the current one and
+-      // this is a no-op.
+-      const desired = snapScrollTop(
+-        restoreScrollTop + (targetScrollTop - lastAppliedTarget),
+-      );
+-      restoreScrollTop = null;
+-      restoredThisTurn = true;
+-      if (Math.abs(viewport.scrollTop - desired) > 1) {
+-        viewport.scrollTo({ top: desired, behavior: "instant" });
+-      }
+-    }
+-
+-    lastAppliedTarget = targetScrollTop;
+-  }
+-
+-  const scheduler = createFrameScheduler(apply);
+-  const observers = createReserveObservers(scheduler.schedule);
+-
+-  scheduler.schedule();
+-  const unsubscribe = store.subscribe(scheduler.schedule);
+-
+-  return () => {
+-    scheduler.cancel();
+-    unsubscribe();
+-    observers.disconnect();
+-    listenViewport(null);
+-    reserve?.remove();
+-  };
+-};
++"use client";
++
++import type { ViewportScrollRestoration } from "../ThreadViewport";
++
++import {
++  computeTopAnchorReserve,
++  computeTopAnchorTargetScrollTop,
++} from "./computeTopAnchorSlack";
++import { createReserveObservers } from "./createReserveObservers";
++import {
++  createReserveElement,
++  getAnchorId,
++  setReserveHeight,
++  snapScrollTop,
++} from "./topAnchorUtils";
++
++/**
++ * Minimal slice of `ThreadViewportStore` that the top-anchor reserve needs.
++ * Decoupling from the full store keeps `mountTopAnchorReserve` testable in
++ * isolation and re-usable from any consumer that can adapt to this shape.
++ */
++export type TopAnchorStore = {
++  getState(): {
++    turnAnchor: "top" | "bottom";
++    element: {
++      viewport: HTMLElement | null;
++      anchor: HTMLElement | null;
++      target: HTMLElement | null;
++    };
++    targetConfig: {
++      tallerThan: number;
++      visibleHeight: number;
++    } | null;
++    topAnchorTurn: {
++      readonly anchorId: string;
++      readonly targetId: string;
++    } | null;
++  };
++  subscribe(fn: () => void): () => void;
++};
++
++const createFrameScheduler = (fn: () => void) => {
++  let frame: number | null = null;
++
++  return {
++    schedule: () => {
++      if (frame !== null) return;
++      frame = requestAnimationFrame(() => {
++        frame = null;
++        fn();
++      });
++    },
++    cancel: () => {
++      if (frame !== null) {
++        cancelAnimationFrame(frame);
++        frame = null;
++      }
++    },
++  };
++};
++
++export const mountTopAnchorReserve = (store: TopAnchorStore, restoration?: ViewportScrollRestoration) => {
++  let reserve: HTMLElement | null = null;
++  const saved = restoration?.current;
++  let pendingRestore = saved ?? null;
++  // The currently running turn is already present on entry, not a new submit.
++  let lastScrolledAnchorId = saved ? store.getState().topAnchorTurn?.anchorId : undefined;
++  const viewportAtMount = store.getState().element.viewport;
++  const restore = () => {
++    const viewport = store.getState().element.viewport;
++    if (!pendingRestore || !viewport) return;
++    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
++    const top = pendingRestore.distanceFromBottomPx === undefined
++      ? pendingRestore.scrollTop
++      : maxScrollTop - pendingRestore.distanceFromBottomPx;
++    viewport.scrollTo({ top: Math.max(0, top), behavior: "instant" });
++    pendingRestore = null;
++  };
++
++  let listenedViewport: HTMLElement | null = null;
++  let lastScrollTop = 0;
++  let restoreScrollTop: number | null = null;
++  let restoredThisTurn = false;
++  let lastAppliedTarget: number | null = null;
++
++  const clearRestore = () => {
++    restoreScrollTop = null;
++    lastAppliedTarget = null;
++  };
++
++  const wasPinnedAtLastScroll = () =>
++    lastAppliedTarget !== null &&
++    Math.abs(lastScrollTop - lastAppliedTarget) <= 1;
++
++  const handleScroll = () => {
++    const viewport = listenedViewport;
++    if (!viewport) return;
++    const scrollTop = viewport.scrollTop;
++    const maxScrollTop = Math.max(
++      0,
++      viewport.scrollHeight - viewport.clientHeight,
++    );
++    // A range clamp starts beyond the new maximum and lands on it.
++    const isRangeClamp =
++      scrollTop < lastScrollTop &&
++      lastScrollTop > maxScrollTop + 1 &&
++      Math.abs(scrollTop - maxScrollTop) <= 1;
++
++    if (isRangeClamp && wasPinnedAtLastScroll() && !restoredThisTurn) {
++      restoreScrollTop ??= lastScrollTop;
++      scheduler.schedule();
++    }
++
++    lastScrollTop = scrollTop;
++  };
++
++  const listenViewport = (viewport: HTMLElement | null) => {
++    if (listenedViewport === viewport) return;
++    if (listenedViewport) {
++      listenedViewport.removeEventListener("scroll", handleScroll);
++    }
++    listenedViewport = viewport;
++    restoredThisTurn = false;
++    clearRestore();
++    if (viewport) {
++      viewport.addEventListener("scroll", handleScroll, { passive: true });
++      lastScrollTop = viewport.scrollTop;
++    }
++  };
++
++  function apply() {
++    const state = store.getState();
++    const { viewport, anchor, target } = state.element;
++    const clamp = state.targetConfig;
++
++    listenViewport(state.turnAnchor === "top" ? viewport : null);
++
++    if (state.turnAnchor !== "top" || !viewport) {
++      observers.disconnect();
++      clearRestore();
++      if (reserve) {
++        setReserveHeight(reserve, 0);
++        reserve.remove();
++      }
++      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
++      return;
++    }
++
++    if (!anchor && !target && !clamp && state.topAnchorTurn) {
++      // ThreadViewport clears this state once the stored pair stops being the
++      // trailing turn (followed at most by pending user messages), so reaching
++      // here means the anchor gap is transient and the next run is imminent.
++      observers.disconnect();
++      clearRestore();
++      if (
++        reserve?.parentElement &&
++        reserve.parentElement.lastElementChild !== reserve
++      ) {
++        reserve.parentElement.append(reserve);
++      }
++      return;
++    }
++
++    if (!anchor || !target || !clamp) {
++      observers.disconnect();
++      clearRestore();
++      if (reserve) {
++        setReserveHeight(reserve, 0);
++        reserve.remove();
++      }
++      // Completed history has no active anchor; restore once its refs exist.
++      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
++      return;
++    }
++
++    reserve ??= createReserveElement();
++
++    if (
++      reserve.parentElement !== target.parentElement ||
++      reserve.previousElementSibling !== target
++    ) {
++      target.after(reserve);
++    }
++
++    observers.target(viewport, anchor, target);
++
++    const reserveChanged = setReserveHeight(
++      reserve,
++      computeTopAnchorReserve({ viewport, anchor, reserve, ...clamp }),
++    );
++
++    if (reserveChanged) {
++      scheduler.schedule();
++      if (!pendingRestore) return;
++    }
++
++    if (pendingRestore) {
++      lastScrolledAnchorId = getAnchorId(anchor);
++      restore();
++    }
++    const anchorId = getAnchorId(anchor);
++    const targetScrollTop = snapScrollTop(
++      computeTopAnchorTargetScrollTop({ viewport, anchor, ...clamp }),
++    );
++
++    if (anchorId === undefined || anchorId !== lastScrolledAnchorId) {
++      restoreScrollTop = null;
++      restoredThisTurn = false;
++      if (Math.abs(viewport.scrollTop - targetScrollTop) > 1) {
++        viewport.scrollTo({ top: targetScrollTop, behavior: "smooth" });
++      }
++      if (anchorId !== undefined) lastScrolledAnchorId = anchorId;
++    } else if (restoreScrollTop !== null && lastAppliedTarget !== null) {
++      // Restore the anchor-relative position: if content above the anchor
++      // changed height and the browser already adjusted scrollTop to match
++      // (scroll anchoring), the desired offset equals the current one and
++      // this is a no-op.
++      const desired = snapScrollTop(
++        restoreScrollTop + (targetScrollTop - lastAppliedTarget),
++      );
++      restoreScrollTop = null;
++      restoredThisTurn = true;
++      if (Math.abs(viewport.scrollTop - desired) > 1) {
++        viewport.scrollTo({ top: desired, behavior: "instant" });
++      }
++    }
++
++    lastAppliedTarget = targetScrollTop;
++  }
++
++  const scheduler = createFrameScheduler(apply);
++  const observers = createReserveObservers(scheduler.schedule);
++
++  // Restore during the layout effect, before paint. Missing refs retry through
++  // the existing store subscription, never a separate scrolling loop.
++  if (pendingRestore) apply();
++  else scheduler.schedule();
++  const unsubscribe = store.subscribe(scheduler.schedule);
++
++  return () => {
++    if (restoration && viewportAtMount) {
++      restoration.current = {
++        scrollTop: viewportAtMount.scrollTop,
++        distanceFromBottomPx: Math.max(0, viewportAtMount.scrollHeight - viewportAtMount.clientHeight - viewportAtMount.scrollTop),
++        topAnchorTurn: store.getState().topAnchorTurn,
++      };
++    }
++    scheduler.cancel();
++    unsubscribe();
++    observers.disconnect();
++    listenViewport(null);
++    reserve?.remove();
++  };
++};
+diff --git a/src/primitives/thread/topAnchor/useTopAnchorReserve.ts b/src/primitives/thread/topAnchor/useTopAnchorReserve.ts
+index b7d57e1..aabc182 100644
+--- a/src/primitives/thread/topAnchor/useTopAnchorReserve.ts
++++ b/src/primitives/thread/topAnchor/useTopAnchorReserve.ts
+@@ -1,5 +1,6 @@
+ "use client";
+ 
++import type { ViewportScrollRestoration } from "../ThreadViewport";
+ import { useIsomorphicLayoutEffect } from "../../../utils/useIsomorphicLayoutEffect";
+ import { useThreadViewportStore } from "../../../context/react/ThreadViewportContext";
+ import { mountTopAnchorReserve } from "./mountTopAnchorReserve";
+@@ -9,11 +10,11 @@ import { mountTopAnchorReserve } from "./mountTopAnchorReserve";
+  * `ThreadViewport` store. Call this from inside the scrollable viewport so
+  * the reserve `<div>` is appended next to the streaming assistant message.
+  */
+-export const useTopAnchorReserve = (enabled: boolean) => {
++export const useTopAnchorReserve = (enabled: boolean, restoration?: ViewportScrollRestoration) => {
+   const threadViewportStore = useThreadViewportStore();
+ 
+   useIsomorphicLayoutEffect(() => {
+     if (!enabled) return;
+-    return mountTopAnchorReserve(threadViewportStore);
+-  }, [enabled, threadViewportStore]);
++    return mountTopAnchorReserve(threadViewportStore, restoration);
++  }, [enabled, threadViewportStore, restoration]);
+ };
