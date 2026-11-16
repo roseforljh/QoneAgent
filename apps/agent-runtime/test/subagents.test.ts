@@ -180,7 +180,8 @@ test("two delegation calls launch independent Pi runs before either finishes", a
     const temporaryConfig = { ...config, runtime: { ...config.runtime, temporaryModelId: "provider/temp" } };
     const adapter = {
       setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
-      run: async (_sessionId: string, _prompt: string, options: { model?: string }) => {
+      run: async (_sessionId: string, _prompt: string, options: { model?: string; serverIds?: string[] }) => {
+        expect(options.serverIds).toEqual(["selected-server"]);
         models.push(options.model ?? "");
         return new Promise<void>((resolve) => { releases.push(resolve); });
       },
@@ -194,7 +195,7 @@ test("two delegation calls launch independent Pi runs before either finishes", a
       streamBuffers: new Map(), subagentStreams: new Map(), activeSubagents: new Set(),
       publish: () => undefined, emit: () => undefined,
     });
-    const input = { parentSessionId: session.id, parentRunId: parent.id, task: "检查", title: "检查", reason: "需要独立检查", expectedResult: "返回检查结论", fallbackModel: "provider/main", permissionMode: "ask" as const };
+    const input = { parentSessionId: session.id, parentRunId: parent.id, task: "检查", title: "检查", reason: "需要独立检查", expectedResult: "返回检查结论", fallbackModel: "provider/main", permissionMode: "ask" as const, serverIds: ["selected-server"] };
     const first = dispatch({ ...input, toolCallId: "call-a" });
     const second = dispatch({ ...input, toolCallId: "call-b" });
     expect(releases).toHaveLength(2);
@@ -672,4 +673,81 @@ test("exhausted recoverable failures can finalize only with the same run's failu
   } finally {
     closeDb(db);
   }
+});
+
+
+test("stopping a parent stops its descendants but leaves another parent running", async () => {
+  const db = openDb(":memory:");
+  try {
+    const workspaceRepo = new WorkspaceRepo(db), workspace = workspaceRepo.upsert("stop", process.cwd());
+    const sessionRepo = new SessionRepo(db), session = sessionRepo.create("stop", workspace.id);
+    const runRepo = new RunRepo(db), firstParent = runRepo.create(session.id), otherParent = runRepo.create(session.id);
+    const subagentRunRepo = new SubagentRunRepo(db);
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    const pending = new Map<string, () => void>(), stopped: string[] = [];
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async (_session: string, _prompt: string, options: { runId?: string }) => new Promise<void>(resolve => pending.set(options.runId!, resolve)),
+      stop: (id: string) => { stopped.push(id); pending.get(id)?.(); return true; },
+      disposeSession: async () => {},
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({ adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo,
+      config: () => config, partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(), streamBuffers: new Map(),
+      subagentStreams: new Map(), activeSubagents: new Set(), publish: () => {}, emit: () => {} });
+    const input = { parentSessionId: session.id, title: "inspect", task: "inspect", reason: "independent inspection", expectedResult: "result", background: true, permissionMode: "full" as const };
+    const first = (await dispatch({ ...input, parentRunId: firstParent.id, toolCallId: "first" })).split("runId=")[1]!;
+    const grandchild = (await dispatch({ ...input, parentRunId: first, toolCallId: "grandchild" })).split("runId=")[1]!;
+    const other = (await dispatch({ ...input, parentRunId: otherParent.id, toolCallId: "other" })).split("runId=")[1]!;
+    await controller.stopChildren(session.id, firstParent.id);
+    expect(stopped).toContain(first); expect(stopped).toContain(grandchild); expect(stopped).not.toContain(other);
+    expect(runRepo.get(first)?.status).toBe("cancelled"); expect(runRepo.get(grandchild)?.status).toBe("cancelled");
+    expect(runRepo.get(other)?.status).toBe("running");
+    await controller.stopChildren(session.id, otherParent.id);
+  } finally { closeDb(db); }
+});
+
+for (const target of ["parent", "child", "settled-child"] as const) test(`force stop via ${target} releases non-cooperating descendants and their scheduler permits without stopping another parent`, async () => {
+  const db = openDb(":memory:");
+  try {
+    const workspaceRepo = new WorkspaceRepo(db), workspace = workspaceRepo.upsert("force", process.cwd());
+    const sessionRepo = new SessionRepo(db), session = sessionRepo.create("force", workspace.id);
+    const runRepo = new RunRepo(db), parent = runRepo.create(session.id), otherParent = runRepo.create(session.id);
+    const subagentRunRepo = new SubagentRunRepo(db), activeSubagents = new Set<string>();
+    let dispatch!: Parameters<PiAdapter["setSubagentDispatcher"]>[0];
+    const pending = new Map<string, (error: Error) => void>(), forced: string[] = [];
+    let cooperativeRoot: string | undefined;
+    const adapter = {
+      setSubagentDispatcher: (callback: typeof dispatch) => { dispatch = callback; },
+      run: async (_session: string, _prompt: string, options: { runId?: string }) => new Promise<void>((_resolve, reject) => pending.set(options.runId!, reject)),
+      stop: (id: string) => { if (id === cooperativeRoot) { pending.get(id)?.(new Error("run aborted")); pending.delete(id); } return true; },
+      forceStop: (id: string) => { forced.push(id); pending.get(id)?.(new Error("run aborted")); return pending.delete(id); },
+      disposeSession: async () => {},
+    } as unknown as PiAdapter;
+    const controller = registerSubagentDispatcher({ adapter, sessionRepo, workspaceRepo, runRepo, subagentRunRepo,
+      config: () => ({ ...config, runtime: { ...config.runtime, maxConcurrent: 3 } }), partsByRun: new Map(), messageSequenceByRun: new Map(), assistantBuffers: new Map(), streamBuffers: new Map(),
+      subagentStreams: new Map(), activeSubagents, publish: () => {}, emit: () => {} });
+    const input = { parentSessionId: session.id, title: "inspect", task: "inspect", reason: "independent inspection", expectedResult: "result", background: true, permissionMode: "full" as const };
+    const first = (await dispatch({ ...input, parentRunId: parent.id, toolCallId: "first" })).split("runId=")[1]!;
+    const grandchild = (await dispatch({ ...input, parentRunId: first, toolCallId: "grandchild" })).split("runId=")[1]!;
+    const other = (await dispatch({ ...input, parentRunId: otherParent.id, toolCallId: "other" })).split("runId=")[1]!;
+    if (target === "settled-child") cooperativeRoot = first;
+    let stopped = false;
+    const cooperative = (target === "parent" ? controller.stopChildren(session.id, parent.id) : controller.control(first, "stop")).then(() => { stopped = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(stopped).toBe(false);
+    if (target === "settled-child") expect(runRepo.get(first)?.status).toBe("cancelled");
+    if (target === "parent") await controller.stopChildren(session.id, parent.id, true);
+    else await controller.control(first, "stop");
+    await cooperative;
+    expect(forced.sort()).toEqual((target === "settled-child" ? [grandchild] : [first, grandchild]).sort());
+    expect(runRepo.get(first)?.status).toBe("cancelled");
+    expect(runRepo.get(grandchild)?.status).toBe("cancelled");
+    expect(runRepo.get(other)?.status).toBe("running");
+    expect([...activeSubagents]).toEqual([other]);
+    const next = (await dispatch({ ...input, parentRunId: parent.id, toolCallId: "next" })).split("runId=")[1]!;
+    expect(pending.has(next)).toBe(true);
+    await controller.stopChildren(session.id, parent.id, true);
+    await controller.stopChildren(session.id, otherParent.id, true);
+    expect(activeSubagents.size).toBe(0);
+  } finally { closeDb(db); }
 });

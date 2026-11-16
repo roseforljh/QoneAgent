@@ -23,8 +23,9 @@ export interface SubagentController {
   restoreMessages(runId: string): PersistedPiMessage[];
   recordEvent(id: string, type: string, payload: unknown, sequence: number): void;
   fail(id: string, message: string): void;
+  stopChildren(sessionId: string, parentRunId: string, force?: boolean): Promise<void>;
   dispose(sessionId: string, parentRunIds?: string[]): Promise<void>;
-  workflow(parentSessionId: string, parentRunId: string, steps: SubagentWorkflowStep[], context?: { model?: string; permissionMode?: "ask" | "auto" | "full"; signal?: AbortSignal; background?: boolean }): Promise<SubagentRunInfo[]>;
+  workflow(parentSessionId: string, parentRunId: string, steps: SubagentWorkflowStep[], context?: { model?: string; permissionMode?: "ask" | "auto" | "full"; serverIds?: string[]; signal?: AbortSignal; background?: boolean }): Promise<SubagentRunInfo[]>;
 }
 
 type TextChunkBuffers = Map<string, string[]>;
@@ -331,6 +332,7 @@ export function registerSubagentDispatcher(options: {
           await adapter.run(executionSessionId, prompt, {
             runId: id, model: row.model ?? undefined, cwd, eventSessionId: executionSessionId,
             permissionMode: (row.permissionMode as "ask" | "auto" | "full" | null) ?? "ask",
+            serverIds: row.serverIds ? JSON.parse(row.serverIds) : [],
             subagentDepth: row.depth, subagentRunId: id,
             attachments,
           }, (type, payload) => emit(type, payload, executionSessionId, id));
@@ -582,6 +584,22 @@ export function registerSubagentDispatcher(options: {
         repo.appendMessage(id, raw.role === "toolResult" ? "tool" : raw.role, text, parts, raw);
       }
     },
+    stopChildren: async (sessionId, parentRunId, force = false) => {
+      const rows = repo.listBySession(sessionId), selected = new Set([parentRunId]);
+      for (let changed = true; changed;) {
+        changed = false;
+        for (const row of rows) if (selected.has(row.parentRunId) && !selected.has(row.runId)) {
+          selected.add(row.runId); changed = true;
+        }
+      }
+      const children = rows.filter(row => row.runId !== parentRunId && selected.has(row.runId));
+      const waiting = children.flatMap(row => jobs.get(row.runId)?.done ?? []);
+      for (const row of children) {
+        interrupt(row.runId);
+        if (force) adapter.forceStop(row.runId);
+      }
+      await Promise.all(waiting);
+    },
     fail: (id, message) => interrupt(id, new Error(message)),
     dispose: async (sessionId, parentRunIds) => {
       const rows = repo.listBySession(sessionId);
@@ -610,9 +628,12 @@ export function registerSubagentDispatcher(options: {
       if (!row) throw new Error(`Unknown subagent ${id}`);
       const job = jobs.get(id);
       if (action === "stop") {
-        if (!job) throw new Error("Subagent is not active");
+        const active = [id, ...descendants(id).map(child => child.runId)].flatMap(runId => jobs.get(runId) ?? []);
+        if (!active.length) throw new Error("Subagent is not active");
+        const force = active.some(child => child.abort.signal.aborted);
         interrupt(id);
-        await job.done;
+        if (force && job) adapter.forceStop(id);
+        await Promise.all([...(job ? [job.done] : []), controller.stopChildren(row.parentSessionId, id, force)]);
       } else if (job) {
         if (action !== "steer" && action !== "follow_up") throw new Error("Subagent already has an active turn");
         if (!message?.trim()) throw new Error(`${action} requires a message`);
@@ -665,7 +686,7 @@ export function registerSubagentDispatcher(options: {
         workflowId, workflowStepId: step.id, dependsOn: step.dependsOn ?? [],
         reason: `工作流步骤「${step.id}」是当前任务的必要环节`,
         expectedResult: `完成工作流步骤「${step.id}」并返回可供后续步骤使用的紧凑总结`,
-        fallbackModel: context?.model, permissionMode: context?.permissionMode ?? "ask", signal: context?.signal,
+        fallbackModel: context?.model, permissionMode: context?.permissionMode ?? "ask", serverIds: context?.serverIds, signal: context?.signal,
         background: context?.background, deferStart: true,
       }).then((value) => {
         const runId = JSON.parse(value).runId as string;

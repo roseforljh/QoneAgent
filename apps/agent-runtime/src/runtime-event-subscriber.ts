@@ -284,6 +284,12 @@ export function handleRuntimeEvent(
   // Child tokens and tool events have their own compact delta protocol. Sending
   // them again as agent.event only duplicates IPC work and is ignored by the UI.
   if (!isSubagentExecution) ctx.send({ type: "agent.event", event: agentEvent });
+  else if (agentEvent.runId && (/^tool\.(started|updated|completed|failed)$/.test(agentEvent.type) && String((agentEvent.payload as { toolName?: string })?.toolName).startsWith("server_")
+    || /^agent\.(cancelled|completed|failed)$/.test(agentEvent.type))) {
+    const child = ctx.subagentRunRepo.get(agentEvent.runId);
+    if (child) ctx.send({ type: "agent.event", event: { ...agentEvent, sessionId: child.parentSessionId, sourceSubagentId: child.runId } });
+  }
+  if (agentEvent.runId && (agentEvent.type === "agent.cancelled" || agentEvent.type === "agent.failed")) ctx.toolCallRepo.cancelRun(agentEvent.runId);
   if (agentEvent.type === "subagent.finished" && agentEvent.runId) {
     // Child transcripts are persisted per message by recordEvent; this run's
     // raw buffer must not outlive the child or it leaks for every delegation.

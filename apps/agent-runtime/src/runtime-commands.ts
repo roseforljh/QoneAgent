@@ -535,6 +535,16 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: "select a workspace before running the agent" });
         return true;
       }
+      const workspaceCwd = services.workspaceRepo.get(s.workspaceId)?.path;
+      if (!workspaceCwd) {
+        services.send({ type: "error", requestId: cmd.requestId, message: "session workspace no longer exists" });
+        return true;
+      }
+      const goal = cmd.goal ? services.goalRepo.getBySession(cmd.sessionId) : undefined;
+      if (cmd.goal && (!goal || goal.status !== "active")) {
+        services.send({ type: "error", requestId: cmd.requestId, message: "goal is not active" });
+        return true;
+      }
       if (cmd.mcpServerId && (!services.mcp.isConnected(cmd.mcpServerId) || services.mcp.toolCount(cmd.mcpServerId) === 0)) {
         services.send({ type: "error", requestId: cmd.requestId, message: "selected MCP server is not connected or has no tools" });
         return true;
@@ -543,10 +553,6 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           services.runRepo.listBySession(cmd.sessionId).some((run) => !services.subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
         services.send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
         return true;
-      }
-      if (cmd.queueItemId) {
-        services.queueRepo.remove(cmd.sessionId, cmd.queueItemId);
-        services.sendQueue(cmd.sessionId);
       }
       if (!cmd.continuation && !cmd.goalContinuation && !cmd.replaceFromMessageId) {
         cmd.replaceFromMessageId = repeatedUserMessageId(services.messageRepo.listBySession(cmd.sessionId).map(message => ({
@@ -587,11 +593,6 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           services.startingRunSessions.delete(cmd.sessionId);
         }
       }
-      const goal = cmd.goal ? services.goalRepo.getBySession(cmd.sessionId) : undefined;
-      if (cmd.goal && (!goal || goal.status !== "active")) {
-        services.send({ type: "error", requestId: cmd.requestId, message: "goal is not active" });
-        return true;
-      }
       const run = services.runRepo.create(cmd.sessionId, {
         origin: goal ? (cmd.goalContinuation ? "goal_continuation" : "goal_kickoff") : "manual",
         goalId: goal?.id,
@@ -604,19 +605,11 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         const userMessage = services.messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id, cmd.quote);
         services.touchSession(cmd.sessionId, userMessage.createdAt);
       }
-      services.emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
-      const workspaceCwd = s.workspaceId ? services.workspaceRepo.get(s.workspaceId)?.path : undefined;
-      if (s.workspaceId && !workspaceCwd) {
-        services.runRepo.finish(run.id, "failed", "session workspace no longer exists");
-        services.assistantPartsByRun.delete(run.id);
-        services.assistantMessageSequenceByRun.delete(run.id);
-        services.assistantRawMessagesByRun.delete(run.id);
-        services.liveAssistantByRun.delete(run.id);
-        services.turnRepo.finish(turn.id, "failed");
-        services.emit("agent.failed", { message: "session workspace no longer exists" }, cmd.sessionId, run.id);
-        services.send({ type: "error", requestId: cmd.requestId, message: "session workspace no longer exists" });
-        return true;
+      if (cmd.queueItemId) {
+        services.queueRepo.remove(cmd.sessionId, cmd.queueItemId);
+        services.sendQueue(cmd.sessionId);
       }
+      services.emit("agent.started", { runId: run.id }, cmd.sessionId, run.id);
 
       const mcpCommand = cmd.mcpServerId ? parseMcpCommand(cmd.message) : undefined;
       const routedMessage = mcpCommand && mcpCommand.serverId === cmd.mcpServerId ? mcpCommand.text : cmd.message;
@@ -624,14 +617,20 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       const modelMessage = [notificationDelivery.prompt, routedMessage].filter(Boolean).join("\n\n");
       Promise.resolve()
         .then(() => {
+          if (services.runRepo.get(run.id)?.status === "cancelled") return;
           services.subagentNotificationCoordinator?.markDelivered(notificationDelivery.ids);
           if (notificationDelivery.ids.length) services.sendSubagentNotifications(cmd.sessionId);
-          return services.adapter.run(cmd.sessionId, modelMessage, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, attachments: cmd.attachments, mcpServerId: cmd.mcpServerId, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
+          return services.adapter.run(cmd.sessionId, modelMessage, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, serverIds: cmd.serverIds, attachments: cmd.attachments, mcpServerId: cmd.mcpServerId, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
           services.emit(type, payload, cmd.sessionId, run.id)
         );
         })
         .then(async () => {
+          if (services.runRepo.get(run.id)?.status === "cancelled") return;
           const cancelled = services.cancelledRuns.delete(run.id);
+          if (cancelled) {
+            await services.subagentController.stopChildren(cmd.sessionId, run.id);
+            if (services.runRepo.get(run.id)?.status === "cancelled") return;
+          }
           const parts = services.assistantPartsByRun.get(run.id) ?? [];
           const assistantMessage = services.persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
           services.releaseUndeliveredSteers(cmd.sessionId, run.id);
@@ -668,11 +667,16 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           }
         })
         .catch(async (err) => {
+          if (services.runRepo.get(run.id)?.status === "cancelled") return;
           if (notificationDelivery.ids.length) {
             services.subagentNotificationCoordinator?.markPending(notificationDelivery.ids);
             services.sendSubagentNotifications(cmd.sessionId);
           }
           const cancelled = services.cancelledRuns.delete(run.id);
+          if (cancelled) {
+            await services.subagentController.stopChildren(cmd.sessionId, run.id);
+            if (services.runRepo.get(run.id)?.status === "cancelled") return;
+          }
           const parts = services.assistantPartsByRun.get(run.id) ?? [];
           const assistantMessage = services.persistPartialAssistant(cmd.sessionId, run.id, cmd.model);
           services.releaseUndeliveredSteers(cmd.sessionId, run.id);
@@ -750,11 +754,15 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
 
     case "agent.stop": {
       const stoppedRun = services.runRepo.get(cmd.runId);
-      if (!services.adapter.stop(cmd.runId)) {
+      // A second press while stopping forces it: the run settles even if a tool ignores the abort.
+      const accepted = cmd.force ? services.adapter.forceStop(cmd.runId) : services.adapter.stop(cmd.runId);
+      const stale = !accepted && cmd.force && stoppedRun && ["created", "running", "waiting_approval", "paused"].includes(stoppedRun.status);
+      if (!accepted && !stale) {
         services.send({ type: "error", requestId: cmd.requestId, message: `unknown active run ${cmd.runId}` });
         return true;
       }
       services.cancelledRuns.add(cmd.runId);
+      // Pause goal continuation before awaiting child shutdown: the parent can settle immediately.
       if (stoppedRun) services.titleControllers.get(stoppedRun.sessionId)?.abort();
       if (stoppedRun?.goalId) {
         const goal = services.goalRepo.get(stoppedRun.goalId);
@@ -765,6 +773,25 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           services.goalRepo.event(goal.id, stoppedRun.sessionId, "paused", { reason: "Paused by user" }, cmd.runId);
           services.publishGoal(updated);
         }
+      }
+      if (stoppedRun) await services.subagentController.stopChildren(stoppedRun.sessionId, cmd.runId, cmd.force);
+      if (stale && stoppedRun && services.runRepo.get(cmd.runId)?.status !== "cancelled") {
+        const parts = services.assistantPartsByRun.get(cmd.runId) ?? [];
+        const message = services.persistPartialAssistant(stoppedRun.sessionId, cmd.runId);
+        services.releaseUndeliveredSteers(stoppedRun.sessionId, cmd.runId);
+        for (const map of [services.assistantBuffers, services.assistantStreamBuffers, services.assistantPartsByRun, services.assistantMessageSequenceByRun, services.assistantRawMessagesByRun, services.liveAssistantByRun]) map.delete(cmd.runId);
+        services.initialUserMessageSeen.delete(cmd.runId);
+        for (const key of services.toolCallIds.keys()) if (key.startsWith(`${cmd.runId}:`)) services.toolCallIds.delete(key);
+        for (const turn of services.turnRepo.listByRun(cmd.runId)) if (turn.status === "running") services.turnRepo.finish(turn.id, "cancelled");
+        for (const [id, runId] of services.approvalRuns) if (runId === cmd.runId) {
+          services.adapter.reject(id);
+          services.commandApprovals.reject(id);
+          services.approvalRuns.delete(id);
+          services.approvalToolCalls.delete(id);
+        }
+        services.cancelledRuns.delete(cmd.runId);
+        services.runRepo.finish(cmd.runId, "cancelled");
+        services.emit("agent.cancelled", message ? { message: { ...message, parts } } : {}, stoppedRun.sessionId, cmd.runId);
       }
       services.send({ type: "pong", requestId: cmd.requestId });
       return true;

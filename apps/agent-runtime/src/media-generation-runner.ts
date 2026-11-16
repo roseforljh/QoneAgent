@@ -17,7 +17,7 @@ export interface GenerationContext {
   onGeneratedMedia?: GeneratedMediaSink;
   /** Tracks the per-run controller so `stop(runId)` can abort generation. */
   trackController(runId: string, controller: AbortController): void;
-  releaseController(runId: string): void;
+  releaseController(runId: string, controller: AbortController): void;
 }
 
 export async function runImageGeneration(
@@ -44,9 +44,10 @@ export async function runImageGeneration(
   ctx.push("message.started", { message: { role: "assistant" } }, sessionId, runId);
   try {
     const parts = await generateImage({ config, format: detected.format, prompt, attachments, apiKey, signal: controller.signal });
+    controller.signal.throwIfAborted();
     ctx.push("message.completed", { message: { role: "assistant", content: parts } }, sessionId, runId);
   } finally {
-    ctx.releaseController(runId);
+    ctx.releaseController(runId, controller);
   }
 }
 
@@ -66,7 +67,7 @@ export async function runSpeechGeneration(
     controller.signal.throwIfAborted();
     ctx.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: runtimeText("pi-adapter.speech_generated", { p0: savedPath }) }] } }, sessionId, runId);
   } finally {
-    ctx.releaseController(runId);
+    ctx.releaseController(runId, controller);
   }
 }
 
@@ -86,6 +87,6 @@ export async function runVideoGeneration(
     controller.signal.throwIfAborted();
     ctx.push("message.completed", { message: { role: "assistant", content: [{ type: "text", text: runtimeText("pi-adapter.video_generated", { p0: savedPath }) }] } }, sessionId, runId);
   } finally {
-    ctx.releaseController(runId);
+    ctx.releaseController(runId, controller);
   }
 }

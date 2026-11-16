@@ -8,7 +8,7 @@ import { SideConversationService } from "./side-conversation.js";
 
 import { createLogger, EventBus, qoneDatabasePath, qoneConfigDatabasePath, qoneMcpDatabasePath, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, AgentCommunicationInfo, SessionSearchResult } from "@qone/protocol";
-import { decodeCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
+import { decodeCommand, REMOVED_BUILTIN_SUBAGENT_IDS, serverOperationInfo, serverOperationCancelled } from "@qone/protocol";
 import { openDb, openConfigDb, openMcpDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
@@ -16,6 +16,7 @@ import { ApprovalQueue } from "./permissions.js";
 import path from "node:path";
 import { mkdirSync } from "node:fs";
 import { GeneratedArtifacts } from "./generated-artifacts.js";
+import { FileDelivery } from "./file-delivery.js";
 import { ProjectResources } from "./project-resources.js";
 import { moveDomainData } from "./domain-data.js";
 
@@ -131,6 +132,8 @@ const generatedArtifacts = new GeneratedArtifacts(
     return projectResources.sessionDirectory(session?.workspaceId, sessionId);
   },
 );
+// Files are referenced where the agent made them; events go through the shared bus.
+const fileDelivery = new FileDelivery(artifactRepo, (type, payload, sessionId, runId) => emit(type, payload, sessionId, runId), (event) => send(event));
 const permissionRepo = new PermissionRepo(configDb);
 const skillRepo = new SkillRepo(db);
 const eventJournal = new SequencedEventJournal<AgentEvent>(settingsRepo.get<number>("event.sequence") ?? 0);
@@ -195,7 +198,7 @@ function runRequiresSubagentFinalization(sessionId: string, runId: string): bool
 }
 eventBus.subscribe((busEvent) => {
   const childExecution = busEvent.scope === "subagent" || Boolean(busEvent.runId && subagentRunIds.has(busEvent.runId));
-  const approvalParent = busEvent.runId && busEvent.type === "approval.requested" ? subagentRunRepo.get(busEvent.runId)?.parentSessionId : undefined;
+  const approvalParent = busEvent.runId && (busEvent.type === "approval.requested" || busEvent.type === "approval.resolved") ? subagentRunRepo.get(busEvent.runId)?.parentSessionId : undefined;
   const replayEvent = eventJournal.record((sequence) => ({
     eventId: crypto.randomUUID(), sequence, type: busEvent.type,
     sessionId: approvalParent ?? busEvent.sessionId, runId: busEvent.runId,
@@ -225,6 +228,7 @@ const assistantMessageSequenceByRun = new Map<string, number>();
 const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }>>();
 const initialUserMessageSeen = new Set<string>();
 const toolCallIds = new Map<string, string>();
+const resolvedServerCalls = new Set<string>();
 const cancelledRuns = new Set<string>();
 const titleControllers = new Map<string, AbortController>();
 const startingRunSessions = new Set<string>();
@@ -320,8 +324,9 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   },
   memoryContext: (sessionId, message, modelName) => memory.context(sessionId, message, modelName),
   memoryTools: (sessionId) => memory.tools(sessionId),
-  serverTools: (workspacePath) => servers.tools(workspacePath),
-  serverSummary: () => servers.summary(),
+  serverTools: (workspacePath, serverIds) => servers.tools(workspacePath, serverIds),
+  deliveryTools: (sessionId, workspacePath, activeRunId) => [fileDelivery.tool(sessionId, workspacePath, activeRunId)],
+  serverSummary: (serverIds) => servers.summary(serverIds),
   onAssistantFinal: (_sessionId, runId, content) => {
     if (content.trim()) assistantBuffers.set(runId, content);
   },
@@ -332,15 +337,25 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       else assistantStreamBuffers.set(runId, [delta]);
     }
   },
-  onTool: (sessionId, runId, phase, name, args, result, toolCallId, _parentToolCallId, durationMs) => {
+  onTool: (sessionId, runId, phase, name, args, result, toolCallId, parentToolCallId, durationMs) => {
     if (phase === "start") {
-      const row = toolCallRepo.start(runId, name, args, toolCallId);
+      const row = toolCallRepo.start(runId, name, args, toolCallId, parentToolCallId);
       if (toolCallId) toolCallIds.set(`${runId}:${toolCallId}`, row.id);
+    } else if (phase === "update") {
+      const operation = serverOperationInfo(result);
+      const id = toolCallId && toolCallIds.get(`${runId}:${toolCallId}`);
+      if (id && operation && !resolvedServerCalls.has(id)) {
+        toolCallRepo.setServerOperation(id, operation);
+        resolvedServerCalls.add(id);
+      }
     } else {
       if (toolCallId) {
         const id = toolCallIds.get(`${runId}:${toolCallId}`);
         if (id) {
-          toolCallRepo.finish(id, result && (result as { isError?: boolean }).isError ? "failed" : "success", result, durationMs);
+          const operation = serverOperationInfo(result);
+          if (operation && !resolvedServerCalls.has(id)) toolCallRepo.setServerOperation(id, operation);
+          resolvedServerCalls.delete(id);
+          toolCallRepo.finish(id, serverOperationCancelled(result) ? "cancelled" : result && (result as { isError?: boolean }).isError ? "failed" : "success", result, durationMs);
           toolCallIds.delete(`${runId}:${toolCallId}`);
         }
       }
@@ -521,6 +536,7 @@ const mcp = new McpManager(async (serverId, token) => {
   send({ type: "mcp.oauth.invalidated", serverId, key });
 });
 async function releaseBrowserSession() {
+  if (adapter.getSessions().some(session => !session.isIdle)) return;
   try { await browserSync?.release(); }
   catch (error) { log.warn("browser session release failed", { err: String(error) }); }
 }
@@ -731,6 +747,7 @@ export function runtimeCommandServices() {
     approvalRuns,
     approvalToolCalls,
     artifactRepo,
+    fileDelivery,
     assistantBuffers,
     assistantMessageSequenceByRun,
     assistantRawMessagesByRun,

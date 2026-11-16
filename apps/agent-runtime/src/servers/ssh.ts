@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from "ssh2";
 import type { ServerInfo } from "@qone/protocol";
 import { runtimeError } from "../runtime-localization.js";
@@ -68,30 +69,85 @@ export function shellPath(value: string): string {
   return shQuote(value);
 }
 
-export interface ExecResult { exit_code: number | null; signal?: string; stdout: string; stderr: string; truncated: boolean; timed_out: boolean }
+export interface ExecResult { exit_code: number | null; signal?: string; stdout: string; stderr: string; truncated: boolean; timed_out: boolean; cancelled?: boolean }
 
-export function exec(client: Client, command: string, options: { cwd?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<ExecResult> {
-  const script = options.cwd ? `cd ${shellPath(options.cwd)} && ${command}` : command;
+/** Cancel this waiter, not the pooled connection other callers still use. */
+export function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return pending;
   return new Promise((resolve, reject) => {
-    client.exec(script, (error, stream) => {
-      if (error) return reject(error);
-      let stdout = "", stderr = "", timedOut = false;
-      const stop = () => { stream.signal("KILL"); stream.close(); };
-      const timer = setTimeout(() => { timedOut = true; stop(); }, options.timeoutMs ?? 120_000);
-      options.signal?.addEventListener("abort", stop, { once: true });
-      stream.on("data", (chunk: Buffer) => { if (stdout.length < LIMIT * 8) stdout += chunk.toString("utf8"); });
-      stream.stderr.on("data", (chunk: Buffer) => { if (stderr.length < LIMIT * 8) stderr += chunk.toString("utf8"); });
-      stream.on("close", (code: number | null, signal?: string) => {
-        clearTimeout(timer);
-        options.signal?.removeEventListener("abort", stop);
-        const out = clip(stdout), err = clip(stderr);
-        resolve({ exit_code: code ?? null, ...(signal ? { signal } : {}), stdout: out.text, stderr: err.text, truncated: out.truncated || err.truncated, timed_out: timedOut });
-      });
-    });
+    const abort = () => { signal.removeEventListener("abort", abort); reject(signal.reason ?? new DOMException("Aborted", "AbortError")); };
+    signal.addEventListener("abort", abort, { once: true });
+    pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
   });
 }
 
-export const sftp = (client: Client) => new Promise<SFTPWrapper>((resolve, reject) => client.sftp((error, wrapper) => error ? reject(error) : resolve(wrapper)));
+export function exec(client: Client, command: string, options: { cwd?: string; timeoutMs?: number; signal?: AbortSignal; onUpdate?: (result: ExecResult) => void } = {}): Promise<ExecResult> {
+  const script = options.cwd ? `cd ${shellPath(options.cwd)} && ${command}` : command;
+  return new Promise((resolve, reject) => {
+    options.signal?.throwIfAborted();
+    let channel: ClientChannel | undefined, settled = false, timedOut = false, cancelled = false;
+    let updateTimer: ReturnType<typeof setTimeout> | undefined;
+    const output = ["", ""], omitted = [0, 0];
+    const decoders = [new StringDecoder("utf8"), new StringDecoder("utf8")];
+    const snapshot = (code: number | null = null, signal?: string): ExecResult => {
+      const [out, err] = output.map(clip);
+      return { exit_code: code, ...(signal ? { signal } : {}), stdout: out!.text, stderr: err!.text,
+        truncated: omitted.some(Boolean) || out!.truncated || err!.truncated, timed_out: timedOut, ...(cancelled ? { cancelled: true } : {}) };
+    };
+    const finish = (error?: Error, code: number | null = null, signal?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer); clearTimeout(updateTimer);
+      options.signal?.removeEventListener("abort", abort);
+      if (error && !cancelled && !timedOut) reject(error); else resolve(snapshot(code, signal));
+    };
+    const stop = () => {
+      if (channel) { channel.signal("KILL"); channel.close(); }
+      else finish();
+    };
+    const abort = () => { cancelled = true; stop(); };
+    const timer = setTimeout(() => { timedOut = true; stop(); }, options.timeoutMs ?? 120_000);
+    options.signal?.addEventListener("abort", abort, { once: true });
+    try { client.exec(script, (error, stream) => {
+      if (settled || options.signal?.aborted) { if (stream) { stream.signal("KILL"); stream.close(); } return; }
+      if (error) return finish(error);
+      channel = stream;
+      const append = (index: number, text: string) => {
+        if (settled) return;
+        const next = output[index]! + text;
+        if (next.length > LIMIT * 2) { omitted[index]! += next.length - LIMIT * 2; output[index] = next.slice(0, LIMIT) + next.slice(-LIMIT); }
+        else output[index] = next;
+        if (options.onUpdate && !updateTimer) updateTimer = setTimeout(() => { updateTimer = undefined; if (!settled) options.onUpdate?.(snapshot()); }, 100);
+      };
+      stream.on("data", (chunk: Buffer) => append(0, decoders[0]!.write(chunk)));
+      stream.stderr.on("data", (chunk: Buffer) => append(1, decoders[1]!.write(chunk)));
+      stream.stderr.once("error", finish);
+      stream.once("error", finish);
+      stream.once("close", (code: number | null, signal?: string) => {
+        append(0, decoders[0]!.end()); append(1, decoders[1]!.end());
+        finish(undefined, code ?? null, signal);
+      });
+      if (options.signal?.aborted) abort();
+    }); } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+  });
+}
+
+export const sftp = (client: Client, signal?: AbortSignal) => new Promise<SFTPWrapper>((resolve, reject) => {
+  signal?.throwIfAborted();
+  const abort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+  signal?.addEventListener("abort", abort, { once: true });
+  try { client.sftp((error, wrapper) => {
+    signal?.removeEventListener("abort", abort);
+    if (signal?.aborted) { wrapper?.end(); abort(); }
+    else if (error) reject(error); else {
+      const close = () => wrapper.end();
+      signal?.addEventListener("abort", close, { once: true });
+      wrapper.once("close", () => signal?.removeEventListener("abort", close));
+      resolve(wrapper);
+    }
+  }); } catch (error) { signal?.removeEventListener("abort", abort); reject(error); }
+});
 
 export const shell = (client: Client, cols: number, rows: number) => new Promise<ClientChannel>((resolve, reject) =>
   client.shell({ term: "xterm-256color", cols, rows }, (error, channel) => error ? reject(error) : resolve(channel)));

@@ -1,13 +1,14 @@
 import { ModelResponseTiming } from "./model-response-timing.js";
 import { extractTextContent } from "./pi-message-utils.js";
 import { createLogger } from "@qone/shared";
+import { limitPreviewStrings, preserveServerOperationResult, serverOperationInfo } from "@qone/protocol";
 
 const log = createLogger("pi-adapter");
 
 export interface SessionSubscriptionHooks {
   onMessage?: (sessionId: string, runId: string, role: "assistant" | "tool", content: string) => void;
   onAssistantFinal?: (sessionId: string, runId: string, content: string) => void;
-  onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string, durationMs?: number) => void;
+  onTool?: (sessionId: string, runId: string, phase: "start" | "update" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string, durationMs?: number) => void;
   onCustomEntry?: (sessionId: string, entry: unknown) => void;
 }
 
@@ -17,6 +18,7 @@ export interface SessionSubscriptionContext {
   session: unknown;
   runs: Map<string, unknown>;
   activeRunIds: Map<string, string>;
+  isCurrent?: () => boolean;
   toolNameByModelName: Map<string, string>;
   hooks: SessionSubscriptionHooks;
   push(type: string, payload: unknown, sessionId: string, runId?: string): void;
@@ -27,12 +29,14 @@ export interface SessionSubscriptionContext {
  * Extracted from PiAdapter.getSession so the adapter stays readable; the
  * context carries exactly the adapter state this loop reads.
  */
-export function subscribeSessionEvents(ctx: SessionSubscriptionContext): void {
+export function subscribeSessionEvents(ctx: SessionSubscriptionContext): (runId: string) => void {
   const { sessionId, eventSessionId, session, runs, activeRunIds, toolNameByModelName, hooks, push } = ctx;
-  let lastToolDeltaAt = 0;
+  let lastToolDeltaAt = 0, retired = false;
+  const serverSnapshots = new Map<unknown, { toolName: unknown; parentToolCallId: unknown; result: unknown }>();
   const responseTiming = new ModelResponseTiming();
   type PiSessionEvent = { type: string; [key: string]: any };
-  (session as { subscribe(listener: (e: PiSessionEvent) => void): void }).subscribe((e) => {
+  const onEvent = (e: PiSessionEvent) => {
+    if (retired || ctx.isCurrent && !ctx.isCurrent()) return;
     const candidateRunId = activeRunIds.get(sessionId);
     const runId = candidateRunId && runs.get(candidateRunId) === session ? candidateRunId : undefined;
     const raw = e as unknown as Record<string, unknown>;
@@ -68,8 +72,9 @@ export function subscribeSessionEvents(ctx: SessionSubscriptionContext): void {
               args: block?.arguments,
             };
       } else if (messageEvent?.type === "toolcall_delta") {
-        // Pi has already parsed the partial JSON. Send snapshots at ~30fps;
-        // block.completed always delivers the final arguments without throttling.
+        // Pi has already parsed the partial JSON. Send snapshots at ~30fps, with
+        // long strings capped at what a preview shows; block.completed always
+        // delivers the full final arguments without throttling.
         const now = Date.now();
         if (now - lastToolDeltaAt < 32) return;
         lastToolDeltaAt = now;
@@ -78,7 +83,7 @@ export function subscribeSessionEvents(ctx: SessionSubscriptionContext): void {
           blockType: "tool-call", contentIndex: messageEvent.contentIndex,
           toolCallId: block?.id,
           toolName: toolNameByModelName.get(String(block?.name ?? "")) ?? block?.name,
-          args: block?.arguments,
+          args: limitPreviewStrings(block?.arguments),
         };
       } else if (messageEvent?.type === "thinking_end") {
         protocolType = "message.block.completed";
@@ -100,14 +105,17 @@ export function subscribeSessionEvents(ctx: SessionSubscriptionContext): void {
       protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, args: raw.args ?? raw.input };
     } else if (e.type === "tool_execution_update") {
       protocolType = "tool.updated";
-      protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, update: raw.partialResult ?? raw.update };
+      const update = raw.partialResult ?? raw.update;
+      if (serverOperationInfo(update)) serverSnapshots.set(raw.toolCallId, { toolName: raw.toolName, parentToolCallId: raw.parentToolCallId, result: update });
+      protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, update };
     } else if (e.type === "tool_execution_end") {
-      const result = raw.result as { isError?: boolean } | undefined;
+      const result = preserveServerOperationResult(serverSnapshots.get(raw.toolCallId)?.result, raw.result) as { isError?: boolean } | undefined;
+      serverSnapshots.delete(raw.toolCallId);
       const isError = e.isError || result?.isError === true;
       protocolType = isError ? "tool.failed" : "tool.completed";
-      protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: isError ? { ...result, isError: true } : raw.result, isError, durationMs: e.durationMs };
+      protocolPayload = { toolCallId: raw.toolCallId, parentToolCallId: raw.parentToolCallId, toolName: toolNameByModelName.get(String(raw.toolName ?? "")) ?? raw.toolName, result: isError ? { ...result, isError: true } : result, isError, durationMs: e.durationMs };
     } else if (e.type === "agent_start") protocolType = "turn.started";
-    else if (e.type === "agent_end") protocolType = "turn.completed";
+    else if (e.type === "agent_end") { serverSnapshots.clear(); protocolType = "turn.completed"; }
     else if (e.type === "entry_appended") {
       protocolType = "session.entry.appended";
       protocolPayload = { entry: raw.entry };
@@ -132,9 +140,24 @@ export function subscribeSessionEvents(ctx: SessionSubscriptionContext): void {
       const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
       hooks.onTool?.(eventSessionId, runId, "start", name, toolPayload.args, undefined, toolPayload.toolCallId, String((toolPayload as { parentToolCallId?: unknown }).parentToolCallId ?? "") || undefined);
     }
+    if (e.type === "tool_execution_update") {
+      hooks.onTool?.(eventSessionId, runId, "update", String((protocolPayload as { toolName?: string }).toolName ?? "tool"), undefined,
+        (protocolPayload as { update?: unknown }).update, toolPayload.toolCallId);
+    }
     if (e.type === "tool_execution_end") {
       const name = toolNameByModelName.get(String(toolPayload.toolName ?? "")) ?? String(toolPayload.toolName ?? "tool");
       hooks.onTool?.(eventSessionId, runId, "end", name, toolPayload.args, toolPayload.result, toolPayload.toolCallId, String((toolPayload as { parentToolCallId?: unknown }).parentToolCallId ?? "") || undefined, typeof e.durationMs === "number" ? e.durationMs : undefined);
     }
-  });
+  };
+  (session as { subscribe(listener: (e: PiSessionEvent) => void): void }).subscribe(onEvent);
+  return (runId) => {
+    if (retired || ctx.isCurrent && !ctx.isCurrent()
+      || activeRunIds.get(sessionId) !== runId || runs.get(runId) !== session) return;
+    for (const [toolCallId, snapshot] of serverSnapshots) {
+      onEvent({ type: "tool_execution_end", toolCallId, toolName: snapshot.toolName, parentToolCallId: snapshot.parentToolCallId,
+        isError: true, result: preserveServerOperationResult(snapshot.result, { isError: true, details: { cancelled: true } }) });
+    }
+    serverSnapshots.clear();
+    retired = true;
+  };
 }

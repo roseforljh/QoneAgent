@@ -112,6 +112,29 @@ describe("replay journal hot path", () => {
     } finally { h.close(); }
   });
 
+  test("only server operations and terminal markers project from a child onto its owning conversation", () => {
+    const h = harness();
+    try {
+      const child = h.ctx.runRepo.create(h.session.id);
+      h.ctx.subagentRunRepo.create({ runId: child.id, parentSessionId: h.session.id, parentRunId: h.run.id, toolCallId: "dispatch", title: "worker", task: "inspect" });
+      const tool = h.ctx.toolCallRepo.start(child.id, "server_exec", {}, "operation");
+      const emit = (type: string, payload: unknown) => {
+        const event: AgentEvent = { eventId: crypto.randomUUID(), sequence: 1, timestamp: Date.now(), sessionId: "child-execution", runId: child.id, scope: "subagent", type, payload };
+        handleRuntimeEvent(h.ctx as never, event, event, true);
+      };
+      emit("message.delta", { delta: "private child output" });
+      emit("tool.updated", { toolName: "read", update: "private local file" });
+      expect(h.sent).toEqual([]);
+      const snapshot = { content: [{ type: "text", text: "live output" }], details: { serverOperation: { serverId: "a", serverName: "Alpha" } } };
+      emit("tool.updated", { toolName: "server_exec", toolCallId: "operation", parentToolCallId: "script", update: snapshot });
+      expect(h.sent).toHaveLength(1);
+      expect(h.sent[0]).toMatchObject({ type: "agent.event", event: { sessionId: h.session.id, sourceSubagentId: child.id, runId: child.id, payload: { update: snapshot, parentToolCallId: "script" } } });
+      emit("agent.cancelled", {});
+      expect(h.sent).toHaveLength(2);
+      expect(h.ctx.toolCallRepo.listByRun(child.id).find(call => call.id === tool.id)!.status).toBe("cancelled");
+    } finally { h.close(); }
+  });
+
   test("NOT_REPLAYED keeps every type whose payload has its own table", () => {
     for (const type of ["message.completed", "tool.completed", "turn_end", "turn.completed", "context.usage", "message.started"]) {
       expect(NOT_REPLAYED.has(type)).toBe(true);

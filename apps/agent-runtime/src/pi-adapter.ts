@@ -1,4 +1,3 @@
-import { runtimeText } from "./runtime-localization";
 import {
   createAgentSession,
   createReadTool,
@@ -25,7 +24,7 @@ import { SIDE_CHAT_INSTRUCTIONS } from "./side-conversation.js";
 import { createFileChangeTools } from "./file-change-tools.js";
 import { createMediaTools, createInternalTools, mediaToolHostFor } from "./pi-tool-kit.js";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
-import { createResourceLoader } from "./skills.js";
+import { createResourceLoader, sessionResourceLoader } from "./skills.js";
 import { runImageGeneration, runSpeechGeneration, runVideoGeneration, type GenerationContext } from "./media-generation-runner.js";
 import { createSubagentTools } from "./subagent-tools.js";
 import type { SubagentSelection } from "./subagent-selection.js";
@@ -34,15 +33,15 @@ import { openAICompletionsStreamSimple } from "./openai-audio.js";
 import { codexResponsesMediaStreamSimple, openAIResponsesMediaStreamSimple } from "./openai-responses-media.js";
 import { anthropicMediaStreamSimple } from "./anthropic-media.js";
 import { ModelMetadataResolver } from "./model-resolver.js";
-import { canProcessMediaAttachment, configuredCapabilities, mediaCapabilitiesContext } from "./media-capabilities.js";
+import { configuredCapabilities } from "./media-capabilities.js";
 import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
 import type { DouyinBridge } from "./douyin-bridge.js";
-import { assertModelToolNames, extractTextContent, fetchProviderModels, parseAutomaticMediaDelegation, splitModelName } from "./pi-message-utils.js";
+import { assertModelToolNames, extractTextContent, fetchProviderModels, splitModelName } from "./pi-message-utils.js";
 import { applyToolExposure, usedToolNames } from "./tool-exposure.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
 import type { AppMediaService } from "./app-media-service.js";
 import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
-import { withMediaPhaseReporter } from "./media-phase.js";
+import { promptPiRun } from "./pi-run-prompt.js";
 
 const log = createLogger("pi-adapter");
 export const PI_REQUEST_OVERRIDES = { httpIdleTimeoutMs: 0 } as const;
@@ -54,10 +53,8 @@ const isOfficialAnthropic = (model: { api: string; baseUrl: string }) =>
 
 type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
-type DelegateSubagent = (input: SubagentSelection & { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; reason: string; expectedResult: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; fallbackModel?: string; permissionMode: RunPermissionMode; background?: boolean; signal?: AbortSignal }) => Promise<string>;
+type DelegateSubagent = (input: SubagentSelection & { parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; task: string; title: string; reason: string; expectedResult: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; fallbackModel?: string; permissionMode: RunPermissionMode; serverIds?: string[]; background?: boolean; signal?: AbortSignal }) => Promise<string>;
 type SubagentController = import("./subagent-runner.js").SubagentController;
-
-type AutomaticMediaDelegation = NonNullable<ReturnType<typeof parseAutomaticMediaDelegation>>;
 
 export interface GoalRuntimeBridge {
   get(sessionId: string, goalId: string, epoch: number, runId: string): unknown;
@@ -72,25 +69,21 @@ export type { PersistedPiMessage } from "./pi-attachments.js";
 interface PiAdapterHooks {
   onMessage?: (sessionId: string, runId: string, role: "assistant" | "tool", content: string) => void;
   onAssistantFinal?: (sessionId: string, runId: string, content: string) => void;
-  onTool?: (sessionId: string, runId: string, phase: "start" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string, durationMs?: number) => void;
+  onTool?: (sessionId: string, runId: string, phase: "start" | "update" | "end", name: string, args?: unknown, result?: unknown, toolCallId?: string, parentToolCallId?: string, durationMs?: number) => void;
   webAccessContext?: (sessionId: string, task?: string) => string;
   /** Long-term memory for top-level conversations only; side chats and subagents never read or write it. */
   memoryContext?: (sessionId: string, message: string, modelName?: string) => string;
   memoryTools?: (sessionId: string) => ToolDefinition[];
+  /** Hands produced local files to the user; a subagent reports paths to its parent instead. */
+  deliveryTools?: (sessionId: string, workspacePath: string, activeRunId: () => string | undefined) => ToolDefinition[];
   /** The user's SSH servers; they go through the normal approval wrapper. */
-  serverTools?: (workspacePath: string) => ToolDefinition[];
+  serverTools?: (workspacePath: string, serverIds: readonly string[]) => ToolDefinition[];
   /** One line naming the user's servers, for the on-demand tool catalog. */
-  serverSummary?: () => string;
+  serverSummary?: (serverIds: readonly string[]) => string;
   onCustomEntry?: (sessionId: string, entry: unknown) => void;
   onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
 }
 
-// Wraps pi-coding-agent sessions and re-emits their events as our
-// internal AgentEvent protocol so the GUI never imports Pi types.
-// Coding tools (read/grep/find/ls/edit/write/powershell) come built in
-// via createAgentSession — no custom search service needed for V1.
-// MCP tools are injected through customTools. Skills are loaded through Pi's
-// ResourceLoader rather than exposed as model-callable tools.
 export class PiAdapter {
   private isSideConversation: (sessionId: string) => boolean = () => false;
   setSideConversationResolver(resolve: (sessionId: string) => boolean) { this.isSideConversation = resolve; }
@@ -100,11 +93,14 @@ export class PiAdapter {
   private activeRunIds = new Map<string, string>();
   private readonly sessionInputs = new SessionInputQueue();
   private runModes = new Map<string, RunPermissionMode>();
+  private sessionEpochs = new Map<string, object>();
   private stoppedRuns = new Set<string>();
+  private forceRejects = new Map<string, (reason: Error) => void>();
   private seq = 0;
   private customTools: ToolDefinition[] = [];
   /** On-demand tool catalog of each live session, and the copy its model has already seen. */
   private toolCatalogs = new WeakMap<AgentSession, string>();
+  private serverScopes = new WeakMap<AgentSession, string>();
   private sentToolCatalogs = new WeakMap<AgentSession, string>();
   private staleSessions = new Set<string>();
   private approvals = new ApprovalQueue();
@@ -138,6 +134,7 @@ export class PiAdapter {
   private downloadedVideoPaths = new Map<string, Map<string, string>>();
   private mediaAttachmentRefs = new Map<string, Map<string, MessageAttachmentInfo>>();
   private mediaRunControllers = new Map<string, AbortController>();
+  private sessionFinalizers = new WeakMap<AgentSession, (runId: string) => void>();
   private registerMediaDirectory(runId: string, directory: string): void {
     const directories = this.videoTempDirs.get(runId) ?? new Set<string>();
     directories.add(directory);
@@ -369,6 +366,7 @@ export class PiAdapter {
   }
 
   async disposeSession(sessionId: string): Promise<void> {
+    this.sessionEpochs.delete(sessionId);
     const session = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
     this.sessionSettingsManagers.delete(sessionId);
@@ -498,6 +496,7 @@ export class PiAdapter {
   }
 
   private push(type: string, payload: unknown, sessionId: string, runId?: string) {
+    if (runId && !this.forceRejects.has(runId)) return;
     this.emit({
       eventId: crypto.randomUUID(),
       sequence: this.seq++,
@@ -510,11 +509,19 @@ export class PiAdapter {
   }
 
   private getSession(...args: Parameters<PiAdapter["createSession"]>): Promise<AgentSession> {
-    return this.sessionInputs.run(args[0], () => this.createSession(...args).catch(async error => {
-      if (!this.sessions.has(args[0])) await this.disposeSession(args[0]); throw error;
-    }));
+    const runId = this.activeRunIds.get(args[0]), owner = runId ? this.forceRejects.get(runId) : undefined;
+    const isCurrent = () => !runId || this.activeRunIds.get(args[0]) === runId && this.forceRejects.get(runId) === owner;
+    return this.sessionInputs.run(args[0], () => {
+      if (!isCurrent()) throw new Error("run aborted");
+      return this.createSession(...args).catch(async error => {
+        if (!this.sessions.has(args[0]) && isCurrent()) await this.disposeSession(args[0]);
+        throw error;
+      });
+    });
   }
-  private async createSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, goalId?: string, goalEpoch?: number, goalRunId?: string): Promise<AgentSession> {
+  private async createSession(sessionId: string, cwd?: string, modelName?: string, thinkingOverride?: RunThinkingLevel, eventSessionId = sessionId, mcpServerId?: string, subagentDepth = 0, subagentRunId?: string, goalId?: string, goalEpoch?: number, goalRunId?: string, serverIds?: string[]): Promise<AgentSession> {
+    const scope = [...new Set(serverIds ?? [])].sort();
+    const scopeKey = JSON.stringify(scope);
     const modelKey = modelName ? splitModelName(modelName).join("/") : undefined;
     const apiType = modelKey ? this.modelApiTypes.get(modelKey) : undefined;
     const override = thinkingOverride ? normalizeThinkingLevelForApi(thinkingOverride, apiType) : undefined;
@@ -522,7 +529,7 @@ export class PiAdapter {
     const existing = this.sessions.get(sessionId);
     if (existing) {
       if (mcpServerId && !existing.isIdle) throw new Error("session is busy");
-      if ((mcpServerId || this.staleSessions.has(sessionId)) && existing.isIdle) {
+      if ((mcpServerId || this.staleSessions.has(sessionId) || (serverIds !== undefined && this.serverScopes.get(existing) !== scopeKey)) && existing.isIdle) {
         await this.disposeSession(sessionId);
       } else {
       if (modelName) {
@@ -533,7 +540,7 @@ export class PiAdapter {
         const currentModel = existing.agent.state.model;
         if (currentModel && `${currentModel.provider}/${currentModel.id}` !== modelName && existing.isIdle) {
           await this.disposeSession(sessionId);
-          return this.createSession(sessionId, cwd, modelName, thinkingOverride, eventSessionId, mcpServerId, subagentDepth, subagentRunId, goalId, goalEpoch, goalRunId);
+          return this.createSession(sessionId, cwd, modelName, thinkingOverride, eventSessionId, mcpServerId, subagentDepth, subagentRunId, goalId, goalEpoch, goalRunId, serverIds);
         }
         await existing.setModel(nextModel);
          if (thinking) existing.setThinkingLevel(thinking);
@@ -542,6 +549,9 @@ export class PiAdapter {
       }
     }
 
+    const epoch = {};
+    this.sessionEpochs.set(sessionId, epoch);
+    const isCurrent = () => this.sessionEpochs.get(sessionId) === epoch;
     const workspacePath = cwd ?? process.cwd();
     const sideConversation = this.isSideConversation(sessionId);
     const resourceKey = sideConversation
@@ -563,6 +573,7 @@ export class PiAdapter {
         if (this.resourceLoaderLoads.get(resourceKey) === loading) this.resourceLoaderLoads.delete(resourceKey);
       }
     }
+    if (!isCurrent()) throw new Error("run aborted");
     const powershell = createPowerShellTool(workspacePath, {
       // PowerShell 7 can emit ANSI color codes for formatted objects. The
       // tool output is sent to the chat as plain text, so those codes would
@@ -594,6 +605,7 @@ export class PiAdapter {
       eventSessionId, subagentRunId, subagentDepth, modelName, maxConcurrent: policy?.maxConcurrent,
       parentRunId: () => this.activeRunIds.get(sessionId),
       permissionMode: () => this.runModes.get(sessionId) ?? "ask",
+      serverIds: scope,
       mediaMimeType: (runId, mediaPath) => this.downloadedVideoPaths.get(runId)?.get(mediaPath),
     });
     const mediaTools = createMediaTools(mediaToolHostFor({
@@ -609,10 +621,11 @@ export class PiAdapter {
       registerMediaDirectory: (runId, directory) => this.registerMediaDirectory(runId, directory),
     }, sessionId), workspacePath, modelName);
     const memoryTools = sideConversation || subagentDepth > 0 || mcpServerId ? [] : this.hooks.memoryTools?.(sessionId) ?? [];
-    const internalTools = [...createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId), ...memoryTools];
+    const deliveryTools = subagentDepth > 0 || mcpServerId ? [] : this.hooks.deliveryTools?.(eventSessionId, workspacePath, () => this.activeRunIds.get(sessionId)) ?? [];
+    const internalTools = [...createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId), ...memoryTools, ...deliveryTools];
     const internalToolNames = new Set(internalTools.map((tool) => tool.name));
     internalToolNames.add("finalize_response");
-    const serverTools = mcpServerId ? [] : this.hooks.serverTools?.(workspacePath) ?? [];
+    const serverTools = mcpServerId ? [] : this.hooks.serverTools?.(workspacePath, scope) ?? [];
     const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...serverTools, ...internalTools].map((t) =>
       withPermission(t, {
         queue: this.approvals,
@@ -620,7 +633,9 @@ export class PiAdapter {
         rules: this.permissionRules,
         mode: () => this.runModes.get(sessionId) ?? "ask",
         internal: internalToolNames.has(t.name),
+        isActive: isCurrent,
         emitApproval: (approvalId, toolName, args, toolCallId) => {
+          if (!isCurrent()) { this.approvals.reject(approvalId); return; }
           const pending = this.pendingApprovalIds.get(sessionId) ?? new Set<string>();
           pending.add(approvalId);
           this.pendingApprovalIds.set(sessionId, pending);
@@ -628,6 +643,7 @@ export class PiAdapter {
         },
         emitResolved: (approvalId, toolCallId, approved) => {
           this.removePendingApproval(approvalId);
+          if (!isCurrent()) return;
           this.push("approval.resolved", { approvalId, toolCallId, approved }, eventSessionId, this.activeRunIds.get(sessionId));
         },
       })
@@ -636,7 +652,7 @@ export class PiAdapter {
     // Integrations load on demand (tool_search / codemode); see tool-exposure.ts.
     // A session bound to one MCP server exists to call exactly those tools: keep them declared.
     const loadout = mcpServerId ? { tools: wrapped, catalog: "" }
-      : applyToolExposure(wrapped, { name: "servers", description: this.hooks.serverSummary?.() ?? "SSH servers" });
+      : applyToolExposure(wrapped, { name: "servers", description: this.hooks.serverSummary?.(scope) ?? "SSH servers" });
 
     const toolNameByModelName = new Map(wrapped.map((tool) => [
       tool.name,
@@ -663,7 +679,8 @@ export class PiAdapter {
       workspacePath,
       undefined,
       createPiSessionEntries(workspacePath, preparedMessages, model,
-        model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined),
+        model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined,
+        sessionId),
     );
     const sessionSettings = SettingsManager.inMemory();
     sessionSettings.applyOverrides(this.compactionOverrides());
@@ -674,25 +691,22 @@ export class PiAdapter {
     const { session } = await createAgentSession({
       cwd: workspacePath,
       sessionManager,
-      // Built-ins are supplied as wrapped definitions so every tool goes through
-      // the same permission boundary. Bash is intentionally omitted on Windows.
-      // Not an allowlist: Pi's own built-ins are replaced by the wrapped ones, every
-      // custom tool is registered, and only `direct` ones start declared. Deferred
-      // integrations stay registered for tool_search and codemode scripts.
+      // Wrapped built-ins and custom tools share the same permission boundary.
       noTools: "builtin",
       tools: ["+codemode", "+tool_search"],
       customTools: loadout.tools,
-      resourceLoader,
+      resourceLoader: await sessionResourceLoader(resourceLoader, workspacePath),
       modelRuntime,
       settingsManager: sessionSettings,
       model,
       thinkingLevel: thinking,
     });
     await session.bindExtensions({}).catch(async (error) => { await session.dispose(); throw error; });
+    if (!isCurrent()) { session.dispose(); throw new Error("run aborted"); }
     // Qone rebuilds sessions from its own message store, which does not keep Pi's
     // loadout entries. Re-declare on-demand tools the restored history already used.
-    const used = usedToolNames(restoredMessages.map((message) => message.rawMessage));
-    const reload = loadout.tools.filter((tool) => (tool as { exposure?: string }).exposure === "deferred" && used.has(tool.name)).map((tool) => tool.name);
+    const deferred = new Set(loadout.tools.filter((tool) => (tool as { exposure?: string }).exposure === "deferred").map((tool) => tool.name));
+    const reload = [...usedToolNames(restoredMessages.map((message) => message.rawMessage))].filter((name) => deferred.has(name));
     if (reload.length) session.setActiveToolsByName([...session.getActiveToolNames(), ...reload]);
     installSubagentFinalizationGuard(session, {
       runId: () => this.activeRunIds.get(sessionId),
@@ -708,19 +722,21 @@ export class PiAdapter {
     }
 
     if (eventSessionId === sessionId) subscribeContextUsage(session, (usage) => {
+      if (!isCurrent()) return;
       const activeModel = session.model;
       const model = this.configuredModelConfigs.find((config) => config.provider === activeModel?.provider && config.model === activeModel?.id)?.id;
       if (model) this.push("context.usage", { model, ...usage }, sessionId, this.activeRunIds.get(sessionId));
     });
-    subscribeSessionEvents({
-      sessionId, eventSessionId, session, runs: this.runs, activeRunIds: this.activeRunIds,
+    this.sessionFinalizers.set(session, subscribeSessionEvents({
+      sessionId, eventSessionId, session, runs: this.runs, activeRunIds: this.activeRunIds, isCurrent,
       toolNameByModelName, hooks: this.hooks,
       push: (type, payload, fromSessionId, runId) => this.push(type, payload, fromSessionId, runId),
-    });
+    }));
 
     this.sessions.set(sessionId, session);
     this.sessionSettingsManagers.set(sessionId, sessionSettings);
     this.toolCatalogs.set(session, loadout.catalog);
+    this.serverScopes.set(session, scopeKey);
     if (loadout.catalog && restoredMessages.some(message => extractTextContent(message.rawMessage).includes(loadout.catalog))) this.sentToolCatalogs.set(session, loadout.catalog);
     return session;
   }
@@ -754,17 +770,34 @@ export class PiAdapter {
   async run(
     sessionId: string,
     message: string,
-    opts: { model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; goalId?: string; goalEpoch?: number },
+    opts: { serverIds?: string[]; model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; goalId?: string; goalEpoch?: number },
     runEmit: RunEmitFn
   ): Promise<void> {
     if (this.activeRunIds.has(sessionId) || this.compactingSessions.has(sessionId)) throw new Error(`session ${sessionId} already has an active run or compaction`);
     const runId = opts.runId ?? crypto.randomUUID();
     this.activeRunIds.set(sessionId, runId);
+    // A forced stop settles the run at once, even while a tool ignores its abort signal.
+    let rejectForce!: (reason: Error) => void;
+    const forced = new Promise<never>((_resolve, reject) => { rejectForce = reject; this.forceRejects.set(runId, reject); });
+    try {
+      await Promise.race([this.execute(sessionId, runId, message, opts, (type, payload) => {
+        if (this.forceRejects.get(runId) === rejectForce && this.activeRunIds.get(sessionId) === runId) runEmit(type, payload);
+      }), forced]);
+    } finally {
+      if (this.forceRejects.get(runId) === rejectForce) this.forceRejects.delete(runId);
+    }
+  }
+
+  private async execute(
+    sessionId: string,
+    runId: string,
+    message: string,
+    opts: Parameters<PiAdapter["run"]>[2],
+    runEmit: RunEmitFn,
+  ): Promise<void> {
     const mediaController = new AbortController();
     this.mediaRunControllers.set(runId, mediaController);
-    // Keep a mode selected immediately before the run starts. This also makes
-    // the IPC update race safe when the UI changes the mode while the run
-    // command is still entering the runtime.
+    // Keep the selected mode ordered with IPC entry into the run.
     this.runModes.set(sessionId, opts.permissionMode ?? this.runModes.get(sessionId) ?? "ask");
     const configuredImageModel = opts.model ? this.imageModelConfigs.get(opts.model) : undefined;
     const configuredSpeechModel = opts.model ? this.speechModelConfigs.get(opts.model) : undefined;
@@ -773,7 +806,9 @@ export class PiAdapter {
     try {
       if (configuredImageModel) {
         if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
-        await this.runImageGeneration(sessionId, runId, message, await materializeModelInputs(opts.attachments, true, ["image"]), configuredImageModel);
+        const modelInputs = await materializeModelInputs(opts.attachments, true, ["image"]);
+        mediaController.signal.throwIfAborted();
+        await this.runImageGeneration(sessionId, runId, message, modelInputs, configuredImageModel);
         runEmit("agent.prompt_done", { runId });
         return;
       }
@@ -789,78 +824,26 @@ export class PiAdapter {
         runEmit("agent.prompt_done", { runId });
         return;
       }
-      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.goalId, opts.goalEpoch, runId);
-      if (this.stoppedRuns.has(runId)) throw new Error("run aborted");
+      session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.goalId, opts.goalEpoch, runId, opts.serverIds ?? []);
+      mediaController.signal.throwIfAborted();
       this.runs.set(runId, session);
-      const activeSession = session;
       const previousLength = session.messages.length;
-      const selectedModel = opts.model
-        ? this.modelRuntime?.getModel(...splitModelName(opts.model))
-        : session.agent.state.model;
-      const isGoogle = selectedModel?.api === "google-generative-ai";
-      const isCompletions = selectedModel?.api === "openai-completions";
+      const selectedModel = opts.model ? this.modelRuntime?.getModel(...splitModelName(opts.model)) : session.agent.state.model;
       const capabilities = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`) : undefined;
-      const attachments = opts.attachments;
-      const videoAttachmentNotice = this.rememberVideoAttachments(runId, attachments);
-      const missingAttachmentInput = capabilities && attachments?.some((attachment) => !canProcessMediaAttachment(selectedModel!.api, capabilities.input, attachment));
-      const nativeVideoAttachment = capabilities && attachments?.find((attachment) => attachment.mimeType.startsWith("video/") && !capabilities.input.includes("video"));
-      const delegationPolicy = this.subagentPolicy?.();
-      const canDelegate = this.delegateSubagent && (!opts.subagentRunId || (delegationPolicy?.allowNested ?? true))
-        && (opts.subagentDepth ?? 0) < (delegationPolicy?.maxDepth ?? 3);
-      const routingCandidates = (missingAttachmentInput || nativeVideoAttachment) && canDelegate ? this.subagentController?.catalog() : undefined;
-      const videoRecognitionSubagent = nativeVideoAttachment && canDelegate && !opts.subagentRunId
-        ? routingCandidates?.capabilities.find((candidate) => candidate.capability === "videoRecognition")
-        : undefined;
-      let automaticMediaDelegation: AutomaticMediaDelegation | undefined;
-      if (nativeVideoAttachment && videoRecognitionSubagent && this.delegateSubagent) {
-        try {
-          const delegated = await this.delegateSubagent({
-            capability: "videoRecognition", subagentId: null,
-            parentSessionId: sessionId, parentRunId: runId,
-            toolCallId: `media-routing-${runId}`,
-            title: runtimeText("pi-adapter.video_recognition_subagent_title"),
-            task: message,
-            reason: runtimeText("pi-adapter.video_recognition_subagent_reason"),
-            expectedResult: runtimeText("pi-adapter.video_recognition_subagent_expected_result"),
-            mediaAttachment: nativeVideoAttachment,
-            fallbackModel: opts.model,
-            permissionMode: opts.permissionMode ?? "ask",
-            background: false,
-            signal: mediaController.signal,
-          });
-          automaticMediaDelegation = parseAutomaticMediaDelegation(delegated);
-        } catch (error) {
-          log.warn("automatic video subagent delegation failed", { runId, error: String(error) });
-        }
-      }
-      const modelAttachments = automaticMediaDelegation
-        ? attachments?.filter((attachment) => !attachment.mimeType.startsWith("video/"))
-        : attachments;
-      const delegatedMediaNotice = automaticMediaDelegation
-        ? runtimeText("pi-adapter.video_recognition_subagent_result", { p0: automaticMediaDelegation.status, p1: automaticMediaDelegation.result })
-        : "";
-      const routingNotice = delegatedMediaNotice || (routingCandidates
-        ? runtimeText("pi-adapter.the_current_model_cannot_directly_read_some_attachments_only", { p0: JSON.stringify(routingCandidates) })
-        : missingAttachmentInput && !canDelegate
-          ? runtimeText("pi-adapter.the_current_model_cannot_directly_read_some_attachments_and")
-          : "");
-      const modelInputs = await materializeModelInputs(modelAttachments, isGoogle, capabilities?.input);
-      const webAccessContext = this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "";
-      // Appended after the user text: earlier history stays byte-identical for provider prefix caches.
-      // Like Pi's own MCP section: announce on-demand tools only when the set changed for this
-      // session object, so earlier messages stay byte-identical and the prompt cache holds.
+      const policy = this.subagentPolicy?.();
+      const canDelegate = Boolean(this.delegateSubagent && (!opts.subagentRunId || (policy?.allowNested ?? true)) && (opts.subagentDepth ?? 0) < (policy?.maxDepth ?? 3));
       const catalog = this.toolCatalogs.get(session) ?? "";
       const toolCatalog = catalog && this.sentToolCatalogs.get(session) !== catalog ? catalog : "";
       if (toolCatalog) this.sentToolCatalogs.set(session, catalog);
-      const memoryContext = opts.subagentRunId || opts.mcpServerId || this.isSideConversation(sessionId)
-        ? "" : this.hooks.memoryContext?.(sessionId, message, opts.model) ?? "";
-      if (mediaController.signal.aborted) throw mediaController.signal.reason;
-      await withMediaPhaseReporter((phase) => {
-        if (isGoogle) this.push("media.phase", { phase: "provider-processing", status: phase }, opts.eventSessionId ?? sessionId, runId);
-      }, () => activeSession.prompt([webAccessContext, capabilities ? mediaCapabilitiesContext(capabilities) : "", routingNotice, automaticMediaDelegation ? "" : videoAttachmentNotice, promptWithAttachments(message, modelAttachments, Boolean(capabilities?.input.includes("video") || capabilities?.input.includes("audio")), capabilities?.input), toolCatalog, memoryContext].filter(Boolean).join("\n"), {
-        images: isGoogle ? googleMediaContent(modelInputs, capabilities?.input)
-          : [...imageContent(modelInputs, capabilities?.input), ...(isCompletions ? googleMediaContent(modelInputs?.filter((item) => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
-      }));
+      await promptPiRun({
+        sessionId, runId, message, session, opts, capabilities, canDelegate,
+        delegate: this.delegateSubagent, catalog: this.subagentController?.catalog?.(),
+        videoNotice: this.rememberVideoAttachments(runId, opts.attachments), toolCatalog,
+        webContext: () => this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "",
+        memoryContext: () => opts.subagentRunId || opts.mcpServerId || this.isSideConversation(sessionId) ? "" : this.hooks.memoryContext?.(sessionId, message, opts.model) ?? "",
+        signal: mediaController.signal,
+        phase: phase => this.push("media.phase", { phase: "provider-processing", status: phase }, opts.eventSessionId ?? sessionId, runId),
+      });
       const assistantMessages = session.messages.slice(previousLength).filter((item) => item.role === "assistant");
       const final = assistantMessages.at(-1);
       if (final?.stopReason === "error") throw new Error(final.errorMessage || "Model request failed");
@@ -869,24 +852,30 @@ export class PiAdapter {
     } catch (error) {
       // Pi cannot resume this in-memory transcript after its compaction continuation
       // lands on an assistant message. Rebuild from persisted messages on the next run.
-      if (String(error).includes("Cannot continue from message role: assistant")) this.staleSessions.add(sessionId);
+      if (this.activeRunIds.get(sessionId) === runId && String(error).includes("Cannot continue from message role: assistant")) this.staleSessions.add(sessionId);
       throw error;
     } finally {
-      const directories = this.videoTempDirs.get(runId);
-      this.videoTempDirs.delete(runId);
-      this.downloadedVideoPaths.delete(runId);
-      this.mediaAttachmentRefs.delete(runId);
-      this.mediaRunControllers.delete(runId);
-      if (directories) await Promise.all([...directories].map((directory) => rm(directory, { recursive: true, force: true }).catch((error) => log.warn("failed to clean downloaded video", { directory, error: String(error) }))));
-      this.runs.delete(runId);
-      this.runModes.delete(sessionId);
-      this.pendingApprovalIds.delete(sessionId);
-      try {
-        // Keep ownership until disposal settles, so a replacement run cannot reuse a closing session.
-        if (!session || opts.mcpServerId || ((this.restoreMessages || this.staleSessions.has(sessionId)) && session.isIdle)) await this.disposeSession(sessionId);
-      } finally {
-        this.stoppedRuns.delete(runId);
-        if (this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
+      // Child resume reuses a run id; identity, not the id alone, owns these maps.
+      if (this.mediaRunControllers.get(runId) === mediaController) {
+        const directories = this.videoTempDirs.get(runId);
+        this.videoTempDirs.delete(runId);
+        this.downloadedVideoPaths.delete(runId);
+        this.mediaAttachmentRefs.delete(runId);
+        if (directories) await Promise.all([...directories].map(directory => rm(directory, { recursive: true, force: true }).catch(error => log.warn("failed to clean downloaded video", { directory, error: String(error) }))));
+        if (this.mediaRunControllers.get(runId) === mediaController && this.activeRunIds.get(sessionId) === runId) {
+          this.runs.delete(runId);
+          this.runModes.delete(sessionId);
+          this.pendingApprovalIds.delete(sessionId);
+          try {
+            if (!session || opts.mcpServerId || ((this.restoreMessages || this.staleSessions.has(sessionId)) && session.isIdle)) await this.disposeSession(sessionId);
+          } finally {
+            if (this.mediaRunControllers.get(runId) === mediaController && this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
+          }
+        }
+        if (this.mediaRunControllers.get(runId) === mediaController) {
+          this.mediaRunControllers.delete(runId);
+          this.stoppedRuns.delete(runId);
+        }
       }
     }
   }
@@ -897,7 +886,7 @@ export class PiAdapter {
       push: (type, payload, sessionId, runId) => this.push(type, payload, sessionId, runId),
       onGeneratedMedia: this.hooks.onGeneratedMedia,
       trackController: (runId, controller) => this.generationRunControllers.set(runId, controller),
-      releaseController: (runId) => this.generationRunControllers.delete(runId),
+      releaseController: (runId, controller) => { if (this.generationRunControllers.get(runId) === controller) this.generationRunControllers.delete(runId); },
     };
   }
 
@@ -925,8 +914,29 @@ export class PiAdapter {
     this.stoppedRuns.add(runId);
     this.mediaRunControllers.get(runId)?.abort();
     this.generationRunControllers.get(runId)?.abort();
-    if (session) void session.abort();
+    if (session) void session.abort().catch(error => log.warn("session abort failed", { runId, error: String(error) }));
     log.info("run aborted", { runId });
+    return true;
+  }
+
+  /** Detach non-cooperating work; only its own resources may be cleaned up later. */
+  forceStop(runId: string): boolean {
+    if (!this.stop(runId)) return false;
+    const session = this.runs.get(runId);
+    if (session) this.sessionFinalizers.get(session)?.(runId);
+    const sessionId = [...this.activeRunIds].find(([, id]) => id === runId)?.[0];
+    if (sessionId) {
+      this.activeRunIds.delete(sessionId);
+      this.sessionInputs.clear(sessionId);
+      this.runModes.delete(sessionId);
+      for (const id of this.pendingApprovalIds.get(sessionId) ?? []) this.approvals.reject(id);
+      this.pendingApprovalIds.delete(sessionId);
+      void this.disposeSession(sessionId).catch((error) => log.warn("forced session disposal failed", { runId, error: String(error) }));
+    }
+    this.runs.delete(runId);
+    this.stoppedRuns.delete(runId);
+    this.forceRejects.get(runId)?.(new Error("run aborted"));
+    log.info("run force-stopped", { runId });
     return true;
   }
 
@@ -940,16 +950,7 @@ export class PiAdapter {
     return ![...this.activeRunIds.values()].includes(runId);
   }
 
-  /**
-   * Queue an internal update at the next assistant-turn boundary. Pi's
-   * follow-up queue waits until the agent stops calling tools, which places
-   * completion acknowledgements after the final answer. Agent.steer() waits
-   * for the current generation and tool batch without aborting either.
-   *
-   * Notification prompts are already expanded plain text, so they can use
-   * Agent's synchronous queue API directly while retaining the same run and
-   * streaming ownership checks as sendToSession().
-   */
+  /** Queue a child update at the next turn without aborting generation or tools. */
   queueSubagentUpdateNow(sessionId: string, message: string, expectedRunId = this.activeRunIds.get(sessionId)): boolean {
     const session = this.activeRunIds.has(sessionId) ? this.sessions.get(sessionId) : undefined;
     if (!session || !expectedRunId || this.activeRunIds.get(sessionId) !== expectedRunId
@@ -964,9 +965,10 @@ export class PiAdapter {
   }
 
   async sendToSession(sessionId: string, message: string, mode: "steer" | "follow_up", attachments?: MessageAttachmentInfo[], expectedRunId = this.activeRunIds.get(sessionId)): Promise<boolean> {
+    const owner = expectedRunId ? this.forceRejects.get(expectedRunId) : undefined;
     return this.sessionInputs.run(sessionId, async () => {
       const session = this.activeRunIds.has(sessionId) ? this.sessions.get(sessionId) : undefined;
-      const isCurrentRun = () => Boolean(expectedRunId && this.activeRunIds.get(sessionId) === expectedRunId
+      const isCurrentRun = () => Boolean(expectedRunId && this.activeRunIds.get(sessionId) === expectedRunId && this.forceRejects.get(expectedRunId) === owner
         && this.sessions.get(sessionId) === session && !this.stoppedRuns.has(expectedRunId) && session?.isStreaming);
       if (!session || !isCurrentRun()) return false;
       const selectedModel = session.agent.state.model;
@@ -979,16 +981,14 @@ export class PiAdapter {
       const prompt = [videoAttachmentNotice, promptWithAttachments(message, attachments, Boolean(input?.includes("video") || input?.includes("audio")), input)].filter(Boolean).join("\n");
       const images = isGoogle ? googleMediaContent(modelAttachments, input)
         : [...imageContent(modelAttachments, input), ...(isCompletions ? googleMediaContent(modelAttachments?.filter((item) => item.mimeType.startsWith("audio/")), input) : [])];
-      // Materializing files can outlive the target run. Never leave an input in
-      // an idle Pi session or accidentally deliver it to its replacement run.
+      // Reject file preparation that outlived its target run, including a replacement run.
       if (!isCurrentRun()) return false;
       if (mode === "steer") await session.steer(prompt, images);
       else await session.followUp(prompt, images);
       if (!isCurrentRun()) {
-        // Pi's input handlers also await. Clear orphaned input only if this
-        // still owns the session; a replacement run's queue belongs to it.
+        // Clear orphaned input only while this still owns the session.
         const activeRun = this.activeRunIds.get(sessionId);
-        if ((!activeRun || activeRun === expectedRunId) && this.sessions.get(sessionId) === session) session.clearQueue();
+        if ((!activeRun || activeRun === expectedRunId) && (!activeRun || this.forceRejects.get(activeRun) === owner) && this.sessions.get(sessionId) === session) session.clearQueue();
         return false;
       }
       return true;

@@ -7,6 +7,7 @@ import { readFilePreview } from "./file-preview.js";
 import { subagentInfo } from "./subagent-runner.js";
 import { generatedSessionTitle, provisionalSessionTitle } from "./session-title.js";
 import { syncPonytailProject } from "./builtin-skills/manager.js";
+import { artifactInfo } from "./file-delivery.js";
 import type { runtimeCommandServices } from "./index.js";
 
 export async function handleSessionCommand(cmd: RuntimeCommand, services: ReturnType<typeof runtimeCommandServices>): Promise<boolean> {
@@ -212,9 +213,9 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       // Rebuild the Pi session so a session that was created for a normal
       // message receives the Goal tools before the kickoff turn.
       await services.adapter.disposeSession(cmd.sessionId);
-      const goal = services.goalRepo.create(cmd.sessionId, cmd.objective, { model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking });
+      const goal = services.goalRepo.create(cmd.sessionId, cmd.objective, { model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking, serverIds: cmd.serverIds });
       services.publishGoal(goal);
-      await services.handle({ type: "agent.run", requestId: cmd.requestId, sessionId: cmd.sessionId, message: cmd.objective, goal: true, attachments: cmd.attachments, quote: cmd.quote, messageId: cmd.messageId, replaceFromMessageId: cmd.replaceFromMessageId, model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking });
+      await services.handle({ type: "agent.run", requestId: cmd.requestId, sessionId: cmd.sessionId, message: cmd.objective, queueItemId: cmd.queueItemId, goal: true, attachments: cmd.attachments, quote: cmd.quote, messageId: cmd.messageId, replaceFromMessageId: cmd.replaceFromMessageId, model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking, serverIds: cmd.serverIds });
       return true;
     }
 
@@ -314,7 +315,10 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       return true;
 
     case "session.toolCalls":
-      services.send({ type: "session.toolCalls", sessionId: cmd.sessionId, toolCalls: services.toolCallRepo.listBySession(cmd.sessionId).filter((call) => !services.subagentRunRepo.get(call.runId)).map((t) => ({
+      services.send({ type: "session.toolCalls", sessionId: cmd.sessionId, toolCalls: services.toolCallRepo.listBySession(cmd.sessionId).filter((call) => !services.subagentRunRepo.get(call.runId) || call.toolName.startsWith("server_")).map((t) => ({
+        parentToolCallId: t.parentToolCallId ?? undefined,
+        serverOperation: t.serverOperation ? JSON.parse(t.serverOperation) : undefined,
+        sourceSubagentId: services.subagentRunRepo.get(t.runId)?.runId,
         id: t.id, runId: t.runId, toolName: t.toolName,
         arguments: t.arguments ?? undefined, resultSummary: t.resultSummary ?? undefined,
         status: t.status, startedAt: t.startedAt ?? undefined, completedAt: t.completedAt ?? undefined,
@@ -334,10 +338,15 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       return true;
 
     case "artifact.list":
-      services.send({ type: "artifact.list", sessionId: cmd.sessionId, artifacts: services.artifactRepo.listBySession(cmd.sessionId).map((artifact) => ({
-        id: artifact.id, sessionId: artifact.sessionId, runId: artifact.runId ?? undefined, type: artifact.type, name: artifact.name,
-        path: artifact.path, mimeType: artifact.mimeType ?? undefined, size: artifact.size ?? undefined, createdAt: artifact.createdAt,
-      })) });
+      services.send({ type: "artifact.list", sessionId: cmd.sessionId, artifacts: services.artifactRepo.listBySession(cmd.sessionId).map(artifactInfo) });
+      return true;
+
+    case "artifact.delete":
+      try {
+        await services.fileDelivery.delete(cmd.sessionId, cmd.artifactId, cmd.requestId);
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      }
       return true;
 
     case "workspace.list":

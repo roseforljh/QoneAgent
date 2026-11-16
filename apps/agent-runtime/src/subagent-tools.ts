@@ -18,6 +18,7 @@ interface SubagentToolOptions {
   maxConcurrent?: number;
   parentRunId: () => string | undefined;
   permissionMode: () => RunPermissionMode;
+  serverIds?: string[];
   mediaMimeType: (runId: string, mediaPath: string) => string | undefined;
 }
 
@@ -82,7 +83,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       const parentRunId = options.parentRunId();
       if (!parentRunId) throw new Error("No active parent run");
       void options.controller!.workflow(eventSessionId, parentRunId, input.steps, {
-        model: modelName, permissionMode: options.permissionMode(), signal, background: true,
+        model: modelName, permissionMode: options.permissionMode(), serverIds: options.serverIds, signal, background: true,
       }).catch(() => undefined);
       return { content: [{ type: "text" as const, text: "Subagent workflow started in background. Use list_subagents or inspect_subagent when you want to process a result." }], details: { background: true } };
     },
@@ -158,7 +159,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
         parentSessionId: eventSessionId, parentRunId, parentSubagentId: subagentRunId, depth: subagentDepth + 1, toolCallId,
         title: input.title.trim(), task: input.task.trim(), subagentId: input.subagentId, capability: input.capability,
         mediaAttachment: input.mediaPath ? { type: "file", name: input.mediaPath.split(/[\\/]/).at(-1) ?? "video", mimeType: mediaMimeType!, data: "", localPath: input.mediaPath, temporary: true } : undefined,
-        fallbackModel: modelName, permissionMode: options.permissionMode(), background, signal,
+        fallbackModel: modelName, permissionMode: options.permissionMode(), serverIds: options.serverIds, background, signal,
         reason: input.reason.trim(), expectedResult: input.expectedResult.trim(),
       });
       const completed = (() => {

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { closeDb, MessageRepo, openDb, RunRepo, SessionRepo, SubagentRunRepo } from "@qone/database";
+import { closeDb, MessageRepo, openDb, RunRepo, SessionRepo, SubagentRunRepo, ToolCallRepo } from "@qone/database";
 import { decodeCommand, type RuntimeEvent } from "@qone/protocol";
 
 test("a real sidecar returns all conversation state in one ordered stdout batch and restores child history across restart", async () => {
@@ -20,6 +20,15 @@ test("a real sidecar returns all conversation state in one ordered stdout batch 
   const parts = [{ type: "text" as const, text: "child answer", messageSequence: 1 }];
   children.appendMessage(child.id, "user", "child task"); children.appendMessage(child.id, "assistant", "child answer", parts);
   children.save(child.id, "child answer", parts); runs.finish(child.id, "completed"); runs.finish(parent.id, "completed");
+  const tools = new ToolCallRepo(db);
+  const mainTool = tools.start(parent.id, "server_read_file", { path: "/config" }, "main-op");
+  const nestedTool = tools.start(child.id, "server_exec", { command: "inspect" }, "child-op", "script");
+  const interruptedTool = tools.start(parent.id, "server_exec", { command: "unfinished" }, "interrupted-op");
+  tools.start(child.id, "read", { path: "private-child-transcript" }, "non-server-child");
+  const operation = { serverId: "server-a", serverName: "Historical server name" };
+  for (const tool of [mainTool, nestedTool, interruptedTool]) tools.setServerOperation(tool.id, operation);
+  tools.finish(mainTool.id, "success", { content: [{ type: "text", text: "config" }], details: { serverOperation: operation } });
+  tools.finish(nestedTool.id, "cancelled", { content: [{ type: "text", text: "partial output" }], details: { serverOperation: operation, cancelled: true } });
   closeDb(db);
   const command = { type: "session.snapshot" as const, requestId: "snapshot-request", sessionId: session.id };
   expect(decodeCommand(JSON.stringify(command))).toEqual(command);
@@ -68,6 +77,13 @@ test("a real sidecar returns all conversation state in one ordered stdout batch 
     expect(subagents.subagents[0]!.status).toBe("completed");
     expect(subagents.subagents[0]!.revision).toBe(1);
     expect(typeof subagents.subagents[0]!.revisionEpoch).toBe("string");
+    const toolHistory = batch.find(event => event.type === "session.toolCalls")!;
+    if (toolHistory.type !== "session.toolCalls") throw new Error("Missing tool history");
+    expect(toolHistory.toolCalls).toHaveLength(3);
+    expect(toolHistory.toolCalls.find(tool => tool.id === mainTool.id)).toMatchObject({ status: "success", serverOperation: operation });
+    expect(toolHistory.toolCalls.find(tool => tool.id === nestedTool.id)).toMatchObject({ status: "cancelled", parentToolCallId: "script", sourceSubagentId: child.id, serverOperation: operation });
+    expect(toolHistory.toolCalls.find(tool => tool.id === nestedTool.id)!.resultSummary).toContain("partial output");
+    expect(toolHistory.toolCalls.find(tool => tool.id === interruptedTool.id)!.status).toBe("cancelled");
   } finally {
     if (timer) clearTimeout(timer);
     process.kill(); await process.exited; await reader.cancel();

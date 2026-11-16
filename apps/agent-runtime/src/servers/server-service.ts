@@ -32,14 +32,14 @@ export class ServerService {
 
   broadcast(requestId?: string, createdGroupId?: string) { this.send(this.state(requestId, createdGroupId)); }
 
-  summary(): string {
-    const list = this.registry.list();
+  summary(serverIds: readonly string[] = []): string {
+    const list = this.registry.list().filter(server => serverIds.includes(server.id));
     return list.length ? `The user's SSH servers: ${list.map((server) => `${server.name} (${server.username}@${server.host}${server.system ? `, ${server.system}` : ""})`).join("; ")}` : "SSH servers";
   }
 
-  tools(workspacePath: string): ToolDefinition[] {
+  tools(workspacePath: string, serverIds: readonly string[] = []): ToolDefinition[] {
     return createServerTools({
-      servers: () => this.registry.list(), pool: this.pool, sessions: this.sessions, workspacePath,
+      servers: () => this.registry.list().filter(server => serverIds.includes(server.id)), pool: this.pool, sessions: this.sessions, workspacePath,
       onActivity: (serverId) => {
         // Reflect a recovered connection once, not on every tool call.
         const server = this.registry.get(serverId);
