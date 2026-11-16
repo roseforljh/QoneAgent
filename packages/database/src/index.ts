@@ -249,6 +249,11 @@ function migrate(sqlite: Database) {
   if (!sqlite.query("PRAGMA table_info(tool_calls)").all().some((column) => (column as { name: string }).name === "duration_ms")) {
     sqlite.exec("ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER");
   }
+  for (const column of ["parent_tool_call_id", "server_operation"]) {
+    if (!sqlite.query("PRAGMA table_info(tool_calls)").all().some(item => (item as { name: string }).name === column)) {
+      sqlite.exec(`ALTER TABLE tool_calls ADD COLUMN ${column} TEXT`);
+    }
+  }
   const goalColumns = new Set(sqlite.query("PRAGMA table_info(goals)").all().map((column) => (column as { name: string }).name));
   if (!goalColumns.has("run_options")) sqlite.exec("ALTER TABLE goals ADD COLUMN run_options TEXT");
   if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "attachments")) {
@@ -328,7 +333,7 @@ function migrate(sqlite: Database) {
     ["failure_kind", "TEXT"], ["dependency_state", "TEXT NOT NULL DEFAULT 'pending'"],
     ["completion_acknowledged", "INTEGER NOT NULL DEFAULT 0"], ["workflow_id", "TEXT"],
     ["workflow_step_id", "TEXT"], ["depends_on", "TEXT"],
-    ["permission_mode", "TEXT"], ["tools", "TEXT"],
+    ["permission_mode", "TEXT"], ["tools", "TEXT"], ["server_ids", "TEXT"],
     ["context_mode", "TEXT NOT NULL DEFAULT 'snapshot'"],
     ["context_message_count", "INTEGER NOT NULL DEFAULT 0"], ["token_usage", "TEXT"],
   ];

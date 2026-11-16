@@ -194,10 +194,11 @@ export class MessageRepo {
 export class SubagentRunRepo {
   constructor(private db: Db) {}
 
-  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; background?: boolean; profileId?: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number; requiredBeforeFinal?: boolean }) {
+  create(input: { runId: string; parentSessionId: string; parentRunId: string; parentSubagentId?: string; depth?: number; toolCallId: string; executionSessionId?: string; background?: boolean; profileId?: string; mediaAttachment?: MessageAttachmentInfo & { temporary?: boolean }; title: string; task: string; model?: string; permissionMode?: "ask" | "auto" | "full"; tools?: string[]; serverIds?: string[]; workflowId?: string; workflowStepId?: string; dependsOn?: string[]; contextMode?: "task-only" | "snapshot"; contextMessageCount?: number; requiredBeforeFinal?: boolean }) {
     this.db.insert(subagentRuns).values({
       runId: input.runId, parentSessionId: input.parentSessionId, parentRunId: input.parentRunId,
       mediaAttachment: input.mediaAttachment ? JSON.stringify(input.mediaAttachment) : null,
+      serverIds: JSON.stringify(input.serverIds ?? []),
       parentSubagentId: input.parentSubagentId ?? null, depth: input.depth ?? 0, toolCallId: input.toolCallId,
       executionSessionId: input.executionSessionId ?? null, background: input.background ?? false, profileId: input.profileId ?? null, title: input.title, task: input.task,
       model: input.model ?? null, permissionMode: input.permissionMode ?? null, tools: input.tools ? JSON.stringify(input.tools) : null,
@@ -472,6 +473,7 @@ export class GoalRepo {
           ? parsed.permissionMode
           : undefined,
         thinking: typeof parsed.thinking === "string" ? parsed.thinking as RunThinkingLevel : undefined,
+        serverIds: Array.isArray(parsed.serverIds) ? parsed.serverIds.filter((id): id is string => typeof id === "string") : [],
       };
     } catch {
       return {};
@@ -527,6 +529,7 @@ export class GoalRepo {
 }
 
 export interface GoalRunOptions {
+  serverIds?: string[];
   model?: string;
   permissionMode?: RunPermissionMode;
   thinking?: RunThinkingLevel;
@@ -564,8 +567,9 @@ export class TurnRepo {
 export class ToolCallRepo {
   constructor(private db: Db) {}
 
-  start(runId: string, toolName: string, args?: unknown, toolCallId?: string) {
+  start(runId: string, toolName: string, args?: unknown, toolCallId?: string, parentToolCallId?: string) {
     const row = {
+      parentToolCallId: parentToolCallId ?? null,
       id: toolCallId ? `${runId}:${toolCallId}` : crypto.randomUUID(),
       runId,
       toolName,
@@ -579,6 +583,16 @@ export class ToolCallRepo {
     return row;
   }
 
+  setServerOperation(id: string, operation: import("@qone/protocol").ServerOperationInfo) {
+    this.db.update(toolCalls).set({ serverOperation: JSON.stringify(operation) })
+      .where(and(eq(toolCalls.id, id), sql`${toolCalls.serverOperation} IS NULL`)).run();
+  }
+
+  cancelRun(runId: string) {
+    this.db.update(toolCalls).set({ status: "cancelled", completedAt: Date.now() })
+      .where(and(eq(toolCalls.runId, runId), sql`${toolCalls.status} IN ('queued', 'running', 'waiting_approval')`)).run();
+  }
+
   setStatus(id: string, status: "running" | "waiting_approval") {
     this.db.update(toolCalls).set({ status }).where(eq(toolCalls.id, id)).run();
   }
@@ -587,7 +601,7 @@ export class ToolCallRepo {
     this.db
       .update(toolCalls)
       .set({
-        status,
+        status: sql`CASE WHEN ${toolCalls.status} = 'cancelled' THEN 'cancelled' ELSE ${status} END`,
         resultSummary: result === undefined ? null : JSON.stringify(persistedToolResult(result)),
         completedAt: Date.now(),
         durationMs: durationMs ?? null,
@@ -608,6 +622,7 @@ export class ToolCallRepo {
   listBySession(sessionId: string) {
     return this.db.select({
       id: toolCalls.id, runId: toolCalls.runId, toolName: toolCalls.toolName,
+      parentToolCallId: toolCalls.parentToolCallId, serverOperation: toolCalls.serverOperation,
       arguments: toolCalls.arguments, resultSummary: toolCalls.resultSummary,
       status: toolCalls.status, startedAt: toolCalls.startedAt, completedAt: toolCalls.completedAt, durationMs: toolCalls.durationMs,
     }).from(toolCalls).innerJoin(runs, eq(toolCalls.runId, runs.id)).where(eq(runs.sessionId, sessionId)).orderBy(toolCalls.startedAt).all();
@@ -884,6 +899,10 @@ export class ArtifactRepo {
     const removed = this.db.select().from(artifacts).where(where).all();
     this.db.delete(artifacts).where(where).run();
     return removed;
+  }
+
+  get(sessionId: string, id: string) {
+    return this.db.select().from(artifacts).where(and(eq(artifacts.sessionId, sessionId), eq(artifacts.id, id))).get();
   }
 
   delete(id: string) {

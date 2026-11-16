@@ -74,6 +74,7 @@ export const subagentRuns = sqliteTable("subagent_runs", {
   model: text("model"),
   permissionMode: text("permission_mode"),
   tools: text("tools"),
+  serverIds: text("server_ids"),
   content: text("content").notNull().default(""),
   parts: text("parts").notNull().default("[]"),
   turnCount: integer("turn_count").notNull().default(1),
@@ -134,6 +135,8 @@ export const toolCalls = sqliteTable(
     startedAt: integer("started_at"),
     completedAt: integer("completed_at"),
     durationMs: integer("duration_ms"),
+    parentToolCallId: text("parent_tool_call_id"),
+    serverOperation: text("server_operation"), // resolved target snapshot, JSON
   },
   (t) => [index("idx_tool_calls_run").on(t.runId)]
 );

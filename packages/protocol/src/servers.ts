@@ -38,6 +38,26 @@ export interface ServerCandidate {
 
 export interface ServerGroupInfo { id: string; name: string }
 
+export interface ServerOperationInfo { serverId: string; serverName: string }
+
+/** Only runtime-produced details identify the resolved target, never model arguments. */
+export function serverOperationInfo(result: unknown): ServerOperationInfo | undefined {
+  const value = (result as { details?: { serverOperation?: ServerOperationInfo } } | undefined)?.details?.serverOperation;
+  return value && typeof value.serverId === "string" && typeof value.serverName === "string" ? value : undefined;
+}
+
+export function serverOperationCancelled(result: unknown): boolean {
+  return (result as { details?: { cancelled?: unknown } } | undefined)?.details?.cancelled === true;
+}
+
+/** Framework cancellation errors carry no target or output; keep the last resolved snapshot. */
+export function preserveServerOperationResult(previous: unknown, next: unknown): unknown {
+  if (!serverOperationInfo(previous) || serverOperationInfo(next)) return next;
+  const before = previous as { content?: unknown; details?: object };
+  const after = next && typeof next === "object" ? next as { details?: object } : undefined;
+  return { ...before, ...after, content: before.content, details: { ...before.details, ...after?.details } };
+}
+
 export type ServerSetupStage = "host-key" | "authenticating" | "inspecting" | "securing";
 
 export type ServerTunnelInfo = { serverId: string; remotePort: number; localPort: number; url: string };

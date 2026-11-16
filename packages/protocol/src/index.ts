@@ -34,6 +34,7 @@ export type { FilePreviewInfo, FilePreviewKind } from "./file-preview";
 export { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta } from "./assistant-parts";
 export { sameUserInput, repeatedUserMessageId } from "./user-message-equality.js";
 export { toolFileChanges, persistedToolResult } from "./file-changes";
+export { TOOL_PREVIEW_TEXT_LIMIT, limitPreviewText, limitPreviewStrings } from "./tool-preview-limit";
 export type { ToolFileChange } from "./file-changes";
 export {
   detectImageModel,
@@ -102,11 +103,12 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "session.subagents"; requestId: string; sessionId: string }
   | { type: "session.subagentNotifications"; requestId: string; sessionId: string }
   | { type: "goal.get"; requestId: string; sessionId: string }
-  | { type: "goal.start"; requestId: string; sessionId: string; objective: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo; messageId?: string; replaceFromMessageId?: string; model?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel }
+  | { type: "goal.start"; requestId: string; sessionId: string; objective: string; queueItemId?: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo; messageId?: string; replaceFromMessageId?: string; model?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; serverIds?: string[] }
   | { type: "goal.pause"; requestId: string; sessionId: string; reason?: string }
   | { type: "goal.resume"; requestId: string; sessionId: string }
   | { type: "goal.clear"; requestId: string; sessionId: string }
   | { type: "artifact.list"; requestId: string; sessionId: string }
+  | { type: "artifact.delete"; requestId: string; sessionId: string; artifactId: string }
   | { type: "workspace.list"; requestId: string }
   | { type: "workspace.upsert"; requestId: string; name: string; path: string }
   | { type: "workspace.rename"; requestId: string; workspaceId: string; name: string }
@@ -173,6 +175,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
       model?: string;
       permissionMode?: RunPermissionMode;
       thinking?: RunThinkingLevel;
+      serverIds?: string[];
       queueItemId?: string;
       mcpServerId?: string;
     }
@@ -182,7 +185,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "queue.edit"; requestId: string; sessionId: string; item: QueueItemInfo }
   | { type: "queue.sync"; requestId: string; sessionId: string; items: QueueItemInfo[] }
   | { type: "queue.remove"; requestId: string; sessionId: string; queueItemId: string }
-  | { type: "agent.stop"; requestId: string; runId: string }
+  | { type: "agent.stop"; requestId: string; runId: string; force?: boolean }
   | { type: "tool.approve"; requestId: string; approvalId: string }
   | { type: "tool.reject"; requestId: string; approvalId: string; reason?: string }
   | { type: "secret.set"; requestId: string; key: string; value: string }
@@ -192,6 +195,8 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
 // ---------- Events (Runtime -> GUI) ----------
 
 export interface AgentEvent<T = unknown> {
+  /** For the small server-tool projection of a child run; no child transcript is duplicated. */
+  sourceSubagentId?: string;
   eventId: string;
   sessionId?: string;
   runId?: string;
@@ -255,6 +260,7 @@ export type RuntimeEvent =
   | { type: "subagent.patch"; sessionId: string; id: string; patch: SubagentRunPatch }
   | { type: "subagent.streaming"; sessionId: string; id: string; revision?: number; revisionEpoch?: string; delta: string; reasoning?: { delta: string; messageSequence: number; contentIndex?: number; complete?: boolean }[] }
   | { type: "artifact.list"; sessionId: string; artifacts: ArtifactInfo[] }
+  | { type: "artifact.deleted"; requestId?: string; sessionId: string; artifactId: string }
   | { type: "workspace.list"; workspaces: WorkspaceInfo[] }
   | { type: "workspace.updated"; workspace: WorkspaceInfo }
   | { type: "workspace.renamed"; workspace: WorkspaceInfo }
@@ -377,6 +383,7 @@ export interface QueueItemInfo {
   id: string;
   sessionId: string;
   text: string;
+  serverIds?: string[];
   quote?: { text: string; messageId: string };
   attachments?: MessageAttachmentInfo[];
   lane: QueueItemLane;
@@ -409,6 +416,9 @@ export interface RunInfo {
 }
 
 export interface ToolCallInfo {
+  parentToolCallId?: string;
+  serverOperation?: import("./servers").ServerOperationInfo;
+  sourceSubagentId?: string;
   id: string;
   runId: string;
   toolName: string;
@@ -882,11 +892,12 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.subagents": z.object({ type: z.literal("session.subagents"), ...request, sessionId: id }),
   "session.subagentNotifications": z.object({ type: z.literal("session.subagentNotifications"), ...request, sessionId: id }),
   "goal.get": z.object({ type: z.literal("goal.get"), ...request, sessionId: id }),
-  "goal.start": z.object({ type: z.literal("goal.start"), ...request, sessionId: id, objective: z.string().trim().min(1), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((goal) => nonMediaAttachmentBytes(goal.attachments) <= 140_000_000, "Goal attachments exceed the maximum size"),
+  "goal.start": z.object({ type: z.literal("goal.start"), ...request, sessionId: id, objective: z.string().trim().min(1), queueItemId: id.optional(), serverIds: z.array(id).optional(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((goal) => nonMediaAttachmentBytes(goal.attachments) <= 140_000_000, "Goal attachments exceed the maximum size"),
   "goal.pause": z.object({ type: z.literal("goal.pause"), ...request, sessionId: id, reason: z.string().optional() }),
   "goal.resume": z.object({ type: z.literal("goal.resume"), ...request, sessionId: id }),
   "goal.clear": z.object({ type: z.literal("goal.clear"), ...request, sessionId: id }),
   "artifact.list": z.object({ type: z.literal("artifact.list"), ...request, sessionId: id }),
+  "artifact.delete": z.object({ type: z.literal("artifact.delete"), ...request, sessionId: id, artifactId: id }),
   "workspace.list": z.object({ type: z.literal("workspace.list"), ...request }),
   "workspace.upsert": z.object({ type: z.literal("workspace.upsert"), ...request, name: id, path: id }),
   "workspace.rename": z.object({ type: z.literal("workspace.rename"), ...request, workspaceId: id, name: id }),
@@ -926,7 +937,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),
-  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), continuation: z.boolean().optional(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "medium", "high", "xhigh", "max"]).optional(), queueItemId: id.optional(), mcpServerId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && nonMediaAttachmentBytes(run.attachments) <= 140_000_000, "Message or valid attachments required"),
+  "agent.run": z.object({ type: z.literal("agent.run"), ...request, sessionId: id, message: z.string(), goal: z.boolean().optional(), goalContinuation: z.boolean().optional(), continuation: z.boolean().optional(), serverIds: z.array(id).optional(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "medium", "high", "xhigh", "max"]).optional(), queueItemId: id.optional(), mcpServerId: id.optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length) && nonMediaAttachmentBytes(run.attachments) <= 140_000_000, "Message or valid attachments required"),
   "agent.permission-mode.set": z.object({ type: z.literal("agent.permission-mode.set"), ...request, sessionId: id, permissionMode: z.enum(["ask", "auto", "full"]) }),
   "global-prompt.get": z.object({ type: z.literal("global-prompt.get"), ...request }),
   "global-prompt.set": z.object({ type: z.literal("global-prompt.set"), ...request, content: z.string().max(200_000) }),
@@ -936,11 +947,11 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "memory.note.delete": z.object({ type: z.literal("memory.note.delete"), ...request, id }),
   "memory.summary.delete": z.object({ type: z.literal("memory.summary.delete"), ...request, id }),
   "agent.steer": z.object({ type: z.literal("agent.steer"), ...request, sessionId: id, runId: id, queueItemId: id, message: z.string(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length), "Message or valid attachments required"),
-  "queue.upsert": z.object({ type: z.literal("queue.upsert"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
-  "queue.edit": z.object({ type: z.literal("queue.edit"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
-  "queue.sync": z.object({ type: z.literal("queue.sync"), ...request, sessionId: id, items: z.array(z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() })).max(100) }),
+  "queue.upsert": z.object({ type: z.literal("queue.upsert"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), serverIds: z.array(id).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
+  "queue.edit": z.object({ type: z.literal("queue.edit"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), serverIds: z.array(id).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
+  "queue.sync": z.object({ type: z.literal("queue.sync"), ...request, sessionId: id, items: z.array(z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), serverIds: z.array(id).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() })).max(100) }),
   "queue.remove": z.object({ type: z.literal("queue.remove"), ...request, sessionId: id, queueItemId: id }),
-  "agent.stop": z.object({ type: z.literal("agent.stop"), ...request, runId: id }),
+  "agent.stop": z.object({ type: z.literal("agent.stop"), ...request, runId: id, force: z.boolean().optional() }),
   "tool.approve": z.object({ type: z.literal("tool.approve"), ...request, approvalId: id }),
   "tool.reject": z.object({ type: z.literal("tool.reject"), ...request, approvalId: id, reason: z.string().optional() }),
   "permission.list": z.object({ type: z.literal("permission.list"), ...request }),
