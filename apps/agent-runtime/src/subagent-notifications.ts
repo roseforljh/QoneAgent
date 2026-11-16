@@ -6,6 +6,8 @@ import { extractTextContent } from "./pi-message-utils.js";
 /** Reserved prefixes distinguish internal updates from user steering messages. */
 export const SUBAGENT_NOTIFICATION_MARKER = "[QONE_SUBAGENT_NOTIFICATION]";
 export const SUBAGENT_LEDGER_MARKER = "[QONE_SUBAGENT_LEDGER]";
+/** A child → parent message delivered into the parent's live turn. */
+export const SUBAGENT_AGENT_MESSAGE_MARKER = "[QONE_AGENT_MESSAGE]";
 
 const MAX_PREVIEW_LENGTH = 180;
 // A timer is only a retry path. The first live delivery is synchronous so a
@@ -48,7 +50,13 @@ export function buildSubagentNotificationPrompt(notifications: readonly Subagent
 
 export function isSubagentUpdatePrompt(value: unknown): boolean {
   const text = extractTextContent(value);
-  return text.startsWith(SUBAGENT_NOTIFICATION_MARKER) || text.startsWith(SUBAGENT_LEDGER_MARKER);
+  return text.startsWith(SUBAGENT_NOTIFICATION_MARKER) || text.startsWith(SUBAGENT_LEDGER_MARKER)
+    || text.startsWith(SUBAGENT_AGENT_MESSAGE_MARKER);
+}
+
+/** The marker-wrapped text of an internal prompt, used as its delivery key. */
+export function subagentUpdateText(value: unknown): string {
+  return extractTextContent(value);
 }
 
 function notificationResult(kind: SubagentNotificationInfo["kind"]): string {
@@ -159,7 +167,15 @@ export class SubagentNotificationCoordinator {
     this.timers.set(sessionId, timer);
   }
 
+  dispose(sessionId: string): void {
+    const timer = this.timers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(sessionId);
+    this.ledgerRequested.delete(sessionId);
+  }
+
   scheduleLedger(sessionId: string): void {
+    if (!this.ledgerPrompt(sessionId)) return;
     this.ledgerRequested.add(sessionId);
     if (this.adapter.isRunning(sessionId)) void this.flush(sessionId);
   }
@@ -169,7 +185,7 @@ export class SubagentNotificationCoordinator {
     const delivery = this.pendingPrompt(sessionId);
     const ledgerOnly = !delivery.prompt && this.ledgerRequested.has(sessionId);
     const prompt = delivery.prompt ?? (ledgerOnly ? this.ledgerPrompt(sessionId) : undefined);
-    if (!prompt || !this.adapter.isRunning(sessionId)) return false;
+    if (!prompt || !this.adapter.isRunning(sessionId)) { this.dispose(sessionId); return false; }
     const activeRunId = this.adapter.activeRunId(sessionId);
     if (!activeRunId) return false;
 

@@ -1,11 +1,12 @@
-import type { AgentEvent, AssistantMessagePart, SubagentConfigInfo } from "@qone/protocol";
+import type { AgentEvent, AgentCommunicationInfo, AssistantMessagePart, SubagentConfigInfo } from "@qone/protocol";
 import { applyAssistantToolEvent, applyReasoningDelta, assistantPartsFromPiMessage } from "@qone/protocol";
 import type { MessageRepo, RunRepo, SettingsRepo, SubagentRunRepo, ToolCallRepo } from "@qone/database";
 import { isAssistantMessageActivity } from "./session-activity.js";
 import { updateLiveAssistant, type LiveAssistantState } from "./live-assistant.js";
 import type { CompactionPositions } from "./compaction-position.js";
 import { finalSubagentSummary } from "./subagent-result.js";
-import { isSubagentUpdatePrompt } from "./subagent-notifications.js";
+import { isSubagentUpdatePrompt, SUBAGENT_AGENT_MESSAGE_MARKER } from "./subagent-notifications.js";
+import { extractTextContent } from "./pi-message-utils.js";
 import type { SubagentNotificationCoordinator } from "./subagent-notifications.js";
 import type { registerSubagentDispatcher } from "./subagent-runner.js";
 import type { createSubagentPublisher } from "./subagent-publisher.js";
@@ -20,6 +21,21 @@ export interface RuntimeBusEvent {
 
 type SubagentPublisher = ReturnType<typeof createSubagentPublisher>;
 type LiveAssistantUpdater = typeof updateLiveAssistant;
+
+/**
+ * Event types whose payload is already stored in its own table (messages,
+ * runs, tool_calls, subagent_runs) or is a transient progress tick. Replay
+ * never reconstructs UI from them, so keeping them only grew the database and
+ * evicted durable events from the in-memory replay ring.
+ */
+export const NOT_REPLAYED = new Set([
+  "message.delta", "message.reasoning.delta",
+  "message.started", "message.completed", "message.block.started", "message.block.completed",
+  "turn.started", "turn_end", "turn.completed", "agent.started",
+  "agent.cancelled", "agent.failed", "agent_settled", "agent.prompt_done",
+  "tool.started", "tool.updated", "tool.completed", "tool.failed",
+  "context.usage", "model.request.started", "model.response.timing",
+]);
 
 /**
  * Everything the bus subscriber reads or writes. Collections are passed by
@@ -52,6 +68,7 @@ export interface RuntimeEventContext {
   emit(type: string, payload: unknown, sessionId?: string, runId?: string): void;
   flushEvents(): void;
   touchSession(sessionId: string, userMessageAt?: number): void;
+  sendMessages(sessionId: string): void;
   deliverSteer(sessionId: string, runId: string, rawUser?: unknown): void;
   queueEventPersistence(event: AgentEvent): void;
   runRequiresSubagentFinalization(sessionId: string, runId: string): boolean;
@@ -88,6 +105,17 @@ function applyRunParts(
   const messageRole = (agentEvent.payload as { message?: { role?: unknown } } | undefined)?.message?.role;
   if (agentEvent.type === "message.started" && messageRole === "assistant") {
     ctx.assistantMessageSequenceByRun.set(runId, agentEvent.sequence);
+  } else if (agentEvent.type === "message.completed" && messageRole === "user") {
+    // Internal prompts (child messages, completion notices, ledger) are real
+    // provider input. Keep them in the run's ordered raw transcript so a
+    // restart replays exactly what the model saw.
+    const rawMessage = (agentEvent.payload as { message?: unknown }).message;
+    if (rawMessage && typeof rawMessage === "object" && isSubagentUpdatePrompt(agentEvent.payload)
+      && (childExecution || ctx.initialUserMessageSeen.has(runId))) {
+      const raw = ctx.assistantRawMessagesByRun.get(runId) ?? [];
+      raw.push(rawMessage);
+      ctx.assistantRawMessagesByRun.set(runId, raw);
+    }
   } else if (agentEvent.type === "message.completed" && (messageRole === "assistant" || messageRole === "toolResult")) {
     const rawMessage = (agentEvent.payload as { message?: unknown }).message;
     if (rawMessage && typeof rawMessage === "object") {
@@ -179,7 +207,8 @@ function publishSubagentEvent(
       ? [ctx.subagentRunRepo.latestMessage(runId)].filter((message): message is NonNullable<typeof message> => Boolean(message)).map((message) => ({
         id: message.id, sequence: message.sequence,
         role: message.role as "user" | "assistant" | "tool" | "system", content: message.content,
-        internal: message.role === "user" && Boolean(message.rawMessage),
+        internal: message.sequence !== 0 && message.role === "user" && Boolean(message.rawMessage),
+        communication: message.communication ? JSON.parse(message.communication) as AgentCommunicationInfo : undefined,
         parts: message.parts ? JSON.parse(message.parts) as AssistantMessagePart[] : undefined,
         createdAt: message.createdAt,
       }))
@@ -230,21 +259,27 @@ export function handleRuntimeEvent(
     }
   }
   if (agentEvent.runId) {
+    const messageSequence = ctx.assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence;
     const parts = ctx.assistantPartsByRun.get(agentEvent.runId);
     if (parts) applyRunParts(ctx, agentEvent, parts, childExecution, updateLive);
     if (ctx.activeSubagents.has(agentEvent.runId)) {
-      publishSubagentEvent(ctx, agentEvent, ctx.assistantMessageSequenceByRun.get(agentEvent.runId) ?? agentEvent.sequence, updateLive);
+      publishSubagentEvent(ctx, agentEvent, messageSequence, updateLive);
     }
   }
   const isSubagentExecution = agentEvent.scope === "subagent";
   if (agentEvent.sessionId && agentEvent.runId && !isSubagentExecution && isAssistantMessageActivity(agentEvent)) {
     ctx.touchSession(agentEvent.sessionId);
   }
-  // Reconnects restore canonical messages and live snapshots. Persisting every
-  // token in the replay journal only grows SQLite work without adding recovery
-  // information.
-  if (agentEvent.type !== "message.delta" && agentEvent.type !== "message.reasoning.delta") {
-    ctx.queueEventPersistence(agentEvent);
+  // The replay journal is only read back by events.replay, whose consumer
+  // advances a cursor and loads messages/runs from their own tables. Persisting
+  // payloads that those tables already own duplicated one tool output five
+  // times (message.started/completed, turn_end, turn.completed, tool.completed)
+  // and wrote one row per streamed token.
+  if (!NOT_REPLAYED.has(agentEvent.type)) {
+    // Terminal events stay replayable, but their message copy is the assistant
+    // row's job; the live send below keeps the full payload.
+    ctx.queueEventPersistence(agentEvent.type === "agent.completed" || agentEvent.type === "agent.cancelled"
+      ? { ...agentEvent, payload: {} } : agentEvent);
   }
   // Child tokens and tool events have their own compact delta protocol. Sending
   // them again as agent.event only duplicates IPC work and is ignored by the UI.
@@ -283,14 +318,19 @@ export function handleRuntimeEvent(
   }
   if (agentEvent.type === "message.completed" && (agentEvent.payload as { message?: { role?: string } }).message?.role === "user" && agentEvent.sessionId && agentEvent.runId && !ctx.subagentRunRepo.get(agentEvent.runId)) {
     const rawUser = (agentEvent.payload as { message?: unknown }).message;
-    if (ctx.initialUserMessageSeen.has(agentEvent.runId)) {
+    const agentMessage = extractTextContent(rawUser);
+    if (agentMessage.startsWith(SUBAGENT_AGENT_MESSAGE_MARKER)) {
+      // The visible bubble was recorded on send. applyRunParts keeps this
+      // delivered input in the ordered raw transcript, without a second copy.
+    } else if (ctx.initialUserMessageSeen.has(agentEvent.runId)) {
       if (!isSubagentUpdatePrompt(agentEvent.payload)) ctx.deliverSteer(agentEvent.sessionId, agentEvent.runId, rawUser);
     } else {
       ctx.initialUserMessageSeen.add(agentEvent.runId);
       // The initial user row was written before the run started; attach the
       // native Pi message so a restart rebuilds the exact provider turn.
+      // A child's message to this run shares the run id but is not the prompt.
       const row = rawUser && typeof rawUser === "object"
-        ? ctx.messageRepo.listBySession(agentEvent.sessionId).filter((message) => message.role === "user" && message.runId === agentEvent.runId).at(-1)
+        ? ctx.messageRepo.listBySession(agentEvent.sessionId).filter((message) => message.role === "user" && message.runId === agentEvent.runId && !message.communication).at(-1)
         : undefined;
       if (row) ctx.messageRepo.setRawMessage(row.id, rawUser);
     }
@@ -299,7 +339,7 @@ export function handleRuntimeEvent(
     const payload = agentEvent.payload as { reason?: string; result?: unknown };
     if (payload.reason === "threshold" || payload.reason === "overflow") {
       const history = ctx.messageRepo.listBySession(agentEvent.sessionId);
-      const throughMessageId = history.find((message) => message.role === "user" && message.runId === agentEvent.runId)?.id ?? history.at(-1)?.id;
+      const throughMessageId = history.find((message) => message.role === "user" && message.runId === agentEvent.runId && !message.communication)?.id ?? history.at(-1)?.id;
       if (throughMessageId) {
         const position = ctx.compactionPositions.update(agentEvent.runId, agentEvent.eventId, agentEvent.timestamp, agentEvent.type === "compaction_start", ctx.assistantPartsByRun.get(agentEvent.runId) ?? []);
         if (agentEvent.type === "compaction_start") {

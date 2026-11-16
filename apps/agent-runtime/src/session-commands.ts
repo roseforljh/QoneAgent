@@ -129,21 +129,24 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       return true;
     }
 
-    case "session.delete":
-      if (services.sideConversations.metadata(cmd.sessionId)) {
-        services.titleControllers.get(cmd.sessionId)?.abort();
-        const active = services.runRepo.listBySession(cmd.sessionId).filter((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));
-        for (const run of active) { services.adapter.stop(run.id); services.cancelledRuns.add(run.id); }
-        const stopped = await Promise.all(active.map((run) => services.adapter.waitForRun(run.id)));
-        if (stopped.some((done) => !done)) {
-          services.send({ type: "error", requestId: cmd.requestId, message: "side conversation is still stopping" });
-          return true;
-        }
+    case "session.delete": {
+      services.titleControllers.get(cmd.sessionId)?.abort();
+      const active = services.runRepo.listBySession(cmd.sessionId).filter((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));
+      for (const run of active) { services.adapter.stop(run.id); services.cancelledRuns.add(run.id); }
+      const stopped = await Promise.all(active.map((run) => services.adapter.waitForRun(run.id)));
+      if (stopped.some((done) => !done)) {
+        services.send({ type: "error", requestId: cmd.requestId, message: "conversation is still stopping" });
+        return true;
       }
       for (const child of services.sessionRepo.list().filter((session) => services.sideConversations.metadata(session.id)?.parentSessionId === cmd.sessionId)) {
         await services.handle({ type: "session.delete", requestId: crypto.randomUUID(), sessionId: child.id });
       }
       await services.subagentController.dispose(cmd.sessionId);
+      services.subagentNotificationCoordinator?.dispose(cmd.sessionId);
+      for (const child of services.subagentRunRepo.listBySession(cmd.sessionId)) {
+        if (child.executionSessionId) services.subagentNotificationCoordinator?.dispose(child.executionSessionId);
+        services.subagentPublisher.forget(child.runId);
+      }
       await services.adapter.disposeSession(cmd.sessionId);
       const deletedGoalTimer = services.goalContinuationTimers.get(cmd.sessionId);
       if (deletedGoalTimer) { clearTimeout(deletedGoalTimer); services.goalContinuationTimers.delete(cmd.sessionId); }
@@ -156,6 +159,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       if (deletedSession) services.projectResources.removeSession(deletedSession.workspaceId, cmd.sessionId);
       services.send({ type: "pong", requestId: cmd.requestId });
       return true;
+    }
 
     case "session.messages":
       services.sendMessages(cmd.sessionId, cmd.requestId, services.send);

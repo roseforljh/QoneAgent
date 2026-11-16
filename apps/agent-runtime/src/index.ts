@@ -3,11 +3,11 @@ import { handleRuntimeCommand } from "./runtime-commands.js";
 import { configureBuiltinSkills } from "./builtin-skills/manager.js";
 import { withRuntimeLocale, runtimeErrorInfo } from "./runtime-localization";
 import { CompactionPositions } from "./compaction-position.js";
-import { handleRuntimeEvent, type RuntimeBusEvent } from "./runtime-event-subscriber.js";
+import { handleRuntimeEvent, NOT_REPLAYED, type RuntimeBusEvent } from "./runtime-event-subscriber.js";
 import { SideConversationService } from "./side-conversation.js";
 
 import { createLogger, EventBus, qoneDatabasePath, qoneConfigDatabasePath, qoneMcpDatabasePath, SequencedEventJournal } from "@qone/shared";
-import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, SessionSearchResult } from "@qone/protocol";
+import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, AgentCommunicationInfo, SessionSearchResult } from "@qone/protocol";
 import { decodeCommand, REMOVED_BUILTIN_SUBAGENT_IDS } from "@qone/protocol";
 import { openDb, openConfigDb, openMcpDb, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager, type McpServerConfig } from "@qone/mcp";
@@ -43,6 +43,9 @@ import { createRuntimeOutput } from "./runtime-output.js";
 import { DouyinBridge } from "./douyin-bridge.js";
 import { AppMediaService } from "./app-media-service.js";
 import { AppOpenCliBridge } from "./app-opencli-bridge.js";
+import { MemoryStore } from "./memory/memory-store.js";
+import { MemoryService } from "./memory/memory-service.js";
+import { ServerService } from "./servers/server-service.js";
 
 const log = createLogger("runtime");
 
@@ -76,7 +79,7 @@ const messageRepo = new MessageRepo(db);
 const runRepo = new RunRepo(db);
 const goalRepo = new GoalRepo(db);
 const subagentRunRepo = new SubagentRunRepo(db);
-const subagentRunIds = new Set(subagentRunRepo.list().map((row) => row.runId));
+const subagentRunIds = new Set<string>();
 const subagentNotificationRepo = new SubagentNotificationRepo(db);
 const turnRepo = new TurnRepo(db);
 const workspaceRepo = new WorkspaceRepo(db);
@@ -91,6 +94,24 @@ const preferencesRepo = new SettingsRepo(configDb);
 configureBuiltinSkills(preferencesRepo);
 const queueRepo = new QueueRepo(settingsRepo);
 const sideConversations = new SideConversationService(db);
+const isMemorySource = (sessionId: string) => !sideConversations.metadata(sessionId) && !subagentRunRepo.getByExecutionSession(sessionId);
+// Late-bound adapter: server changes rebuild idle agent sessions so tool lists stay current.
+const servers: ServerService = new ServerService(preferencesRepo, (event) => send(event), () => adapter.invalidateSessions());
+const memory: MemoryService = new MemoryService({
+  store: new MemoryStore(settingsRepo),
+  source: {
+    candidates: () => sessionRepo.list().filter((session) => isMemorySource(session.id))
+      .map((session) => ({ id: session.id, title: session.title, updatedAt: session.updatedAt })),
+    transcript: (sessionId) => messageRepo.listBySession(sessionId).map(({ role, content }) => ({ role, content })),
+  },
+  searchConversations: (query, excludeId) => sessionRepo.search(query, 20)
+    .filter(({ session }) => session.id !== excludeId && isMemorySource(session.id))
+    .map(({ session, content }) => ({ id: session.id, title: session.title, content: content ?? session.title })),
+  // Late-bound: the adapter is created below and only called once a run starts.
+  complete: (modelName) => (system, user, maxTokens): Promise<{ text: string; tokens: number }> => adapter.completeText(modelName, system, user, maxTokens),
+  onChange: (state) => send({ type: "memory.state", state }),
+  onError: (error) => log.warn("memory consolidation skipped", { err: String(error) }),
+});
 const compactionPreferences: PiCompactionPreferences = normalizePiCompactionPreferences(
   preferencesRepo.get("compaction.settings") ?? DEFAULT_PI_COMPACTION_PREFERENCES,
 );
@@ -125,18 +146,20 @@ const subagentPublisher = createSubagentPublisher({
 let subagentController: ReturnType<typeof registerSubagentDispatcher>;
 let subagentNotificationCoordinator: SubagentNotificationCoordinator | undefined;
 function publishSubagent(runId: string) {
-  subagentRunIds.add(runId);
+  const status = runRepo.get(runId)?.status;
+  if (status && ["created", "running", "waiting_approval", "paused"].includes(status)) subagentRunIds.add(runId);
+  else subagentRunIds.delete(runId);
   subagentPublisher.publish(runId);
 }
 let eventFlushTimer: ReturnType<typeof setTimeout> | undefined;
 const flushEvents = () => {
   if (eventFlushTimer) clearTimeout(eventFlushTimer);
   eventFlushTimer = undefined;
-  if (pendingEvents.length === 0) return;
-  const batch = pendingEvents.splice(0, pendingEvents.length);
-  eventRepo.addMany(batch);
-  const last = batch.at(-1);
-  if (last) settingsRepo.set("event.sequence", last.sequence + 1);
+  if (pendingEvents.length) eventRepo.addMany(pendingEvents.splice(0, pendingEvents.length));
+  // Transient events advance the sequence without a row, so the watermark must
+  // come from the journal itself; otherwise a restart reuses sequence numbers
+  // the renderer already consumed.
+  settingsRepo.set("event.sequence", eventJournal.next);
 };
 const queueEventPersistence = (event: AgentEvent) => {
   pendingEvents.push(event);
@@ -173,17 +196,19 @@ function runRequiresSubagentFinalization(sessionId: string, runId: string): bool
 eventBus.subscribe((busEvent) => {
   const childExecution = busEvent.scope === "subagent" || Boolean(busEvent.runId && subagentRunIds.has(busEvent.runId));
   const approvalParent = busEvent.runId && busEvent.type === "approval.requested" ? subagentRunRepo.get(busEvent.runId)?.parentSessionId : undefined;
-  const agentEvent = eventJournal.record((sequence) => ({
+  const replayEvent = eventJournal.record((sequence) => ({
     eventId: crypto.randomUUID(), sequence, type: busEvent.type,
     sessionId: approvalParent ?? busEvent.sessionId, runId: busEvent.runId,
-    timestamp: Date.now(), payload: busEvent.payload, scope: approvalParent ? "conversation" : childExecution ? "subagent" : "conversation",
-  } satisfies AgentEvent), busEvent.type !== "message.delta" && busEvent.type !== "message.reasoning.delta");
+    timestamp: Date.now(), payload: busEvent.type === "agent.completed" ? {} : busEvent.payload,
+    scope: approvalParent ? "conversation" : childExecution ? "subagent" : "conversation",
+  } satisfies AgentEvent), !NOT_REPLAYED.has(busEvent.type));
+  const agentEvent = busEvent.type === "agent.completed" ? { ...replayEvent, payload: busEvent.payload } : replayEvent;
   handleRuntimeEvent({
     messageRepo, runRepo, subagentRunRepo, toolCallRepo, settingsRepo,
     assistantBuffers, assistantStreamBuffers, assistantPartsByRun, assistantRawMessagesByRun, assistantMessageSequenceByRun,
     liveAssistantByRun, subagentStreams, activeSubagents, subagentRunIds, initialUserMessageSeen,
     approvalRuns, approvalToolCalls, toolCallIds, compactionPositions,
-    send: (event) => send(event as never), emit, flushEvents, touchSession, deliverSteer, queueEventPersistence,
+    send: (event) => send(event as never), emit, flushEvents, touchSession, sendMessages, deliverSteer, queueEventPersistence,
     runRequiresSubagentFinalization,
     subagentConfig: () => subagentConfig,
     subagentController: () => subagentController,
@@ -293,6 +318,10 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       }));
     return webAccessMemory.context(sessionId, task, history);
   },
+  memoryContext: (sessionId, message, modelName) => memory.context(sessionId, message, modelName),
+  memoryTools: (sessionId) => memory.tools(sessionId),
+  serverTools: (workspacePath) => servers.tools(workspacePath),
+  serverSummary: () => servers.summary(),
   onAssistantFinal: (_sessionId, runId, content) => {
     if (content.trim()) assistantBuffers.set(runId, content);
   },
@@ -330,13 +359,12 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   },
 }, permissionRepo, (sessionId, currentRunId) => {
   const subagent = subagentRunRepo.getByExecutionSession(sessionId);
-  if (subagent) {
-    return subagentRunRepo.listMessages(subagent.runId).map((message) => ({
-      role: message.role, content: message.content, createdAt: message.createdAt,
-      rawMessage: message.rawMessage ? JSON.parse(message.rawMessage) : undefined,
-    }));
-  }
-  const history = messageRepo.listBySession(sessionId).filter((message) => message.runId !== currentRunId).map((message) => ({
+  // A communication row carrying a raw Pi message is itself provider input (a
+  // message sent while the agent was idle). Rows without one are UI projections
+  // of a prompt that already lives in the run's raw transcript.
+  if (subagent) return subagentController.restoreMessages(subagent.runId);
+  const history = messageRepo.listBySession(sessionId)
+    .filter((message) => message.runId !== currentRunId && (!message.communication || Boolean(message.rawMessage))).map((message) => ({
     id: message.id,
     role: message.role,
     content: message.content,
@@ -379,6 +407,10 @@ subagentController = registerSubagentDispatcher({
     message.runId === runId && message.role === "user" && message.attachments ? JSON.parse(message.attachments) as MessageAttachmentInfo[] : []),
   runtime: () => subagentConfig.runtime,
   acknowledge: (runId) => subagentNotificationCoordinator?.acknowledge(runId),
+  appendParentMessage: (sessionId, runId, content, communication, rawMessage) => {
+    messageRepo.add(sessionId, "user", content, runId, undefined, undefined, undefined, undefined, undefined, undefined, rawMessage, communication);
+    sendMessages(sessionId);
+  },
   publish: publishSubagent, emit: (type, payload, sessionId, runId) => eventBus.emit({ type, payload, sessionId, runId, scope: "subagent" }),
 });
 adapter.setSubagentController(subagentController);
@@ -614,6 +646,7 @@ function sendMessages(sessionId: string, requestId?: string, sendEvent: typeof s
       id: m.id, sessionId: m.sessionId, runId: m.runId ?? undefined,
       role: m.role, content: m.content,
       quote: m.quote ? JSON.parse(m.quote) as MessageQuoteInfo : undefined,
+      communication: m.communication ? JSON.parse(m.communication) as AgentCommunicationInfo : undefined,
       parts: m.parts ? JSON.parse(m.parts) as AssistantMessagePart[] : undefined,
       attachments: m.attachments ? JSON.parse(m.attachments) : undefined,
       model: m.model ?? undefined, goalId: m.goalId ?? undefined, createdAt: m.createdAt,
@@ -691,6 +724,8 @@ function sendSubagentConfig(requestId?: string) {
 export function runtimeCommandServices() {
   return {
     adapter,
+    memory,
+    servers,
     ensureModelsReady,
     browserReady,
     approvalRuns,

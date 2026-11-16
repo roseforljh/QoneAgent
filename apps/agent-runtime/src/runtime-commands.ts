@@ -42,6 +42,36 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       }
       return true;
 
+    case "servers.list": case "servers.add": case "servers.rename": case "servers.delete": case "servers.test":
+    case "servers.move": case "servers.group.create": case "servers.group.rename": case "servers.group.delete":
+    case "servers.trust-host-key": case "servers.discover": case "servers.tunnel.close":
+    case "server.terminal.open": case "server.terminal.write": case "server.terminal.resize": case "server.terminal.close":
+      try {
+        await services.servers.handle(cmd);
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+
+    case "memory.get":
+    case "memory.enabled.set":
+    case "memory.note.save":
+    case "memory.note.delete":
+    case "memory.summary.delete":
+      try {
+        const store = services.memory.store;
+        if (cmd.type === "memory.enabled.set") {
+          // The memory tool only exists while memory is on, so sessions rebuild their tool set.
+          if (store.setEnabled(cmd.enabled)) await services.adapter.invalidateSessions();
+        } else if (cmd.type === "memory.note.save") store.saveNote(cmd.content, { id: cmd.id });
+        else if (cmd.type === "memory.note.delete") store.deleteNote(cmd.id);
+        else if (cmd.type === "memory.summary.delete") store.forgetSummary(cmd.id);
+        services.send({ type: "memory.state", requestId: cmd.requestId, state: store.state() });
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+
     case "skills.cloud.list": {
       const page = await listCloudSkills(cmd.collection, cmd.page, cmd.query);
       services.send({ type: "skills.cloud.list", requestId: cmd.requestId, ...page });
@@ -544,6 +574,10 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           await services.adapter.disposeSession(cmd.sessionId);
           services.flushEvents();
           services.messageRepo.truncateFrom(cmd.sessionId, cmd.replaceFromMessageId);
+          for (const child of childRuns) if (removedRunIds.has(child.runId)) {
+            services.subagentPublisher.forget(child.runId);
+            if (child.executionSessionId) services.subagentNotificationCoordinator?.dispose(child.executionSessionId);
+          }
           await services.generatedArtifacts.removeRuns(cmd.sessionId, [...removedRunIds]);
           services.eventJournal.restore(services.eventRepo.list());
         } catch (error) {

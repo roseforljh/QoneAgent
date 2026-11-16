@@ -135,6 +135,18 @@ test("interleaved children retain ownership and snapshots/disposal cancel only t
   expect(jobs.size).toBe(0);
 });
 
+test("forgetting a deleted child cancels only its work and drops its revision ownership", () => {
+  const { publisher, events, advance, jobs } = fixture();
+  publisher.publish("a"); publisher.publish("b");
+  publisher.append("a", "discarded"); publisher.append("b", "kept");
+  publisher.forget("a");
+  expect(jobs.size).toBe(1);
+  advance(32);
+  expect(events.at(-1)).toMatchObject({ type: "subagent.streaming", id: "b", delta: "kept" });
+  expect(publisher.snapshot({ id: "a" } as SubagentRunInfo).revision).toBe(1);
+  publisher.dispose();
+});
+
 test("queued tool arguments use the latest canonical parts once at the fixed deadline and settle at boundaries", () => {
   const { publisher, items, events, advance, loads } = fixture();
   const tool: AssistantMessagePart = { type: "tool-call", toolCallId: "tool", toolName: "read", args: {}, messageSequence: 1 };

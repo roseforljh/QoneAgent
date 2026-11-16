@@ -41,6 +41,12 @@ describe("adjacent user bubbles", () => {
     expect(repeatedUserMessageId([user("1", "different"), user("2"), user("3")], { content: "same" })).toBe("2");
   });
 
+  test("agent communication never becomes a repeated user input or truncates its history", () => {
+    const notice = { ...user("agent"), communication: { fromId: "child", toId: "parent" } };
+    expect(repeatedUserMessageId([user("1"), notice], { content: "same" })).toBeUndefined();
+    expect(repeatedUserMessageId([notice, user("2")], { content: "same" })).toBe("2");
+  });
+
   test("answers and different user inputs break the group", () => {
     const answer = { id: "answer", role: "assistant", content: "answer" };
     expect(repeatedUserMessageId([user("1"), answer], { content: "same" })).toBeUndefined();

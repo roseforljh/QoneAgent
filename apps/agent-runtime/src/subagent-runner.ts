@@ -1,8 +1,9 @@
 import { runtimeText } from "./runtime-localization";
-import { detectImageModel, type AssistantMessagePart, type MessageAttachmentInfo, type SubagentConfigInfo, type SubagentRunInfo, type SubagentDependencyState, type SubagentFailureKind } from "@qone/protocol";
+import { detectImageModel, type AgentCommunicationInfo, type AssistantMessagePart, type MessageAttachmentInfo, type SubagentConfigInfo, type SubagentRunInfo, type SubagentDependencyState, type SubagentFailureKind } from "@qone/protocol";
 import type { RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
-import type { PiAdapter } from "./pi-adapter.js";
+import type { PersistedPiMessage, PiAdapter } from "./pi-adapter.js";
 import { buildSubagentPrompt, subagentCatalog } from "./subagents.js";
+import { SUBAGENT_AGENT_MESSAGE_MARKER } from "./subagent-notifications.js";
 import { resolveSubagentSelection, type SubagentWorkflowStep } from "./subagent-selection.js";
 import { SubagentScheduler } from "./subagent-scheduler.js";
 import { finalSubagentSummary } from "./subagent-result.js";
@@ -15,8 +16,11 @@ export interface SubagentController {
   finalize(parentRunId: string, resolvedSubagentRunIds: string[]): { ok: boolean; missing: { runId: string; title: string; status: string; dependencyState: string; failureKind?: string }[] };
   waitForDependencyChange(parentRunId: string, signal?: AbortSignal): Promise<void>;
   catalog(): ReturnType<typeof subagentCatalog>;
-  control(runId: string, action: "stop" | "resume" | "retry" | "steer" | "follow_up", message?: string, signal?: AbortSignal): Promise<SubagentRunInfo>;
+  control(runId: string, action: "stop" | "resume" | "retry" | "steer" | "follow_up", message?: string, signal?: AbortSignal, callerId?: string): Promise<SubagentRunInfo>;
   wait(runId: string, timeoutMs?: number, signal?: AbortSignal, callerId?: string): Promise<SubagentRunInfo>;
+  /** Child → parent message. Persisted on both transcripts; delivered live only while the parent is streaming. */
+  messageParent(runId: string, message: string): { delivered: boolean; toId: string };
+  restoreMessages(runId: string): PersistedPiMessage[];
   recordEvent(id: string, type: string, payload: unknown, sequence: number): void;
   fail(id: string, message: string): void;
   dispose(sessionId: string, parentRunIds?: string[]): Promise<void>;
@@ -76,12 +80,19 @@ export function subagentInfo(runId: string, repo: SubagentRunRepo, runs: RunRepo
     messages: repo.listMessages(runId).map((message) => ({
       id: message.id, sequence: message.sequence,
       role: message.role as "user" | "assistant" | "tool" | "system", content: message.content,
-      internal: message.role === "user" && Boolean(message.rawMessage),
+      internal: message.sequence !== 0 && message.role === "user" && Boolean(message.rawMessage),
+      communication: readCommunication(message),
       parts: message.parts ? (JSON.parse(message.parts) as AssistantMessagePart[]).map(part => part.type === "tool-call"
         ? tools.get(part.toolCallId) ?? part : part) : undefined,
       createdAt: message.createdAt,
     })),
   };
+}
+
+/** Persisted communication metadata is optional: older rows and older databases simply have none. */
+function readCommunication(row: { communication?: string | null }): AgentCommunicationInfo | undefined {
+  if (!row.communication) return undefined;
+  try { return JSON.parse(row.communication) as AgentCommunicationInfo; } catch { return undefined; }
 }
 
 /** Persisted child identity; each invocation owns one cancellable execution and one permit. */
@@ -104,6 +115,8 @@ export function registerSubagentDispatcher(options: {
   attachmentsProvider?: (sessionId: string, runId: string) => MessageAttachmentInfo[];
   runtime?: () => SubagentConfigInfo["runtime"];
   acknowledge?: (runId: string) => void;
+  /** Persist a child → parent message on the parent conversation transcript. */
+  appendParentMessage?: (sessionId: string, runId: string, content: string, communication: AgentCommunicationInfo, rawMessage?: unknown) => void;
   publish: (runId: string) => void;
   emit: (type: string, payload: unknown, sessionId?: string, runId?: string) => void;
 }): SubagentController {
@@ -111,7 +124,7 @@ export function registerSubagentDispatcher(options: {
     partsByRun, messageSequenceByRun, assistantBuffers, streamBuffers, subagentStreams,
     activeSubagents, publish, emit } = options;
   const policy = () => options.runtime?.() ?? options.config().runtime;
-  type Job = { abort: AbortController; done: Promise<void>; state: "queued" | "running"; failure?: Error; cancelled: boolean; lastMessageRole?: string };
+  type Job = { abort: AbortController; done: Promise<void>; state: "queued" | "running"; failure?: Error; cancelled: boolean; initialMessageId?: string; listeners: Set<() => void> };
   const jobs = new Map<string, Job>();
   const scheduler = new SubagentScheduler(() => policy().maxConcurrent);
   const yielding = new Map<string, { count: number; held: boolean }>();
@@ -163,12 +176,17 @@ export function registerSubagentDispatcher(options: {
       authorized: infos.length === 0 || runRepo.isFinalizationAuthorized(parentRunId),
     };
   };
-  const waitForDependencyChange = (parentRunId: string, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+  const awaitDependencyChange = (parentRunId: string, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason ?? new Error("aborted"));
       return;
     }
-    const cleanup = () => { dependencyWaiters.get(parentRunId)?.delete(finish); signal?.removeEventListener("abort", abort); };
+    const cleanup = () => {
+      const waiters = dependencyWaiters.get(parentRunId);
+      waiters?.delete(finish);
+      if (waiters && !waiters.size) dependencyWaiters.delete(parentRunId);
+      signal?.removeEventListener("abort", abort);
+    };
     const finish = () => { cleanup(); resolve(); };
     const abort = () => { cleanup(); reject(signal?.reason ?? new Error("aborted")); };
     const waiters = dependencyWaiters.get(parentRunId) ?? new Set<() => void>();
@@ -176,6 +194,10 @@ export function registerSubagentDispatcher(options: {
     signal?.addEventListener("abort", abort, { once: true });
     if (!dependencyStatus(parentRunId).blocking.length) finish();
   });
+  // A nested parent waiting on its children must not keep its scheduler permit:
+  // with maxConcurrent saturated that is a parent-waits-child/child-waits-permit deadlock.
+  const waitForDependencyChange = (parentRunId: string, signal?: AbortSignal) =>
+    withoutPermit(parentRunId, () => awaitDependencyChange(parentRunId, signal));
   const finalize = (parentRunId: string, resolvedSubagentRunIds: string[]) => {
     const status = dependencyStatus(parentRunId);
     const listed = new Set(resolvedSubagentRunIds);
@@ -246,12 +268,24 @@ export function registerSubagentDispatcher(options: {
       entry.count--;
       if (!entry.count) {
         yielding.delete(parentId);
-        if (entry.held && !parent.abort.signal.aborted) await scheduler.acquire(parentId, parent.abort.signal);
+        if (entry.held && !parent.abort.signal.aborted) {
+          await scheduler.acquire(parentId, parent.abort.signal);
+          // The parent may have finished while this wait was pending; a permit
+          // re-acquired for a dead job would never be released.
+          if (!jobs.has(parentId)) scheduler.release(parentId);
+        }
       }
     }
   };
+  /** Parent → child direction for a follow-up or steer message. */
+  const parentCommunication = (row: NonNullable<ReturnType<typeof repo.get>>): AgentCommunicationInfo => {
+    const parent = repo.get(row.parentRunId);
+    return parent
+      ? { fromId: parent.runId, fromTitle: parent.title, toId: row.runId, toTitle: row.title }
+      : { fromId: row.parentRunId, fromTitle: sessionRepo.get(row.parentSessionId)?.title ?? "main", toId: row.runId, toTitle: row.title };
+  };
 
-  const start = (id: string, prompt: string, newTurn: boolean, persistUserMessage: boolean, signal?: AbortSignal, attachments?: MessageAttachmentInfo[]): Job => {
+  const start = (id: string, prompt: string, newTurn: boolean, persistUserMessage: boolean, signal?: AbortSignal, attachments?: MessageAttachmentInfo[], communication?: AgentCommunicationInfo): Job => {
     if (jobs.has(id)) throw new Error("Subagent already has an active turn");
     const row = repo.get(id)!;
     const parent = sessionRepo.get(row.parentSessionId);
@@ -259,7 +293,7 @@ export function registerSubagentDispatcher(options: {
     if (!cwd) throw new Error("Subagent workspace is unavailable");
     const executionSessionId = row.executionSessionId ?? `${row.parentSessionId}::subagent::${id}`;
     if (!row.executionSessionId) repo.updateExecutionSession(id, executionSessionId);
-    const job: Job = { abort: new AbortController(), done: Promise.resolve(), state: "queued", cancelled: false };
+    const job: Job = { abort: new AbortController(), done: Promise.resolve(), state: "queued", cancelled: false, listeners: new Set() };
     jobs.set(id, job);
     activeSubagents.add(id);
     partsByRun.set(id, JSON.parse(row.parts));
@@ -267,8 +301,10 @@ export function registerSubagentDispatcher(options: {
     runRepo.revokeFinalization(row.parentRunId);
     repo.setDependencyState(id, "running", { completionAcknowledged: false });
     if (!newTurn) repo.incrementTurn(id);
-    if (persistUserMessage) repo.appendMessage(id, "user", prompt);
-    job.lastMessageRole = repo.latestMessage(id)?.role;
+    if (persistUserMessage) {
+      repo.appendMessage(id, "user", prompt, undefined, undefined, communication);
+      job.initialMessageId = repo.latestMessage(id)!.id;
+    }
     const onAbort = () => interrupt(id);
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) onAbort();
@@ -332,6 +368,8 @@ export function registerSubagentDispatcher(options: {
         repo.save(id, content, parts);
         activeSubagents.delete(id);
         jobs.delete(id);
+        for (const resolve of job.listeners) resolve();
+        job.listeners.clear();
         scheduler.release(id);
         subagentStreams.delete(id);
         partsByRun.delete(id);
@@ -352,11 +390,31 @@ export function registerSubagentDispatcher(options: {
   const deferredStarts = new Map<string, (taskOverride?: string) => Promise<string>>();
   const waitForCompletion = async (id: string, timeoutMs = policy().timeoutMs, signal?: AbortSignal): Promise<SubagentRunInfo> => {
     requireInfo(id);
-    const deadline = Date.now() + timeoutMs;
-    while (jobs.has(id) && Date.now() < deadline) {
-      if (signal?.aborted) throw signal.reason;
-      await new Promise(resolve => setTimeout(resolve, 25));
-    }
+    const job = jobs.get(id);
+    if (job) await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) { reject(signal.reason); return; }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+        job.listeners.delete(finish);
+        resolve();
+      };
+      const abort = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        job.listeners.delete(finish);
+        reject(signal?.reason ?? new Error("aborted"));
+      };
+      // The job settles this promise; the timer only bounds the caller's wait.
+      // Listeners are removed on settle, so repeated waits cannot accumulate.
+      const timer = setTimeout(finish, timeoutMs);
+      signal?.addEventListener("abort", abort, { once: true });
+      job.listeners.add(finish);
+    });
     return requireInfo(id);
   };
 
@@ -436,12 +494,55 @@ export function registerSubagentDispatcher(options: {
     maxConcurrent: policy().maxConcurrent,
   }));
 
+  /** A Pi-shaped user message for an agent-to-agent row, so restarts replay it. */
+  const agentUserMessage = (text: string) => ({ role: "user" as const, content: [{ type: "text" as const, text }], timestamp: Date.now() });
+
+  const messageParent = (id: string, message: string): { delivered: boolean; toId: string } => {
+    const text = message.trim();
+    if (!text) throw new Error("Message text is required");
+    const row = repo.get(id);
+    if (!row) throw new Error(`Unknown subagent ${id}`);
+    const parent = repo.get(row.parentRunId);
+    const communication: AgentCommunicationInfo = {
+      fromId: id, fromTitle: row.title,
+      toId: row.parentRunId,
+      toTitle: parent?.title ?? sessionRepo.get(row.parentSessionId)?.title ?? "main",
+    };
+    // Both transcripts keep the same structured source so neither UI side needs
+    // to infer the direction from text.
+    const prompt = `${SUBAGENT_AGENT_MESSAGE_MARKER}\n${text}`;
+    const raw = agentUserMessage(prompt);
+    // The sender's bubble is a UI projection, not another user prompt to itself.
+    repo.appendMessage(id, "user", text, undefined, undefined, communication);
+    const delivered = adapter.queueSubagentUpdateNow(
+      parent?.executionSessionId ?? row.parentSessionId,
+      prompt,
+      row.parentRunId,
+    );
+    // A live recipient records its actual Pi input in order; its bubble is only
+    // a projection. An idle recipient needs the replayable input on this row.
+    if (parent) repo.appendMessage(parent.runId, "user", text, undefined, delivered ? undefined : raw, communication);
+    else options.appendParentMessage?.(row.parentSessionId, row.parentRunId, text, communication, delivered ? undefined : raw);
+    publish(id);
+    if (parent) publish(parent.runId);
+    // A parent blocked in the finalization gate must wake to answer a child's
+    // question; otherwise parent-waits-child and child-waits-answer deadlock.
+    for (const resolve of dependencyWaiters.get(row.parentRunId) ?? []) resolve();
+    dependencyWaiters.delete(row.parentRunId);
+    return { delivered, toId: row.parentRunId };
+  };
+
   const controller: SubagentController = {
     query,
     acknowledge,
     dependencyStatus,
     finalize,
     waitForDependencyChange,
+    messageParent,
+    restoreMessages: (id) => repo.listMessages(id)
+      .filter(message => message.id !== jobs.get(id)?.initialMessageId && (!message.communication || Boolean(message.rawMessage)))
+      .map(message => ({ role: message.role, content: message.content, createdAt: message.createdAt,
+        rawMessage: message.rawMessage ? JSON.parse(message.rawMessage) : undefined })),
     list: (sessionId, ownerId) => {
       const owner = ownerId ? repo.get(ownerId) : undefined;
       if (ownerId && owner?.executionSessionId !== sessionId) return [];
@@ -470,10 +571,15 @@ export function registerSubagentDispatcher(options: {
       if (type === "message.completed" && raw?.role) {
         const text = typeof raw.content === "string" ? raw.content
           : Array.isArray(raw.content) ? raw.content.filter(p => p?.type === "text").map(p => p.text).join("") : "";
-        if (raw.role === "user" && job.lastMessageRole === "user") return;
+        if (raw.role === "user" && job.initialMessageId) {
+          // Replace the pre-run UI placeholder with the expanded native prompt;
+          // all later user messages are distinct, even consecutive steers.
+          repo.setRawMessage(job.initialMessageId, raw);
+          job.initialMessageId = undefined;
+          return;
+        }
         const parts = raw.role === "assistant" ? (partsByRun.get(id) ?? []).filter(p => p.messageSequence === sequence) : undefined;
         repo.appendMessage(id, raw.role === "toolResult" ? "tool" : raw.role, text, parts, raw);
-        if (raw.role !== "system") job.lastMessageRole = raw.role === "toolResult" ? "tool" : raw.role;
       }
     },
     fail: (id, message) => interrupt(id, new Error(message)),
@@ -489,8 +595,14 @@ export function registerSubagentDispatcher(options: {
       for (const row of children) interrupt(row.runId);
       await Promise.all(waiting);
       for (const row of children) if (row.executionSessionId) await adapter.disposeSession(row.executionSessionId);
+      // Terminal children keep no live waiter or deferred start; nothing can
+      // resolve them once their run rows are gone.
+      for (const row of children) {
+        dependencyWaiters.delete(row.runId);
+        deferredStarts.delete(row.runId);
+      }
     },
-    control: async (id, action, message, signal?: AbortSignal) => {
+    control: async (id, action, message, signal?: AbortSignal, callerId?: string) => {
       // A parent tool call can already be cancelled when control is invoked;
       // starting a child turn first would leave a cancelled run behind.
       if (signal?.aborted) throw signal.reason ?? new Error("aborted");
@@ -506,8 +618,7 @@ export function registerSubagentDispatcher(options: {
         if (!message?.trim()) throw new Error(`${action} requires a message`);
         if (job.state !== "running" || !row.executionSessionId ||
             !await adapter.sendToSession(row.executionSessionId, message.trim(), action)) throw new Error("Subagent is not ready for input");
-        repo.appendMessage(id, "user", message.trim());
-        job.lastMessageRole = "user";
+        repo.appendMessage(id, "user", message.trim(), undefined, undefined, parentCommunication(row));
         repo.incrementTurn(id);
       } else {
         if ((action === "steer" || action === "follow_up") && !message?.trim()) throw new Error(`${action} requires a message`);
@@ -527,7 +638,8 @@ export function registerSubagentDispatcher(options: {
           repo.incrementRetry(id);
         }
         const attachments = originalAttachments(row.parentSessionId, id);
-        await start(id, message?.trim() || (action === "retry" ? row.task : runtimeText("subagent-runner.continue_the_previous_task_and_describe_the_new_results")), false, action !== "retry", signal, attachments).done;
+        await withoutPermit(callerId, () => start(id, message?.trim() || (action === "retry" ? row.task : runtimeText("subagent-runner.continue_the_previous_task_and_describe_the_new_results")), false, action !== "retry", signal, attachments,
+          action === "retry" ? undefined : parentCommunication(row)).done);
       }
       const result = requireInfo(id);
       if (["completed", "failed", "cancelled", "interrupted"].includes(result.status)) acknowledge(id);

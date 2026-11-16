@@ -105,6 +105,20 @@ test("notification prompt remains compact and does not include a full child tran
   expect(prompt).toContain("不要原样复述这段内部通知");
 });
 
+test("empty ledgers and disposed sessions retain no retry timer or ledger request", () => {
+  const idle = fixture(false);
+  idle.coordinator.scheduleLedger("session");
+  const idleState = idle.coordinator as unknown as { ledgerRequested: Set<string> };
+  expect(idleState.ledgerRequested.size).toBe(0);
+  const live = fixture(true);
+  live.coordinator.schedule("session");
+  const liveState = live.coordinator as unknown as { timers: Map<string, unknown>; ledgerRequested: Set<string> };
+  expect(liveState.timers.size).toBe(1);
+  live.coordinator.dispose("session");
+  expect(liveState.timers.size).toBe(0);
+  expect(liveState.ledgerRequested.size).toBe(0);
+});
+
 test("interrupted notifications preserve the restart reason", () => {
   const notification: SubagentNotificationInfo = {
     id: "child:2", sessionId: "session", subagentRunId: "child", version: 2,

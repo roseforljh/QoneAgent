@@ -115,7 +115,7 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       const input = params as { runId: string; action: "stop" | "resume" | "retry" | "steer" | "follow_up"; message?: string };
       checkChild(input.runId);
       if (signal?.aborted) throw signal.reason ?? new Error("aborted");
-      const result = await options.controller!.control(input.runId, input.action, input.message, signal);
+      const result = await options.controller!.control(input.runId, input.action, input.message, signal, subagentRunId);
       return subagentResultForModel(result);
     },
   }] : [];
@@ -168,5 +168,23 @@ export function createSubagentTools(options: SubagentToolOptions): ToolDefinitio
       return info ? subagentResultForModel(info) : { content: [{ type: "text", text: result }], details: {} };
     },
   }] : [];
-  return [...inspectTools, ...delegateTool];
+  // Only a child has a parent to talk to; the root conversation has no target.
+  const messageTool: ToolDefinition[] = options.controller && subagentRunId ? [{
+    name: "message_parent",
+    label: "Message parent",
+    description: "Send a short status, question or blocker to the parent agent that delegated this task. Delivery is asynchronous: keep working on the independent parts of the task and do not block waiting for a reply. Do not use it for the final result.",
+    promptSnippet: "Use message_parent for a blocking question or an important intermediate finding, then continue independent work. The final answer still belongs in your last assistant message.",
+    parameters: Type.Object({ message: Type.String({ minLength: 1, maxLength: 8_000 }) }),
+    executionMode: "sequential",
+    execute: async (_toolCallId, params) => {
+      const result = options.controller!.messageParent(subagentRunId, (params as { message: string }).message);
+      return {
+        content: [{ type: "text" as const, text: result.delivered
+          ? "Message delivered to the parent agent."
+          : "Message recorded for the parent agent; it will be read on the parent's next turn." }],
+        details: result,
+      };
+    },
+  }] : [];
+  return [...inspectTools, ...delegateTool, ...messageTool];
 }

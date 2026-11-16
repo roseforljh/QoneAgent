@@ -123,10 +123,17 @@ export function createSubagentPublisher(options: {
         }
       }
     },
+    forget(id: string) {
+      clear(id);
+      sessions.delete(id);
+      knownParts.delete(id);
+      revisions.delete(id);
+    },
     dispose() {
       for (const id of pending.keys()) clear(id);
       sessions.clear();
       knownParts.clear();
+      revisions.clear();
     },
   };
 }

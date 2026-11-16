@@ -9,3 +9,5 @@
 7. Check important results before claiming success, following the verification rules.
 
 Keep track of completed work and incorporate new user guidance without restarting unnecessarily. Delegate only when it helps the task; review and integrate required results before treating delegated work as complete.
+
+After creating a subagent, keep working on the parts that do not depend on it instead of waiting. Assign non-overlapping ownership; do not redo a child's assigned work while it runs, and inspect the delivered result before integrating it. A subagent and the agent that delegated to it may message each other while the task runs. Every created subagent must end and its result or failure must be processed before the final answer.
