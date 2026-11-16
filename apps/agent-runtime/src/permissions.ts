@@ -2,6 +2,7 @@
 // sandbox: a shell command or third-party tool can perform arbitrary I/O once
 // approved. Keep that distinction visible when changing the mode descriptions.
 
+import { isReadOnlyServerCommand } from "./servers/server-command-policy.js";
 import { createLogger } from "@qone/shared";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { realpathSync } from "node:fs";
@@ -65,12 +66,23 @@ const TOOL_PERMISSIONS: Record<string, PermissionDecision> = {
   control_subagent: "allow",
   run_subagent_workflow: "allow",
   wait_subagent: "allow",
+  message_parent: "allow",
 
   write: "ask",
   edit: "ask",
 
   bash: "ask",
   powershell: "ask",
+
+  // SSH servers: reads are free, changes are approved (server_exec is refined in decide()).
+  server_read_file: "allow",
+  server_open_port: "allow",
+  server_exec: "ask",
+  server_write_file: "ask",
+  server_edit: "ask",
+  server_terminal: "ask",
+  server_upload: "ask",
+  server_download: "ask",
 };
 
 // Protect credential stores, not OS/application directories. Installation
@@ -105,10 +117,15 @@ function insideWorkspace(target: string, workspacePath: string): boolean {
   return resolved === ws || resolved.startsWith(`${ws}${path.sep}`);
 }
 
-const MUTATING_FILE_TOOLS = new Set(["write", "edit", "qone_douyin_download", "qone_app_download"]);
+const MUTATING_FILE_TOOLS = new Set(["write", "edit", "qone_douyin_download", "qone_app_download", "server_download"]);
+const REMOTE_PATH_TOOLS = new Set(["server_read_file", "server_write_file", "server_edit"]);
 
 function pathArgument(ctx: ToolContext): string | undefined {
   const args = ctx.args as Record<string, unknown> | undefined;
+  // Remote server paths are not local files; transfers name their local side explicitly.
+  if (REMOTE_PATH_TOOLS.has(ctx.toolName)) return undefined;
+  if (ctx.toolName === "server_download") return typeof args?.local_path === "string" ? args.local_path : path.join("downloads", "servers");
+  if (ctx.toolName === "server_upload") return typeof args?.local_path === "string" ? args.local_path : undefined;
   const candidate = args?.path ?? args?.file ?? (ctx.toolName === "qone_douyin_download" ? path.join("downloads", "douyin")
     : ctx.toolName === "qone_app_download" ? path.join("downloads", "app")
     : ctx.toolName === "powershell" || ctx.toolName === "bash" ? args?.cwd : undefined);
@@ -142,7 +159,9 @@ export function decide(ctx: ToolContext): PermissionDecision {
     return "deny";
   }
 
-  const base = TOOL_PERMISSIONS[ctx.toolName] ?? "ask";
+  const base = ctx.toolName === "server_exec" && command && isReadOnlyServerCommand(command) ? "allow"
+    : ctx.toolName === "server_terminal" && args?.action !== "write" && args?.action !== "open" ? "allow"
+    : TOOL_PERMISSIONS[ctx.toolName] ?? "ask";
 
   // cwd resolves relative paths; it is not a read sandbox. Only mutations
   // outside the workspace need boundary approval.
@@ -205,13 +224,17 @@ export function toolSource(name: string): "builtin" | "plugin" | "mcp" {
 
 export function permissionNames(toolName: string): string[] {
   if (["dispatch_subagent", "run_subagent_workflow", "control_subagent"].includes(toolName)) return ["agent.delegate"];
-  if (["inspect_subagent", "wait_subagent", "list_subagents"].includes(toolName)) return ["agent.inspect"];
+  if (["inspect_subagent", "wait_subagent", "list_subagents", "message_parent"].includes(toolName)) return ["agent.inspect"];
   if (toolName === "read" || toolName === "grep" || toolName === "find" || toolName === "ls") return ["filesystem.read"];
   if (toolName === "write" || toolName === "edit") return ["filesystem.write"];
   if (toolName === "qone_douyin_download" || toolName === "qone_app_download") return ["filesystem.write", "network.access"];
   if (toolName === "qone_douyin_list_videos" || toolName === "qone_douyin_resolve_author") return ["network.access"];
   if (toolName === "qone_app_inspect" || toolName === "qone_app_list") return ["network.access"];
   if (toolName === "bash" || toolName === "powershell") return ["shell.execute"];
+  if (toolName === "server_exec" || toolName === "server_terminal") return ["server.execute"];
+  if (toolName === "server_write_file" || toolName === "server_edit" || toolName === "server_upload") return ["server.write"];
+  if (toolName === "server_read_file" || toolName === "server_open_port") return ["server.read"];
+  if (toolName === "server_download") return ["filesystem.write"];
   if (toolName.startsWith("mcp:")) return ["mcp.execute"];
   return ["tool.execute"];
 }
