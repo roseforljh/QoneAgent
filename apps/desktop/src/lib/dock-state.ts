@@ -6,7 +6,7 @@ import type { WorkspaceFileLocation, WorkspaceFileTarget } from "./workspace-fil
 
 export type DockView = "session" | "terminal" | "files" | "file" | "git" | "browser" | "mcp" | "skills" | "subagents" | "changes" | "sideChat";
 export type DockFileTarget = WorkspaceFileLocation & Pick<WorkspaceFileTarget, "attachment"> & { path: string; requestId: string };
-export type DockTab = { id: string; view: DockView; workspaceId?: string; browserTarget?: BrowserDockRequest; fileTarget?: DockFileTarget; changesTarget?: RunChangesTarget; refreshNonce?: number };
+export type DockTab = { id: string; view: DockView; workspaceId?: string; /** SSH terminal target. */ serverId?: string; browserTarget?: BrowserDockRequest; fileTarget?: DockFileTarget; changesTarget?: RunChangesTarget; refreshNonce?: number };
 export interface DockScope {
   sessionId?: string;
   workspaceId?: string;

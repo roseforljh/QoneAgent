@@ -48,6 +48,7 @@ import { DOCK_VISIBILITY_TRANSITION } from "../../lib/pane-motion";
 import { NARROW_SCREEN_WIDTH } from "../../lib/sidebar-layout";
 import TerminalView, { type TerminalApi } from "./dock-terminal-view";
 import { closeDockTerminalResource } from "../../lib/dock-terminal-resource";
+import { OPEN_SERVER_TERMINAL_EVENT, useServerStore } from "../../lib/server-state";
 import { DockTerminalActions } from "./dock-terminal-actions";
 import { CodexIcon } from "../ui/CodexIcon";
 import terminalIcon from "../../assets/codex-icons/terminal-light-16.svg";
@@ -85,6 +86,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
   const { t } = useLocale();
   const workspaces = useStore((state) => state.workspaces);
   const sideChats = useStore((state) => state.sideChats);
+  const servers = useServerStore((state) => state.servers);
   const storedScope = useDockState((state) => state.scopes[scopeKey]);
   const updateDock = useDockState((state) => state.update);
   const [openTabs, setOpenTabs] = useState<DockTab[]>(() => storedScope?.openTabs ?? []);
@@ -399,9 +401,19 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
       setActiveTabId(tab.id);
       setCollapsed(false);
     };
+    const openServer = (event: Event) => {
+      const serverId = (event as CustomEvent<string>).detail;
+      setLauncherOpen(false);
+      const tab: DockTab = { id: rid(), view: "terminal", workspaceId, serverId };
+      setOpenTabs((current) => [...current, tab]);
+      setActiveTabId(tab.id);
+      setCollapsed(false);
+    };
     window.addEventListener("qone-toggle-dock-view", toggleDockView);
     window.addEventListener("qone-toggle-dock-panel", toggleDockPanel);
+    window.addEventListener(OPEN_SERVER_TERMINAL_EVENT, openServer);
     return () => {
+      window.removeEventListener(OPEN_SERVER_TERMINAL_EVENT, openServer);
       window.removeEventListener("qone-toggle-dock-view", toggleDockView);
       window.removeEventListener("qone-toggle-dock-panel", toggleDockPanel);
     };
@@ -498,7 +510,8 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
                 const duplicateCount = openTabs.filter((item) => item.view === tab.view).length;
                 const fileName = tab.fileTarget?.path.split(/[\\/]/).at(-1);
                 const workspace = workspaces.find((item) => item.id === (tab.workspaceId ?? workspaceId));
-                const tabBaseLabel = tab.view === "sideChat" ? sideChats[tab.id]?.title ?? label : tab.view === "file" && fileName ? fileName : tab.view === "terminal" && workspace?.path ? workspace.path : label;
+                const serverName = tab.serverId ? servers.find((server) => server.id === tab.serverId)?.name ?? t("servers.deleted") : undefined;
+                const tabBaseLabel = tab.view === "sideChat" ? sideChats[tab.id]?.title ?? label : tab.view === "file" && fileName ? fileName : serverName ?? (tab.view === "terminal" && workspace?.path ? workspace.path : label);
                 const tabLabel = tab.view !== "file" && duplicateCount > 1 ? `${tabBaseLabel} ${openTabs.slice(0, index + 1).filter((item) => item.view === tab.view).length}` : tabBaseLabel;
                 const terminalState = terminalStatus[tab.id]?.status ?? "starting";
                 return (
@@ -570,12 +583,12 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             {openTabs.map((tab) => {
               const active = scopeActive && !collapsed && activeTabId === tab.id;
-              const needsWorkspace = tab.view === "files" || tab.view === "git" || tab.view === "terminal";
+              const needsWorkspace = tab.view === "files" || tab.view === "git" || (tab.view === "terminal" && !tab.serverId);
               const tabWorkspaceId = tab.workspaceId ?? workspaceId;
               return (
                 <div key={tab.id} className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", active ? "flex flex-col" : "hidden")}>
                   {needsWorkspace && !tabWorkspaceId ? <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.noWorkspace")}</p> : null}
-                  {tab.view === "terminal" && tabWorkspaceId && <TerminalView tabId={tab.id} workspaceId={tabWorkspaceId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
+                  {tab.view === "terminal" && (tab.serverId || tabWorkspaceId) && <TerminalView tabId={tab.id} workspaceId={tabWorkspaceId} serverId={tab.serverId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
                   {tab.view === "browser" && <DockBrowserView browserId={tab.id} active={active && !launcherOpen && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} onClose={() => void closeTab(tab.id)} />}
                   {tab.view === "files" && tabWorkspaceId && <FilesView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} fileTarget={tab.fileTarget} active={active} />}
                   {tab.view === "file" && tab.fileTarget && (tab.fileTarget.attachment

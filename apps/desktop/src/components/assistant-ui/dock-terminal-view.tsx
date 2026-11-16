@@ -7,8 +7,8 @@ import type { TerminalStatus } from "../../lib/dock-terminal-session";
 
 export interface TerminalApi { clear: () => void; focus: () => void; restart: () => void }
 
-export default function TerminalView({ tabId, workspaceId, active, apiRef, onStatus }: {
-  tabId: string; workspaceId: string; active: boolean;
+export default function TerminalView({ tabId, workspaceId, serverId, active, apiRef, onStatus }: {
+  tabId: string; workspaceId?: string; serverId?: string; active: boolean;
   apiRef: MutableRefObject<TerminalApi | undefined>;
   onStatus: (tabId: string, status: TerminalStatus, detail?: string) => void;
 }) {
@@ -18,10 +18,10 @@ export default function TerminalView({ tabId, workspaceId, active, apiRef, onSta
   const resourceRef = useRef<DockTerminalResource | undefined>(undefined);
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !cwd) return;
+    if (!host || (!cwd && !serverId)) return;
     // The tab owns this resource. UI cleanup only detaches it; explicit tab/session
     // deletion is the only ordinary action that disposes the process and xterm.
-    const resource = getDockTerminalResource(tabId, cwd);
+    const resource = getDockTerminalResource(tabId, serverId ? { serverId } : { cwd: cwd! });
     resourceRef.current = resource;
     const detach = resource.attach(host);
     const unsubscribe = resource.session.subscribe(({ status, detail }) => onStatus(tabId, status, detail));
@@ -42,7 +42,7 @@ export default function TerminalView({ tabId, workspaceId, active, apiRef, onSta
       apiRef.current = undefined;
       resourceRef.current = undefined;
     };
-  }, [tabId, workspaceId, cwd, apiRef, onStatus]);
+  }, [tabId, workspaceId, serverId, cwd, apiRef, onStatus]);
 
   useEffect(() => {
     if (!active) return;

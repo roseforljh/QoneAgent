@@ -16,6 +16,8 @@ export function CodexIcon({ src, style, ...props }: CodexIconProps) {
     {...props}
     style={{
       display: "inline-block",
+      // Icons are spans; generic `span { flex: 1 }` layout rules must never stretch them.
+      flex: "none",
       pointerEvents: "none",
       backgroundColor: "currentColor",
       maskImage: mask,

@@ -1,0 +1,14 @@
+/* Dialogs opened from inside settings: above its layer (z-index 100). */
+.nested-dialog-overlay { position: fixed; z-index: 120; inset: 0; background: rgb(0 0 0 / 54%); animation: nested-dialog-fade .14s ease-out; }
+.nested-dialog { position: fixed; z-index: 121; top: 50%; left: 50%; display: flex; width: 480px; max-width: calc(100vw - 48px); max-height: calc(100dvh - 48px); flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 18px; outline: 0; background: var(--popover); color: var(--foreground); box-shadow: 0 24px 80px rgb(0 0 0 / 28%); transform: translate(-50%, -50%); animation: nested-dialog-in .18s cubic-bezier(.2, .9, .3, 1.2); }
+.nested-dialog.is-wide { width: 560px; }
+.nested-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 18px 10px 20px; }
+.nested-dialog > header h2 { margin: 0; font-size: 15px; font-weight: var(--q-weight-medium); }
+.nested-dialog > header p { margin: 4px 0 0; color: var(--muted-foreground); font-size: var(--q-text-xs); line-height: 1.5; }
+.nested-dialog-body { display: flex; flex-direction: column; gap: 14px; padding: 6px 20px 16px; overflow-y: auto; }
+.nested-dialog > footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--q-surface-muted) 45%, transparent); }
+@keyframes nested-dialog-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nested-dialog-in { from { opacity: 0; transform: translate(-50%, -48%) scale(.97); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+
+.nested-dialog-close { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background .15s ease, color .15s ease; }
+.nested-dialog-close:hover { background: var(--q-surface-muted); color: var(--foreground); }

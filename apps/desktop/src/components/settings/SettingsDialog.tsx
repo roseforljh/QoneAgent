@@ -53,6 +53,11 @@ import { ConfigurationSection } from "./configuration-section";
 import { ModelsSection } from "./models-section";
 import { SubagentsSection } from "./subagents-section";
 import { CompactionSection } from "./compaction-section";
+import { MemorySection } from "./memory/memory-section";
+import { ServersSection } from "./servers/servers-section";
+import desktopIcon from "../../assets/codex-icons/desktop-light-16.svg";
+import { CodexIcon } from "../ui/CodexIcon";
+import brainIcon from "../../assets/codex-icons/brain-light-16.svg";
 import { SubagentRuntimeSettings } from "./SubagentRuntimeSettings";
 import { SubagentTemporarySettings } from "./SubagentTemporarySettings";
 import { BuiltinSubagentSettings } from "./BuiltinSubagentDialog";
@@ -61,13 +66,16 @@ import { normalizeSubagentLogos, SubagentLogo } from "./subagent-logo";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import "./model-layout.css";
 
-type SettingsSectionId = "general" | "personalization" | "configuration" | "models" | "mcp" | "skills" | "subagents" | "compaction";
+type SettingsSectionId = "general" | "personalization" | "memory" | "servers" | "configuration" | "models" | "mcp" | "skills" | "subagents" | "compaction";
 
 type SettingsSection = {
   id: SettingsSectionId;
   labelKey: `nav.${SettingsSectionId}`;
-  icon: typeof Settings2;
+  icon: (props: { size?: number }) => ReactNode;
 };
+
+const MemoryIcon = ({ size }: { size?: number }) => <CodexIcon src={brainIcon} style={{ width: size, height: size }} />;
+const ServersIcon = ({ size }: { size?: number }) => <CodexIcon src={desktopIcon} style={{ width: size, height: size }} />;
 
 const ORDER_STORAGE_KEY = "qone-settings-section-order";
 const LONG_PRESS_MS = 280;
@@ -75,6 +83,8 @@ const LONG_PRESS_MS = 280;
 const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "general", labelKey: "nav.general", icon: Settings2 },
   { id: "personalization", labelKey: "nav.personalization", icon: CircleUserRound },
+  { id: "memory", labelKey: "nav.memory", icon: MemoryIcon },
+  { id: "servers", labelKey: "nav.servers", icon: ServersIcon },
   { id: "configuration", labelKey: "nav.configuration", icon: MonitorCog },
   { id: "models", labelKey: "nav.models", icon: Bot },
   { id: "mcp", labelKey: "nav.mcp", icon: Command },
@@ -93,9 +103,15 @@ function loadSectionOrder(): SettingsSectionId[] {
     const validOrder = parsed.filter(
       (id): id is SettingsSectionId => typeof id === "string" && validIds.has(id as SettingsSectionId),
     );
-    return validOrder.length === DEFAULT_ORDER.length && new Set(validOrder).size === DEFAULT_ORDER.length
-      ? validOrder
-      : DEFAULT_ORDER;
+    const order = [...new Set(validOrder)];
+    if (!order.length) return DEFAULT_ORDER;
+    // Sections added after the order was saved go to their default position.
+    for (const id of DEFAULT_ORDER) {
+      if (order.includes(id)) continue;
+      const previous = DEFAULT_ORDER.slice(0, DEFAULT_ORDER.indexOf(id)).reverse().find((candidate) => order.includes(candidate));
+      order.splice(previous ? order.indexOf(previous) + 1 : 0, 0, id);
+    }
+    return order;
   } catch {
     return DEFAULT_ORDER;
   }
@@ -107,10 +123,12 @@ function loadSectionOrder(): SettingsSectionId[] {
 
 
 
-function SectionContent({ activeSection }: { activeSection: SettingsSectionId }) {
+function SectionContent({ activeSection, onClose }: { activeSection: SettingsSectionId; onClose: () => void }) {
   switch (activeSection) {
     case "general": return <GeneralSection />;
     case "personalization": return <PersonalizationSection />;
+    case "memory": return <MemorySection />;
+    case "servers": return <ServersSection onClose={onClose} />;
     case "configuration": return <ConfigurationSection />;
     case "models": return <ModelsSection />;
     case "mcp": return <McpSection />;
@@ -327,7 +345,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             <main className="settings-dialog-content" aria-live="polite">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div key={activeSection} className="settings-dialog-section" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -5 }} transition={{ duration: 0.14 }}>
-                  <SectionContent activeSection={activeSection} />
+                  <SectionContent activeSection={activeSection} onClose={onClose} />
                 </motion.div>
               </AnimatePresence>
             </main>
