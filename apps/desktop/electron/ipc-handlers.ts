@@ -69,7 +69,7 @@ export function registerIpcHandlers(
         return secretStore.deleteSecret(args.key);
       }
       case "terminal_spawn": {
-        return terminal.spawn(args.terminalId, args.shell, args.cwd, args.cols, args.rows);
+        return terminal.spawn(args.terminalId, args.shell, args.cwd, args.cols, args.rows, args.shellArgs);
       }
       case "terminal_write": {
         return terminal.write(args.terminalId, args.data);

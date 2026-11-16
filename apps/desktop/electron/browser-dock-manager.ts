@@ -1,7 +1,7 @@
 import { WebContentsView, shell, type BrowserWindow } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { getRuntimeDir } from "./data-paths";
 
 interface BrowserSession {
   id: string;
@@ -11,6 +11,8 @@ interface BrowserSession {
 
 export class BrowserDockManager {
   private sessions = new Map<string, BrowserSession>();
+  /** Preview files this manager wrote; app exit removes exactly these. */
+  private previewFiles = new Set<string>();
   private getMainWindow: () => BrowserWindow | null;
   private cdpPort: number;
 
@@ -88,8 +90,13 @@ export class BrowserDockManager {
   }
 
   public openPreviewExternal(html: string): void {
-    const tmpFile = path.join(os.tmpdir(), `qone-preview-${Date.now()}.html`);
+    // Keep previews under Qone's own runtime dir so closeAll can remove them;
+    // the OS temp dir would accumulate one file per preview forever.
+    const directory = path.join(getRuntimeDir(), "previews");
+    fs.mkdirSync(directory, { recursive: true });
+    const tmpFile = path.join(directory, `preview-${crypto.randomUUID()}.html`);
     fs.writeFileSync(tmpFile, html, "utf8");
+    this.previewFiles.add(tmpFile);
     shell.openPath(tmpFile).catch(() => {});
   }
 
@@ -138,6 +145,10 @@ export class BrowserDockManager {
         }
       }
       this.sessions.delete(browserId);
+      // removeChildView only detaches the view; its renderer process and
+      // webContents survive until destroyed, leaking one per dock open/close.
+      // No beforeunload: a page must not be able to veto the teardown.
+      if (!session.view.webContents.isDestroyed()) session.view.webContents.close({ waitForBeforeUnload: false });
     }
   }
 
@@ -165,5 +176,9 @@ export class BrowserDockManager {
     for (const id of this.sessions.keys()) {
       this.close(id);
     }
+    for (const file of this.previewFiles) {
+      try { fs.rmSync(file, { force: true }); } catch { /* already gone */ }
+    }
+    this.previewFiles.clear();
   }
 }

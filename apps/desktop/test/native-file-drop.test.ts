@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { fileFromNativeInfo } from "../src/lib/native-file-drop";
+import { fileFromNativeInfo, isInsideNativeDropTarget } from "../src/lib/native-file-drop";
 import type { NativeAttachmentFile } from "../src/lib/native-attachment-file";
 
 test("native picker and drop metadata keep the original path for every file type", () => {
@@ -26,4 +26,10 @@ test("native folder metadata keeps its original directory path without reading c
   expect(folder.qoneIsDirectory).toBe(true);
   expect(folder.type).toBe("inode/directory");
   expect(folder.size).toBe(0);
+});
+
+test("drop hit testing uses CSS coordinates without false matches on HiDPI displays", () => {
+  const sidebar = { getBoundingClientRect: () => ({ left: 0, right: 260, top: 0, bottom: 800 }) } as unknown as HTMLElement;
+  expect(isInsideNativeDropTarget(sidebar, { x: 120, y: 200 })).toBe(true);
+  expect(isInsideNativeDropTarget(sidebar, { x: 350, y: 200 })).toBe(false);
 });

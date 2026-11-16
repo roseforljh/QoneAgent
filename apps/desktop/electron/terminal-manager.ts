@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { BrowserWindow } from "electron";
+import { killProcessTree } from "./process-tree";
 
 interface TerminalSession {
   process: ChildProcess;
@@ -10,7 +11,7 @@ export class TerminalManager {
   private sessions = new Map<string, TerminalSession>();
   private getMainWindow: () => BrowserWindow | null;
 
-  constructor(getMainWindow: () => BrowserWindow | null) {
+  constructor(getMainWindow: () => BrowserWindow | null, private spawnShell: typeof spawn = spawn) {
     this.getMainWindow = getMainWindow;
   }
 
@@ -19,11 +20,12 @@ export class TerminalManager {
     shell = "powershell.exe",
     cwd?: string,
     cols = 120,
-    rows = 30
+    rows = 30,
+    shellArgs: string[] = [],
   ): void {
     this.kill(terminalId);
 
-    const child = spawn(shell, [], {
+    const child = this.spawnShell(shell, shellArgs, {
       cwd: cwd || process.cwd(),
       env: {
         ...process.env,
@@ -35,7 +37,8 @@ export class TerminalManager {
       windowsHide: true,
     });
 
-    this.sessions.set(terminalId, { process: child, terminalId });
+    const session: TerminalSession = { process: child, terminalId };
+    this.sessions.set(terminalId, session);
 
     const emit = (channel: string, payload: unknown) => {
       const window = this.getMainWindow();
@@ -43,21 +46,28 @@ export class TerminalManager {
         window.webContents.send(channel, payload);
       }
     };
+    // The same id can be reopened before the old process finishes dying. Only
+    // the session that still owns this id may delete it or report its exit;
+    // otherwise a late close would drop the new terminal and close its UI.
+    const owns = () => this.sessions.get(terminalId) === session;
+    const data = (payload: unknown) => { if (owns()) emit("terminal:data", payload); };
 
     child.stdout?.on("data", (chunk: Buffer) => {
-      emit("terminal:data", { terminalId, data: chunk.toString("utf8") });
+      data({ terminalId, data: chunk.toString("utf8") });
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
-      emit("terminal:data", { terminalId, data: chunk.toString("utf8") });
+      data({ terminalId, data: chunk.toString("utf8") });
     });
 
     child.on("close", () => {
+      if (!owns()) return;
       this.sessions.delete(terminalId);
       emit("terminal:exit", { terminalId });
     });
 
     child.on("error", (error) => {
+      if (!owns()) return;
       emit("terminal:data", { terminalId, data: `\r\n[terminal error: ${error.message}]\r\n` });
       this.sessions.delete(terminalId);
       emit("terminal:exit", { terminalId });
@@ -78,12 +88,9 @@ export class TerminalManager {
   public kill(terminalId: string): void {
     const session = this.sessions.get(terminalId);
     if (session) {
-      try {
-        session.process.kill();
-      } catch {
-        // 忽略
-      }
       this.sessions.delete(terminalId);
+      // A shell's children (builds, REPLs) outlive a plain kill on Windows.
+      killProcessTree(session.process);
     }
   }
 

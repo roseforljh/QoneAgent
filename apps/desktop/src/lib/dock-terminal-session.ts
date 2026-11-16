@@ -73,7 +73,7 @@ export function createDockTerminalSession(options: TerminalSessionOptions) {
       if (disposed) return;
       if (restart) await options.invoke("terminal_kill", { terminalId: options.terminalId });
       if (disposed) return;
-      await options.invoke("terminal_spawn", { terminalId: options.terminalId, shell: "pwsh.exe -NoProfile", cwd: options.cwd, ...options.dimensions() });
+      await options.invoke("terminal_spawn", { terminalId: options.terminalId, shell: "pwsh.exe", shellArgs: ["-NoProfile"], cwd: options.cwd, ...options.dimensions() });
       if (disposed) return; // dispose's queued kill runs after spawn settles.
       setStatus("ready");
       for (const data of pendingInput.splice(0)) write(data);

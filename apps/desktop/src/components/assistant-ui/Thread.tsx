@@ -47,7 +47,7 @@ import { messageById } from "../../lib/store-indexes";
 import { createMessageStructureSelector } from "../../lib/thread-message-structure";
 import { getThreadScrollState, pruneThreadScrollStates } from "../../lib/thread-scroll-state";
 import { useLocale } from "../../localization";
-import { pickNativeAttachmentFiles, pickNativeAttachmentFolder, useNativeFileDrop } from "../../lib/native-file-drop";
+import { pickNativeAttachmentFiles, pickNativeAttachmentFolder } from "../../lib/native-file-drop";
 import { hasDesktopBridge } from "../../store";
 import { getQoneMessageQueue } from "../../lib/qone-message-queue";
 import { ComposerQueueEnterPlugin } from "./composer-queue-enter";
@@ -122,10 +122,13 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
     return { after, between };
   }, [compactions, compactionStatus, autoCompactionStatus, pairedUserIdByAssistant, threadMessages]);
   const errorMessageId = chatRunError && chatRunError.sessionId === currentSessionId ? chatRunErrorMessageId(chatRunError.userMessageId) : undefined;
-  const latestAssistantId = useMemo(
-    () => [...threadMessages].reverse().find((message) => message.role === "assistant" && message.id !== errorMessageId)?.id,
-    [threadMessages, errorMessageId],
-  );
+  const latestAssistantId = useMemo(() => {
+    for (let index = threadMessages.length - 1; index >= 0; index--) {
+      const message = threadMessages[index]!;
+      if (message.role === "assistant" && message.id !== errorMessageId) return message.id;
+    }
+    return undefined;
+  }, [threadMessages, errorMessageId]);
   const dayMessages = threadMessages as unknown as Parameters<typeof messageDaySeparators>[0];
   const daySeparators = useMemo(() => messageDaySeparators(dayMessages, pairedUserIdByAssistant, today), [dayMessages, pairedUserIdByAssistant, today]);
   const dayFormatter = useMemo(() => new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }), [locale]);
@@ -307,7 +310,6 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
       }
     }));
   }, [aui]);
-  useNativeFileDrop(shellRef, onNativeFiles);
   const onEditorReady = useCallback((insert: InsertComposerTool | null) => { insertToolRef.current = insert; }, []);
   const onCommandReady = useCallback((insert: InsertComposerCommand | null) => { insertCommandRef.current = insert; }, []);
   const onCommandSelect = useCallback((command: ComposerCommand) => { insertCommandRef.current?.(command); }, []);

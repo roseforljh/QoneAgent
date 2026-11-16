@@ -5,9 +5,11 @@ import fs from "node:fs";
 import { Notification, type BrowserWindow } from "electron";
 import { getRootDataDir } from "./data-paths";
 import { persistRuntimeSecret } from "./secret-store";
+import { killProcessTree } from "./process-tree";
 
 export class SidecarManager {
   private child: ChildProcess | null = null;
+  private exiting: Promise<void> = Promise.resolve();
   private generation = 0;
   private batchQueue: unknown[] = [];
   private batchTimer: NodeJS.Timeout | null = null;
@@ -53,9 +55,16 @@ export class SidecarManager {
     return { command: "bun", args: ["run", devPath], cwd: path.dirname(devPath) };
   }
 
-  public start(): void {
+  public start(): Promise<void> {
     this.stop();
-    const currentGen = ++this.generation;
+    const generation = ++this.generation;
+    // A newer start/stop invalidates this queued spawn while teardown settles.
+    return this.exiting.then(() => {
+      if (generation === this.generation) this.spawnRuntime(generation);
+    });
+  }
+
+  private spawnRuntime(currentGen: number): void {
     const { command, args, cwd } = this.resolveRuntimeEntry();
 
     const child = spawn(command, args, {
@@ -168,19 +177,20 @@ export class SidecarManager {
   }
 
   public restart(): Promise<void> {
-    this.start();
-    return Promise.resolve();
+    return this.start();
   }
 
   public stop(): void {
+    this.generation++;
     this.flushBatch();
-    if (this.child) {
-      try {
-        this.child.kill();
-      } catch {
-        // 忽略
-      }
-      this.child = null;
-    }
+    const child = this.child;
+    this.child = null;
+    if (!child) return;
+    const closed = new Promise<void>((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
+      child.once("close", () => resolve());
+    });
+    // Join both the wrapper's pipes and the tree walker before opening the next DB.
+    this.exiting = Promise.all([closed, killProcessTree(child)]).then(() => {});
   }
 }

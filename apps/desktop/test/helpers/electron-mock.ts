@@ -33,10 +33,24 @@ export function installElectronMock() {
     contextBridge: {
       exposeInMainWorld: (key: string, value: unknown) => { exposedGlobals[key] = value; },
     },
+    webUtils: { getPathForFile: (file: { path?: string }) => file.path ?? "" },
     safeStorage: { isEncryptionAvailable: () => false },
     Notification: class { show() {} },
     shell: { openExternal: async () => undefined, openPath: async () => "", showItemInFolder: () => undefined },
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showSaveDialog: async () => ({ canceled: true }) },
-    WebContentsView: class { setBounds() {} webContents = { loadURL: async () => undefined, on: () => undefined }; },
+    WebContentsView: class {
+      static instances: { destroyed: boolean }[] = [];
+      closed = false;
+      setBounds() {}
+      setVisible() {}
+      webContents = {
+        loadURL: async () => undefined,
+        on: () => undefined,
+        executeJavaScript: async () => undefined,
+        isDestroyed: () => this.closed,
+        close: () => { this.closed = true; },
+      };
+      constructor() { (this.constructor as unknown as { instances: unknown[] }).instances.push(this); }
+    },
   }));
 }

@@ -8,6 +8,10 @@ import type {
 import { CompositeAttachmentAdapter, SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter } from "@assistant-ui/react";
 import type { NativeAttachmentFile } from "./native-attachment-file";
 import { INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo } from "./native-attachment-file";
+import { getPathForFile, isDesktop } from "./desktop-bridge";
+import { inspectNativeDroppedFile } from "./native-file-drop";
+import { localizeError } from "./error-localization";
+import { useStore } from "../store";
 
 const createAttachmentId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -83,7 +87,19 @@ export class QoneAttachmentAdapter implements AttachmentAdapter {
   ]);
 
   public add(state: { file: File }) {
-    return (state.file as NativeAttachmentFile).qoneLocalPath ? this.native.add(state) : this.browser.add(state);
+    const nativeFile = state.file as NativeAttachmentFile;
+    if (nativeFile.qoneLocalPath) return this.native.add(state);
+    const localPath = isDesktop() ? getPathForFile(state.file) : "";
+    if (localPath) {
+      // 拖入的本地文件或文件夹通过主进程识别真实路径与目录属性
+      return inspectNativeDroppedFile(localPath)
+        .then((file) => this.native.add({ file }))
+        .catch((error) => {
+          useStore.setState({ lastError: localizeError(error) });
+          throw error;
+        });
+    }
+    return this.browser.add(state);
   }
 
   public send(attachment: PendingAttachment) {

@@ -29,6 +29,8 @@ const bridge = exposedGlobals.electronBridge as {
 fakeWindow.electronBridge = bridge;
 
 const { SidecarManager } = await import("../electron/sidecar");
+const { TerminalManager } = await import("../electron/terminal-manager");
+const { createDockTerminalSession } = await import("../src/lib/dock-terminal-session");
 const { registerIpcHandlers } = await import("../electron/ipc-handlers");
 
 const received: unknown[] = [];
@@ -36,16 +38,15 @@ const browserWindow = {
   isDestroyed: () => false,
   webContents: {
     send: (channel: string, payload: unknown) => {
-      if (channel !== "runtime-event") return;
-      // The main process sends batches (arrays) or single events.
-      received.push(payload);
+      if (channel === "runtime-event") received.push(payload);
       for (const listener of rendererListeners.get(channel) ?? []) listener({}, payload);
     },
   },
 };
 
 const sidecar = new SidecarManager(() => browserWindow as never);
-registerIpcHandlers(() => browserWindow as never, sidecar, {} as never, {} as never);
+const terminal = new TerminalManager(() => browserWindow as never);
+registerIpcHandlers(() => browserWindow as never, sidecar, terminal, {} as never);
 
 let unsubscribe: (() => void) | undefined;
 const events: Record<string, unknown>[] = [];
@@ -86,7 +87,7 @@ const send = (command: Record<string, unknown>) => bridge.invoke("runtime_send",
 beforeAll(async () => {
   // The preload listener forwards to `dispatch`; keep a real subscription path.
   unsubscribe = await bridge.listen("runtime-event", (event) => dispatch(event.payload));
-  sidecar.start();
+  await sidecar.start();
 });
 
 afterAll(async () => {
@@ -130,6 +131,62 @@ test("workspace, session and snapshot commands round-trip over the real stdio pr
   const messages = await nextEvent((event) =>
     event.type === "session.messages" && event.sessionId === created.session.id, "session.messages");
   expect(messages.messages).toEqual([]);
+}, 30_000);
+
+test("the dock terminal starts a real shell through preload IPC with separate executable and arguments", async () => {
+  const terminalId = `terminal-${crypto.randomUUID()}`;
+  const marker = `qone-shell-${crypto.randomUUID()}`;
+  const chunks: string[] = [];
+  let ready!: () => void;
+  let fail!: (error: Error) => void;
+  const output = new Promise<void>((resolve, reject) => { ready = resolve; fail = reject; });
+  const timer = setTimeout(() => fail(new Error(`shell output timeout: ${chunks.join("")}`)), 15_000);
+  const session = createDockTerminalSession({
+    terminalId, cwd: workspaceDir, dimensions: () => ({ cols: 100, rows: 30 }),
+    invoke: bridge.invoke,
+    listen: async (callbacks) => {
+      const offData = await bridge.listen("terminal:data", (event) => {
+        const payload = event.payload as { terminalId: string; data: string };
+        if (payload.terminalId === terminalId) callbacks.data(payload.data);
+      });
+      const offExit = await bridge.listen("terminal:exit", (event) => {
+        if ((event.payload as { terminalId: string }).terminalId === terminalId) callbacks.exit();
+      });
+      return () => { offData(); offExit(); };
+    },
+    output: data => {
+      chunks.push(data);
+      if (chunks.join("").includes(marker)) ready();
+      if (data.includes("[terminal error:")) fail(new Error(data));
+    },
+  });
+  let child: import("node:child_process").ChildProcess | undefined;
+  try {
+    await session.start();
+    child = (terminal as unknown as { sessions: Map<string, { process: import("node:child_process").ChildProcess }> }).sessions.get(terminalId)?.process;
+    expect(child?.pid).toBeGreaterThan(0);
+    session.write(`Write-Output ('qone-' + 'shell-${marker.slice("qone-shell-".length)}')\r\n`);
+    await output;
+    expect(session.getSnapshot().status).toBe("ready");
+    expect(chunks.join("")).toContain(marker);
+  } finally {
+    clearTimeout(timer);
+    await session.dispose();
+    if (child && child.exitCode === null && child.signalCode === null) await new Promise<void>(resolve => child!.once("close", () => resolve()));
+  }
+  expect((terminal as unknown as { sessions: Map<string, unknown> }).sessions.size).toBe(0);
+}, 30_000);
+
+test("restarting the real sidecar joins the old process tree before accepting commands", async () => {
+  const oldChild = (sidecar as unknown as { child: import("node:child_process").ChildProcess }).child;
+  const oldPid = oldChild.pid;
+  await bridge.invoke("runtime_restart");
+  const child = (sidecar as unknown as { child: import("node:child_process").ChildProcess }).child;
+  expect(child.pid).not.toBe(oldPid);
+  expect(oldChild.exitCode !== null || oldChild.signalCode !== null).toBe(true);
+  await send({ type: "ping", requestId: "chain-restarted" });
+  const pong = await nextEvent((event) => event.type === "pong" && event.requestId === "chain-restarted", "restarted pong");
+  expect(String(pong.capabilities)).toContain("session.snapshot");
 }, 30_000);
 
 test("no credential-bearing event reaches the renderer and unknown commands still answer", async () => {

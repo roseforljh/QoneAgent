@@ -40,15 +40,16 @@ const getMimeType = (name: string) => {
 export const fileFromNativeInfo = (file: NativeFileInfo): File =>
   createNativeAttachmentFile(file.name, file.isDirectory ? DIRECTORY_MIME_TYPE : getMimeType(file.name), file.path, file.size, file.isDirectory);
 
-export const isInsideNativeDropTarget = (element: HTMLElement | null, position: DropPosition, scale = window.devicePixelRatio || 1) => {
+export const isInsideNativeDropTarget = (element: HTMLElement | null, position: DropPosition) => {
   if (!element) return false;
   const rect = element.getBoundingClientRect();
-  // Tauri supplies physical pixels, while some test/webview paths use CSS pixels.
-  return [
-    { x: position.x, y: position.y },
-    { x: position.x / scale, y: position.y / scale },
-  ].some(({ x, y }) => x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom);
+  return position.x >= rect.left && position.x < rect.right && position.y >= rect.top && position.y < rect.bottom;
 };
+
+export async function inspectNativeDroppedFile(path: string): Promise<File> {
+  const file = await invoke<NativeFileInfo>("inspect_dropped_file", { path });
+  return fileFromNativeInfo(file);
+}
 
 export async function pickNativeAttachmentFiles(): Promise<File[]> {
   const files = await invoke<NativeFileInfo[]>("pick_attachment_files", { title: translateCurrent("attachment.add") });
@@ -73,8 +74,7 @@ export function useNativeFileDrop(
   const addFiles = useCallback(async (paths: string[]) => {
     const files = await Promise.all(paths.map(async (path) => {
       try {
-        const file = await invoke<NativeFileInfo>("inspect_dropped_file", { path });
-        return fileFromNativeInfo(file);
+        return await inspectNativeDroppedFile(path);
       } catch (error) {
         useStore.setState({ lastError: localizeError(error) });
         return null;

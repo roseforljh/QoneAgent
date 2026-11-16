@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 const listeners = new Map<string, Set<(...args: any[]) => void>>();
 
@@ -55,6 +55,13 @@ const bridge = {
   convertFileSrc: (filePath: string) => {
     const normalized = filePath.replace(/\\/g, "/");
     return `asset://localhost/${normalized.startsWith("/") ? normalized.slice(1) : normalized}`;
+  },
+  getPathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
   },
 };
 
