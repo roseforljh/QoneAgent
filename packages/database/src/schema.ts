@@ -24,6 +24,7 @@ export const messages = sqliteTable(
     role: text("role").notNull(), // user | assistant | system | tool
     content: text("content").notNull(),
     quote: text("quote"), // JSON: selected text annotation metadata
+    communication: text("communication"), // JSON: structured agent sender and recipient
     parts: text("parts"), // ordered visible Pi assistant parts; null for legacy messages
     rawMessage: text("raw_message"), // JSON: native Pi transcript messages for restart fidelity
     attachments: text("attachments"),
@@ -114,6 +115,7 @@ export const subagentMessages = sqliteTable("subagent_messages", {
   content: text("content").notNull(),
   parts: text("parts"),
   rawMessage: text("raw_message"),
+  communication: text("communication"),
   createdAt: integer("created_at").notNull(),
 }, (t) => [index("idx_subagent_messages_run").on(t.subagentRunId, t.sequence)]);
 

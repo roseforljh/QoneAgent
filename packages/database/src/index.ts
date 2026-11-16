@@ -67,7 +67,7 @@ function openDatabase(path: string, driver: SqliteDriver, initialize: (sqlite: D
 }
 
 export function closeDb(db: Db) {
-  db.$client.close();
+  db.$client.close(true);
 }
 
 // Bootstrap migration mirrors drizzle/0000_initial.sql plus later schema changes.
@@ -92,6 +92,7 @@ function migrate(sqlite: Database) {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       quote TEXT,
+      communication TEXT,
       parts TEXT,
       raw_message TEXT,
       attachments TEXT,
@@ -239,6 +240,7 @@ function migrate(sqlite: Database) {
   }
   if (!messageColumns.has("goal_id")) sqlite.exec("ALTER TABLE messages ADD COLUMN goal_id TEXT");
   if (!messageColumns.has("quote")) sqlite.exec("ALTER TABLE messages ADD COLUMN quote TEXT");
+  if (!messageColumns.has("communication")) sqlite.exec("ALTER TABLE messages ADD COLUMN communication TEXT");
   const runColumns = new Set(sqlite.query("PRAGMA table_info(runs)").all().map((column) => (column as { name: string }).name));
   if (!runColumns.has("origin")) sqlite.exec("ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'");
   if (!runColumns.has("goal_id")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_id TEXT");
@@ -312,6 +314,7 @@ function migrate(sqlite: Database) {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       parts TEXT,
+      communication TEXT,
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_subagent_messages_run ON subagent_messages(subagent_run_id, sequence);
@@ -330,5 +333,7 @@ function migrate(sqlite: Database) {
     ["context_message_count", "INTEGER NOT NULL DEFAULT 0"], ["token_usage", "TEXT"],
   ];
   for (const [name, definition] of additions) if (!subagentColumns.has(name)) sqlite.exec(`ALTER TABLE subagent_runs ADD COLUMN ${name} ${definition}`);
-  if (!sqlite.query("PRAGMA table_info(subagent_messages)").all().some((column) => (column as { name: string }).name === "raw_message")) sqlite.exec("ALTER TABLE subagent_messages ADD COLUMN raw_message TEXT");
+  const subagentMessageColumns = new Set(sqlite.query("PRAGMA table_info(subagent_messages)").all().map(column => (column as { name: string }).name));
+  if (!subagentMessageColumns.has("raw_message")) sqlite.exec("ALTER TABLE subagent_messages ADD COLUMN raw_message TEXT");
+  if (!subagentMessageColumns.has("communication")) sqlite.exec("ALTER TABLE subagent_messages ADD COLUMN communication TEXT");
 }
