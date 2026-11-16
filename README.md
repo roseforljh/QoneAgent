@@ -20,8 +20,8 @@ bun run apps/agent-runtime/test/smoke.ts
 默认保存到 Windows 用户目录 `C:\Users\<用户名>\.qone\`：
 
 - `runtime/qone.db`：SQLite 索引和持久化数据
-- `config/settings.db`：模型配置、全局设置和权限
-- `mcp/servers.db`：MCP 服务配置；凭据仍保存在 Windows Credential Manager
+- `settings.json`：模型、MCP、权限和偏好的唯一配置源，用户和 AI 均可直接编辑，保存后自动生效
+- `config/state.json`：MCP 图标等内部缓存；凭据仍使用本机加密存储
 - `runtime/window-state.json`、`runtime/webview/`：窗口状态和 WebView 数据
 - `Qone.md`：全局提示词，直接放在数据根目录
 - `system-prompts/01-identity.md` 至 `08-communication.md`：固定 System Prompt 的八个源码模块
@@ -38,11 +38,11 @@ bun run apps/agent-runtime/test/smoke.ts
 
 测试时可用 `QONE_DATA_DIR`、`QONE_DB`、`QONE_LOG_DIR` 覆盖数据、数据库和日志路径。
 
-项目、消息、会话和运行索引由 `runtime/qone.db` 保存。`project.json`、`session.json` 是目录说明，由数据库重建。配置和 MCP 使用各自目录内的 SQLite 数据库；原统一数据库内的配置在启动时迁入对应数据库，不保留旧路径回退读取。Skill 安装内容和缓存、插件代码和私有数据使用各自的目录。插件加载模块已有目录支持，主运行时尚未启用插件执行。
+项目、消息、会话和运行索引由 `runtime/qone.db` 保存。`project.json`、`session.json` 是目录说明，由数据库重建。配置只保存在 `settings.json`，不再与数据库双向同步，也不创建配置数据库或执行旧库迁移。直接在主对话中要求安装 MCP、安装 Skill 或修改参数，AI 会通过文件操作完成，客户端监听文件并刷新列表和后续运行的会话；正在执行的任务不被强制打断。Skill 安装内容和缓存、插件代码和私有数据使用各自的目录。插件加载模块已有目录支持，主运行时尚未启用插件执行。
 
 全局提示词只从数据根目录的 `Qone.md` 读取，项目规则读取选定工作区根目录的 `AGENTS.md` 等 Pi 支持文件，不向用户目录或其他父目录扫描。桌面和运行时都按同一个 `QONE_DATA_DIR` 解析目录，WebView 数据路径与源码、安装位置无关。启用内置 `ponytail` 时，运行时会在项目根目录的 `AGENTS.md` 中维护带标记的 Ponytail 提示词区块；文件不存在会自动创建，关闭时只移除该区块并保留项目原有规则。
 
-新的 `Qone.md` 默认包含 Ponytail 全局规则，默认内容维护在 `apps/agent-runtime/src/default-global-instructions.md` 并随运行时打包，后续默认规则可继续追加到该文件。初始化只创建缺失文件，已有文字和主动清空的文件都不会被覆盖，也不会在每次启动时重复追加。Ponytail 小节受内置技能开关约束；关闭时运行时会在全局指导后明确要求忽略该小节，其他全局规则继续适用。技能更新按钮只更新技能文件，不覆盖用户维护的 `Qone.md`。修改全局提示词后重启开发运行时，以刷新已存在的会话。
+新的 `Qone.md` 默认包含 Ponytail 全局规则，默认内容维护在 `apps/agent-runtime/src/default-global-instructions.md` 并随运行时打包，后续默认规则可继续追加到该文件。初始化只创建缺失文件，已有文字和主动清空的文件都不会被覆盖，也不会在每次启动时重复追加。Ponytail 小节受内置技能开关约束；关闭时运行时会在全局指导后明确要求忽略该小节，其他全局规则继续适用。技能更新按钮只更新技能文件，不覆盖用户维护的 `Qone.md`。修改全局提示词、在 `skills/installed/` 安装或删除技能后自动刷新，无需重启。
 
 固定 System Prompt 与 `Qone.md` 分开。运行时按 Identity → Behavior → Execution → Web Access → Coding → Verification → Safety → Communication 的显式顺序读取八个 Markdown 文件，统一换行并以两个换行拼接，作为 Pi 自定义 System Prompt 的首段；用户指导、项目规则、技能及工具上下文仍由现有机制放在后续部分。安装时从随运行时打包的 Markdown 创建缺失模块，保留已有内容；空白或不可读的模块会报错，额外文件不参与加载。相同版本和模块内容产生相同的固定前缀；完整请求仍会随任务上下文改变，实际缓存命中由模型服务决定。修改模块后重启开发运行时以刷新已存在的会话。
 
