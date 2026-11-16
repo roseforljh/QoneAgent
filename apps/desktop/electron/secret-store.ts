@@ -34,15 +34,21 @@ function readSecretFile(): SecretFileContent {
   if (!fs.existsSync(file)) return {};
   try {
     const raw = fs.readFileSync(file, "utf8");
-    return JSON.parse(raw) as SecretFileContent;
+    const content: unknown = JSON.parse(raw);
+    if (!content || typeof content !== "object" || Array.isArray(content)) throw new Error();
+    return content as SecretFileContent;
   } catch {
-    return {};
+    throw new Error("Stored credentials could not be read");
   }
 }
 
 function writeSecretFile(content: SecretFileContent): void {
   const file = getSecretsFilePath();
-  fs.writeFileSync(file, JSON.stringify(content, null, 2), "utf8");
+  const staging = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(staging, JSON.stringify(content, null, 2), "utf8");
+    fs.renameSync(staging, file);
+  } finally { fs.rmSync(staging, { force: true }); }
 }
 
 const FALLBACK_KEY = crypto.scryptSync("qone-local-auth-fallback", "salt", 32);
@@ -66,40 +72,37 @@ function fallbackDecrypt(encoded: string): string {
 }
 
 export function setSecret(key: string, value: string): void {
-  validateSecretKey(key);
+  storeSecrets({ [key]: value }, []);
+}
+
+function storeSecrets(values: Record<string, string>, removeKeys: string[]): void {
+  for (const key of [...Object.keys(values), ...removeKeys]) validateSecretKey(key);
   const content = readSecretFile();
-  if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = safeStorage.encryptString(value);
-    content[key] = {
-      data: encrypted.toString("base64"),
-      isSafeStorage: true,
-    };
-  } else {
-    content[key] = {
-      data: fallbackEncrypt(value),
-      isSafeStorage: false,
-    };
+  for (const key of removeKeys) delete content[key];
+  const available = safeStorage.isEncryptionAvailable();
+  for (const [key, value] of Object.entries(values)) {
+    content[key] = { data: available ? safeStorage.encryptString(value).toString("base64") : fallbackEncrypt(value), isSafeStorage: available };
   }
   writeSecretFile(content);
 }
 
-export function getSecret(key: string): string | null {
-  validateSecretKey(key);
+/** Read a batch atomically; missing entries are omitted, unreadable entries are errors. */
+export function getSecrets(keys: string[]): Record<string, string> {
+  for (const key of keys) validateSecretKey(key);
   const content = readSecretFile();
-  const entry = content[key];
-  if (!entry) return null;
-  try {
-    if (entry.isSafeStorage) {
-      if (safeStorage.isEncryptionAvailable()) {
-        const buffer = Buffer.from(entry.data, "base64");
-        return safeStorage.decryptString(buffer);
-      }
-      return null;
-    }
-    return fallbackDecrypt(entry.data);
-  } catch {
-    return null;
-  }
+  return Object.fromEntries(keys.flatMap(key => {
+    const entry = content[key];
+    if (!entry) return [];
+    try {
+      if (entry.isSafeStorage && !safeStorage.isEncryptionAvailable()) throw new Error();
+      const value = entry.isSafeStorage ? safeStorage.decryptString(Buffer.from(entry.data, "base64")) : fallbackDecrypt(entry.data);
+      return [[key, value]];
+    } catch { throw new Error("Stored credentials could not be decrypted"); }
+  }));
+}
+
+export function getSecret(key: string): string | null {
+  return getSecrets([key])[key] ?? null;
 }
 
 export function deleteSecret(key: string): void {
@@ -117,9 +120,19 @@ export function deleteSecret(key: string): void {
  * events never reach the renderer; they become a redacted `mcp.oauth.saved`
  * acknowledgement. Returns null when the event must not be forwarded at all.
  */
-export function persistRuntimeSecret(event: unknown): unknown | null {
+export function persistRuntimeSecret(event: unknown, acknowledge?: (requestId: string, saved: boolean) => void): unknown | null {
   if (!event || typeof event !== "object") return event;
   const record = event as Record<string, unknown>;
+  if (record.type === "claude-code.credentials") {
+    const { requestId, serverId, values, removeKeys } = record;
+    if (typeof requestId !== "string" || typeof serverId !== "string") return null;
+    try {
+      if (!values || typeof values !== "object" || Array.isArray(values) || Object.values(values).some(value => typeof value !== "string") || !Array.isArray(removeKeys) || removeKeys.some(key => typeof key !== "string")) throw new Error();
+      storeSecrets(values as Record<string, string>, removeKeys as string[]);
+    } catch { acknowledge?.(requestId, false); return null; }
+    acknowledge?.(requestId, true);
+    return [...new Set([...removeKeys as string[], ...Object.keys(values as object)])].map(key => ({ type: "mcp.oauth.saved", serverId, key }));
+  }
   const key = record.key;
   if (record.type === "mcp.oauth.token" || record.type === "mcp.oauth.credential") {
     const secret = record.type === "mcp.oauth.token" ? record.accessToken : record.value;

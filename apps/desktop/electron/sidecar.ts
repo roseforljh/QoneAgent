@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { Notification, type BrowserWindow } from "electron";
 import { getRootDataDir } from "./data-paths";
-import { persistRuntimeSecret } from "./secret-store";
+import { getSecrets, persistRuntimeSecret } from "./secret-store";
 import { killProcessTree } from "./process-tree";
 
 export class SidecarManager {
@@ -115,7 +115,24 @@ export class SidecarManager {
     // Batched payloads arrive as NDJSON arrays; intercept every event so no
     // credential-bearing event slips through to the renderer.
     const events = (Array.isArray(parsed) ? parsed : [parsed])
-      .map((event) => persistRuntimeSecret(event))
+      .flatMap((event) => {
+        if (event?.type === "mcp.credentials.request") {
+          const { requestId, keys } = event;
+          if (typeof requestId !== "string") return [];
+          let values: Record<string, string> = {}, ok = false;
+          try {
+            if (!Array.isArray(keys) || keys.some(key => typeof key !== "string")) throw new Error();
+            values = getSecrets(keys);
+            ok = true;
+          } catch { /* A read failure is not a missing credential or an expired login. */ }
+          void this.send(JSON.stringify({ type: "mcp.credentials.restored", requestId, values, ok })).catch(() => {});
+          return [];
+        }
+        const persisted = persistRuntimeSecret(event, (requestId, saved) => {
+          void this.send(JSON.stringify({ type: "claude-code.credentials.saved", requestId, saved })).catch(() => {});
+        });
+        return Array.isArray(persisted) ? persisted : [persisted];
+      })
       .filter((event): event is object => event !== null);
 
     for (const event of events) {

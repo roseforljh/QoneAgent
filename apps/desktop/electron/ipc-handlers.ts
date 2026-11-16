@@ -2,6 +2,7 @@ import { ipcMain, shell, type BrowserWindow } from "electron";
 import { SidecarManager } from "./sidecar";
 import { TerminalManager } from "./terminal-manager";
 import { BrowserDockManager } from "./browser-dock-manager";
+import { DesktopUpdater } from "./updater";
 import * as secretStore from "./secret-store";
 import * as fileDialogs from "./file-dialogs";
 
@@ -9,7 +10,8 @@ export function registerIpcHandlers(
   getMainWindow: () => BrowserWindow | null,
   sidecar: SidecarManager,
   terminal: TerminalManager,
-  browserDock: BrowserDockManager
+  browserDock: BrowserDockManager,
+  updater: DesktopUpdater = new DesktopUpdater()
 ): void {
   // 统一 invoke 入口或分命 handlers
   ipcMain.handle("desktop_invoke", async (_event, cmd: string, args: Record<string, any> = {}) => {
@@ -150,6 +152,12 @@ export function registerIpcHandlers(
       case "shell_show_item_in_folder": {
         shell.showItemInFolder(args.path);
         return;
+      }
+      case "update_check": {
+        return updater.check(typeof args.timeout === "number" ? args.timeout : undefined);
+      }
+      case "update_download_and_install": {
+        return updater.downloadAndInstall(typeof args.version === "string" ? args.version : undefined);
       }
       default:
         throw new Error(`unknown command: ${cmd}`);
