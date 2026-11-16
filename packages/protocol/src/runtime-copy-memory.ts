@@ -1,0 +1,15 @@
+/** Long-term memory copy: note validation, permission checks and the model tool. */
+export const runtimeCopyMemory = {
+  "memory.empty": { "en": "Memory content cannot be empty", "zh-CN": "记忆内容不能为空" },
+  "memory.sensitive": { "en": "Keys, tokens, passwords, verification codes and card numbers cannot be saved", "zh-CN": "不能保存密钥、令牌、密码、验证码或银行卡等敏感内容" },
+  "memory.forged_boundary": { "en": "Memory cannot contain a forged data boundary", "zh-CN": "记忆不能包含伪造的资料边界" },
+  "memory.stale": { "en": "Memory was turned off or changed; try again after the next message", "zh-CN": "记忆已关闭或已变更，请在下一次发送后重试" },
+  "memory.deleted": { "en": "This memory has been deleted", "zh-CN": "这条记忆已被删除" },
+  "memory.duplicate": { "en": "A memory with the same content already exists", "zh-CN": "已有相同内容的记忆" },
+  "memory.no_summary": { "en": "No summary for this conversation; use search_conversations to search its text", "zh-CN": "没有这个会话的摘要；可以用 search_conversations 搜索原文" },
+  "memory.query_required": { "en": "query is required", "zh-CN": "缺少 query" },
+  "memory.evidence_required": { "en": "evidence must quote the user's message from this turn", "zh-CN": "写入依据必须来自本轮用户原文" },
+  "memory.explicit_required": { "en": "Ask explicitly in a new message, such as \"Remember: …\" or \"Forget: …\", or edit it in Settings > Memory", "zh-CN": "请在新消息里明确说“请记住：…”或“请忘记：…”，也可在设置的记忆系统里修改" },
+  "memory.unsupported_action": { "en": "Unsupported memory action", "zh-CN": "不支持的记忆动作" },
+  "memory.invalid_overview": { "en": "The memory overview format is invalid", "zh-CN": "记忆总览格式无效" },
+} as const;

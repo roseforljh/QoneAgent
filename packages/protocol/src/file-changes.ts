@@ -27,22 +27,10 @@ export function toolFileChanges(result: unknown): ToolFileChange[] {
   });
 }
 
-/** Keep large mutation evidence intact. Never slice JSON into an invalid
- * string: tool parts and ToolCallRepo must restore the same structured data.
- */
+/** Preserve complete JSON results for reloads; presentation can bound its own preview. */
 export function persistedToolResult(value: unknown): unknown {
   if (value === undefined) return "";
   try {
-    const serialized = JSON.stringify(value);
-    if (serialized === undefined) return "";
-    if (serialized.length <= 20_000) return value;
-    const source = record(value);
-    const details = record(source?.details);
-    if (toolFileChanges(value).length || typeof details?.patch === "string") {
-      const content = Array.isArray(source?.content) ? source.content : [];
-      const text = content.flatMap((block) => { const item = record(block); return item?.type === "text" && typeof item.text === "string" ? [item.text] : []; }).join("\n");
-      return { ...source, content: [{ type: "text", text: text.length > 20_000 ? text.slice(0, 20_000) + "…" : text }], details };
-    }
-    return serialized.slice(0, 20_000);
+    return JSON.stringify(value) === undefined ? "" : value;
   } catch { return String(value); }
 }

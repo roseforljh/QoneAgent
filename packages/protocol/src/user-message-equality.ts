@@ -1,7 +1,7 @@
 import type { MessageAttachmentInfo } from "./index.js";
 
 type UserInput = { content: string; attachments?: readonly MessageAttachmentInfo[] };
-type HistoryMessage = UserInput & { id: string; role: string };
+type HistoryMessage = UserInput & { id: string; role: string; communication?: unknown };
 
 /** Compare the submitted payload, including attachment order and file identity. */
 export function sameUserInput(left: UserInput, right: UserInput): boolean {
@@ -21,7 +21,7 @@ export function repeatedUserMessageId(history: readonly HistoryMessage[], input:
   let id: string | undefined;
   for (let index = history.length - 1; index >= 0; index--) {
     const message = history[index]!;
-    if (message.role !== "user" || !sameUserInput(message, input)) break;
+    if (message.communication || message.role !== "user" || !sameUserInput(message, input)) break;
     id = message.id;
   }
   return id;

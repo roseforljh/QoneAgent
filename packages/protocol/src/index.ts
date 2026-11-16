@@ -14,6 +14,8 @@ export { ACTIVITY_TITLE_TOOL, ACTIVITY_TITLE_MAX_LENGTH, activityTitleFromArgs }
 import type { FilePreviewInfo } from "./file-preview";
 import { isRuntimeMessageKey, type RuntimeLocale, type LocalizedErrorInfo, type RuntimeMessageKey } from "./localized-error";
 import { isEccBuiltinSubagentId } from "./builtin-subagents/catalog";
+import { serverCommandSchemas, type ServerCommand, type ServerEvent } from "./servers";
+export * from "./servers";
 export {
   ECC_BUILTIN_SUBAGENT_REVISION,
   ECC_BUILTIN_SUBAGENT_SOURCE,
@@ -116,6 +118,11 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "file.preview"; requestId: string; workspaceId?: string; path: string; full?: boolean }
   | { type: "global-prompt.get"; requestId: string }
   | { type: "global-prompt.set"; requestId: string; content: string }
+  | { type: "memory.get"; requestId: string }
+  | { type: "memory.enabled.set"; requestId: string; enabled: boolean }
+  | { type: "memory.note.save"; requestId: string; id?: string; content: string }
+  | { type: "memory.note.delete"; requestId: string; id: string }
+  | { type: "memory.summary.delete"; requestId: string; id: string }
   | { type: "skills.list"; requestId: string; cwd?: string }
   | { type: "skills.cloud.list"; requestId: string; collection: "popular" | "trending" | "official"; page: number; query?: string }
   | { type: "skills.cloud.install"; requestId: string; source: string; skillId: string }
@@ -179,7 +186,8 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "tool.approve"; requestId: string; approvalId: string }
   | { type: "tool.reject"; requestId: string; approvalId: string; reason?: string }
   | { type: "secret.set"; requestId: string; key: string; value: string }
-  | { type: "secret.delete"; requestId: string; key: string });
+  | { type: "secret.delete"; requestId: string; key: string }
+  | ServerCommand);
 
 // ---------- Events (Runtime -> GUI) ----------
 
@@ -223,6 +231,7 @@ export interface LiveAssistantMessage {
 }
 
 export type RuntimeEvent =
+  | ServerEvent
   | { type: "pong"; requestId: string; capabilities?: string[]; compaction?: CompactionSettingsInfo }
   | { type: "session.compacted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo }
   | { type: "session.compactionInterrupted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo; message: string }
@@ -289,6 +298,7 @@ export type RuntimeEvent =
   | { type: "file.read"; requestId?: string; workspaceId: string; path: string; content: string; binary?: boolean; truncated?: boolean }
   | { type: "file.preview"; requestId: string; workspaceId?: string; path: string; file: FilePreviewInfo }
   | { type: "global-prompt"; requestId: string; content: string; path: string; directory?: string }
+  | { type: "memory.state"; requestId?: string; state: MemoryStateInfo }
   | { type: "terminal.data"; terminalId: string; data: string }
   | { type: "terminal.exit"; terminalId: string }
   | { type: "error"; requestId?: string; message: string; localization?: LocalizedErrorInfo };
@@ -312,7 +322,15 @@ export interface SessionSearchResult {
   snippet?: string;
 }
 
+export interface AgentCommunicationInfo {
+  fromId: string;
+  fromTitle: string;
+  toId: string;
+  toTitle: string;
+}
+
 export interface MessageInfo {
+  communication?: AgentCommunicationInfo;
   id: string;
   sessionId: string;
   runId?: string;
@@ -327,6 +345,17 @@ export interface MessageInfo {
 }
 
 export type GoalStatus = "active" | "paused" | "blocked" | "complete";
+
+export interface MemoryNoteInfo { id: string; content: string; origin: "manual" | "chat"; createdAt: number; updatedAt: number }
+/** One idle conversation's task summary; the id is the session id. */
+export interface MemorySummaryInfo { id: string; title: string; content: string; sourceUpdatedAt: number; generatedAt: number }
+export interface MemoryStateInfo {
+  enabled: boolean;
+  overview?: { content: string; generatedAt: number };
+  summaries: MemorySummaryInfo[];
+  notes: MemoryNoteInfo[];
+  stats: { calls: number; tokens: number; lastUpdatedAt: number };
+}
 
 export interface GoalInfo {
   id: string;
@@ -491,6 +520,7 @@ export interface SubagentNotificationInfo {
 }
 
 export interface SubagentMessageInfo {
+  communication?: AgentCommunicationInfo;
   /** Runtime-expanded input; the original task or follow-up is shown instead. */
   internal?: boolean;
   id: string;
@@ -835,6 +865,7 @@ const subagentConfig = z.object({
   updatedAt: z.number().int().nonnegative(),
 });
 const commandSchemas: Record<string, z.ZodTypeAny> = {
+  ...serverCommandSchemas,
   ping: z.object({ type: z.literal("ping"), ...request }),
   "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id }),
   "session.side-chat.create": z.object({ type: z.literal("session.side-chat.create"), ...request, sessionId: id, queueItemId: id.optional(), title: id.optional() }),
@@ -899,6 +930,11 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "agent.permission-mode.set": z.object({ type: z.literal("agent.permission-mode.set"), ...request, sessionId: id, permissionMode: z.enum(["ask", "auto", "full"]) }),
   "global-prompt.get": z.object({ type: z.literal("global-prompt.get"), ...request }),
   "global-prompt.set": z.object({ type: z.literal("global-prompt.set"), ...request, content: z.string().max(200_000) }),
+  "memory.get": z.object({ type: z.literal("memory.get"), ...request }),
+  "memory.enabled.set": z.object({ type: z.literal("memory.enabled.set"), ...request, enabled: z.boolean() }),
+  "memory.note.save": z.object({ type: z.literal("memory.note.save"), ...request, id: id.optional(), content: z.string().max(100_000) }),
+  "memory.note.delete": z.object({ type: z.literal("memory.note.delete"), ...request, id }),
+  "memory.summary.delete": z.object({ type: z.literal("memory.summary.delete"), ...request, id }),
   "agent.steer": z.object({ type: z.literal("agent.steer"), ...request, sessionId: id, runId: id, queueItemId: id, message: z.string(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length), "Message or valid attachments required"),
   "queue.upsert": z.object({ type: z.literal("queue.upsert"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
   "queue.edit": z.object({ type: z.literal("queue.edit"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
