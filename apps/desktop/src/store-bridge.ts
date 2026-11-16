@@ -5,7 +5,7 @@ import { localizeError } from "./lib/error-localization";
 import { invoke, listen, openUrl } from "./lib/desktop-bridge";
 import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
 import { DEFAULT_RUN_PERMISSION_MODE, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults } from "./lib/run-options";
-import { getQoneMessageQueue } from "./lib/qone-message-queue";
+import { getQoneMessageQueue, prunePausedQueues } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
 import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
 import { dispatchMemoryError, dispatchMemoryState } from "./lib/memory-state";
@@ -98,7 +98,7 @@ let wired = false;
 let lastSequence = -1;
 const lastRunSequences = new Map<string, number>();
 export function initRuntimeBridge(dependencies: ReturnType<typeof import("./store").bridgeDependencies>) {
-  const { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
+  const { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
   if (wired) return;
   if (!hasDesktopBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
@@ -114,6 +114,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       setMetadataLookupSupported(false);
       pendingAgentRuns.clear();
       stopRequestedSessionIds.clear();
+      forceStopRequestedSessionIds.clear();
       stopRequests.clear();
       pendingTitleRequests.clear();
       pendingSessionMessageRequests.clear();
@@ -183,7 +184,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     const msg = raw;
     if (msg.type === "error" && msg.localization) msg.message = localizeError(msg);
     if (handleSideConversationEvent(msg)) continue;
-    if (msg.type === "agent.event" && msg.event.scope === "subagent") {
+    if (msg.type === "agent.event" && msg.event.scope === "subagent" && !msg.event.sourceSubagentId) {
       lastSequence = Math.max(lastSequence, msg.event.sequence);
       continue;
     }
@@ -201,7 +202,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       : "sessionId" in msg ? msg.sessionId
       : "subagent" in msg ? msg.subagent.parentSessionId
       : msg.type === "goal.updated" ? msg.goal.sessionId
-      : msg.type === "error" && msg.requestId ? pendingAgentRuns.get(msg.requestId)?.sessionId
+      : msg.type === "error" && msg.requestId ? pendingAgentRuns.get(msg.requestId)?.sessionId ?? stopRequests.get(msg.requestId)?.sessionId
       : undefined;
     const eventStore = sessionStore(useStore, targetSessionId);
     const s = eventStore.getState();
@@ -216,6 +217,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           const { sessionId } = pendingAgentRuns.get(msg.requestId)!;
           // A pong only acknowledges that runtime_send accepted the command;
           // it does not confirm that the user turn is durable yet.
+          requestSessionMessages(sessionId);
           void s.send({ type: "session.runs", requestId: rid(), sessionId });
           break;
         }
@@ -307,7 +309,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (eventStore.getState().creatingSession && eventStore.getState().pendingMessage !== undefined) {
           queueMicrotask(() => {
             const state = eventStore.getState();
-          if (state.currentSessionId === msg.session.id && state.pendingMessage !== undefined) state.runAgent(state.pendingMessage, undefined, state.pendingAttachments, undefined, state.pendingGoal, msg.session.id, state.pendingQuote);
+          if (state.currentSessionId === msg.session.id && state.pendingMessage !== undefined) state.runAgent(state.pendingMessage, undefined, state.pendingAttachments, undefined, state.pendingGoal, msg.session.id, state.pendingQuote, undefined, state.pendingServerIds);
           });
         }
         break;
@@ -330,6 +332,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         // is not snapshotted back into the cache by switchSessionState.
         const liveIds = new Set([...msg.sessions.map((session) => session.id),
           ...(msg.sideChats ?? Object.values(state.sideChats)).map((session) => session.id)]);
+        prunePausedQueues(liveIds);
         const switchState = selectionChanged ? switchSessionState(state, selected?.id) : undefined;
         const cachedIds = Object.keys(switchState?.backgroundSessions ?? state.backgroundSessions);
         const staleIds = cachedIds.filter((id) => !liveIds.has(id));
@@ -416,7 +419,17 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         // conversation snapshot. The request id is the only ordering signal
         // that survives the runtime IPC boundary.
         if (!isLatestRequest) break;
-        const savedMessageIds = new Set(msg.messages.map((message) => message.id));
+        const savedMessages = new Map(msg.messages.map(message => [message.id, message]));
+        const savedMessageIds = new Set(savedMessages.keys());
+        for (const pending of pendingAgentRuns.values()) {
+          if (pending.sessionId !== msg.sessionId) continue;
+          const saved = savedMessages.get(pending.userMessageId);
+          if (!saved?.runId) continue;
+          const wasUnbound = !pending.runId;
+          pending.runId = saved.runId;
+          if (pending.queueItemId) getQoneMessageQueue(msg.sessionId)?.settleSend(pending.queueItemId, true);
+          if (wasUnbound) void s.send({ type: "session.runs", requestId: rid(), sessionId: msg.sessionId });
+        }
         for (const [requestId, pending] of pendingAgentRuns) {
           // A run may produce an up-to-date snapshot before an older in-flight
           // query returns. Do not drop the protection until the run is over;
@@ -498,8 +511,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           eventStore.setState((st) => {
             const calls = msg.toolCalls.map((t) => ({
                 toolCallId: t.id.startsWith(`${t.runId}:`) ? t.id.slice(t.runId.length + 1) : t.id,
-                runId: t.runId, toolName: t.toolName,
-                status: t.status === "failed" || t.status === "cancelled" ? "failed" : t.status === "running" ? "running" : t.status === "waiting_approval" ? "waiting" : "success",
+                runId: t.runId, toolName: t.toolName, parentToolCallId: t.parentToolCallId, serverOperation: t.serverOperation, sourceSubagentId: t.sourceSubagentId,
+                status: t.status === "cancelled" ? "cancelled" : t.status === "failed" ? "failed" : t.status === "running" ? "running" : t.status === "waiting_approval" ? "waiting" : "success",
                 args: (() => { try { return t.arguments ? JSON.parse(t.arguments) : undefined; } catch { return undefined; } })(),
                 argsText: t.arguments ?? undefined,
                 result: (() => { try { return t.resultSummary ? JSON.parse(t.resultSummary) : undefined; } catch { return t.resultSummary; } })(),
@@ -508,7 +521,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
                 completedAt: t.completedAt,
                 durationMs: t.durationMs,
               } satisfies ToolCall));
-            const live = new Map(st.toolCalls.filter((call) => call.runId === st.activeRunId).map((call) => [call.toolCallId, call]));
+            const live = new Map(st.toolCalls.filter((call) => call.runId === st.activeRunId || Boolean(call.sourceSubagentId) && (call.status === "running" || call.status === "waiting")).map((call) => [call.toolCallId, call]));
             const merged = calls.map((call) => live.get(call.toolCallId) ?? call);
             const mergedIds = new Set(merged.map((call) => call.toolCallId));
             for (const call of live.values()) if (!mergedIds.has(call.toolCallId)) merged.push(call);
@@ -519,6 +532,11 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       case "session.runs":
         {
           const activeRun = msg.runs.find((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));
+          for (const pending of pendingAgentRuns.values()) {
+            if (pending.sessionId !== msg.sessionId || !pending.runId || pending.completed) continue;
+            const run = msg.runs.find(run => run.id === pending.runId);
+            if (run && !["created", "running", "waiting_approval", "paused"].includes(run.status)) pending.completed = true;
+          }
           eventStore.setState((st) => {
             // A completed run may still be waiting for its history snapshot to
             // persist the optimistic user message. That persistence wait must
@@ -540,7 +558,10 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
                   : {}),
             };
           });
-          if (activeRun && stopRequestedSessionIds.has(msg.sessionId)) stopRun(msg.sessionId, activeRun.id);
+          if (activeRun && stopRequestedSessionIds.has(msg.sessionId)) {
+            sessionStore(useStore, msg.sessionId).setState({ stoppingRunId: activeRun.id });
+            stopRun(msg.sessionId, activeRun.id, forceStopRequestedSessionIds.has(msg.sessionId));
+          } else if (!eventStore.getState().running) finishStopRequest(msg.sessionId);
         }
         break;
       case "session.subagents":
@@ -572,6 +593,11 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         break;
       case "artifact.list":
         if (msg.sessionId === eventStore.getState().currentSessionId) eventStore.setState({ artifacts: msg.artifacts });
+        break;
+      case "artifact.deleted":
+        if (msg.sessionId === eventStore.getState().currentSessionId) {
+          eventStore.setState((st) => ({ artifacts: st.artifacts.filter((artifact) => artifact.id !== msg.artifactId) }));
+        }
         break;
       case "workspace.list": {
         eventStore.setState({ workspaces: msg.workspaces, workspacesLoaded: true });
@@ -814,8 +840,10 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (msg.requestId && stopRequests.has(msg.requestId)) {
           const request = stopRequests.get(msg.requestId)!;
           stopRequests.delete(msg.requestId);
-          stopRequestedSessionIds.delete(request.sessionId);
+          finishStopRequest(request.sessionId, request.runId);
           eventStore.setState({ lastError: displayRuntimeError(msg.message) });
+          // The runtime no longer runs it: reconcile instead of staying "running" forever.
+          void s.send({ type: "session.runs", requestId: rid(), sessionId: request.sessionId });
           break;
         }
         if (msg.requestId && pendingTitleRequests.has(msg.requestId)) {
@@ -870,6 +898,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         if (msg.requestId && pendingAgentRuns.has(msg.requestId)) {
           const pending = pendingAgentRuns.get(msg.requestId)!;
           pendingAgentRuns.delete(msg.requestId);
+          if (!pending.runId && pending.queueItemId) getQoneMessageQueue(pending.sessionId)?.settleSend(pending.queueItemId, false);
           pendingMessageReplacements.delete(pending.sessionId);
           finishStopRequest(pending.sessionId);
           if (pending.sessionId === eventStore.getState().currentSessionId) {

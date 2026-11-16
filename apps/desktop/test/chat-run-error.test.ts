@@ -2,6 +2,8 @@ import { beforeEach, expect, test } from "bun:test";
 import type { AgentEvent } from "@qone/protocol";
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 import { switchSessionState } from "../src/lib/session-execution-state";
+import { createQoneMessageQueue } from "../src/lib/qone-message-queue";
+import { bindSessionQueue, hydrateSessionQueue } from "../src/lib/session-queue-lifecycle";
 import { commands, emit, event, requestModelMetadata, resetHarness, setSendFailure, storage, useStore } from "./helpers/chat-store-harness";
 
 beforeEach(() => { resetHarness(); });
@@ -491,4 +493,79 @@ test("stop requested before run id arrives is sent once the run starts", async (
   } finally {
     useStore.setState(previous, true);
   }
+});
+
+const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+test("IPC rejection restores the queued input exactly once and leaves later inputs waiting", async () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ connected: true, currentSessionId: "ipc-queue", running: false, activeRunId: undefined, messages: [],
+      sessions: [{ id: "ipc-queue", title: "IPC", workspaceId: "workspace", createdAt: 1, updatedAt: 1 }],
+      workspaces: [{ id: "workspace", name: "Test", path: "C:/test", createdAt: 1, updatedAt: 1 }] });
+    const queue = createQoneMessageQueue({ sessionId: "ipc-queue", isRunning: () => useStore.getState().running,
+      steer: async () => false, sync: () => {}, send: (message, id, attachments) => useStore.getState().runAgent(
+        message.content[0]?.type === "text" ? message.content[0].text : "", undefined, attachments, id),
+    });
+    hydrateSessionQueue(queue, []); bindSessionQueue("ipc-queue", queue);
+    setSendFailure(async command => { if (command.type === "agent.run") throw new Error("pipe closed"); });
+    const input = (text: string) => ({ role: "user" as const, parentId: null, sourceId: null, runConfig: {}, content: [{ type: "text" as const, text }], attachments: [] });
+    queue.adapter.enqueue(input("first")); queue.adapter.enqueue(input("second"));
+    await tick();
+    expect(commands.filter(command => command.type === "agent.run")).toHaveLength(1);
+    expect(queue.adapter.items.map(item => item.prompt)).toEqual(["first", "second"]);
+    expect(useStore.getState().running).toBe(false);
+    setSendFailure(undefined);
+    queue.steerNow(queue.adapter.items[0]!.id);
+    await tick();
+    expect(commands.filter(command => command.type === "agent.run")).toHaveLength(2);
+    expect(queue.adapter.items.map(item => item.prompt)).toEqual(["second"]);
+  } finally { setSendFailure(undefined); useStore.setState({ connected: false }); useStore.setState(previous, true); }
+});
+
+test("a background stop IPC failure clears only its owner's stopping state", async () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ connected: true, currentSessionId: "selected", running: false, activeRunId: undefined, lastError: undefined,
+      backgroundSessions: { owner: { running: true, activeRunId: "owner-run", stoppingRunId: undefined } } });
+    setSendFailure(async command => { if (command.type === "agent.stop") throw new Error("stop pipe closed"); });
+    useStore.getState().stopAgent("owner");
+    await tick();
+    expect(useStore.getState().lastError).toContain("stop pipe closed");
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().activeRunId).toBeUndefined();
+    expect(useStore.getState().backgroundSessions.owner?.running).toBe(true);
+    expect(useStore.getState().backgroundSessions.owner?.stoppingRunId).toBeUndefined();
+    expect(commands).toContainEqual(expect.objectContaining({ type: "session.runs", sessionId: "owner" }));
+  } finally { setSendFailure(undefined); useStore.setState(previous, true); }
+});
+
+test("a terminal run snapshot clears stopping state and keeps the next stop cooperative", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ currentSessionId: "reconciled-stop", running: true, activeRunId: "old", stoppingRunId: undefined });
+    useStore.getState().stopAgent();
+    emit({ type: "session.runs", sessionId: "reconciled-stop", runs: [{ id: "old", sessionId: "reconciled-stop", status: "cancelled", startedAt: 1 }] });
+    expect(useStore.getState().running).toBe(false);
+    expect(useStore.getState().stoppingRunId).toBeUndefined();
+    useStore.setState({ running: true, activeRunId: "new" });
+    useStore.getState().stopAgent();
+    expect(commands.filter(command => command.type === "agent.stop").at(-1)).toMatchObject({ runId: "new" });
+    expect(commands.filter(command => command.type === "agent.stop").at(-1)).not.toHaveProperty("force");
+    emit({ type: "agent.event", event: { ...event("agent.cancelled", {}), sessionId: "reconciled-stop", runId: "new" } });
+  } finally { useStore.setState(previous, true); }
+});
+
+test("authoritative session lists prune deleted queue pause keys but preserve live main and side chats", () => {
+  const previous = useStore.getState();
+  try {
+    for (const id of ["deleted", "kept", "side"]) storage.set(`qone:queue-paused:${id}`, "1");
+    storage.set("unrelated-setting", "keep");
+    useStore.setState({ currentSessionId: "kept", backgroundSessions: {}, sideChats: {} });
+    emit({ type: "session.list", sessions: [{ id: "kept", title: "K", createdAt: 1, updatedAt: 1 }],
+      sideChats: [{ id: "side", title: "S", createdAt: 1, updatedAt: 1 }] });
+    expect(storage.has("qone:queue-paused:deleted")).toBe(false);
+    expect(storage.get("qone:queue-paused:kept")).toBe("1");
+    expect(storage.get("qone:queue-paused:side")).toBe("1");
+    expect(storage.get("unrelated-setting")).toBe("keep");
+  } finally { for (const id of ["deleted", "kept", "side"]) storage.delete(`qone:queue-paused:${id}`); storage.delete("unrelated-setting"); useStore.setState(previous, true); }
 });

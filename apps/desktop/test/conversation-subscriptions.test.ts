@@ -79,6 +79,24 @@ test("switching selection restores cached streams without transferring ownership
   } finally { unsubscribe(); }
 });
 
+test("first writes to absent optional session fields notify the owning view", () => {
+  const { source, main, side } = fixture();
+  const { stoppingRunId: _, ...withoutStopping } = source.getState();
+  source.setState(withoutStopping as AgentState, true);
+  const before = main.getState();
+  let rootCalls = 0, mainCalls = 0, sideCalls = 0;
+  const subscriptions = [source.subscribe(() => rootCalls++), main.subscribe(() => mainCalls++), side.subscribe(() => sideCalls++)];
+  try {
+    source.setState({ stoppingRunId: "main-run" });
+    expect([rootCalls, mainCalls, sideCalls]).toEqual([1, 1, 0]);
+    expect(main.getState()).not.toBe(before);
+    expect(main.getState().stoppingRunId).toBe("main-run");
+    source.setState(withoutStopping as AgentState, true);
+    expect([rootCalls, mainCalls, sideCalls]).toEqual([2, 2, 0]);
+    expect(main.getState().stoppingRunId).toBeUndefined();
+  } finally { subscriptions.forEach(unsubscribe => unsubscribe()); }
+});
+
 test("routed state readers return stable snapshots until their source changes", () => {
   const { source } = fixture();
   const owner = sessionStore(source, "side");

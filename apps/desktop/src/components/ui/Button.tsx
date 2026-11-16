@@ -19,6 +19,9 @@ const sizeClasses: Record<ButtonSize, string> = {
   "icon-sm": "size-7",
 };
 
+// Icon-only ghost buttons highlight the glyph, never the background.
+const ghostIconClasses = "text-muted-foreground hover:text-foreground aria-pressed:text-foreground data-[state=open]:text-foreground";
+
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
@@ -31,7 +34,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       type={type}
       className={cn(
         "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-transparent bg-clip-padding text-sm font-medium transition-all outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-        variantClasses[variant],
+        variant === "ghost" && size.startsWith("icon") ? ghostIconClasses : variantClasses[variant],
         sizeClasses[size],
         className,
       )}

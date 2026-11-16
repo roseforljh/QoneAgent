@@ -68,14 +68,24 @@ export function subagentMessages(item: SubagentRunInfo): ThreadMessage[] {
       id: `${item.id}:task`, role: "user", createdAt: new Date(item.startedAt),
       content: [{ type: "text", text: item.task }], attachments: [], metadata: { custom: {} },
     },
-    ...messageParts.map(({ id, parts, last }): ThreadMessage => ({
-      id, role: "assistant", createdAt: new Date(item.startedAt),
-      content: (() => {
-        const converted = assistantMessageContent({ content: last && item.streaming ? item.streaming : parts.length ? "" : item.content, parts: parts.length ? parts : undefined }, [], isRunning && last);
-        return typeof converted === "string" ? [{ type: "text" as const, text: converted }] : converted as readonly ThreadAssistantMessagePart[];
-      })(),
-      status: last ? finalStatus : { type: "complete", reason: "stop" },
-      metadata: { unstable_state: null, unstable_annotations: [], unstable_data: [], steps: [], custom: {} },
-    })),
+    ...messageParts.map(({ id, parts, last }): ThreadMessage => {
+      // Settled groups keep their identity so streaming re-renders only the live one.
+      const dependencies = [...parts, last, last && item.streaming, last && isRunning, last && item.status, last && item.error, parts.length ? "" : item.content];
+      const key = parts[0];
+      const cached = key && groupMessages.get(key);
+      if (cached && cached.dependencies.length === dependencies.length && dependencies.every((value, index) => Object.is(value, cached.dependencies[index]))) return cached.message;
+      const converted = assistantMessageContent({ content: last && item.streaming ? item.streaming : parts.length ? "" : item.content, parts: parts.length ? parts : undefined }, [], isRunning && last);
+      const message: ThreadMessage = {
+        id, role: "assistant", createdAt: new Date(item.startedAt),
+        content: typeof converted === "string" ? [{ type: "text" as const, text: converted }] : converted as readonly ThreadAssistantMessagePart[],
+        status: last ? finalStatus : { type: "complete", reason: "stop" },
+        metadata: { unstable_state: null, unstable_annotations: [], unstable_data: [], steps: [], custom: {} },
+      };
+      if (key) groupMessages.set(key, { dependencies, message });
+      return message;
+    }),
   ];
 }
+
+type GroupPart = SubagentRunInfo["parts"][number];
+const groupMessages = new WeakMap<GroupPart, { dependencies: unknown[]; message: ThreadMessage }>();

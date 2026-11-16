@@ -21,12 +21,13 @@
   gap: 0;
   padding: 0;
   border-radius: 8px;
-  color: var(--foreground);
+  color: var(--muted-foreground);
   cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease;
+  transition: color 150ms ease;
 }
-.q-sidebar-rail-action:is(:hover, :focus-visible, [data-state="open"]) {
-  background: var(--q-hover);
+.q-collapsed-sidebar .q-sidebar-rail-action:is(:hover, :focus-visible, [data-state="open"]) {
+  background: transparent;
+  color: var(--foreground);
 }
 .q-project-popover {
   z-index: 80;

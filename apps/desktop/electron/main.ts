@@ -18,6 +18,7 @@ import { TerminalManager } from "./terminal-manager";
 import { BrowserDockManager } from "./browser-dock-manager";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { installDevtoolsShortcutGuard } from "./devtools-policy";
+import { localRangeResponse } from "./local-file-range";
 
 // 注册 app 与 asset 特权协议
 protocol.registerSchemesAsPrivileged([
@@ -268,12 +269,14 @@ if (!gotTheLock) {
       }
     });
 
-    // 处理 asset:// 协议
+    // 处理 asset:// 协议；媒体的 Range 请求按片段从磁盘读取，可拖动进度
     protocol.handle("asset", (request) => {
       let filePath = decodeURIComponent(new URL(request.url).pathname);
       if (process.platform === "win32" && filePath.startsWith("/")) {
         filePath = filePath.slice(1);
       }
+      const range = request.headers.get("Range");
+      if (range) return localRangeResponse(filePath, range, request.method);
       return net.fetch(pathToFileURL(filePath).toString());
     });
 

@@ -18,8 +18,9 @@ export function conversationStateChanged(state: AgentState, previous: AgentState
 }
 
 export function sameVisibleState(left: AgentState, right: AgentState) {
-  return Object.keys(right).every((key) => key === "backgroundSessions"
-    || left[key as keyof AgentState] === right[key as keyof AgentState]);
+  const equal = (key: string) => key === "backgroundSessions"
+    || left[key as keyof AgentState] === right[key as keyof AgentState];
+  return Object.keys(left).every(equal) && Object.keys(right).every(equal);
 }
 
 export function isolateBackgroundSubscriptions(store: StoreApi<AgentState>) {

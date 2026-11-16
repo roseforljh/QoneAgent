@@ -50,6 +50,17 @@ test("internal runtime inputs are hidden while task and literal follow-ups remai
   expect(messages[2]!.content[0]).toMatchObject({ text: followUp });
 });
 
+test("live child text without saved messages keeps settled groups and refreshes only the live one", () => {
+  const before = subagentMessages(worker);
+  const after = subagentMessages({ ...worker, streaming: "继续检查更多" });
+  expect(after[1]).toBe(before[1]);
+  expect(after[2]).toBe(before[2]);
+  expect(after[3]).not.toBe(before[3]);
+  expect(after[3]!.content[0]).toMatchObject({ text: "继续检查更多" });
+  const finished = subagentMessages({ ...worker, status: "completed", streaming: undefined });
+  expect(finished.at(-1)!.status?.type).toBe("complete");
+});
+
 test("streamed child text and reasoning reuse saved messages while changed tasks and results refresh", () => {
   const saved = {
     id: "saved", role: "assistant" as const, sequence: 1, content: "saved answer", createdAt: 2,

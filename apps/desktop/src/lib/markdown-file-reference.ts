@@ -43,9 +43,9 @@ export function parseMarkdownFileReference(href: string | undefined): MarkdownFi
   return { path: path.replaceAll("\\", "/"), ...(line ? { line } : {}), ...(column ? { column } : {}), ...(endLine ? { endLine } : {}) };
 }
 
-/** Keep local anchor destinations without weakening image or protocol sanitization. */
+/** Keep local file destinations (links and embedded media) without weakening protocol sanitization. */
 export const markdownUrlTransform: UrlTransform = (url, key) =>
-  key === "href" && parseMarkdownFileReference(url) ? url : defaultUrlTransform(url);
+  (key === "href" || key === "src") && parseMarkdownFileReference(url) ? url : defaultUrlTransform(url);
 
 export function fileReferenceLabel(reference: MarkdownFileReference): string {
   return `${reference.path}${reference.line ? `:${reference.line}${reference.column ? `:${reference.column}` : ""}${reference.endLine ? `–${reference.endLine}` : ""}` : ""}`;

@@ -6,6 +6,7 @@ import { cn } from "../../lib/utils";
 import { MathBlock } from "./elements/math-block";
 import { MarkdownText as OfficialMarkdownText } from "./elements/markdown-text";
 import { MarkdownLink } from "./markdown-link";
+import { MarkdownImage, MarkdownParagraph } from "./markdown-local-media";
 export { citationSource } from "./markdown-link";
 import "katex/dist/katex.min.css";
 
@@ -46,7 +47,7 @@ function MarkdownTable({ className, children, ...props }: ComponentProps<"table"
         type="button"
         onClick={copy}
         aria-label={t("chat.copyTable")}
-        className="absolute top-1.5 right-1.5 z-10 grid size-7 place-items-center rounded-md border border-border/50 bg-background/80 text-muted-foreground opacity-0 backdrop-blur-xs transition-opacity duration-150 hover:bg-muted hover:text-foreground group-hover/table:opacity-100"
+        className="absolute top-1.5 right-1.5 z-10 grid size-7 place-items-center rounded-md border border-border/50 bg-background/80 text-muted-foreground opacity-0 backdrop-blur-xs transition-opacity duration-150 hover:text-foreground group-hover/table:opacity-100"
       >
         {isCopied ? <CheckIcon className="size-3.5 text-emerald-500" /> : <CopyIcon className="size-3.5" />}
       </button>
@@ -79,8 +80,9 @@ const defaultComponents = memoizeMarkdownComponents({
   h4: ({ className, ...props }) => <h4 className={cn("aui-md-h4 mt-3.5 mb-1 scroll-m-20 text-[14.5px] font-medium text-foreground first:mt-0 last:mb-0", className)} {...props} />,
   h5: ({ className, ...props }) => <h5 className={cn("aui-md-h5 mt-3 mb-1 text-sm font-semibold first:mt-0 last:mb-0", className)} {...props} />,
   h6: ({ className, ...props }) => <h6 className={cn("aui-md-h6 mt-3 mb-1 text-sm font-medium first:mt-0 last:mb-0", className)} {...props} />,
-  p: ({ className, ...props }) => <p className={cn("aui-md-p my-2.5 leading-relaxed text-foreground/90 first:mt-0 last:mb-0", className)} {...props} />,
+  p: ({ className, ...props }) => <MarkdownParagraph className={cn("aui-md-p my-2.5 leading-relaxed text-foreground/90 first:mt-0 last:mb-0", className)} {...props} />,
   a: MarkdownLink,
+  img: MarkdownImage,
   blockquote: ({ className, ...props }) => <blockquote className={cn("aui-md-blockquote border-s-2 border-primary/50 bg-foreground/[0.02] dark:bg-foreground/[0.04] text-muted-foreground my-3 rounded-r-md py-1.5 ps-3.5 italic", className)} {...props} />,
   ul: ({ className, ...props }) => <ul className={cn("aui-md-ul marker:text-muted-foreground/60 my-2.5 ms-5 list-disc space-y-1 leading-relaxed text-foreground/90 [&>li]:mt-0.5", className)} {...props} />,
   ol: ({ className, ...props }) => <ol className={cn("aui-md-ol marker:text-muted-foreground/60 my-2.5 ms-5 list-decimal space-y-1 leading-relaxed text-foreground/90 [&>li]:mt-0.5", className)} {...props} />,

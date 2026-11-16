@@ -23,7 +23,7 @@ afterAll(() => {
   else Reflect.deleteProperty(globalThis, "window");
 });
 
-const { useStore, initBridge } = await import("../src/store");
+const { useStore, initBridge, bridgeDependencies } = await import("../src/store");
 const { emptySessionState } = await import("../src/lib/session-execution-state");
 const { bindSessionQueue, hydrateSessionQueue } = await import("../src/lib/session-queue-lifecycle");
 initBridge();
@@ -36,6 +36,9 @@ const input = (text: string) => ({
   metadata: { custom: {} }, content: [{ type: "text" as const, text }], attachments: [],
 });
 function createSession() {
+  const { pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests } = bridgeDependencies();
+  pendingAgentRuns.clear(); stopRequestedSessionIds.clear(); forceStopRequestedSessionIds.clear(); stopRequests.clear();
+  storage.clear();
   commands.length = 0;
   useStore.setState({ ...emptySessionState(), connected: true, currentSessionId: undefined,
     sessions: [], backgroundSessions: {}, sideChats: {}, creatingSession: false, pendingMessage: undefined,
@@ -81,6 +84,7 @@ test("a delayed enqueue echo cannot restore a sent input or overwrite the next w
     expect(commands.filter((command) => command.type === "agent.run")).toHaveLength(1);
     expect(useStore.getState().messages.map((message) => message.content)).toEqual(["latest user input"]);
     expect(queue.adapter.items).toHaveLength(0);
+    runEvent("agent.started", "first-run");
     const enqueueEcho = snapshots.find((items) => items.some((item) => item.text === "latest user input"))!;
     expect(enqueueEcho).toHaveLength(1);
     queue.adapter.enqueue(input("next waiting input"));
@@ -153,6 +157,206 @@ test("consecutive stops allow new sends and a rejected in-flight steer returns t
     expect(queue.adapter.steerItems).toHaveLength(0);
     expect(queue.adapter.items).toHaveLength(0);
     expect(useStore.getState().lastError).toBeUndefined();
+  } finally {
+    useStore.setState({ connected: false });
+    useStore.setState(previous, true);
+  }
+});
+
+test("terminal recovery without a start event acknowledges the saved input and releases the next queue item", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession();
+    const queue = boundQueue();
+    queue.adapter.enqueue(input("first")); queue.adapter.enqueue(input("second")); await tick();
+    const first = commands.find(command => command.type === "agent.run")!;
+    if (first.type !== "agent.run") throw new Error("missing run");
+    emit({ type: "pong", requestId: first.requestId });
+    emit({ type: "session.runs", sessionId: session.id, runs: [{ id: "missed-run", sessionId: session.id, status: "completed", startedAt: 1 }] });
+    expect(useStore.getState().running).toBe(true);
+    emit({ type: "session.messages", sessionId: session.id, messages: [{ id: first.messageId!, sessionId: session.id, runId: "missed-run", role: "user", content: "first", createdAt: 1 }] });
+    expect(queue.getSnapshot().map(item => item.text)).toEqual(["second"]);
+    emit({ type: "session.runs", sessionId: session.id, runs: [{ id: "missed-run", sessionId: session.id, status: "completed", startedAt: 1 }] });
+    expect(useStore.getState().running).toBe(false);
+    await tick();
+    expect(runs()).toEqual(["first", "second"]);
+    expect(queue.adapter.items).toHaveLength(0);
+    expect(queue.getSnapshot().map(item => item.text)).toEqual(["second"]);
+    // A history refresh for the previous run cannot settle the new pending input.
+    emit({ type: "session.messages", sessionId: session.id, messages: [{ id: first.messageId!, sessionId: session.id, runId: "missed-run", role: "user", content: "first", createdAt: 1 }] });
+    emit({ type: "session.runs", sessionId: session.id, runs: [{ id: "missed-run", sessionId: session.id, status: "completed", startedAt: 1 }] });
+    expect(useStore.getState().running).toBe(true);
+    expect(queue.getSnapshot().map(item => item.text)).toEqual(["second"]);
+  } finally { useStore.setState({ connected: false }); useStore.setState(previous, true); }
+});
+
+test("late terminal events cannot erase stop intent for a new run awaiting its id", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession(); const queue = boundQueue();
+    queue.adapter.enqueue(input("old")); await tick(); runEvent("agent.started", "old-run");
+    runEvent("agent.cancelled", "old-run");
+    queue.adapter.enqueue(input("new")); await tick();
+    useStore.getState().stopAgent();
+    expect(useStore.getState().stoppingRunId).toBeNull();
+    runEvent("agent.cancelled", "old-run");
+    expect(useStore.getState().stoppingRunId).toBeNull();
+    runEvent("agent.started", "new-run");
+    expect(commands.filter(command => command.type === "agent.stop")).toContainEqual(expect.objectContaining({ runId: "new-run" }));
+    runEvent("agent.cancelled", "new-run");
+  } finally { useStore.setState({ connected: false }); useStore.setState(previous, true); }
+});
+
+const textOf = (message: { content: readonly { type: string; text?: string }[] }) => message.content[0]?.type === "text" ? message.content[0].text ?? "" : "";
+const runs = () => commands.filter((command) => command.type === "agent.run").map((command) => command.type === "agent.run" ? command.message : "");
+let eventSequence = 1000;
+const runEvent = (type: "agent.started" | "agent.cancelled", runId: string) => emit({
+  type: "agent.event", event: { eventId: crypto.randomUUID(), sessionId: session.id, runId, type, sequence: ++eventSequence, timestamp: Date.now(), payload: {} },
+});
+function boundQueue(send?: (message: Parameters<Parameters<typeof createQoneMessageQueue>[0]["send"]>[0], id: string) => boolean) {
+  const queue = createQoneMessageQueue({
+    sessionId: session.id,
+    isRunning: () => useStore.getState().running,
+    getActiveRunId: () => useStore.getState().activeRunId,
+    send: send ?? ((message, id, attachments) => useStore.getState().runAgent(textOf(message), undefined, attachments, id)),
+    steer: async () => false,
+    sync: () => {},
+  });
+  hydrateSessionQueue(queue, []);
+  bindSessionQueue(session.id, queue);
+  return queue;
+}
+
+test("an input refused before reaching the runtime stays first in line and the queue does not stall", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession();
+    let attempts = 0;
+    const queue = boundQueue((message, id) => attempts++ === 0 ? false : useStore.getState().runAgent(textOf(message), undefined, undefined, id));
+    queue.adapter.enqueue(input("first"));
+    await tick();
+    // Refused: nothing was sent, nothing was lost, and nothing loops.
+    expect(runs()).toEqual([]);
+    expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["first"]);
+    expect(attempts).toBe(1);
+    // The next idle transition retries it in place.
+    useStore.setState({ running: true });
+    useStore.setState({ running: false });
+    await tick();
+    expect(runs()).toEqual(["first"]);
+    queue.adapter.enqueue(input("second"));
+    await tick();
+    expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["second"]);
+  } finally {
+    useStore.setState({ connected: false });
+    useStore.setState(previous, true);
+  }
+});
+
+test("stopping keeps queued inputs waiting until the user sends again, then FIFO resumes", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession();
+    const queue = boundQueue();
+    queue.adapter.enqueue(input("task"));
+    await tick();
+    runEvent("agent.started", "run-a");
+    queue.adapter.enqueue(input("queued while running"));
+    await tick();
+    useStore.getState().stopAgent();
+    runEvent("agent.cancelled", "run-a");
+    await tick();
+    expect(useStore.getState().running).toBe(false);
+    expect(runs()).toEqual(["task"]);
+    expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["queued while running"]);
+    // A new send is the go-ahead: the older input goes first, the new one waits.
+    queue.adapter.enqueue(input("new input"));
+    await tick();
+    expect(runs()).toEqual(["task", "queued while running"]);
+    expect(queue.adapter.items.map((item) => item.prompt)).toEqual(["new input"]);
+  } finally {
+    useStore.setState({ connected: false });
+    useStore.setState(previous, true);
+  }
+});
+
+test("a runtime refusal restores the input without automatically retrying or consuming the next item", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession();
+    const queue = boundQueue();
+    queue.adapter.enqueue(input("refused"));
+    await tick();
+    const command = commands.find(command => command.type === "agent.run")!;
+    queue.adapter.enqueue(input("next"));
+    await tick();
+    emit({ type: "error", requestId: command.requestId, message: "MCP unavailable" });
+    await tick();
+    expect(runs()).toEqual(["refused"]);
+    expect(queue.adapter.items.map(item => item.prompt)).toEqual(["refused", "next"]);
+    queue.steerNow(queue.adapter.items[0]!.id);
+    await tick();
+    expect(runs()).toEqual(["refused", "refused"]);
+    expect(queue.adapter.items.map(item => item.prompt)).toEqual(["next"]);
+  } finally { useStore.setState({ connected: false }); useStore.setState(previous, true); }
+});
+
+test("two stop clicks before the run id arrives preserve the forced-stop intent", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession();
+    boundQueue().adapter.enqueue(input("starting"));
+    await tick();
+    useStore.getState().stopAgent();
+    expect(useStore.getState().stoppingRunId).toBeNull();
+    useStore.getState().stopAgent();
+    runEvent("agent.started", "late-run");
+    expect(commands.filter(command => command.type === "agent.stop")).toEqual([
+      expect.objectContaining({ runId: "late-run", force: true }),
+    ]);
+    runEvent("agent.cancelled", "late-run");
+    expect(useStore.getState().stoppingRunId).toBeUndefined();
+  } finally { useStore.setState({ connected: false }); useStore.setState(previous, true); }
+});
+
+test("paused queues survive recreation and explicit send-now resumes the selected input", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession();
+    const queue = boundQueue();
+    useStore.setState({ running: true });
+    queue.adapter.enqueue(input("kept after restart"));
+    await tick();
+    const snapshot = queue.getSnapshot();
+    queue.pauseAfterStop();
+    useStore.setState({ connected: false, running: false });
+    const sent: string[] = [];
+    const restored = createQoneMessageQueue({ sessionId: session.id, isRunning: () => false, steer: async () => false,
+      sync: () => {}, send: message => { sent.push(textOf(message)); } });
+    restored.restore(snapshot);
+    await tick();
+    expect(sent).toEqual([]);
+    restored.steerNow(restored.adapter.items[0]!.id);
+    await tick();
+    expect(sent).toEqual(["kept after restart"]);
+  } finally { storage.clear(); useStore.setState({ connected: false }); useStore.setState(previous, true); }
+});
+
+test("pressing stop again while the run is still active forces it with the same button", async () => {
+  const previous = useStore.getState();
+  try {
+    createSession();
+    boundQueue().adapter.enqueue(input("hangs"));
+    await tick();
+    runEvent("agent.started", "run-hung");
+    useStore.getState().stopAgent();
+    expect(useStore.getState().stoppingRunId).toBe("run-hung");
+    useStore.getState().stopAgent();
+    const stops = commands.filter((command) => command.type === "agent.stop");
+    expect(stops.map((command) => command.type === "agent.stop" && [command.runId, Boolean(command.force)])).toEqual([["run-hung", false], ["run-hung", true]]);
+    runEvent("agent.cancelled", "run-hung");
+    await tick();
+    expect(useStore.getState().running).toBe(false);
   } finally {
     useStore.setState({ connected: false });
     useStore.setState(previous, true);

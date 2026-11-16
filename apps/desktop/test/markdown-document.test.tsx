@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MarkdownDocument } from "../src/components/assistant-ui/markdown-document";
 import { FileReferenceContext } from "../src/lib/file-reference-context";
-import { documentMarkdownUrlTransform } from "../src/lib/document-markdown";
+import { markdownUrlTransform } from "../src/lib/markdown-file-reference";
 
 test("the reader renders full Markdown with GFM, math and stable document anchors", () => {
   const markup = renderToStaticMarkup(<FileReferenceContext.Provider value={{ directory: "C:\\Repo\\docs", root: "C:\\Repo", sessionId: "session", workspaceId: "workspace" }}>
@@ -21,7 +21,7 @@ test("the reader renders full Markdown with GFM, math and stable document anchor
 });
 
 test("document resources retain local paths without allowing executable protocols", () => {
-  expect(documentMarkdownUrlTransform("images/plot.png", "src", { type: "element", tagName: "img", properties: {}, children: [] })).toBe("images/plot.png");
-  expect(documentMarkdownUrlTransform("file:///C:/Docs/plot.png", "src", { type: "element", tagName: "img", properties: {}, children: [] })).toBe("file:///C:/Docs/plot.png");
-  expect(documentMarkdownUrlTransform("javascript:alert(1)", "href", { type: "element", tagName: "a", properties: {}, children: [] })).toBe("");
+  expect(markdownUrlTransform("images/plot.png", "src", { type: "element", tagName: "img", properties: {}, children: [] })).toBe("images/plot.png");
+  expect(markdownUrlTransform("file:///C:/Docs/plot.png", "src", { type: "element", tagName: "img", properties: {}, children: [] })).toBe("file:///C:/Docs/plot.png");
+  expect(markdownUrlTransform("javascript:alert(1)", "href", { type: "element", tagName: "a", properties: {}, children: [] })).toBe("");
 });

@@ -308,6 +308,97 @@ test("reconnecting while editing detaches the recovery copy before dispatch can 
   expect(sent).toEqual(["next", "modified"]);
 });
 
+test("send-now after a stop selects the clicked item before releasing FIFO", async () => {
+  const f = fixture();
+  for (const text of ["A", "B", "C"]) f.queue.adapter.enqueue(message(text));
+  await tick();
+  const clicked = f.queue.adapter.items[2]!.id;
+  f.queue.pauseAfterStop();
+  f.idle();
+  f.queue.steerNow(clicked);
+  await tick();
+  expect(f.sent.map(item => item.message.content)).toEqual([message("C").content]);
+  expect(prompts(f)).toEqual(["A", "B"]);
+});
+
+test("a dispatch suspended between dequeue and send retains its original identity", async () => {
+  const f = fixture();
+  f.queue.adapter.enqueue(message("retained"));
+  await tick();
+  const id = f.snapshot()[0]!.id;
+  f.idle();
+  f.queue.suspend();
+  await tick();
+  expect(f.sent).toEqual([]);
+  expect(f.snapshot().map(item => item.id)).toEqual([id]);
+  f.queue.resume();
+  await tick();
+  expect(f.sent.map(item => item.id)).toEqual([id]);
+});
+
+test("a throwing send keeps the head and retries only after an explicit action", async () => {
+  const sent: string[] = [], errors: string[] = [];
+  let fail = true;
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => false, steer: async () => false, sync: () => {},
+    send: item => { if (fail) throw new Error("bridge failed"); sent.push(item.content[0]!.type === "text" ? item.content[0]!.text : ""); },
+    onError: error => errors.push(error),
+  });
+  queue.adapter.enqueue(message("A"));
+  await tick();
+  expect(errors).toHaveLength(1);
+  expect(queue.adapter.items.map(item => item.prompt)).toEqual(["A"]);
+  fail = false;
+  queue.adapter.enqueue(message("B"));
+  await tick();
+  expect(sent).toEqual(["A"]);
+  expect(queue.adapter.items.map(item => item.prompt)).toEqual(["B"]);
+});
+
+test("deleting a saving edit releases later inputs without waiting for the file read", async () => {
+  const f = fixture();
+  f.queue.adapter.enqueue(message("editing"));
+  f.queue.adapter.enqueue(message("next"));
+  await tick();
+  const id = f.queue.adapter.items[0]!.id;
+  f.queue.beginEdit(id);
+  const read = deferred<ArrayBuffer>();
+  const save = f.queue.edit(id, slowFile("discarded", read.promise));
+  f.queue.remove(id);
+  f.idle();
+  await tick();
+  expect(f.sent.map(item => item.message.content)).toEqual([message("next").content]);
+  read.resolve(new ArrayBuffer(0));
+  expect(await save).toBe(false);
+});
+
+test("saving a detached refused head releases its retry hold", async () => {
+  let allowed = false;
+  const sent: string[] = [];
+  const queue = createQoneMessageQueue({
+    sessionId: "s", isRunning: () => false, steer: async () => false, sync: () => {},
+    send: item => { if (!allowed) return false; sent.push(item.content[0]!.type === "text" ? item.content[0]!.text : ""); },
+  });
+  queue.adapter.enqueue(message("refused"));
+  await tick();
+  const id = queue.adapter.items[0]!.id;
+  queue.beginEdit(id);
+  allowed = true;
+  expect(await queue.edit(id, message("corrected"))).toBe(true);
+  await tick();
+  expect(sent).toEqual(["corrected"]);
+});
+
+test("restoring a queue invalidates an older dispatch continuation", async () => {
+  const f = fixture();
+  f.queue.adapter.enqueue(message("old"));
+  await tick();
+  f.idle();
+  f.queue.restore([{ id: "restored", sessionId: "s", text: "new", lane: "queue", status: "queued", position: 0, createdAt: 1, updatedAt: 1 }]);
+  await tick();
+  expect(f.sent.map(item => item.message.content)).toEqual([message("new").content]);
+});
+
 test("runtime disconnect retains edits in their own sessions while clearing execution state", () => {
   const current: QueueItemInfo = { id: "q-a", sessionId: "a", text: "a", lane: "queue", status: "scheduled", position: 0, createdAt: 1, updatedAt: 1 };
   const other = { ...current, id: "q-b", sessionId: "b", text: "b" };

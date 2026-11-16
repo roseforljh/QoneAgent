@@ -50,16 +50,17 @@ const submit = async (view: ReturnType<typeof liveRuntime>, text: string) => {
   await view.runtime.thread.composer.send();
 };
 
-test("an idle composer send leaves both views and durable queue before the run starts", async () => {
+test("an idle composer send leaves both views while retaining a durable recovery copy until acknowledged", async () => {
   let running = false;
   const sent: string[] = [];
   const queue = createQoneMessageQueue({ sessionId: "idle-refresh", isRunning: () => running,
     send: (message) => {
       expect(main.visible()).toEqual([]);
       expect(side.visible()).toEqual([]);
-      expect(queue.getSnapshot()).toEqual([]);
+      expect(queue.getSnapshot()).toEqual([expect.objectContaining({ text: "latest input", status: "scheduled" })]);
       sent.push(message.content[0]?.type === "text" ? message.content[0].text : "");
       running = true;
+      return true;
     }, steer: async () => false, sync: () => {},
   });
   const main = liveRuntime(queue, false);
@@ -68,6 +69,8 @@ test("an idle composer send leaves both views and durable queue before the run s
     await submit(main, "latest input");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(sent).toEqual(["latest input"]);
+    queue.settleSend(queue.getSnapshot()[0]!.id, true);
+    expect(queue.getSnapshot()).toEqual([]);
     expect(main.visible()).toEqual([]);
     expect(side.visible()).toEqual([]);
     await submit(side, "waiting input");

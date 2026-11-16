@@ -37,7 +37,7 @@ test("nested batches and legacy encoded payloads are accepted and malformed item
   } finally { useStore.setState(previous, true); }
 });
 
-test("Pi shell updates reach the desktop before completion and keep structured results", () => {
+test("Pi shell updates reach the desktop before completion and keep structured results", async () => {
   const previous = useStore.getState();
   const update = { content: [{ type: "text", text: "stdout-before" }] };
   const result = { content: [{ type: "text", text: "stdout-before\nstdout-after" }], structuredContent: { output: "stdout-before\nstdout-after", truncated: false, exit_code: 0 } };
@@ -45,6 +45,7 @@ test("Pi shell updates reach the desktop before completion and keep structured r
     useStore.setState({ currentSessionId: "shell-session", activeRunId: "shell-run", toolCalls: [], backgroundSessions: {} });
     emit(execution(2001, "tool.started", "shell-run", "shell-session", { toolCallId: "shell-call", toolName: "powershell", args: { command: "test" } }));
     emit(execution(2002, "tool.updated", "shell-run", "shell-session", { toolCallId: "shell-call", toolName: "powershell", update }));
+    await Bun.sleep(45);
     expect(useStore.getState().toolCalls[0]).toMatchObject({ status: "running", result: update });
     emit(execution(2003, "tool.completed", "shell-run", "shell-session", { toolCallId: "shell-call", toolName: "powershell", result, durationMs: 600 }));
     expect(useStore.getState().toolCalls[0]).toMatchObject({ status: "success", result });

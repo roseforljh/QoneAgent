@@ -25,7 +25,7 @@ import { sessionActivityAt } from "./lib/session-recency";
 import { useComposerDrafts } from "./lib/use-composer-drafts";
 import { composerDrafts } from "./lib/composer-drafts";
 import { queueMessageDraft } from "./lib/queue-composer-edit";
-import { createQoneMessageQueue, getQoneMessageQueue } from "./lib/qone-message-queue";
+import { createQoneMessageQueue, getQoneMessageQueue, messageServerIds } from "./lib/qone-message-queue";
 import { useSteeringMessages } from "./lib/use-steering-messages";
 import { useMessageQueueAdapter } from "./lib/use-message-queue-adapter";
 import { QoneAttachmentAdapter } from "./lib/file-attachment-adapter";
@@ -107,6 +107,7 @@ function useQoneRuntime(pendingRun: { current: PendingRun | null }) {
 
   const queue = useMemo(() => currentSessionId && queueReady ? getQoneMessageQueue(currentSessionId) ?? createQoneMessageQueue({
     sessionId: currentSessionId,
+    getServerIds: () => useStore.getState().runOptionsBySession[currentSessionId]?.serverIds ?? [],
     isRunning: () => sessionStore(useStore, currentSessionId).getState().running || Boolean(useStore.getState().compactionStatuses[currentSessionId]),
     getActiveRunId: () => sessionStore(useStore, currentSessionId).getState().activeRunId,
     isDuplicate: (message, attachments) => {
@@ -131,7 +132,7 @@ function useQoneRuntime(pendingRun: { current: PendingRun | null }) {
       });
       return true;
     },
-    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); if (prompt.text.trim()) addComposerHistory(currentSessionId, prompt.text); runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId, prompt.quote); },
+    send: (message, queueItemId, attachments) => { const prompt = extractComposerPrompt(message); const sent = runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, currentSessionId, prompt.quote, undefined, messageServerIds(message)); if (sent && prompt.text.trim()) addComposerHistory(currentSessionId, prompt.text); return sent; },
     steer: (message, queueItemId, attachments, targetRunId) => {
       const state = sessionStore(useStore, currentSessionId).getState();
       if (!targetRunId || state.activeRunId !== targetRunId || !state.running) return Promise.resolve(false);

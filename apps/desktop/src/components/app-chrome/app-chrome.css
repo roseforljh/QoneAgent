@@ -3,7 +3,8 @@
 .q-app-titlebar-navigation, .q-app-window-controls { display: flex; height: 100%; flex: none; align-items: center; }
 .q-app-titlebar-navigation { gap: 4px; padding-inline: 8px 6px; -webkit-app-region: no-drag; }
 .q-app-titlebar-navigation button { display: grid; width: 30px; height: 28px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--q-sidebar-foreground); cursor: pointer; }
-.q-app-titlebar-navigation button:hover:not(:disabled), .q-app-menubar button:hover, .q-app-menubar button[data-state="open"] { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
+.q-app-titlebar-navigation button:hover:not(:disabled) { color: var(--foreground); }
+.q-app-menubar button:hover, .q-app-menubar button[data-state="open"] { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
 .q-app-titlebar-navigation button:disabled { opacity: .35; cursor: default; }
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
   .q-app-titlebar-navigation button > [data-slot="codex-icon"] { transition: transform 160ms ease-out; }

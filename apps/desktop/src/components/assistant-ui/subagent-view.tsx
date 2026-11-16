@@ -14,7 +14,7 @@ import { AssistantParts } from "./assistant-parts";
 import { SubagentThread } from "./subagent-thread";
 import { AgentCommunication, useAgentCommunication } from "./agent-communication";
 import { ImageGeneration } from "./elements/image-generation";
-import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
+import { DeliveredFiles } from "./delivered-files";
 import { createOwnedSubagentSelector } from "./subagent-message-ownership";
 import { createSubagentIdsSelector, createSubagentSummarySelector, messageById, subagentById, subagentsForTree } from "../../lib/store-indexes";
 import "./subagent-view.css";
@@ -56,7 +56,7 @@ export const SubagentMedia: FC = () => {
       error={generation.missingImage ? t("subagent.noImageGenerated") : generation.error}
       onRegenerate={!generation.generating ? () => useStore.getState().send({ type: "subagent.control", requestId: crypto.randomUUID(), runId: generation.id, action: "retry" }) : undefined}
     />)}
-    <GeneratedMediaArtifacts runIds={childRunIds} />
+    <DeliveredFiles runIds={childRunIds} />
   </div>;
 };
 
@@ -110,7 +110,7 @@ export const SubagentPanel: FC<{ selectedId?: string; onSelect: (id?: string) =>
       <h2 className="q-subagent-detail-title">{selected.title}</h2>
       <div className="q-subagent-detail-meta"><span>{statusLabel(selected, locale)}</span><span>·</span><span>{model(selected.model)}</span><span>·</span><span>{duration(selected)}</span></div>
       <SubagentTranscript />
-      <GeneratedMediaArtifacts runIds={[selected.id]} />
+      <DeliveredFiles runIds={[selected.id]} />
       {selected.error && <p className="q-subagent-error">{selected.error}</p>}
     </SubagentThread> : <div className="q-subagent-panel-scroll">
       {subagentIdList.length === 0 ? <p className="q-subagent-empty">{locale === "zh-CN" ? "暂无子代理" : "No subagents yet"}</p> : subagentIdList.map((id) => <SubagentRow key={id} id={id} onSelect={onSelect} now={now} locale={locale} profiles={subagentConfig.profiles} />)}

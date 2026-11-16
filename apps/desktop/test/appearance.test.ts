@@ -41,6 +41,8 @@ test("accent values and Qone theme tokens match the extracted Codex functions", 
       expect(tokens["--q-selection"]).toBe(expected.selection);
       expect(tokens["--q-user-message-background"]).toBe(expected.userMessageBackground);
       expect(tokens["--q-user-message-text"]).toBe(expected.userMessageText);
+      // Hover/open surfaces must never take the accent tint.
+      expect(tokens["--accent"]).toBe(tokens["--q-hover"]);
     }
   }
 });

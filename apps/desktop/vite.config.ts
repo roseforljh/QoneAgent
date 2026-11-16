@@ -42,5 +42,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 1480,
     strictPort: true,
+    // Transform the startup graph while Electron boots, not after it requests the page.
+    warmup: { clientFiles: ["./src/main.tsx", "./src/components/assistant-ui/Thread.tsx"] },
   },
 });

@@ -13,8 +13,8 @@
 .browser-page-new-tab:hover { background: var(--q-hover); color: var(--foreground); }
 .browser-page-toolbar { display: flex; min-height: 44px; flex: none; align-items: center; gap: 12px; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--card); }
 .browser-page-controls { display: flex; flex: none; gap: 3px; }
-.browser-page-controls button, .browser-page-close { display: grid; width: 29px; height: 28px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--foreground); cursor: pointer; }
-.browser-page-controls button:hover:not(:disabled), .browser-page-close:hover { background: var(--q-hover); }
+.browser-page-controls button, .browser-page-close { display: grid; width: 29px; height: 28px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: color .15s ease; }
+.browser-page-controls button:hover:not(:disabled), .browser-page-close:hover { color: var(--foreground); }
 .browser-page-controls button:disabled { opacity: .4; cursor: default; }
 .browser-page-address-input { min-width: 0; flex: 1; padding: 6px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--background); color: var(--foreground); font: inherit; font-size: 12px; outline: none; }
 .browser-page-address-input:focus { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 18%, transparent); }

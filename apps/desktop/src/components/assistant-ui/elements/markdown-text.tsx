@@ -11,8 +11,10 @@ import { remarkQoneGfm } from "../../../lib/markdown-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { normalizeMathDelimiters, escapeCurrencyDollars } from "@assistant-ui/react-markdown";
-import { type FC, memo, useMemo, useRef, useState } from "react";
-import type { TextMessagePartProps } from "@assistant-ui/react";
+import { type FC, forwardRef, memo, type ReactNode, useMemo, useRef, useState } from "react";
+import { TextMessagePartProvider, useMessagePartText, type TextMessagePartProps } from "@assistant-ui/react";
+import { splitMarkdownBlocks, type MarkdownBlockState } from "../../../lib/markdown-blocks";
+import { useSmoothText } from "../../../lib/use-smooth-text";
 import { CheckIcon, CopyIcon, EyeIcon } from "lucide-react";
 
 import { TooltipIconButton } from "../tooltip-icon-button";
@@ -69,6 +71,8 @@ function remarkQoneAutolink() {
 
 type MarkdownTextProps = Partial<TextMessagePartProps> & Pick<MarkdownTextPrimitiveProps, "urlTransform" | "remarkPlugins"> & {
   components?: Parameters<typeof memoizeMarkdownComponents>[0];
+  /** Static documents whose plugins need the whole tree (heading slugs) render as one block. */
+  wholeDocument?: boolean;
 };
 
 const useShallowStable = <T extends Record<string, unknown> | undefined>(
@@ -87,9 +91,33 @@ const useShallowStable = <T extends Record<string, unknown> | undefined>(
   return ref.current;
 };
 
-const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components, urlTransform = markdownUrlTransform, remarkPlugins = [] }) => {
+const BlockContainer = forwardRef<HTMLDivElement, { children?: ReactNode }>(({ children }, _ref) => <>{children}</>);
+BlockContainer.displayName = "MarkdownBlockContainer";
+const rehypePlugins = [rehypeKatex];
+const componentsByLanguage = {
+  mermaid: { SyntaxHighlighter: MermaidCode },
+  "generative-ui": { SyntaxHighlighter: GenerativeUICode },
+  js: { SyntaxHighlighter: PrismCode },
+  jsx: { SyntaxHighlighter: PrismCode },
+  ts: { SyntaxHighlighter: PrismCode },
+  tsx: { SyntaxHighlighter: PrismCode },
+  python: { SyntaxHighlighter: PrismCode },
+};
+const preprocessMarkdown = (text: string) => escapeCurrencyDollars(normalizeMultilineDisplayMath(normalizeMathDelimiters(text)));
+
+type MarkdownBlockProps = Pick<MarkdownTextPrimitiveProps, "urlTransform" | "remarkPlugins" | "components"> & { text: string };
+
+// One block renders through the stock primitive; frozen blocks bail out here.
+const MarkdownBlock = memo(({ text, ...props }: MarkdownBlockProps) => (
+  <TextMessagePartProvider text={text}>
+    <MarkdownTextPrimitive {...props} smooth={false} containerComponent={BlockContainer} rehypePlugins={rehypePlugins} componentsByLanguage={componentsByLanguage} />
+  </TextMessagePartProvider>
+));
+MarkdownBlock.displayName = "MarkdownBlock";
+
+const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components, urlTransform = markdownUrlTransform, remarkPlugins, wholeDocument = false }) => {
   const stableComponents = useShallowStable(components);
-  const extraRemarkPlugins = remarkPlugins ?? [];
+  const stableRemarkPlugins = useShallowStable(remarkPlugins as Record<string, unknown> | undefined) as MarkdownTextProps["remarkPlugins"];
   const markdownComponents = useMemo(() => {
     if (!stableComponents) return defaultComponents;
     return {
@@ -97,27 +125,27 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components, urlTransform = ma
       ...memoizeMarkdownComponents(stableComponents),
     };
   }, [stableComponents]);
+  const plugins = useMemo(() => [remarkQoneGfm, remarkMath, remarkQoneAutolink, remarkMarkdownFileReferences, ...(stableRemarkPlugins ?? [])], [stableRemarkPlugins]);
+
+  // Reveal newly streamed text per frame, then re-parse only the block still growing.
+  const part = useMessagePartText();
+  const status = part.status.type;
+  const text = useSmoothText(part.text, status === "running");
+  const splitState = useRef<MarkdownBlockState | undefined>(undefined);
+  const blocks = useMemo(() => {
+    const source = preprocessMarkdown(text);
+    if (wholeDocument) return [source];
+    const result = splitMarkdownBlocks(source, splitState.current);
+    splitState.current = result.state;
+    return result.blocks;
+  }, [text, wholeDocument]);
 
   return (
-    <MarkdownTextPrimitive
-      smooth={false}
-      urlTransform={urlTransform}
-      remarkPlugins={[remarkQoneGfm, remarkMath, remarkQoneAutolink, remarkMarkdownFileReferences, ...extraRemarkPlugins]}
-      rehypePlugins={[rehypeKatex]}
-      preprocess={(text) => escapeCurrencyDollars(normalizeMultilineDisplayMath(normalizeMathDelimiters(text)))}
-      className="aui-md"
-      components={markdownComponents}
-      componentsByLanguage={{
-        mermaid: { SyntaxHighlighter: MermaidCode },
-        "generative-ui": { SyntaxHighlighter: GenerativeUICode },
-        js: { SyntaxHighlighter: PrismCode },
-        jsx: { SyntaxHighlighter: PrismCode },
-        ts: { SyntaxHighlighter: PrismCode },
-        tsx: { SyntaxHighlighter: PrismCode },
-        python: { SyntaxHighlighter: PrismCode },
-      }}
-      defer
-    />
+    <div className="aui-md" data-status={status}>
+      {blocks.map((block, index) => (
+        <MarkdownBlock key={index} text={block} urlTransform={urlTransform} remarkPlugins={plugins} components={markdownComponents} />
+      ))}
+    </div>
   );
 };
 

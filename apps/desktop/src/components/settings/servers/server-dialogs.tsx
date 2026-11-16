@@ -112,7 +112,7 @@ export function ServerDetailDialog({ server, tunnels, onOpenChange, run, onTermi
   const rename = () => { if (name.trim() && name.trim() !== server.name) void run({ type: "servers.rename", id: server.id, name }); };
 
   return (
-    <NestedDialog open onOpenChange={onOpenChange} wide
+    <NestedDialog open onOpenChange={onOpenChange} wide focusContent
       title={<span className="server-dialog-title"><span className={cn("servers-dot", `is-${server.status}`)} />
         <input value={name} onChange={(event) => setName(event.target.value)} onBlur={rename} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} aria-label={t("servers.name")} /></span>}
       description={serverAddress(server)}

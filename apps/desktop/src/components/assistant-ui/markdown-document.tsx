@@ -1,8 +1,8 @@
 import { useContext, type ComponentProps } from "react";
 import { TextMessagePartProvider } from "@assistant-ui/react";
 import { FileReferenceContext } from "../../lib/file-reference-context";
-import { documentMarkdownUrlTransform, remarkDocumentHeadings } from "../../lib/document-markdown";
-import { parseMarkdownFileReference } from "../../lib/markdown-file-reference";
+import { remarkDocumentHeadings } from "../../lib/document-markdown";
+import { markdownUrlTransform, parseMarkdownFileReference } from "../../lib/markdown-file-reference";
 import { resolveFileReferencePath } from "../../lib/workspace-file-navigation";
 import { useLocalFilePreview } from "../../lib/local-file-preview";
 import { useLocale } from "../../localization";
@@ -42,7 +42,7 @@ const plugins = [remarkDocumentHeadings];
 export function MarkdownDocument({ text }: { text: string }) {
   return <article data-markdown-document className="q-markdown-document mx-auto w-full max-w-3xl px-6 pt-8 pb-12 select-text break-words">
     <TextMessagePartProvider text={text}>
-      <MarkdownText components={components} urlTransform={documentMarkdownUrlTransform} remarkPlugins={plugins} />
+      <MarkdownText components={components} urlTransform={markdownUrlTransform} remarkPlugins={plugins} wholeDocument />
     </TextMessagePartProvider>
   </article>;
 }

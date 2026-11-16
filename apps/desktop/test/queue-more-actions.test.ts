@@ -109,3 +109,20 @@ test("transfer restoration follows an edited neighbor's new local identity", asy
   pending.resolve(false); await transfer;
   expect(f.queue.adapter.items.map((item) => item.prompt)).toEqual(["edited A", "B"]);
 });
+
+test("restoring after a disconnect does not revive an old transfer or replace its newer input", async () => {
+  for (const committed of [true, false]) {
+    const f = fixture();
+    f.queue.adapter.enqueue(message("original")); await tick();
+    const localId = f.queue.adapter.items[0]!.id;
+    const persistentId = f.queue.getPersistentId(localId)!;
+    const pending = deferred<boolean>();
+    const result = f.queue.transfer(localId, () => pending.promise);
+    f.queue.restore([{ id: persistentId, sessionId: "parent", text: "restored edit", position: 0, lane: "queue", status: "queued", createdAt: 1, updatedAt: 2 }]);
+    pending.resolve(committed);
+    expect(await result).toBe(committed);
+    expect(f.queue.hasTransfers()).toBe(false);
+    expect(f.queue.adapter.items.map(item => item.prompt)).toEqual(["restored edit"]);
+    expect(f.queue.getItem(persistentId)?.text).toBe("restored edit");
+  }
+});

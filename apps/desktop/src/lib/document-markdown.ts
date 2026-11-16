@@ -1,6 +1,3 @@
-import { defaultUrlTransform, type UrlTransform } from "react-markdown";
-import { parseMarkdownFileReference } from "./markdown-file-reference";
-
 interface MarkdownNode {
   type: string;
   value?: string;
@@ -29,6 +26,3 @@ export function remarkDocumentHeadings() {
     visit(tree);
   };
 }
-
-export const documentMarkdownUrlTransform: UrlTransform = (url, key) =>
-  (key === "href" || key === "src") && parseMarkdownFileReference(url) ? url : defaultUrlTransform(url);

@@ -51,7 +51,7 @@
 .memory-summary-card p { display: -webkit-box; margin: 0; overflow: hidden; color: var(--muted-foreground); font-size: 12px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .memory-icon-button { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted-foreground); opacity: 0; cursor: pointer; transition: opacity .14s ease, background .15s ease, color .15s ease; }
 .memory-summary-card:hover .memory-icon-button, .memory-summary-card:focus-within .memory-icon-button, .memory-note-card:hover .memory-icon-button, .memory-note-card:focus-within .memory-icon-button { opacity: 1; }
-.memory-icon-button:hover { background: color-mix(in srgb, var(--destructive) 12%, transparent); color: var(--destructive); }
+.memory-icon-button:hover { color: var(--destructive); }
 
 /* Notes */
 .memory-composer { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--background); transition: border-color .15s ease, box-shadow .15s ease; }

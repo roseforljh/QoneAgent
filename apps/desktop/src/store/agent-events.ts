@@ -3,7 +3,7 @@
 
 
 
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type AgentCommunicationInfo, type ArtifactInfo, type CompactionMarkerInfo, type RunInfo } from "@qone/protocol";
+import { preserveServerOperationResult, serverOperationInfo, serverOperationCancelled, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type AgentCommunicationInfo, type ArtifactInfo, type CompactionMarkerInfo, type RunInfo } from "@qone/protocol";
 
 import { getQoneMessageQueue } from "../lib/qone-message-queue";
 import { lastUserTurn } from "../lib/agent-communication";
@@ -24,7 +24,7 @@ function executionPhaseForTool(toolName: string): ExecutionPhase {
 }
 
 export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof sessionStore>, dependencies: ReturnType<typeof import("../store").bridgeDependencies>) {
-  const { clearDelta, pendingAgentRuns, stopRequestedSessionIds, stopRun, flushNow, queueReasoning, queueDelta, ensureStreamingToolPart, finishStopRequest, requestSessionMessages } = dependencies;
+  const { clearDelta, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRun, flushNow, queueReasoning, queueDelta, queueToolUpdate, ensureStreamingToolPart, finishStopRequest, requestSessionMessages } = dependencies;
 
         if (ev.sessionId && ev.runId && ev.type === "context.compaction.started") {
           const p = ev.payload as { id?: unknown; throughMessageId?: unknown; partIndex?: number; startedAt?: unknown; source?: unknown } | null;
@@ -60,7 +60,11 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
           eventStore.setState((st) => {
             const persistedIds = new Set<string>();
             for (const pending of pendingAgentRuns.values()) {
-              if (pending.sessionId === ev.sessionId) persistedIds.add(pending.userMessageId);
+              if (pending.sessionId === ev.sessionId && !pending.completed && (!pending.runId || pending.runId === ev.runId)) {
+                pending.runId = ev.runId;
+                persistedIds.add(pending.userMessageId);
+                if (pending.queueItemId) getQoneMessageQueue(pending.sessionId)?.settleSend(pending.queueItemId, true);
+              }
             }
             // Only rebuild the history when one of its rows actually changes;
             // an unchanged array keeps every downstream selector stable.
@@ -86,7 +90,11 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
                 : [{ id: ev.runId!, sessionId: ev.sessionId ?? st.currentSessionId ?? "", status: "running", startedAt: ev.timestamp }, ...st.runs],
             };
           });
-          if (ev.sessionId && stopRequestedSessionIds.has(ev.sessionId)) stopRun(ev.sessionId, ev.runId);
+          if (ev.sessionId && stopRequestedSessionIds.has(ev.sessionId)) {
+            // Stop was pressed before the run id arrived; a further press forces it.
+            eventStore.setState({ stoppingRunId: ev.runId });
+            stopRun(ev.sessionId, ev.runId, forceStopRequestedSessionIds.has(ev.sessionId));
+          }
         }
         const p = ev.payload as Record<string, unknown> | undefined;
 
@@ -235,6 +243,8 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
           if (activeRun) flushNow(ev.sessionId);
           const tc: ToolCall = {
             toolCallId,
+            parentToolCallId: typeof p?.parentToolCallId === "string" ? p.parentToolCallId : undefined,
+            sourceSubagentId: ev.sourceSubagentId,
             runId: ev.runId ?? "",
             toolName: String(toolPayload.toolName ?? "tool"),
             status: "running",
@@ -273,24 +283,20 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
               } : {}),
             };
           });
-        } else if (ev.type === "tool.updated" && ev.runId === eventStore.getState().activeRunId) {
-          eventStore.setState((st) => ({
-            toolCalls: st.toolCalls.map((call) =>
-              call.runId === ev.runId && call.toolCallId === p?.toolCallId && (call.status === "running" || call.status === "waiting")
-                ? { ...call, status: "running", result: p.update }
-                : call
-            ),
-          }));
+        } else if (ev.type === "tool.updated" && (ev.runId === eventStore.getState().activeRunId || Boolean(ev.sourceSubagentId))) {
+          if (typeof p?.toolCallId === "string") queueToolUpdate(p.toolCallId, ev.runId!, p.update, ev.sessionId);
         } else if (ev.type === "tool.completed" || ev.type === "tool.failed") {
+          flushNow(ev.sessionId);
           const id = String(p?.toolCallId ?? "");
           const isErr = ev.type === "tool.failed" || Boolean(p?.isError ?? p?.error);
           eventStore.setState((st) => ({
             toolCalls: st.toolCalls.map((t) =>
-              t.toolCallId === id
+              t.toolCallId === id && t.runId === ev.runId
                 ? {
                     ...t,
-                    status: isErr ? "failed" : "success",
-                    result: p?.result ?? p?.content,
+                    status: t.status === "cancelled" || serverOperationCancelled(p?.result) ? "cancelled" : isErr ? "failed" : "success",
+                    serverOperation: serverOperationInfo(p?.result) ?? t.serverOperation,
+                    result: t.status === "cancelled" && !serverOperationCancelled(p?.result) ? t.result : preserveServerOperationResult(t.result, p?.result ?? p?.content),
                     summary: undefined,
                     completedAt: ev.timestamp,
                     ...(typeof p?.durationMs === "number" ? { durationMs: p.durationMs } : {}),
@@ -310,7 +316,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
             eventStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status: "waiting_approval" } : run) }));
           }
           eventStore.setState((st) => ({
-            toolCalls: st.toolCalls.map((tool) => tool.runId === ev.runId && tool.toolName === String(p?.toolName ?? "") && tool.status === "running" ? { ...tool, status: "waiting" } : tool),
+            toolCalls: st.toolCalls.map((tool) => tool.runId === ev.runId && (p?.toolCallId ? tool.toolCallId === p.toolCallId : tool.toolName === String(p?.toolName ?? "")) && tool.status === "running" ? { ...tool, status: "waiting" } : tool),
             approvals: [
               ...st.approvals,
               {
@@ -324,7 +330,10 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
 
         else if (ev.type === "approval.resolved") {
           const approvalId = String(p?.approvalId ?? "");
-          if (approvalId) eventStore.setState((st) => ({ approvals: st.approvals.filter((approval) => approval.id !== approvalId) }));
+          if (approvalId) eventStore.setState((st) => ({
+            approvals: st.approvals.filter((approval) => approval.id !== approvalId),
+            toolCalls: st.toolCalls.map(tool => tool.runId === ev.runId && tool.toolCallId === p?.toolCallId && tool.status === "waiting" ? { ...tool, status: "running" } : tool),
+          }));
         }
 
         else if (
@@ -333,7 +342,10 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
           ev.type === "agent.failed"
         ) {
           const isActiveRun = !ev.runId || ev.runId === eventStore.getState().activeRunId;
-          if (isActiveRun) clearDelta(ev.sessionId);
+          if (isActiveRun || ev.sourceSubagentId) flushNow(ev.sessionId);
+          eventStore.setState(st => ({ toolCalls: st.toolCalls.map(call => call.runId === ev.runId && (call.status === "running" || call.status === "waiting")
+            ? { ...call, status: ev.type === "agent.completed" ? "failed" : "cancelled", completedAt: ev.timestamp } : call) }));
+          if (ev.sourceSubagentId) return;
           const completedMessage = p?.message;
           if (
             completedMessage &&
@@ -373,6 +385,10 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
             const status = ev.type === "agent.completed" ? "completed" : ev.type === "agent.cancelled" ? "cancelled" : "failed";
             eventStore.setState((st) => ({ runs: st.runs.map((run) => run.id === ev.runId ? { ...run, status, completedAt: Date.now() } : run) }));
           }
+          const sessionId = ev.sessionId ?? eventStore.getState().currentSessionId;
+          if (isActiveRun && sessionId) for (const pending of pendingAgentRuns.values()) {
+            if (pending.sessionId === sessionId && (!pending.runId || pending.runId === ev.runId)) pending.completed = true;
+          }
           if (isActiveRun) {
             eventStore.setState((st) => ({ streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], waitingSubagents: [], running: false, activeRunId: undefined, executionPhase: undefined, approvals: [], runningSessionIds: ev.sessionId ? st.runningSessionIds.filter((id) => id !== ev.sessionId) : st.runningSessionIds }));
           }
@@ -383,11 +399,7 @@ export function handleAgentEvent(ev: AgentEvent, eventStore: ReturnType<typeof s
             const cancelledSessionId = ev.sessionId ?? eventStore.getState().currentSessionId;
             eventStore.setState((st) => ({ titleGeneratingSessionIds: st.titleGeneratingSessionIds.filter((id) => id !== cancelledSessionId) }));
           }
-          const sessionId = ev.sessionId ?? eventStore.getState().currentSessionId;
           if (sessionId) {
-            for (const pending of pendingAgentRuns.values()) {
-              if (pending.sessionId === sessionId) pending.completed = true;
-            }
             const state = eventStore.getState();
             requestSessionMessages(sessionId);
             state.send({ type: "session.toolCalls", requestId: rid(), sessionId });

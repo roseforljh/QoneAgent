@@ -4,15 +4,31 @@ import { runInNewContext } from "node:vm";
 
 const source = readFileSync(new URL("../public/boot-theme.js", import.meta.url), "utf8");
 
-function resolveTheme(saved: string | null, systemDark: boolean) {
-  const document = { documentElement: { dataset: {} as Record<string, string> } };
+function boot(items: Record<string, string | null>, systemDark: boolean) {
+  const style: Record<string, string> = {};
+  const document = {
+    documentElement: { dataset: {} as Record<string, string>, style: { setProperty: (name: string, value: string) => { style[name] = value; } } },
+    addEventListener() {},
+  };
   runInNewContext(source, {
     document,
-    localStorage: { getItem: () => saved },
+    window: {},
+    localStorage: { getItem: (key: string) => items[key] ?? null },
     matchMedia: () => ({ matches: systemDark }),
   });
-  return document.documentElement.dataset.theme;
+  return { dataset: document.documentElement.dataset, style };
 }
+
+const resolveTheme = (saved: string | null, systemDark: boolean) => boot({ "qone-theme": saved }, systemDark).dataset.theme;
+
+test("startup skeleton follows the saved sidebar width and collapsed state", () => {
+  const open = boot({ "qone:left-sidebar-width:px:v2": "300" }, false);
+  expect(open.style["--qone-boot-sidebar-width"]).toBe("300px");
+  expect(open.dataset.qoneBootSidebar).toBeUndefined();
+  const collapsed = boot({ "qone-sidebar-preferences": JSON.stringify({ state: { collapsed: true } }) }, false);
+  expect(collapsed.dataset.qoneBootSidebar).toBe("collapsed");
+  expect(collapsed.dataset.qoneBootWeb).toBe("");
+});
 
 test("startup theme honors an explicitly saved dark theme", () => {
   expect(resolveTheme("dark", false)).toBe("dark");

@@ -1,7 +1,8 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { useAuiState, type ReasoningMessagePartComponent } from "@assistant-ui/react";
 import ReactMarkdown from "react-markdown";
+import { splitMarkdownBlocks, type MarkdownBlockState } from "../../lib/markdown-blocks";
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { CodexChevronRightIcon } from "./execution-icons";
 import { MeasuredCollapse } from "./elements/measured-collapse";
@@ -11,9 +12,19 @@ import { latestReasoningText } from "./reasoning-preview";
 import { useLocale } from "../../localization";
 import "./reasoning.css";
 
-// Disclosure and fade state changes must not reparse the entire reasoning text.
-const ReasoningText = memo(function ReasoningText({ text }: { text: string }) {
+// Disclosure and fade state changes must not reparse the entire reasoning text,
+// and streaming re-parses only the block still growing.
+const ReasoningBlock = memo(function ReasoningBlock({ text }: { text: string }) {
   return <ReactMarkdown allowedElements={["p", "br"]} unwrapDisallowed skipHtml>{text}</ReactMarkdown>;
+});
+const ReasoningText = memo(function ReasoningText({ text }: { text: string }) {
+  const splitState = useRef<MarkdownBlockState | undefined>(undefined);
+  const blocks = useMemo(() => {
+    const result = splitMarkdownBlocks(text, splitState.current);
+    splitState.current = result.state;
+    return result.blocks;
+  }, [text]);
+  return <>{blocks.map((block, index) => <ReasoningBlock key={index} text={block} />)}</>;
 });
 
 export const Reasoning: ReasoningMessagePartComponent = () => {

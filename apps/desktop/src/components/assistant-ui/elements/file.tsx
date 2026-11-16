@@ -198,7 +198,7 @@ function FileDownload({
       download={filename || "download"}
       {...(kind === "url" && { target: "_blank", rel: "noopener noreferrer" })}
       className={cn(
-        "text-muted-foreground hover:bg-accent hover:text-accent-foreground shrink-0 rounded-md p-1 transition-colors",
+        "text-muted-foreground hover:text-foreground shrink-0 rounded-md p-1 transition-colors",
         className,
       )}
       aria-label={!children ? `Download ${filename || "file"}` : undefined}

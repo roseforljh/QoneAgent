@@ -283,7 +283,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
                       type="button"
                       aria-label={t("mcp.delete", { name: server.name })}
                       onClick={() => void remove(server.id, server.name, server.oauth?.tokenSecretKey)}
-                      className="ms-auto rounded-md p-1 text-foreground/40 transition-colors hover:bg-red-500/10 hover:text-red-500"
+                      className="ms-auto rounded-md p-1 text-foreground/40 transition-colors hover:text-red-500"
                     >
                       <Trash2Icon className="size-3.5" />
                     </button>

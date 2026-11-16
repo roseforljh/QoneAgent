@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useStore } from "../../store";
 import { dockScopeKey } from "../../lib/dock-state";
-import { WorkspaceDock } from "./workspace-dock";
+
+// Terminal, diff, shiki and file readers stay out of the startup bundle.
+const WorkspaceDock = lazy(async () => ({ default: (await import("./workspace-dock")).WorkspaceDock }));
 
 type DockOwner = { key: string; sessionId?: string; workspaceId?: string; hasTabs: boolean };
 
@@ -28,7 +30,7 @@ export function ScopedWorkspaceDocks({ onViewChange }: { onViewChange: (view: st
 
   // Render the selected owner immediately, before the retention effect runs.
   const owners = retained.some((owner) => owner.key === current.key) ? retained : [...retained, current];
-  return <>{owners.map((owner) => {
+  return <Suspense fallback={null}>{owners.map((owner) => {
     const active = owner.key === current.key;
     const ownerWorkspaceId = owner.sessionId
       ? sessions.find((session) => session.id === owner.sessionId)?.workspaceId ?? owner.workspaceId
@@ -47,5 +49,5 @@ export function ScopedWorkspaceDocks({ onViewChange }: { onViewChange: (view: st
         return owners.map((item) => item.key === owner.key ? { ...item, hasTabs } : item);
       })}
     />;
-  })}</>;
+  })}</Suspense>;
 }

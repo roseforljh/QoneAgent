@@ -4,8 +4,7 @@ import { en } from "../src/i18n/en";
 import { zh, type MessageKey } from "../src/i18n/zh-CN";
 
 const keys = ["startup.failed", "startup.loading", "startup.scriptFailed", "startup.cspBlocked",
-  "startup.resource", "startup.loadingProjects", "startup.file", "common.edit", "startup.view",
-  "startup.help", "sidebar.newChat", "app.apps", "sidebar.projects", "common.settings"] satisfies MessageKey[];
+  "startup.resource"] satisfies MessageKey[];
 const copy = (messages: Record<MessageKey, string>) => Object.fromEntries(keys.map((key) => [key, messages[key]]));
 
 export async function generateBootLocale(): Promise<string> {

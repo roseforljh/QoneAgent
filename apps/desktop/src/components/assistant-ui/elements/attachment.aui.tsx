@@ -224,7 +224,7 @@ const AttachmentUI: FC = () => {
 const AttachmentRemove: FC = () => {
   const { t } = useLocale();
   return (
-    <AttachmentPrimitive.Remove render={<TooltipIconButton tooltip={t("attachment.remove")} className="aui-attachment-tile-remove absolute end-1 top-1/2 size-5 -translate-y-1/2 rounded-full text-foreground/45 hover:bg-foreground/[0.06]! hover:text-foreground/90! active:scale-[0.96] motion-reduce:transition-none dark:hover:bg-foreground/[0.09]!" side="top" />}>
+    <AttachmentPrimitive.Remove render={<TooltipIconButton tooltip={t("attachment.remove")} className="aui-attachment-tile-remove absolute end-1 top-1/2 size-5 -translate-y-1/2 rounded-full text-foreground/45 hover:text-foreground/90! active:scale-[0.96] motion-reduce:transition-none" side="top" />}>
       <XIcon className="aui-attachment-remove-icon size-3 stroke-[2.5]" />
     </AttachmentPrimitive.Remove>
   );
@@ -262,7 +262,7 @@ export const ComposerAddAttachment: FC<{ hidden?: boolean }> = ({ hidden = false
         variant="ghost"
         size="icon"
         className={cn(
-          "aui-composer-add-attachment text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-7 rounded-full active:scale-[0.96] motion-reduce:transition-none",
+          "aui-composer-add-attachment text-muted-foreground hover:text-foreground dark:border-muted-foreground/15 size-7 rounded-full active:scale-[0.96] motion-reduce:transition-none",
           hidden && "pointer-events-none absolute size-px overflow-hidden opacity-0",
         )}
         aria-label={t("attachment.add")}

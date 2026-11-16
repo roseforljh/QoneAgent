@@ -9,7 +9,7 @@ import { useExternalStoreRuntime, type AppendMessage } from "@assistant-ui/react
 import { sameUserInput } from "@qone/protocol";
 import { useStore } from "../store";
 import { sessionStore } from "./session-execution-state";
-import { createQoneMessageQueue, getQoneMessageQueue } from "./qone-message-queue";
+import { createQoneMessageQueue, getQoneMessageQueue, messageServerIds } from "./qone-message-queue";
 import { bindSessionQueue, hydrateSessionQueue } from "./session-queue-lifecycle";
 import { convertedMessage } from "./runtime-message-converter";
 import { QoneAttachmentAdapter } from "./file-attachment-adapter";
@@ -47,11 +47,13 @@ export function useSideConversationRuntime(sessionId: string) {
   const owner = useMemo(() => sessionStore(useStore, sessionId), [sessionId]);
   const submit = (message: AppendMessage, queueItemId: string | undefined, attachments: Awaited<ReturnType<typeof serializeMessageAttachments>>) => {
     const prompt = extractComposerPrompt(message);
-    if (prompt.text.trim()) addComposerHistory(sessionId, prompt.text);
-    useStore.getState().runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, sessionId, prompt.quote);
+    const sent = useStore.getState().runAgent(prompt.text, undefined, attachments, queueItemId, prompt.goal, sessionId, prompt.quote, undefined, messageServerIds(message));
+    if (sent && prompt.text.trim()) addComposerHistory(sessionId, prompt.text);
+    return sent;
   };
   const queue = useMemo(() => ready ? getQoneMessageQueue(sessionId) ?? createQoneMessageQueue({
     sessionId,
+    getServerIds: () => useStore.getState().runOptionsBySession[sessionId]?.serverIds ?? [],
     isRunning: () => owner.getState().running || Boolean(useStore.getState().compactionStatuses[sessionId]),
     getActiveRunId: () => owner.getState().activeRunId,
     isDuplicate: (message, attachments) => {

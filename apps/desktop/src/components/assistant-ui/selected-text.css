@@ -125,7 +125,7 @@
 .q-composer-quote-text { display: block; overflow-wrap: anywhere; white-space: pre-wrap; }
 .q-composer-quote-actions { display: flex; flex: none; align-items: center; gap: 2px; }
 .q-composer-quote-action { display: grid; width: 24px; height: 24px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
-.q-composer-quote-action:hover { background: color-mix(in srgb, var(--foreground) 8%, transparent); color: var(--foreground); }
+.q-composer-quote-action:hover { color: var(--foreground); }
 .q-composer-quote-action:focus-visible { outline: 2px solid var(--ring); outline-offset: -1px; }
 .q-composer-quote-editor { width: 100%; min-height: 40px; max-height: 120px; margin: -2px 0 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; outline: 0; background: var(--q-surface-muted); color: var(--foreground); font: inherit; line-height: 1.5; resize: vertical; }
 .q-composer-quote-editor:focus { border-color: var(--ring); }

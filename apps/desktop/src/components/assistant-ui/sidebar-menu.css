@@ -34,8 +34,8 @@
 .q-sidebar-menu-subtrigger > svg:last-child { margin-left: auto; }
 .q-sidebar-menu-item:hover,
 .q-sidebar-menu-item[data-highlighted],
-.q-sidebar-menu-item[data-state="open"],
-.q-sidebar-menu-trigger[data-state="open"] { background: var(--accent); }
+.q-sidebar-menu-item[data-state="open"] { background: var(--accent); }
+.q-sidebar-menu-trigger[data-state="open"] { color: var(--foreground); }
 .q-sidebar [data-slot="aui-thread-list-item-more"]:focus-visible,
 .q-sidebar .q-sidebar-menu-trigger:focus-visible { outline: none; box-shadow: none; }
 .q-sidebar-section-label > span:last-child { transform-origin: center; }

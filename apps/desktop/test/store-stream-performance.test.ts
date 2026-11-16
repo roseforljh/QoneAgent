@@ -131,6 +131,17 @@ test("deleting the selected session prunes the snapshot created during switching
   } finally { useStore.setState(previous, true); }
 });
 
+test("server history restores nested child identity and cancellation without polluting the selected conversation", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ connected: true, currentSessionId: "perf-session", toolCalls: [], activeRunId: undefined, backgroundSessions: {}, messages: [] });
+    const result = { content: [{ type: "text", text: "saved output" }], details: { cancelled: true, serverOperation: { serverId: "a", serverName: "Alpha" } } };
+    emit({ type: "session.toolCalls", sessionId: "history-owner", toolCalls: [{ id: "child:nested", runId: "child", toolName: "server_exec", parentToolCallId: "script", sourceSubagentId: "child", serverOperation: result.details.serverOperation, status: "cancelled", resultSummary: JSON.stringify(result) }] });
+    expect(useStore.getState().toolCalls).toEqual([]);
+    expect(useStore.getState().backgroundSessions["history-owner"]!.toolCalls[0]).toMatchObject({ toolCallId: "nested", parentToolCallId: "script", sourceSubagentId: "child", status: "cancelled", serverOperation: result.details.serverOperation, result });
+  } finally { useStore.setState(previous, true); }
+});
+
 test("tool call alignment keeps its array when nothing needs renaming", () => {  const previous = useStore.getState();
   try {
     const calls = Array.from({ length: 500 }, (_, index) => ({ toolCallId: `call-${index}`, runId: "run-a", toolName: "read", status: "success" as const }));

@@ -1,6 +1,7 @@
 import type { RunPermissionMode, RunThinkingLevel } from "@qone/protocol";
 
 export type SessionRunOptions = {
+  serverIds?: string[];
   modelId?: string;
   permissionMode?: RunPermissionMode;
   thinkingByModel?: Record<string, RunThinkingLevel>;
@@ -24,6 +25,7 @@ function parseRunOptions(value: unknown): SessionRunOptions {
     ? Object.fromEntries(Object.entries(record.thinkingByModel).filter(([, level]) => levels.has(level as RunThinkingLevel))) as Record<string, RunThinkingLevel>
     : undefined;
   return {
+    ...(Array.isArray(record.serverIds) ? { serverIds: [...new Set(record.serverIds.filter((id): id is string => typeof id === "string" && Boolean(id)))] } : {}),
     ...(modelId ? { modelId } : {}),
     ...(permissionMode ? { permissionMode } : {}),
     ...(thinkingByModel && Object.keys(thinkingByModel).length ? { thinkingByModel } : {}),
@@ -31,6 +33,7 @@ function parseRunOptions(value: unknown): SessionRunOptions {
 }
 
 export function withRunOptionDefaults(options: SessionRunOptions | undefined, defaults: SessionRunOptions | undefined): SessionRunOptions {
+  const serverIds = options?.serverIds ?? defaults?.serverIds;
   const modelId = options?.modelId ?? defaults?.modelId;
   const permissionMode = options?.permissionMode ?? defaults?.permissionMode;
   const thinkingByModel = options?.thinkingByModel || defaults?.thinkingByModel
@@ -38,6 +41,7 @@ export function withRunOptionDefaults(options: SessionRunOptions | undefined, de
     : undefined;
   return {
     ...(modelId ? { modelId } : {}),
+    ...(serverIds ? { serverIds: [...serverIds] } : {}),
     ...(permissionMode ? { permissionMode } : {}),
     ...(thinkingByModel && Object.keys(thinkingByModel).length ? { thinkingByModel } : {}),
   };

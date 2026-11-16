@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
-import { CircleHelp } from "lucide-react";
 import { useStore } from "../../store";
 import { revealItemInDir } from "../../lib/desktop-bridge";
 import { useLocale } from "../../localization";
-import { cn } from "../../lib/utils";
 import { MemoryChips, type MemoryChip } from "../assistant-ui/elements/memory-chips";
 import { SectionHeader, SettingsPageHeader } from "./settings-chrome";
 
@@ -34,7 +32,6 @@ function loadPersonalizationProfile(): PersonalizationProfile {
 export function PersonalizationSection() {
   const { t } = useLocale();
   const [profile, setProfile] = useState<PersonalizationProfile>(loadPersonalizationProfile);
-  const [showMemoryInfo, setShowMemoryInfo] = useState(false);
   const globalPrompt = useStore((state) => state.globalPrompt);
   const globalPromptPath = useStore((state) => state.globalPromptPath);
   const globalPromptLoaded = useStore((state) => state.globalPromptLoaded);
@@ -102,13 +99,6 @@ export function PersonalizationSection() {
           aria-label={t("personalization.globalPrompt")}
         />
         <p className="settings-global-prompt-hint">{t("personalization.globalPromptHint")}</p>
-      </section>
-      <section className="settings-memory-section">
-        <div className="settings-memory-heading"><h3>{t("personalization.memory")}</h3><CircleHelp size={18} /></div>
-        <div className="settings-memory-row">
-          <div><strong>{t("personalization.enableMemory")}</strong><p>{t("personalization.memoryDescription")}<button type="button" className="settings-learn-more" onClick={() => setShowMemoryInfo((current) => !current)}>{t("personalization.learnMore")}</button></p>{showMemoryInfo && <p className="settings-memory-info">{t("personalization.memoryInfo")}</p>}</div>
-          <button type="button" role="switch" aria-label={t("personalization.enableMemory")} aria-checked={profile.memoryEnabled} className={cn("settings-switch", profile.memoryEnabled && "is-on")} onClick={() => updateProfile("memoryEnabled", !profile.memoryEnabled)}><span /></button>
-        </div>
       </section>
     </>
   );

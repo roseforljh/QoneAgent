@@ -26,6 +26,7 @@ export function alignToolCallIds(calls: readonly ToolCall[], messages: readonly 
   const cursors = new Map<ToolPart[], number>();
   let changed = false;
   const aligned = calls.map((call) => {
+    if (call.parentToolCallId || call.sourceSubagentId) return call;
     const runUsed = used.get(call.runId) ?? new Set<string>();
     let match = exactByRun.get(call.runId)?.get(call.toolCallId);
     if (!match) {

@@ -26,7 +26,7 @@ export function ImageGeneration({ prompt, generating, error, onRegenerate, class
       </div>
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 flex-1 truncate text-xs text-foreground/55">{generating ? t("image.generating") : prompt}</p>
-        {onRegenerate && <button type="button" aria-label={t("image.regenerate")} disabled={generating} onClick={onRegenerate} className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-foreground/60 hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"><RefreshCwIcon className="size-3.5" /></button>}
+        {onRegenerate && <button type="button" aria-label={t("image.regenerate")} disabled={generating} onClick={onRegenerate} className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-foreground/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"><RefreshCwIcon className="size-3.5" /></button>}
       </div>
     </div>
   );

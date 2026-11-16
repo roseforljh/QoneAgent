@@ -1,12 +1,13 @@
 import { localizeError } from "./lib/error-localization";
 import { alignToolCallIds } from "./lib/tool-call-alignment";
 import { initRuntimeBridge } from "./store-bridge";
-import { repeatedUserMessageId } from "@qone/protocol";
+import { repeatedUserMessageId, serverOperationInfo } from "@qone/protocol";
 import { sessionStore, switchSessionState, type SessionExecutionState } from "./lib/session-execution-state";
 import { updateSessionActivity } from "./lib/session-recency";
 import { create } from "zustand";
 import { isolateBackgroundSubscriptions } from "./lib/store-subscriptions";
 import { invoke } from "./lib/desktop-bridge";
+import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type MessageQuoteInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo } from "@qone/protocol";
 import { DEFAULT_RUN_PERMISSION_MODE, loadNewSessionRunOptions, loadRunOptions, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults, type SessionRunOptions } from "./lib/run-options";
 import { defaultThinkingForModel, normalizeThinkingLevel } from "./lib/model-settings";
@@ -49,10 +50,13 @@ export interface PendingApproval {
 }
 
 export interface ToolCall {
+  parentToolCallId?: string;
+  sourceSubagentId?: string;
+  serverOperation?: import("@qone/protocol").ServerOperationInfo;
   toolCallId: string;
   runId: string;
   toolName: string;
-  status: "running" | "success" | "failed" | "waiting";
+  status: "running" | "success" | "failed" | "waiting" | "cancelled";
   args?: unknown;
   argsText?: string;
   result?: unknown;
@@ -91,6 +95,7 @@ export interface AgentState {
   workspaces: WorkspaceInfo[];
   modelConfigs: ModelConfigInfo[];
   selectedModelId?: string;
+  setServerIds: (ids: string[], sessionId?: string) => void;
   runOptionsBySession: Record<string, SessionRunOptions>;
   /** Shared model/thinking/permission configuration for every new conversation. */
   draftRunOptions: SessionRunOptions;
@@ -117,6 +122,7 @@ export interface AgentState {
   pendingGoal?: boolean;
   pendingAttachments?: MessageAttachmentInfo[];
   pendingQuote?: MessageQuoteInfo;
+  pendingServerIds?: string[];
   titleGeneratingSessionIds: string[];
   messages: ChatMessage[];
   queueItems: QueueItemInfo[];
@@ -134,6 +140,8 @@ export interface AgentState {
   runningSessionIds: string[];
   completedSessionIds: string[];
   activeRunId?: string;
+  /** Stopping run; null means its id has not arrived yet. A second press forces it. */
+  stoppingRunId?: string | null;
   approvals: PendingApproval[];
   toolCalls: ToolCall[];
   permissionRules: PermissionRuleInfo[];
@@ -168,7 +176,8 @@ export interface AgentState {
   selectWorkspace: (id: string) => void;
   selectSession: (id: string) => void;
   searchSessions: (query: string) => void;
-  runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean, sessionId?: string, quote?: MessageQuoteInfo, continuation?: boolean) => void;
+  /** True when the input was handed to the runtime; false when it was refused locally. */
+  runAgent: (message: string, replaceFromMessageId?: string, attachments?: MessageAttachmentInfo[], queueItemId?: string, goal?: boolean, sessionId?: string, quote?: MessageQuoteInfo, continuation?: boolean, serverIds?: string[]) => boolean;
   pauseGoal: (sessionId?: string) => void;
   resumeGoal: (sessionId?: string) => void;
   clearGoal: (sessionId?: string) => void;
@@ -223,19 +232,25 @@ function rememberBrowserConnection(): void {
   catch { /* Local storage may be unavailable in a restricted preview. */ }
 }
 
-const pendingAgentRuns = new Map<string, { requestId: string; sessionId: string; userMessageId: string; completed?: boolean }>();
+const pendingAgentRuns = new Map<string, { requestId: string; sessionId: string; userMessageId: string; queueItemId?: string; runId?: string; completed?: boolean }>();
 const stopRequestedSessionIds = new Set<string>();
-const stopRequests = new Map<string, { sessionId: string; runId: string }>();
-function stopRun(sessionId: string, runId: string) {
-  if ([...stopRequests.values()].some((request) => request.runId === runId)) return;
+const forceStopRequestedSessionIds = new Set<string>();
+const stopRequests = new Map<string, { sessionId: string; runId: string; force?: boolean }>();
+function stopRun(sessionId: string, runId: string, force = false) {
+  if ([...stopRequests.values()].some(request => request.runId === runId && (!force || request.force))) return;
   const requestId = rid();
-  stopRequests.set(requestId, { sessionId, runId });
-  void useStore.getState().send({ type: "agent.stop", requestId, runId }).then((sent) => {
+  stopRequests.set(requestId, { sessionId, runId, force });
+  void useStore.getState().send({ type: "agent.stop", requestId, runId, ...(force ? { force } : {}) }).then((sent) => {
     if (!sent) stopRequests.delete(requestId);
   });
 }
 function finishStopRequest(sessionId: string, runId?: string) {
-  stopRequestedSessionIds.delete(sessionId);
+  const state = sessionStore(useStore, sessionId).getState();
+  if (!runId || state.activeRunId === runId || (!state.activeRunId && state.stoppingRunId !== null)) {
+    stopRequestedSessionIds.delete(sessionId);
+    forceStopRequestedSessionIds.delete(sessionId);
+    if (state.stoppingRunId !== undefined) sessionStore(useStore, sessionId).setState({ stoppingRunId: undefined });
+  }
   for (const [requestId, request] of stopRequests) {
     if (request.sessionId === sessionId && (!runId || request.runId === runId)) stopRequests.delete(requestId);
   }
@@ -445,7 +460,9 @@ export const useStore = create<AgentState>((set, get, api) => {
       if (cmd.type === "secret.set" && cmd.key.startsWith("mcp.env:")) restoredMcpSecrets.delete(cmd.key);
       if (cmd.type === "agent.run" || cmd.type === "goal.start") {
         if (!cmd.messageId || !pendingAgentRuns.has(cmd.requestId)) return false;
+        const pending = pendingAgentRuns.get(cmd.requestId)!;
         pendingAgentRuns.delete(cmd.requestId);
+        if (pending.queueItemId) getQoneMessageQueue(cmd.sessionId)?.settleSend(pending.queueItemId, false);
         finishStopRequest(cmd.sessionId);
         {
           clearDelta(cmd.sessionId);
@@ -460,6 +477,14 @@ export const useStore = create<AgentState>((set, get, api) => {
           });
         }
         set((state) => ({ runningSessionIds: state.runningSessionIds.filter((id) => id !== cmd.sessionId), completedSessionIds: state.completedSessionIds.filter((id) => id !== cmd.sessionId), titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
+      } else if (cmd.type === "agent.stop") {
+        const request = stopRequests.get(cmd.requestId);
+        if (request) {
+          stopRequests.delete(cmd.requestId);
+          finishStopRequest(request.sessionId, request.runId);
+          sessionStore(useStore, request.sessionId).setState({ lastError: localizeError(error) });
+          void get().send({ type: "session.runs", requestId: rid(), sessionId: request.sessionId });
+        }
       } else if (cmd.type === "session.generate-title") {
         pendingTitleRequests.delete(cmd.requestId);
         set((state) => ({ titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== cmd.sessionId) }));
@@ -584,9 +609,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     const workspaceId = state.sessions.find((session) => session.id === id)?.workspaceId;
     const workspaceChanged = workspaceId !== undefined && workspaceId !== state.currentWorkspaceId;
     const cached = state.backgroundSessions[id];
-    // A loaded background conversation can render immediately while its history
-    // is refreshed. Only show the blocking skeleton for a first load or a load
-    // that was already pending when the conversation was left.
+    // A cached chat renders during history refresh; only first/pending loads block it.
     const messagesLoadingSessionId = cached?.messagesLoadingSessionId === id ? id : cached ? undefined : id;
     const storedRunOptions = state.runOptionsBySession[id];
     const needsDefaults = !storedRunOptions?.modelId || !storedRunOptions?.permissionMode;
@@ -621,42 +644,42 @@ export const useStore = create<AgentState>((set, get, api) => {
     });
   },
 
-  runAgent: (message, replaceFromMessageId, attachments, queueItemId, goal, sessionId, quote, continuation) => {
+  runAgent: (message, replaceFromMessageId, attachments, queueItemId, goal, sessionId, quote, continuation, serverIds) => {
     const { getState: get, setState: set } = sessionStore(useStore, sessionId);
     const mcpCommand = parseMcpCommand(message);
     if (mcpCommand) {
       const server = get().mcpServers.find((item) => item.id === mcpCommand.serverId);
       if (!server?.connected || !(server.toolCount && server.toolCount > 0)) {
         set({ lastError: t("error.mcpUnavailable") });
-        return;
+        return false;
       }
       if (!mcpCommand.text && !attachments?.length) {
         set({ lastError: t("error.mcpMessageRequired") });
-        return;
+        return false;
       }
       if (goal) {
         set({ lastError: t("error.goalMcpUnsupported") });
-        return;
+        return false;
       }
     }
     const sid = get().currentSessionId;
     if (!sid) {
       const workspaceId = get().draftWorkspaceId;
-      if (!workspaceId || get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
-      set({ pendingMessage: message, pendingGoal: goal, pendingAttachments: attachments, pendingQuote: quote, currentWorkspaceId: workspaceId, lastError: undefined });
+      if (!workspaceId || get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return false;
+      set({ pendingMessage: message, pendingGoal: goal, pendingAttachments: attachments, pendingQuote: quote, pendingServerIds: [...(serverIds ?? get().draftRunOptions.serverIds ?? [])], currentWorkspaceId: workspaceId, lastError: undefined });
       get().createSessionForWorkspace(workspaceId);
-      return;
+      return true;
     }
     const session = get().sessions.find((item) => item.id === sid) ?? get().sideChats[sid];
-    if (!session?.workspaceId || !get().workspaces.some((workspace) => workspace.id === session.workspaceId)) return;
-    if (get().running || get().compactionStatuses[sid]) return;
-    if (!hasDesktopBridge()) { set({ lastError: t("error.runtimeDisconnected") }); return; }
+    if (!session?.workspaceId || !get().workspaces.some((workspace) => workspace.id === session.workspaceId)) return false;
+    if (get().running || get().compactionStatuses[sid]) return false;
+    if (!hasDesktopBridge()) { set({ lastError: t("error.runtimeDisconnected") }); return false; }
     const history = get().messages;
     if (!continuation) replaceFromMessageId ??= repeatedUserMessageId(history, { content: message, attachments });
     const replaceIndex = replaceFromMessageId
       ? history.findIndex((item) => item.id === replaceFromMessageId && item.role === "user")
       : -1;
-    if (replaceFromMessageId && replaceIndex < 0) return;
+    if (replaceFromMessageId && replaceIndex < 0) return false;
     const persistedReplaceId = replaceIndex >= 0 && history[replaceIndex]?.persisted !== false ? replaceFromMessageId : undefined;
     if (persistedReplaceId) pendingMessageReplacements.set(sid, persistedReplaceId);
     const keptMessages = replaceIndex >= 0 ? history.slice(0, replaceIndex) : history;
@@ -682,6 +705,7 @@ export const useStore = create<AgentState>((set, get, api) => {
       pendingGoal: undefined,
       pendingAttachments: undefined,
       pendingQuote: undefined,
+      pendingServerIds: undefined,
       lastError: undefined,
       chatRunError: undefined,
       toolCalls: replaceIndex >= 0 ? s.toolCalls.filter((call) => keptRunIds.has(call.runId)) : s.toolCalls,
@@ -698,24 +722,32 @@ export const useStore = create<AgentState>((set, get, api) => {
     const requestedThinking = model ? options?.thinkingByModel?.[model] : undefined;
     const thinking = model ? normalizeThinkingLevel(requestedThinking ?? defaultThinkingForModel(modelConfig, apiType), apiType) : undefined;
     const permissionMode = options?.permissionMode ?? DEFAULT_RUN_PERMISSION_MODE;
+    serverIds ??= [...(options?.serverIds ?? [])];
     const requestId = rid();
-    pendingAgentRuns.set(requestId, { requestId, sessionId: sid, userMessageId: messageId });
+    pendingAgentRuns.set(requestId, { requestId, sessionId: sid, userMessageId: messageId, queueItemId });
     get().send(goal
-      ? { type: "goal.start", requestId, sessionId: sid, objective: message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, model, permissionMode, thinking }
-      : { type: "agent.run", requestId, sessionId: sid, message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, queueItemId, model, permissionMode, thinking, mcpServerId: mcpCommand?.serverId, continuation });
+      ? { type: "goal.start", requestId, sessionId: sid, objective: message, queueItemId, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, model, permissionMode, thinking, serverIds }
+      : { type: "agent.run", requestId, sessionId: sid, message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, queueItemId, model, permissionMode, thinking, serverIds, mcpServerId: mcpCommand?.serverId, continuation });
     if (history.length === 0) {
       const titleRequestId = rid();
       pendingTitleRequests.set(titleRequestId, sid);
       get().send({ type: "session.generate-title", requestId: titleRequestId, sessionId: sid, prompt: (mcpCommand ? mcpCommand.text : message) || attachments?.map((attachment) => attachment.name).join(", ") || t("attachment.image"), model });
     }
+    return true;
   },
 
   stopAgent: (sessionId) => {
-    const { currentSessionId, activeRunId, running } = sessionStore(useStore, sessionId).getState();
+    const store = sessionStore(useStore, sessionId);
+    const { currentSessionId, activeRunId, running, stoppingRunId } = store.getState();
     if (!currentSessionId || !running) return;
+    // Cancel keeps FIFO paused until an explicit send resumes it.
+    getQoneMessageQueue(currentSessionId)?.pauseAfterStop();
+    const force = stopRequestedSessionIds.has(currentSessionId);
+    if (force) forceStopRequestedSessionIds.add(currentSessionId);
     stopRequestedSessionIds.add(currentSessionId);
-    if (activeRunId) stopRun(currentSessionId, activeRunId);
-    else void get().send({ type: "session.runs", requestId: rid(), sessionId: currentSessionId });
+    store.setState({ stoppingRunId: activeRunId ?? null });
+    if (!activeRunId) { void get().send({ type: "session.runs", requestId: rid(), sessionId: currentSessionId }); return; }
+    stopRun(currentSessionId, activeRunId, force || stoppingRunId === activeRunId);
   },
 
   pauseGoal: (sessionId = get().currentSessionId) => { if (sessionId) void get().send({ type: "goal.pause", requestId: rid(), sessionId }); },
@@ -823,6 +855,18 @@ export const useStore = create<AgentState>((set, get, api) => {
     saveNewSessionRunOptions(draftRunOptions);
     return { draftRunOptions };
   }),
+  setServerIds: (ids, sessionId) => set((state) => {
+    const serverIds = [...new Set(ids)];
+    const sid = sessionId ?? state.currentSessionId;
+    if (!sid) {
+      const draftRunOptions = { ...state.draftRunOptions, serverIds };
+      saveNewSessionRunOptions(draftRunOptions);
+      return { draftRunOptions };
+    }
+    const runOptionsBySession = { ...state.runOptionsBySession, [sid]: { ...state.runOptionsBySession[sid], serverIds } };
+    saveRunOptions(runOptionsBySession);
+    return { runOptionsBySession };
+  }),
   setRunThinking: (modelId, level, sessionId) => set((state) => {
     const sid = sessionId ?? state.currentSessionId;
     if (!sid) {
@@ -839,7 +883,8 @@ export const useStore = create<AgentState>((set, get, api) => {
 });
 
 // Flush each session independently so navigation cannot redirect buffered tokens.
-const deltas = new Map<string, { text: string; reasoning?: { delta: string; contentIndex?: number }; timer?: ReturnType<typeof setTimeout> }>();
+// Text, reasoning and live tool output share one ~30fps commit per session.
+const deltas = new Map<string, { text: string; reasoning?: { delta: string; contentIndex?: number }; tools?: Map<string, { runId: string; update: unknown }>; timer?: ReturnType<typeof setTimeout> }>();
 function bufferFor(sessionId: string) {
   let buffer = deltas.get(sessionId);
   if (!buffer) { buffer = { text: "" }; deltas.set(sessionId, buffer); }
@@ -855,16 +900,29 @@ function queueReasoning(delta: string, contentIndex?: number, sessionId = useSto
   const buffer = bufferFor(sessionId);
   buffer.reasoning = { delta: (buffer.reasoning?.delta ?? "") + delta, contentIndex };
 }
+/** Live tool output is a snapshot: only the latest update per call matters. */
+function queueToolUpdate(toolCallId: string, runId: string, update: unknown, sessionId = useStore.getState().currentSessionId) {
+  if (!sessionId) return;
+  const buffer = bufferFor(sessionId);
+  (buffer.tools ??= new Map()).set(toolCallId, { runId, update });
+}
 function flushNow(sessionId = useStore.getState().currentSessionId) {
   if (!sessionId) return;
   const buffer = deltas.get(sessionId);
   if (!buffer) return;
   clearDelta(sessionId);
-  const { text, reasoning } = buffer;
+  const { text, reasoning, tools } = buffer;
   sessionStore(useStore, sessionId).setState((st) => ({
     streaming: st.streaming + text,
     streamingParts: reasoning && st.activeMessageSequence !== undefined
       ? applyReasoningDelta(st.streamingParts, reasoning, st.activeMessageSequence) : st.streamingParts,
+    ...(tools ? {
+      toolCalls: st.toolCalls.map((call) => {
+        const pending = tools.get(call.toolCallId);
+        return pending && call.runId === pending.runId && (call.status === "running" || call.status === "waiting")
+          ? { ...call, status: "running" as const, result: pending.update, serverOperation: serverOperationInfo(pending.update) ?? call.serverOperation } : call;
+      }),
+    } : {}),
   }));
 }
 function clearDelta(sessionId = useStore.getState().currentSessionId) {
@@ -897,9 +955,7 @@ function ensureStreamingToolPart(
   return applyAssistantToolEvent(next, "tool.started", payload);
 }
 
-// A reload removes the selected user turn in the runtime database. Ignore an
-// older session.messages response that still contains that turn, otherwise a
-// delayed response can restore the old bubble beside the replacement.
+// Ignore history predating the selected turn's runtime replacement.
 const pendingMessageReplacements = new Map<string, string>();
 const pendingSessionMessageRequests = new Map<string, { sessionId: string }>();
 const latestSessionMessageRequest = new Map<string, string>();
@@ -932,12 +988,10 @@ function clearSessionMessageRequests(sessionId: string) {
 }
 
 export function bridgeDependencies() {
-  return { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
+  return { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, queueToolUpdate, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, restoredMcpSecrets, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
 }
 
 export function initBridge() { initRuntimeBridge(bridgeDependencies()); }
 
-// IPC listeners, request maps and conversation queues share this store's
-// lifetime. React refresh alone leaves them holding the previous module.
-// Reconnect the renderer to the existing runtime when this state graph changes.
+// IPC listeners and queues share this store's lifetime; refresh must reconnect them.
 if (import.meta.hot) import.meta.hot.accept(() => window.location.reload());

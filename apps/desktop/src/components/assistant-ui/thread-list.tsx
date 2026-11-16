@@ -197,7 +197,7 @@ const ThreadListItemMore: FC<{ isRunning: boolean; isCompleted: boolean; onRenam
             variant="ghost"
             size="icon"
             data-slot="aui_thread-list-item-more"
-            className="data-[state=open]:bg-accent size-6 shrink-0 p-0 focus-visible:ring-0"
+            className="size-6 shrink-0 p-0 focus-visible:ring-0"
           >
             <CodexIcon src={moreIcon} className="size-3.5" />
             <span className="sr-only">{t("sidebar.chatOptions")}</span>

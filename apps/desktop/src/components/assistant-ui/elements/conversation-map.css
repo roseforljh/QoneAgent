@@ -123,7 +123,7 @@
 }
 .q-conversation-bookmark-button:hover,
 .q-conversation-bookmark-button:focus-visible,
-.q-conversation-bookmark-button[aria-pressed="true"] { background: color-mix(in oklab, var(--color-foreground) 8%, transparent); color: var(--color-foreground); }
+.q-conversation-bookmark-button[aria-pressed="true"] { color: var(--color-foreground); }
 .q-conversation-preview-body {
   display: -webkit-box;
   max-height: 4.5rem;

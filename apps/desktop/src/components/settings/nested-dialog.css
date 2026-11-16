@@ -11,4 +11,4 @@
 @keyframes nested-dialog-in { from { opacity: 0; transform: translate(-50%, -48%) scale(.97); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
 
 .nested-dialog-close { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background .15s ease, color .15s ease; }
-.nested-dialog-close:hover { background: var(--q-surface-muted); color: var(--foreground); }
+.nested-dialog-close:hover { color: var(--foreground); }

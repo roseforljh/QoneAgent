@@ -53,7 +53,7 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
     tooltip={t("chat.queueRemove")}
     disabled={steering}
     onClick={detached ? onDelete : undefined}
-    className="size-7 rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+    className="size-7 rounded-lg text-muted-foreground transition-colors hover:text-foreground"
   ><CodexIcon src={trashIcon} className="size-4" /></TooltipIconButton>;
 
   return <div
@@ -87,7 +87,7 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
       {!steering && <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button type="button" title={t("chat.queueMore")} aria-label={t("chat.queueMore")} disabled={editing}
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:text-foreground data-[state=open]:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
             <CodexIcon src={moreIcon} className="size-4" />
           </button>
         </DropdownMenu.Trigger>

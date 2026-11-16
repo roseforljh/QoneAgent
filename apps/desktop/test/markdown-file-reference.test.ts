@@ -21,13 +21,15 @@ test("web/mail/anchor destinations and invalid positions never become file refer
   }
 });
 
-test("Markdown URL transform preserves file anchors but keeps protocol and image filtering", () => {
+test("Markdown URL transform keeps local files for links and embedded media but filters unsafe protocols", () => {
   const node = { type: "element", tagName: "a", properties: {}, children: [] } as const;
   // URL transform does not need node data; these calls follow react-markdown's signature.
   expect(markdownUrlTransform("C:/Repo/A.ts:3", "href", { ...node, children: [] })).toBe("C:/Repo/A.ts:3");
   expect(markdownUrlTransform("file:///C:/A.ts", "href", { ...node, children: [] })).toBe("file:///C:/A.ts");
-  expect(markdownUrlTransform("file:///C:/A.png", "src", { ...node, children: [] })).toBe("");
+  // Local images, video and audio the agent made render in place from disk.
+  expect(markdownUrlTransform("file:///C:/A.png", "src", { ...node, children: [] })).toBe("file:///C:/A.png");
   expect(markdownUrlTransform("javascript:alert(1)", "href", { ...node, children: [] })).toBe("");
+  expect(markdownUrlTransform("javascript:alert(1)", "src", { ...node, children: [] })).toBe("");
   expect(markdownUrlTransform("https://example.com", "href", { ...node, children: [] })).toBe("https://example.com");
 });
 

@@ -53,6 +53,7 @@ function createSideConversation(command: Pending["command"], item?: QueueItemInf
       command, resolve, reject, draft,
       options: {
         ...parentOptions,
+        ...(item?.serverIds || parentOptions?.serverIds ? { serverIds: [...(item?.serverIds ?? parentOptions?.serverIds ?? [])] } : {}),
         modelId: parentOptions?.modelId ?? state.selectedModelId,
         permissionMode: parentOptions?.permissionMode ?? DEFAULT_RUN_PERMISSION_MODE,
       },

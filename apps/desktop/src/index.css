@@ -506,7 +506,7 @@ a { text-decoration: none; }
 .qone-logo { display: block; object-fit: contain; }
 .brand-mark { width: 28px; height: 28px; }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background .15s ease, color .15s ease; }
-.icon-button:hover { background: var(--accent); color: var(--foreground); }
+.icon-button:hover { color: var(--foreground); }
 
 .error-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 20px 0; padding: 10px 13px; border: 1px solid color-mix(in srgb, var(--q-danger) 25%, transparent); border-radius: 9px; background: var(--q-danger-bg); color: var(--q-danger); font-size: 12px; }
 
@@ -525,7 +525,7 @@ a { text-decoration: none; }
 .settings-dialog-backdrop { position: absolute; inset: 0; border: 0; background: rgb(0 0 0 / 68%); cursor: default; }
 .settings-dialog { position: relative; display: grid; grid-template-columns: 214px minmax(0, 1fr); width: min(790px, 100%); height: min(540px, calc(100vh - 48px)); overflow: hidden; border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 14px; background: var(--q-surface); box-shadow: 0 22px 58px rgb(0 0 0 / 42%); }
 .settings-dialog-close { position: absolute; z-index: 2; top: 12px; left: 12px; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background .15s ease, color .15s ease; }
-.settings-dialog-close:hover { background: var(--q-hover); color: var(--foreground); }
+.settings-dialog-close:hover { color: var(--foreground); }
 .settings-dialog-sidebar { display: flex; min-height: 0; flex-direction: column; padding: 52px 10px 10px; border-right: 1px solid var(--border); background: var(--q-surface-muted); }
 .settings-dialog-nav { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 2px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .settings-dialog-nav > div { flex: 0 0 auto; }
@@ -745,7 +745,7 @@ a { text-decoration: none; }
 .settings-subagent-card-main small { color: var(--muted-foreground); font-size: var(--q-text-xs); }
 .settings-subagent-card { min-width: 0; }.settings-subagent-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
 .settings-subagent-actions button { display: grid; min-width: 28px; min-height: 28px; place-items: center; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: var(--q-text-xs); cursor: pointer; }
-.settings-subagent-actions button:hover { background: var(--q-hover); color: var(--foreground); }
+.settings-subagent-actions button:hover { color: var(--foreground); }
 .settings-empty-card { display: flex; min-height: 100px; align-items: center; gap: 12px; padding: 18px; border: 1px dashed var(--border); border-radius: 10px; color: var(--muted-foreground); }
 .settings-empty-card p { margin: 0; font-size: 12px; line-height: 1.6; }
 .settings-subagent-prompt { min-height: 150px; }

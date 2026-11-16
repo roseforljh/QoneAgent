@@ -15,7 +15,7 @@
 .servers-button.is-danger { border-color: color-mix(in srgb, var(--destructive) 35%, var(--border)); color: var(--destructive); }
 .servers-button.is-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--destructive) 10%, transparent); }
 .servers-icon-button { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; padding: 0; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background .15s ease, color .15s ease; }
-.servers-icon-button:hover:not(:disabled), .servers-icon-button[data-state="open"] { background: var(--q-surface-muted); color: var(--foreground); }
+.servers-icon-button:hover:not(:disabled), .servers-icon-button[data-state="open"] { color: var(--foreground); }
 .servers-icon-button:disabled { cursor: default; opacity: .4; }
 .servers-icon-button.is-bordered { width: 30px; height: 30px; border-color: var(--border); background: var(--q-surface); }
 

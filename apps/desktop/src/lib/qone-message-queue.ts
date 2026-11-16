@@ -14,10 +14,12 @@ import { messageQuote, withMessageQuote } from "./message-quote";
 type QueueCallbacks = {
   sessionId: string;
   isRunning: () => boolean;
+  getServerIds?: () => string[];
   getActiveRunId?: () => string | undefined;
   editPending?: (message: AppendMessage) => boolean;
   isDuplicate?: (message: AppendMessage, attachments: MessageAttachmentInfo[]) => boolean;
-  send: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[]) => void;
+  /** false restores the input; true waits for runtime acknowledgement; void accepts immediately. */
+  send: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[]) => boolean | void;
   steer: (message: AppendMessage, queueItemId: string, attachments: MessageAttachmentInfo[], targetRunId?: string) => Promise<boolean | undefined>;
   sync: (items: QueueItemInfo[]) => void;
   onError?: (message: string) => void;
@@ -36,6 +38,7 @@ export type QueueBundle = {
   edit: (id: string, message: AppendMessage) => Promise<boolean>;
   remove: (id: string) => void;
   settleSteer: (persistentId: string, delivered: boolean) => void;
+  settleSend: (persistentId: string, accepted: boolean) => void;
   getPersistentId: (localId: string) => string | undefined;
   getLocalId: (persistentId: string) => string | undefined;
   getItem: (persistentId: string) => QueueItemInfo | undefined;
@@ -45,13 +48,31 @@ export type QueueBundle = {
   transfer: (localId: string, open: (item: QueueItemInfo) => Promise<boolean>) => Promise<boolean>;
   hasTransfers: () => boolean;
   resume: () => void;
+  /** After the user stops a run, queued inputs wait until the user sends again. */
+  pauseAfterStop: () => void;
 };
+
+const QUEUE_PAUSE_PREFIX = "qone:queue-paused:";
+export function prunePausedQueues(liveIds: Set<string>) {
+  try {
+    const storage = window.localStorage;
+    for (let index = storage.length - 1; index >= 0; index--) {
+      const key = storage.key(index);
+      if (key?.startsWith(QUEUE_PAUSE_PREFIX) && !liveIds.has(key.slice(QUEUE_PAUSE_PREFIX.length))) storage.removeItem(key);
+    }
+  } catch { /* Storage unavailable. */ }
+}
 
 const activeQueues = new Map<string, QueueBundle>();
 export const getQoneMessageQueue = (sessionId: string) => activeQueues.get(sessionId);
 export const setQoneMessageQueue = (sessionId: string, bundle: QueueBundle | undefined) => {
   if (bundle) activeQueues.set(sessionId, bundle);
   else activeQueues.delete(sessionId);
+};
+
+export const messageServerIds = (message: AppendMessage): string[] | undefined => {
+  const ids = message.metadata?.custom?.serverIds;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : undefined;
 };
 
 const textOf = (message: AppendMessage) => message.content
@@ -78,7 +99,7 @@ const toMessage = (item: QueueItemInfo): AppendMessage => ({
   sourceId: null,
   runConfig: undefined,
   createdAt: new Date(item.createdAt),
-  metadata: { custom: item.quote ? { quote: item.quote } : {} },
+  metadata: { custom: { ...(item.quote ? { quote: item.quote } : {}), serverIds: item.serverIds ?? [] } },
   content: item.text ? [{ type: "text", text: item.text }] : [],
   attachments: (item.attachments ?? []).map((attachment) => {
     const file = attachment.localPath
@@ -111,12 +132,19 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
   const steerPositions = new Map<string, { before: string[]; after: string[] }>();
   const attachmentVersions = new Map<string, number>();
   const holdReasons = new Set<string>();
+  const pauseKey = `${QUEUE_PAUSE_PREFIX}${callbacks.sessionId}`;
+  try { if (window.localStorage.getItem(pauseKey) === "1") holdReasons.add("stopped"); } catch { /* Storage unavailable. */ }
+  const rememberPaused = (paused: boolean) => {
+    try { window.localStorage.setItem(pauseKey, paused ? "1" : "0"); } catch { /* Storage unavailable. */ }
+  };
   const transfers = new Map<string, { item: QueueItemInfo; position: { before: string[]; after: string[] } }>();
   let editingLocalId: string | undefined;
   let editPosition: { before: string[]; after: string[] } | undefined;
   let editingItem: QueueItemInfo | undefined;
   let restoring = false;
   let dispatchingMessage: AppendMessage | undefined;
+  let generation = 0;
+  const pendingSends = new Map<string, { message: AppendMessage; files: MessageAttachmentInfo[]; time: { createdAt: number; updatedAt: number } }>();
   let steerTail = Promise.resolve();
   const serializedMessages = new WeakMap<AppendMessage, Promise<MessageAttachmentInfo[]>>();
   const mergedMessages = new WeakSet<AppendMessage>();
@@ -129,7 +157,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     return result;
   };
   const sameMessage = (left: AppendMessage, a: MessageAttachmentInfo[], right: AppendMessage, b: MessageAttachmentInfo[]) =>
-    sameUserInput({ content: withMessageQuote(textOf(left), messageQuote(left)), attachments: a }, { content: withMessageQuote(textOf(right), messageQuote(right)), attachments: b });
+    JSON.stringify(messageServerIds(left) ?? []) === JSON.stringify(messageServerIds(right) ?? []) && sameUserInput({ content: withMessageQuote(textOf(left), messageQuote(left)), attachments: a }, { content: withMessageQuote(textOf(right), messageQuote(right)), attachments: b });
 
   const hold = (reason: string) => {
     if (holdReasons.size === 0) controller.hold();
@@ -158,6 +186,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
         sessionId: callbacks.sessionId,
         text: textOf(message),
         quote: messageQuote(message),
+        serverIds: messageServerIds(message),
         attachments: attachments.get(item.id),
         lane,
         status: lane === "steer" ? "steering" : "queued",
@@ -165,6 +194,11 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
         createdAt: time.createdAt,
         updatedAt: time.updatedAt,
       } satisfies QueueItemInfo];
+    });
+    // Keep an IPC-bound input durable until agent.started confirms acceptance.
+    for (const [id, pending] of [...pendingSends].reverse()) result.unshift({
+      id, sessionId: callbacks.sessionId, text: textOf(pending.message), quote: messageQuote(pending.message),
+      serverIds: messageServerIds(pending.message), attachments: pending.files, lane: "queue", status: "scheduled", position: 0, ...pending.time,
     });
     // Retain the original as a durable recovery copy while the composer owns
     // the edit. It is absent from the dispatch lanes and cannot block FIFO.
@@ -195,22 +229,44 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       hold("dispatch");
       dispatchingMessage = message;
       const fallbackAttachments = attachments.get(localId) ?? [];
+      const time = timestamps.get(localId) ?? { createdAt: Date.now(), updatedAt: Date.now() };
       messages.delete(localId);
       persistentIds.delete(localId);
       attachments.delete(localId);
       timestamps.delete(localId);
       attachmentVersions.delete(localId);
-      void serialize(message).catch(() => fallbackAttachments).then((serialized) => {
-        if (holdReasons.has("suspended")) return;
-        callbacks.send(message, queueItemId, serialized);
+      const dispatchGeneration = generation;
+      void serialize(message).then((serialized) => {
+        if (generation !== dispatchGeneration) return;
+        if (holdReasons.has("suspended") || holdReasons.has("stopped")) {
+          requeueHead(message, queueItemId, serialized, time);
+          controller.notifyIdle();
+          return;
+        }
+        pendingSends.set(queueItemId, { message, files: serialized, time });
+        hold(`send:${queueItemId}`);
+        const accepted = callbacks.send(message, queueItemId, serialized);
+        if (accepted === false) { settleSend(queueItemId, false, true); return; }
+        if (accepted !== true) settleSend(queueItemId, true);
         if (callbacks.isRunning()) controller.notifyBusy();
         persist();
-      }).catch(reportError).finally(() => {
+      }).catch((error) => {
+        if (generation !== dispatchGeneration) return;
+        if (pendingSends.has(queueItemId)) settleSend(queueItemId, false, true);
+        else {
+          hold("send-failed");
+          requeueHead(message, queueItemId, fallbackAttachments, time);
+          controller.notifyIdle();
+        }
+        reportError(error);
+      }).finally(() => {
+        if (generation !== dispatchGeneration) return;
         dispatchingMessage = undefined;
         releaseHold("dispatch");
       });
     },
   });
+  if (holdReasons.size) controller.hold();
 
   const reportError = (error: unknown) => callbacks.onError?.(localizeError(error));
 
@@ -247,6 +303,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     timestamps.delete(localId);
     attachmentVersions.delete(localId);
     invalidIds.delete(localId);
+    for (const reason of holdReasons) if (reason.startsWith(`edit-prepare:${localId}:`)) releaseHold(reason);
   };
   // The composer owns an edited message. Reinsert under the same persistent
   // identity only after its complete input has been validated.
@@ -282,10 +339,40 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
   const findNewId = (before: readonly QueueItemState[], after: readonly QueueItemState[]) =>
     after.find((item) => !before.some((candidate) => candidate.id === item.id))?.id;
 
+  const requeueHead = (message: AppendMessage, queueItemId: string, files: MessageAttachmentInfo[], time: { createdAt: number; updatedAt: number }) => {
+    const before = controller.adapter.items;
+    controller.adapter.enqueue(message);
+    const localId = findNewId(before, controller.adapter.items)!;
+    messages.set(localId, message);
+    persistentIds.set(localId, queueItemId);
+    attachments.set(localId, files);
+    timestamps.set(localId, time);
+    controller.adapter.move(localId, { lane: "queue", insertAfter: null });
+    persist();
+  };
+  const settleSend = (id: string, accepted: boolean, retryOnIdle = false) => {
+    const pending = pendingSends.get(id);
+    if (!pending) return;
+    hold("settle-send");
+    try {
+      pendingSends.delete(id);
+      if (!accepted) {
+        hold(retryOnIdle ? "send-failed" : "send-rejected");
+        requeueHead(pending.message, id, pending.files, pending.time);
+        controller.notifyIdle();
+      } else persist();
+      releaseHold(`send:${id}`);
+    } finally { releaseHold("settle-send"); }
+  };
+  // Explicit user actions retry a refused head; only a new send resumes after a stop.
+  const releaseRetry = () => { releaseHold("send-rejected"); releaseHold("send-failed"); };
+  const resumeAfterStop = () => { rememberPaused(false); releaseHold("stopped"); releaseRetry(); };
+
   const adapter = {
     get items() { return controller.adapter.items; },
     get steerItems() { return controller.adapter.steerItems; },
     enqueue(message: AppendMessage) {
+      message = { ...message, metadata: { ...message.metadata, custom: { ...message.metadata?.custom, serverIds: [...(callbacks.getServerIds?.() ?? messageServerIds(message) ?? [])] } } };
       if (callbacks.editPending?.(message)) return;
       const tail = controller.adapter.items.at(-1) ?? controller.adapter.steerItems.at(-1);
       const previous = tail ? messages.get(tail.id) : dispatchingMessage;
@@ -293,10 +380,12 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       if (!message.attachments?.length && (previous
         ? !previous.attachments?.length && sameMessage(previous, [], message, [])
         : callbacks.isDuplicate?.(message, []))) return;
-      const holdForMapping = !callbacks.isRunning();
-      if (holdForMapping) hold("mapping");
-      else controller.notifyBusy();
+      // Map the new item before releasing a stopped/refused queue.
+      hold("mapping");
+      const wasRunning = callbacks.isRunning();
+      if (wasRunning) controller.notifyBusy();
       try {
+        resumeAfterStop();
         const before = controller.adapter.items;
         controller.adapter.enqueue(message);
         const localId = findNewId(before, controller.adapter.items);
@@ -331,10 +420,10 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
         }
         persist();
       } catch (error) {
-        if (!holdForMapping) controller.notifyIdle();
+        if (wasRunning) controller.notifyIdle();
         throw error;
       } finally {
-        if (holdForMapping) releaseHold("mapping");
+        releaseHold("mapping");
       }
     },
     steer(message: AppendMessage) {
@@ -376,8 +465,11 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       const time = timestamps.get(localId);
       if (time) timestamps.set(localId, { ...time, updatedAt: Date.now() });
       persist();
+      releaseRetry();
     },
     async edit(localId: string, message: AppendMessage) {
+      const original = messages.get(localId);
+      if (original) message = { ...message, metadata: { ...message.metadata, custom: { ...message.metadata?.custom, serverIds: messageServerIds(original) ?? [] } } };
       if (!messages.has(localId) || steeringIds.has(localId) || transfers.has(localId)) return false;
       const version = (attachmentVersions.get(localId) ?? 0) + 1;
       attachmentVersions.set(localId, version);
@@ -390,6 +482,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
         if (time) timestamps.set(localId, { ...time, updatedAt: Date.now() });
         if (editingLocalId === localId) {
           reinsertEdit(localId, message, serialized);
+          releaseRetry();
           return true;
         }
         messages.set(localId, message);
@@ -398,6 +491,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
         controller.adapter.edit(localId, message);
         persist();
         releaseHold(`invalid:${localId}`);
+        releaseRetry();
         return true;
       } catch (error) {
         if (attachmentVersions.get(localId) !== version || !messages.has(localId)) return false;
@@ -416,11 +510,17 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
         editPosition = undefined;
       }
       persist();
+      releaseRetry();
     },
   };
 
   const steerNow = (localId: string) => {
-    adapter.move(localId, { lane: callbacks.isRunning() ? "steer" : "queue", insertAfter: null });
+    if (!controller.adapter.items.some((item) => item.id === localId) || transfers.has(localId) || steeringIds.has(localId)) return;
+    hold("send-now");
+    try {
+      adapter.move(localId, { lane: callbacks.isRunning() ? "steer" : "queue", insertAfter: null });
+      resumeAfterStop();
+    } finally { releaseHold("send-now"); }
   };
 
   const beginEdit = (localId: string) => {
@@ -449,6 +549,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     const persistentId = persistentIds.get(localId);
     const item = persistentId && snapshot().find((entry) => entry.id === persistentId);
     if (!message || !item || !controller.adapter.items.some((entry) => entry.id === localId)) return false;
+    const transferGeneration = generation;
     const position = positionOf(localId);
     transfers.set(localId, { item, position });
     controller.adapter.remove(localId);
@@ -456,6 +557,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     let committed = false;
     try { committed = await open(item); return committed; }
     finally {
+      if (generation !== transferGeneration) return committed;
       hold(`transfer-restore:${localId}`);
       try {
         transfers.delete(localId);
@@ -483,9 +585,16 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
 
   const restore = (items: QueueItemInfo[], editingItemId?: string) => {
     restoring = true;
+    generation++;
+    steerTail = Promise.resolve();
+    pendingSends.clear();
+    dispatchingMessage = undefined;
+    const stopped = holdReasons.has("stopped");
     hold("restore");
     holdReasons.clear();
     holdReasons.add("restore");
+    // A reconnect must not undo the user's stop.
+    if (stopped) holdReasons.add("stopped");
     let normalizedSteer = false;
     try {
       controller.clear();
@@ -494,6 +603,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       attachments.clear();
       timestamps.clear();
       attachmentVersions.clear();
+      transfers.clear();
       steeringIds.clear();
       steerAttempts.clear();
       invalidIds.clear();
@@ -528,7 +638,7 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
       if (editingId) beginEdit(editingId);
     } finally {
       restoring = false;
-      if (!callbacks.isRunning()) releaseHold("restore");
+      if (!callbacks.isRunning()) { controller.notifyIdle(); releaseHold("restore"); }
       if (normalizedSteer) persist();
     }
   };
@@ -556,11 +666,13 @@ export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {
     restore,
     beginEdit,
     cancelEdit,
-    releaseIdle: () => releaseHold("restore"),
+    releaseIdle: () => { releaseHold("restore"); releaseHold("send-failed"); },
     suspend: () => hold("suspended"),
+    pauseAfterStop: () => { rememberPaused(true); hold("stopped"); },
     edit: adapter.edit,
     remove: adapter.remove,
     settleSteer,
+    settleSend,
     getPersistentId: (localId) => persistentIds.get(localId),
     getLocalId: (persistentId: string) => [...persistentIds.entries()].find(([, id]) => id === persistentId)?.[0],
     getMessage: (localId) => messages.get(localId),

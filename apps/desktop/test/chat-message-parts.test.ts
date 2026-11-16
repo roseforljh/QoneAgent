@@ -268,7 +268,7 @@ test("reloaded legacy tool rows use the persisted assistant part id", () => {
   });
 });
 
-test("streaming tool arguments update one preview without entering prose or completing the tool", () => {
+test("streaming tool arguments update one preview without entering prose or completing the tool", async () => {
   const sessionId = "live-tool-session";
   const runId = "live-tool-run";
   useStore.setState({ currentSessionId: sessionId, activeRunId: runId, running: true,
@@ -291,11 +291,16 @@ test("streaming tool arguments update one preview without entering prose or comp
   expect(useStore.getState().preparedToolCallIds).toEqual(["live-edit"]);
   send("tool.started", 405, { toolCallId: "live-edit", toolName: "edit", args: { path: "a.ts", oldText: "old", newText: "new final" } });
   send("tool.updated", 406, { toolCallId: "live-edit", update: "applying" });
+  // Live tool output is coalesced into the same frame-rate flush as text.
+  expect(useStore.getState().toolCalls[0]?.result).toBeUndefined();
+  await Bun.sleep(45);
   expect(useStore.getState().toolCalls[0]).toMatchObject({ result: "applying", status: "running" });
   send("tool.updated", 407, { toolCallId: "live-edit", update: "wrong run" }, "another-run");
+  await Bun.sleep(45);
   expect(useStore.getState().toolCalls[0]?.result).toBe("applying");
   send("tool.completed", 408, { toolCallId: "live-edit", result: "done" });
   send("tool.updated", 409, { toolCallId: "live-edit", update: "late update" });
+  await Bun.sleep(45);
   expect(useStore.getState().toolCalls[0]).toMatchObject({ result: "done", status: "success" });
   expect(useStore.getState().streamingParts).toHaveLength(1);
 });
