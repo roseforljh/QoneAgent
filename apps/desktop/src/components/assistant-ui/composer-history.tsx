@@ -104,7 +104,7 @@ export function ComposerHistoryPlugin({ menuOpen }: { menuOpen: boolean }) {
   // 提取当前会话中的历史用户消息
   const sessionUserMessages = useMemo(() => {
     return messages
-      .filter((m) => m.role === "user" && typeof m.content === "string" && m.content.trim().length > 0)
+      .filter((m) => m.role === "user" && !m.communication && typeof m.content === "string" && m.content.trim().length > 0)
       .map((m) => m.content);
   }, [messages]);
 

@@ -8,13 +8,14 @@ type SavedMessage = NonNullable<SubagentRunInfo["messages"]>[number];
 const savedMessages = new WeakMap<SavedMessage, { task?: string; converted: ThreadMessage }>();
 
 function savedMessage(message: SavedMessage, task: string): ThreadMessage | undefined {
-  if (message.internal || (message.role !== "user" && message.role !== "assistant")) return undefined;
+  if ((message.internal && !message.communication) || (message.role !== "user" && message.role !== "assistant")) return undefined;
   const initialTask = message.role === "user" && message.sequence === 0 ? task : undefined;
   const cached = savedMessages.get(message);
   if (cached && cached.task === initialTask) return cached.converted;
   const converted: ThreadMessage = message.role === "user" ? {
     id: message.id, role: "user", createdAt: new Date(message.createdAt),
-    content: [{ type: "text", text: initialTask ?? message.content }], attachments: [], metadata: { custom: {} },
+    content: [{ type: "text", text: initialTask ?? message.content }], attachments: [],
+    metadata: { custom: message.communication ? { qoneAgentCommunication: message.communication } : {} },
   } : {
     id: message.id, role: "assistant", createdAt: new Date(message.createdAt),
     content: assistantMessageContent({ content: message.content, parts: message.parts }, [], false) as readonly ThreadAssistantMessagePart[],

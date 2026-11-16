@@ -24,9 +24,16 @@ import type { ExecutionPhase } from "../../store";
 
 function regenerateCurrentTurn(messageId: string, owner: ReturnType<typeof useConversationStoreApi>): void {
   const state = owner.getState();
-  const messageIndex = messageId === "streaming" ? state.messages.length : state.messages.findIndex((message) => message.id === messageId);
-  const source = state.messages.slice(0, messageIndex < 0 ? state.messages.length : messageIndex).reverse().find((message) => message.role === "user");
-  if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), undefined, source.quote);
+  const messages = state.messages;
+  const end = messageId === "streaming" ? messages.length : messages.findIndex((message) => message.id === messageId);
+  // An agent-to-agent row is a user turn by role only; regenerating from it
+  // would resend another agent's text as the person's prompt.
+  for (let index = (end < 0 ? messages.length : end) - 1; index >= 0; index--) {
+    const source = messages[index]!;
+    if (source.role !== "user" || source.communication) continue;
+    state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), undefined, source.quote);
+    return;
+  }
 }
 
 type VisibleImagePart = Extract<PartState, { type: "image" }>;

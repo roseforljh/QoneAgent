@@ -32,7 +32,13 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
     return messages.at(-2)?.role === "user" && messages.at(-1)?.role === "assistant";
   });
   const phase = useAuiState((state) => threadPhase(state.thread.isRunning, state.thread.messages));
-  const turnId = useAuiState((state) => [...state.thread.messages].reverse().find((message) => message.role === "user")?.id);
+  const turnId = useAuiState((state) => {
+    for (let index = state.thread.messages.length - 1; index >= 0; index--) {
+      const message = state.thread.messages[index]!;
+      if (message.role === "user" && !message.metadata?.custom?.qoneAgentCommunication) return message.id;
+    }
+    return undefined;
+  });
   const viewportStore = useThreadViewportStore();
   // Descendant layout effects run before the viewport's host ref registers.
   // Subscribe to that registration instead of abandoning the one mount attempt.

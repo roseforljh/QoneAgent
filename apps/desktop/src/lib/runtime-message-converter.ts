@@ -33,7 +33,7 @@ export function createMessageConverter() {
     const failure = role === "assistant" && message.id.startsWith("image-error:")
       ? context.imageGenerationError : undefined;
     const dependencies: unknown[] = role === "user"
-      ? [message.content, message.quote?.text, message.quote?.messageId,
+      ? [message.content, message.quote?.text, message.quote?.messageId, message.communication,
         ...(message.attachments ?? []).flatMap((attachment) => attachment.type === "image" && attachment.localPath
           ? [context.imagePreviews[attachment.localPath]] : [])]
       : [streaming && context.running, streaming && context.imageModel,
@@ -68,7 +68,10 @@ export function createMessageConverter() {
               };
           }),
         ],
-        metadata: message.quote ? { custom: { quote: message.quote } } : undefined,
+        metadata: message.quote || message.communication ? { custom: {
+          ...(message.quote ? { quote: message.quote } : {}),
+          ...(message.communication ? { qoneAgentCommunication: message.communication } : {}),
+        } } : undefined,
       };
     } else {
       const content = appendSubagentImages(assistantMessageContent(message, calls, streaming), images);

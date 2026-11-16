@@ -28,13 +28,24 @@ export function UserMessageActions() {
   const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
   const editing = useAuiState((state) => state.message.composer.isEditing);
-  const isLastUserMessage = useAuiState((state) => [...state.thread.messages].reverse().find((message) => message.role === "user")?.id === messageId);
+  // An agent-to-agent message is stored as a user turn but is not the person's
+  // prompt: it must not receive edit/retry, and it must not shadow the real
+  // last user turn that those actions target.
+  const agentCommunication = useAuiState((state) => Boolean(state.message.metadata?.custom?.qoneAgentCommunication));
+  const isLastUserMessage = useAuiState((state) => {
+    for (let index = state.thread.messages.length - 1; index >= 0; index--) {
+      const message = state.thread.messages[index]!;
+      if (message.role !== "user" || message.metadata?.custom?.qoneAgentCommunication) continue;
+      return message.id === messageId;
+    }
+    return false;
+  });
   const running = useAuiState((state) => state.thread.isRunning);
   const editCapability = useAuiState((state) => state.thread.capabilities.edit);
   const hasText = useAuiState((state) => state.message.parts.some(
     (part) => part.type === "text" && part.text.trim().length > 0,
   ));
-  if (!hasText || editing) return null;
+  if (!hasText || editing || agentCommunication) return null;
   const canEdit = !running && isLastUserMessage && editCapability;
   return (
     <ActionBarPrimitive.Root autohide="never" className="q-message-actions q-user-message-actions">

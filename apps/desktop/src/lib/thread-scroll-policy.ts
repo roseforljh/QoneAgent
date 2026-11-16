@@ -50,7 +50,9 @@ export function threadPhase(running: boolean, messages: readonly ThreadMessage[]
   let workStarted = false;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
-    if (message.role === "user") break;
+    // An agent-to-agent message is a user-role row but not the person's turn;
+    // it must not end the scan before the reply's own text is seen.
+    if (message.role === "user" && !message.metadata?.custom?.qoneAgentCommunication) break;
     if (message.role !== "assistant") continue;
     for (const part of message.content) {
       if (part.type === "text" && part.text.trim()) {

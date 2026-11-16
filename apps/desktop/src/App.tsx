@@ -1,4 +1,5 @@
 import { useConversationMessages } from "./lib/use-conversation-messages";
+import { lastUserTurn } from "./lib/agent-communication";
 import { PendingApprovals } from "./components/assistant-ui/pending-approvals";
 import { bindSessionQueue, hydrateSessionQueue } from "./lib/session-queue-lifecycle";
 import { sessionStore } from "./lib/session-execution-state";
@@ -110,7 +111,7 @@ function useQoneRuntime(pendingRun: { current: PendingRun | null }) {
     getActiveRunId: () => sessionStore(useStore, currentSessionId).getState().activeRunId,
     isDuplicate: (message, attachments) => {
       const state = sessionStore(useStore, currentSessionId).getState();
-      const previous = [...state.messages].reverse().find((item) => item.role === "user");
+      const previous = lastUserTurn(state.messages);
       return state.running && Boolean(previous && sameUserInput(previous, { content: extractComposerPrompt(message).text, attachments }));
     },
     editPending: (message) => {
@@ -228,14 +229,14 @@ function useQoneRuntime(pendingRun: { current: PendingRun | null }) {
     },
     onReload: async (parentId) => {
       if (!parentId) return;
-      const source = useStore.getState().messages.find((message) => message.id === parentId && message.role === "user");
+      const source = useStore.getState().messages.find((message) => message.id === parentId && message.role === "user" && !message.communication);
       if (source) runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), undefined, source.quote);
     },
     onEdit: async (message) => {
       const sourceId = message.sourceId;
       const state = useStore.getState();
       if (!sourceId || !state.currentSessionId || state.running) return;
-      const source = state.messages.find((item) => item.id === sourceId && item.role === "user");
+      const source = state.messages.find((item) => item.id === sourceId && item.role === "user" && !item.communication);
       const prompt = extractComposerPrompt(message);
       let attachments: MessageAttachmentInfo[];
       try { attachments = await serializeMessageAttachments(message); }

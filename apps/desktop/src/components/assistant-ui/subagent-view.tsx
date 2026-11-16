@@ -12,6 +12,7 @@ import { createSubagentMediaSelector, subagentImageGenerations } from "../../lib
 import { SubagentLogo } from "../settings/subagent-logo";
 import { AssistantParts } from "./assistant-parts";
 import { SubagentThread } from "./subagent-thread";
+import { AgentCommunication, useAgentCommunication } from "./agent-communication";
 import { ImageGeneration } from "./elements/image-generation";
 import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
 import { createOwnedSubagentSelector } from "./subagent-message-ownership";
@@ -69,10 +70,16 @@ function statusLabel(item: SubagentRunInfo, locale: string) {
   return zh ? "运行中" : "Running";
 }
 
+export function SubagentUserMessage() {
+  const communication = useAgentCommunication();
+  return communication ? <AgentCommunication communication={communication} />
+    : <MessagePrimitive.Root className="q-subagent-task rounded-lg border border-border/50 bg-foreground/[0.03] px-3 py-2 text-xs text-foreground/65">
+      <MessagePrimitive.Parts />
+    </MessagePrimitive.Root>;
+}
+
 const renderSubagentMessage = ({ message }: { message: ThreadMessage }) => message.role === "user"
-        ? <MessagePrimitive.Root className="q-subagent-task rounded-lg border border-border/50 bg-foreground/[0.03] px-3 py-2 text-xs text-foreground/65">
-            <MessagePrimitive.Parts />
-          </MessagePrimitive.Root>
+        ? <SubagentUserMessage />
         : <MessagePrimitive.Root className="q-subagent-transcript space-y-3 text-sm">
             <AssistantParts />
           </MessagePrimitive.Root>;

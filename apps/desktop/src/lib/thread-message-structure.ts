@@ -14,6 +14,9 @@ export function createMessageStructureSelector(includeSettledContent = false) {
       return saved.id === message.id && saved.role === message.role && savedDetails.parentId === nextDetails.parentId
         && saved.createdAt.getTime() === message.createdAt.getTime()
         && savedDetails.status?.type === nextDetails.status?.type
+        // An agent communication marker decides whether the row pairs with a
+        // reply, so a metadata-only change must still produce a new structure.
+        && Boolean(saved.metadata?.custom?.qoneAgentCommunication) === Boolean(message.metadata?.custom?.qoneAgentCommunication)
         && (!includeSettledContent || nextDetails.status?.type === "running" || saved.content === message.content && saved.attachments === message.attachments);
     })) return previous;
     previous = messages;

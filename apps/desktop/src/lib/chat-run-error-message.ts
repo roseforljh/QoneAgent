@@ -8,7 +8,9 @@ export function insertChatRunErrorMessage(messages: readonly ChatMessage[], erro
   const userIndex = messages.findIndex((message) => message.id === error.userMessageId && message.role === "user");
   if (userIndex < 0) return [...messages];
 
-  const nextUserOffset = messages.slice(userIndex + 1).findIndex((message) => message.role === "user");
+  // An agent-to-agent message is a user-role row but not a turn boundary; the
+  // error belongs after the last real user turn before it.
+  const nextUserOffset = messages.slice(userIndex + 1).findIndex((message) => message.role === "user" && !message.communication);
   const insertAt = nextUserOffset < 0 ? messages.length : userIndex + 1 + nextUserOffset;
   const preceding = messages[insertAt - 1];
   const failedMessage: ChatMessage = {

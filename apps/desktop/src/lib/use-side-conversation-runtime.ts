@@ -1,4 +1,5 @@
 import { useConversationStore } from "./conversation-context";
+import { lastUserTurn } from "./agent-communication";
 import { useShallow } from "zustand/react/shallow";
 import { useConversationMessages } from "./use-conversation-messages";
 import { createSubagentImagesSelector } from "./subagent-images";
@@ -55,7 +56,7 @@ export function useSideConversationRuntime(sessionId: string) {
     getActiveRunId: () => owner.getState().activeRunId,
     isDuplicate: (message, attachments) => {
       const state = owner.getState();
-      const previous = [...state.messages].reverse().find((item) => item.role === "user");
+      const previous = lastUserTurn(state.messages);
       return state.running && Boolean(previous && sameUserInput(previous, { content: extractComposerPrompt(message).text, attachments }));
     },
     editPending: (message) => {
@@ -114,14 +115,14 @@ export function useSideConversationRuntime(sessionId: string) {
     onReload: async (parentId) => {
       if (!parentId) return;
       const state = owner.getState();
-      const source = state.messages.find((message) => message.id === parentId && message.role === "user");
+      const source = state.messages.find((message) => message.id === parentId && message.role === "user" && !message.communication);
       if (source) state.runAgent(source.content, source.id, source.attachments, undefined, Boolean(source.goalId), sessionId, source.quote);
     },
     onEdit: async (message) => {
       const sourceId = message.sourceId;
       const current = owner.getState();
       if (!sourceId || current.running) return;
-      const source = current.messages.find((item) => item.id === sourceId && item.role === "user");
+      const source = current.messages.find((item) => item.id === sourceId && item.role === "user" && !item.communication);
       const prompt = extractComposerPrompt(message);
       let attachments: Awaited<ReturnType<typeof serializeMessageAttachments>>;
       try { attachments = await serializeMessageAttachments(message); }

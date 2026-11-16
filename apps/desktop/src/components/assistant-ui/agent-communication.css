@@ -1,0 +1,5 @@
+.q-agent-communication { align-self: stretch; min-width: 0; margin-block: 8px 16px; border: 1px solid color-mix(in oklab, var(--ring) 28%, var(--border)); border-inline-start: 3px solid var(--ring); border-radius: 10px; padding: 10px 13px; background: color-mix(in oklab, var(--ring) 5%, var(--background)); overflow-wrap: anywhere; }
+.q-agent-communication-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; color: var(--muted-foreground); font-size: var(--q-text-xs); }
+.q-agent-communication-heading strong { color: var(--foreground); font-weight: 500; }
+.q-agent-communication-label { padding: 1px 5px; border-radius: 4px; background: color-mix(in oklab, var(--ring) 13%, transparent); color: var(--foreground); font-size: 10px; }
+.q-agent-communication-content { min-width: 0; font-size: var(--q-text-sm); line-height: 1.6; }
