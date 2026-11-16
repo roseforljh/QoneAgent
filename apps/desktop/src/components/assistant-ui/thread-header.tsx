@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { DropdownMenu } from "radix-ui";
 import { BotMessageSquareIcon, FolderTreeIcon, GlobeIcon, ListTodoIcon, PencilIcon, PinIcon, PinOffIcon, PlugIcon, TrashIcon, WandSparklesIcon } from "lucide-react";
+import { isServerOperation } from "../../lib/server-operations";
+import { CodexTerminalIcon } from "./execution-icons";
 import { CodexIcon } from "../ui/CodexIcon";
 import sidebarIcon from "../../assets/codex-icons/sidebar-light-16.svg";
 import moreIcon from "../../assets/codex-icons/ellipsis-horizontal-light-20.svg";
@@ -23,6 +25,7 @@ export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
   onOpenSidebar?: () => void;
 }) {
   const { t } = useLocale();
+  const hasServers = useStore(state => Boolean((state.currentSessionId ? state.runOptionsBySession[state.currentSessionId] : state.draftRunOptions)?.serverIds?.length) || state.toolCalls.some(isServerOperation));
   const sessionId = useStore((state) => state.currentSessionId);
   const session = useStore((state) => state.sessions.find((item) => item.id === state.currentSessionId));
   const canCreateSideChat = useStore((state) => Boolean(state.connected && session?.workspaceId && state.workspaces.some((workspace) => workspace.id === session.workspaceId) && !session.sideChat));
@@ -132,6 +135,9 @@ export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
+        {hasServers && <TooltipIconButton tooltip={t("servers.title")} onClick={() => toggleDockView("servers")} aria-pressed={dockView === "servers"} className="q-thread-header-action text-sky-600 dark:text-sky-300">
+          <CodexTerminalIcon className="size-[18px]" />
+        </TooltipIconButton>}
         <TooltipIconButton
           tooltip={t("dock.terminal")}
           onClick={() => toggleDockView("terminal")}

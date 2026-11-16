@@ -36,6 +36,7 @@ export interface ToolCallProps {
   pending?: boolean;
   waiting?: boolean;
   failed?: boolean;
+  cancelled?: boolean;
   canExpand?: boolean;
   requestLabel?: string;
   resultLabel?: string;
@@ -59,6 +60,7 @@ export function ToolCall({
   pending = false,
   waiting = false,
   failed = false,
+  cancelled = false,
   canExpand = true,
   open,
   onOpenChange,
@@ -72,7 +74,7 @@ export function ToolCall({
     <Collapsible
       ref={disclosureRef}
       data-slot="tool-call"
-      data-status={failed ? "failed" : waiting ? "waiting" : pending ? "pending" : running ? "running" : "success"}
+      data-status={cancelled ? "cancelled" : failed ? "failed" : waiting ? "waiting" : pending ? "pending" : running ? "running" : "success"}
       open={open && canExpand}
       onOpenChange={onOpenChange}
       className={cn("min-w-0 w-full max-w-full", className)}

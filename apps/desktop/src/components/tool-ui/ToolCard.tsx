@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { PendingApproval, ToolCall } from "../../store";
 
 const statusStyle: Record<ToolCall["status"], string> = {
+  cancelled: "border-border text-muted-foreground",
   running: "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:border-amber-400/50 dark:bg-amber-400/10 dark:text-amber-300",
   success: "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:border-emerald-400/50 dark:bg-emerald-400/10 dark:text-emerald-300",
   failed: "border-red-500/50 bg-red-500/10 text-red-700 dark:border-red-400/50 dark:bg-red-400/10 dark:text-red-300",
@@ -26,7 +27,7 @@ function ToolShell({ call, title, children }: { call: ToolCall; title: string; c
     <header className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
       <strong className="text-foreground">{title}</strong>
       <code className="text-muted-foreground">{call.toolName}</code>
-      <span className={`ml-auto rounded-full border px-2 py-0.5 font-medium ${statusStyle[call.status]}`}>{t(({ running: "goal.active", success: "goal.complete", failed: "tool.failed", waiting: "tool.waiting" } as const)[call.status])}</span>
+      <span className={`ml-auto rounded-full border px-2 py-0.5 font-medium ${statusStyle[call.status]}`}>{t(({ running: "goal.active", success: "goal.complete", failed: "tool.failed", waiting: "tool.waiting", cancelled: "servers.view.cancelled" } as const)[call.status])}</span>
     </header>
     <div className="p-3">{children}</div>
   </motion.article>;

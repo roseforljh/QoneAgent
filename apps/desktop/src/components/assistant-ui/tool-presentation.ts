@@ -1,4 +1,4 @@
-import { toolFileChanges } from "@qone/protocol";
+import { limitPreviewText, toolFileChanges, TOOL_PREVIEW_TEXT_LIMIT } from "@qone/protocol";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent, type Locale } from "../../localization";
 import { diffLines, parsePatch, formatPatch } from "diff";
 import { commandForTool } from "./tool-action-summary";
@@ -43,6 +43,10 @@ export type ToolPresentation =
       kind: "terminal";
       command?: string;
       output: string;
+      stderr?: string;
+      exitCode?: number;
+      timedOut?: boolean;
+      truncated?: boolean;
     }
   | {
       kind: "search";
@@ -76,8 +80,6 @@ export type ToolPresentation =
 
 type RecordValue = Record<string, unknown>;
 
-const MAX_TEXT_LENGTH = 20_000;
-
 function asRecord(value: unknown): RecordValue | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as RecordValue
@@ -95,14 +97,10 @@ function parseJson(value: unknown): unknown {
   }
 }
 
-function limitText(value: string): string {
-  return value.length > MAX_TEXT_LENGTH ? `${value.slice(0, MAX_TEXT_LENGTH)}…` : value;
-}
-
 function debugJson(value: unknown): string {
   try {
     const json = JSON.stringify(value, null, 2);
-    return limitText(json ?? String(value));
+    return limitPreviewText(json ?? String(value));
   } catch {
     return String(value);
   }
@@ -125,8 +123,8 @@ export function editDiff(args: unknown): Extract<ToolPresentation, { kind: "diff
   const name = toolArg(record, "path");
   return {
     kind: "diff",
-    oldFile: { content: limitText(edits.map((edit) => edit.oldText as string).join("\n")), ...(name ? { name } : {}) },
-    newFile: { content: limitText(edits.map((edit) => edit.newText as string).join("\n")), ...(name ? { name } : {}) },
+    oldFile: { content: limitPreviewText(edits.map((edit) => edit.oldText as string).join("\n")), ...(name ? { name } : {}) },
+    newFile: { content: limitPreviewText(edits.map((edit) => edit.newText as string).join("\n")), ...(name ? { name } : {}) },
     ...(name ? { name } : {}),
   };
 }
@@ -144,7 +142,7 @@ function resultText(result: unknown, tail = false): string | undefined {
     ? parsed
     : contentBlocks(parsed).flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
   if (!text.trim()) return undefined;
-  return tail && text.length > MAX_TEXT_LENGTH ? `…${text.slice(-MAX_TEXT_LENGTH)}` : limitText(text);
+  return tail && text.length > TOOL_PREVIEW_TEXT_LIMIT ? `…${text.slice(-TOOL_PREVIEW_TEXT_LIMIT)}` : limitPreviewText(text);
 }
 
 /** Pi image blocks carry raw base64; image views need a data URL. */
@@ -190,7 +188,7 @@ function scriptPresentation(result: unknown, args: unknown): Extract<ToolPresent
         ...(typeof item.error === "string" ? { error: item.error } : {}),
       }] : [];
     }) : [],
-    output: typeof parsed === "string" ? limitText(parsed) : limitText(blocks.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n")),
+    output: typeof parsed === "string" ? limitPreviewText(parsed) : limitPreviewText(blocks.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n")),
     images: blocks.flatMap((block) => imageFromBlock(block) ?? []),
   };
 }
@@ -211,6 +209,18 @@ export function detectToolPresentation(toolName: string, result: unknown, args?:
   }
   if (toolName === "codemode") return scriptPresentation(result, args);
   const commandTool = isCommandTool({ toolName });
+  if (toolName.startsWith("server_")) {
+    const text = contentBlocks(result).filter(block => block.type === "text").map(block => block.text).join("\n");
+    const value = asRecord(parseJson(text));
+    if (toolName === "server_exec" && value && ("stdout" in value || "stderr" in value)) {
+      return { kind: "terminal", command: toolArg(args, "command"), output: limitPreviewText(String(value.stdout ?? "")), stderr: limitPreviewText(String(value.stderr ?? "")),
+        exitCode: typeof value.exit_code === "number" ? value.exit_code : undefined, timedOut: value.timed_out === true, truncated: value.truncated === true };
+    }
+    if (toolName === "server_read_file" && typeof value?.content === "string") return { kind: "file", name: toolArg(args, "path"), content: limitPreviewText(value.content) };
+    if (toolName === "server_terminal" && typeof value?.output === "string") return { kind: "terminal", output: limitPreviewText(value.output) };
+    if (typeof value?.error === "string") return { kind: "text", text: value.error };
+    if (value) return { kind: "text", text: debugJson(value) };
+  }
   const text = resultText(result, commandTool);
   const path = toolArg(args, "path");
   if (commandTool) {
@@ -221,7 +231,7 @@ export function detectToolPresentation(toolName: string, result: unknown, args?:
     case "write": {
       const content = toolArg(args, "content");
       if (path && content !== undefined) {
-        return { kind: "diff", oldFile: { content: "", name: path }, newFile: { content: limitText(content), name: path }, name: path };
+        return { kind: "diff", oldFile: { content: "", name: path }, newFile: { content: limitPreviewText(content), name: path }, name: path };
       }
       break;
     }

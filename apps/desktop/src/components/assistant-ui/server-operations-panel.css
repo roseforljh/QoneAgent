@@ -1,0 +1,16 @@
+.q-server-panel { --server-accent: #0284c7; }
+.q-server-panel .q-subagent-panel-header { gap: 8px; }
+.q-server-panel .q-server-stop { display: inline-flex; width: auto; gap: 6px; border: 1px solid color-mix(in srgb, var(--server-accent) 24%, transparent); border-radius: 999px; padding: 4px 10px; color: var(--server-accent); background: color-mix(in srgb, var(--server-accent) 8%, transparent); font-size: 11px; white-space: nowrap; transition: background 150ms; }
+.q-server-stop:disabled { opacity: .6; cursor: wait; }
+.q-server-row { gap: 10px; padding-block: 12px; }
+.q-server-avatar { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: 10px; color: var(--server-accent); background: color-mix(in srgb, var(--server-accent) 10%, transparent); }
+.q-server-operation { position: relative; margin: 12px 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, currentColor 9%, transparent); border-radius: 12px; contain: inline-size; }
+.q-server-operation[data-status="running"] { border-color: color-mix(in srgb, var(--server-accent) 25%, transparent); background: color-mix(in srgb, var(--server-accent) 3%, transparent); }
+.q-server-operation-meta { display: flex; align-items: center; gap: 5px; margin-bottom: 7px; font-size: 10px; color: color-mix(in srgb, currentColor 55%, transparent); }
+.q-server-parameters { padding: 6px 10px; border-radius: 8px; background: color-mix(in srgb, currentColor 3%, transparent); font-size: 11px; }
+.q-server-parameters summary { cursor: pointer; opacity: .6; }
+.q-server-parameters pre { max-height: 12rem; overflow: auto; margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.q-server-more { display: block; margin: 6px 0; border-radius: 6px; padding: 4px 8px; font-size: 11px; color: color-mix(in srgb, currentColor 55%, transparent); transition: background 150ms; }
+.q-server-more:hover { background: color-mix(in srgb, currentColor 5%, transparent); }
+@media (prefers-reduced-motion: reduce) { .q-server-panel * { transition: none; } }
+.dark .q-server-panel { --server-accent: #7dd3fc; }

@@ -151,6 +151,7 @@ export function toolActionSummary(
   now: number,
   locale: Locale,
 ): string {
+  if (toolCallStatus(part, call) === "cancelled") return translate(locale, "servers.view.cancelled");
   const duration = elapsedSeconds(call, now);
   const failed = toolCallStatus(part, call) === "failed";
   if (commandForTool(part, call)) {

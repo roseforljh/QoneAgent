@@ -47,6 +47,7 @@ function FileResult({ presentation }: { presentation: Extract<ToolPresentation, 
 }
 
 function TerminalResult({ presentation, emptyText, running }: { presentation: Extract<ToolPresentation, { kind: "terminal" }>; emptyText?: string; running?: boolean }) {
+  const { t } = useLocale();
   const output = presentation.output.trim();
   return (
     <div data-slot="tool-terminal-result" className="overflow-hidden rounded-xl border border-foreground/10 bg-background/45">
@@ -55,6 +56,12 @@ function TerminalResult({ presentation, emptyText, running }: { presentation: Ex
           <span data-slot="tool-terminal-command" className="text-foreground/75">{presentation.command}</span>
         ) : !running && <span className="text-foreground/45">{emptyText}</span>}
       </pre>
+      {presentation.stderr && <div className="border-t border-foreground/10 px-3 py-2 text-rose-700 dark:text-rose-300"><span className="text-[10px]">{t("servers.view.stderr")}</span><pre className="whitespace-pre-wrap break-words font-mono">{presentation.stderr}</pre></div>}
+      {(presentation.exitCode !== undefined || presentation.timedOut || presentation.truncated) && <div className="flex flex-wrap gap-3 border-t border-foreground/10 px-3 py-1.5 text-[10px] text-foreground/45">
+        {presentation.exitCode !== undefined && <span>{t("servers.view.exit", { code: presentation.exitCode })}</span>}
+        {presentation.timedOut && <span className="text-destructive">{t("servers.view.timeout")}</span>}
+        {presentation.truncated && <span>{t("servers.view.truncated")}</span>}
+      </div>}
       {!output && running && <div role="status" className="flex items-center gap-1 px-3 pb-2.5 text-foreground/45">
         {emptyText}<EllipsisDots />
       </div>}

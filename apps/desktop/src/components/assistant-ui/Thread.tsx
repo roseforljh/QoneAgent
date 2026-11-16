@@ -4,6 +4,7 @@ import { localizeError } from "../../lib/error-localization";
 import { ComposerAttachments, ComposerAddAttachment } from "./elements/attachment.aui";
 import { UserMessage, UserMessageContent } from "./user-message";
 import { ComposerToolsPopover, type ComposerTool } from "./composer-tools";
+import { ComposerServers } from "./composer-servers";
 import { ComposerTriggers } from "./composer-triggers";
 import { ComposerEditorBridge, type ComposerMentionControls, type InsertComposerCommand, type InsertComposerTool } from "./composer-editor-bridge";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
@@ -18,7 +19,7 @@ import { ComposerUnlinkedNode } from "./composer-unlinked-node";
 import "./composer-links.css";
 import { AssistantParts } from "./assistant-parts";
 import { AssistantMessageLayout } from "./assistant-message-layout";
-import { GeneratedMediaArtifacts } from "./generated-media-artifacts";
+import { DeliveredFiles } from "./delivered-files";
 import { MessagePair } from "./elements/message-pair";
 import { DaySeparatorMarker } from "./elements/day-separator";
 import { chatRunErrorMessageId } from "../../lib/chat-run-error-message";
@@ -300,6 +301,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const mentionWasOpen = useRef(false);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
+  const [serversOpen, setServersOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const onNativeFiles = useCallback(async (files: globalThis.File[]) => {
     await Promise.all(files.map(async (file) => {
@@ -323,6 +325,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
     else if (tool.id === "folder") void pickNativeAttachmentFolder().then(onNativeFiles).catch((error) => {
       useStore.setState({ lastError: localizeError(error) });
     });
+    else if (tool.id === "servers") setServersOpen(true);
     else if (tool.id === "compact") compactSession();
     else insertToolRef.current?.({ id: tool.id, label: tool.label });
   }, [compactSession, onNativeFiles]);
@@ -368,7 +371,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
             <ComposerHistoryPlugin menuOpen={mentionOpen || slashOpen} />
           </LexicalComposerInput>
           <ComposerTriggers onToolSelect={onToolSelect} onCommandSelect={onCommandSelect} onMentionStateChange={onMentionStateChange} onSlashStateChange={setSlashOpen} />
-          <ComposerAction mentionOpen={mentionOpen} onToggleMention={toggleMention} />
+          <ComposerAction mentionOpen={mentionOpen} onToggleMention={toggleMention} serversOpen={serversOpen} onServersOpenChange={setServersOpen} />
         </div>
       </ComposerPrimitive.AttachmentDropzone>
       </ComposerPrimitive.Unstable_TriggerPopoverRoot>
@@ -393,18 +396,22 @@ const GoalStatusBar: FC = () => {
   </div>;
 };
 
-const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> = ({ mentionOpen, onToggleMention }) => {
+const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void; serversOpen: boolean; onServersOpenChange: (open: boolean) => void }> = ({ mentionOpen, onToggleMention, serversOpen, onServersOpenChange }) => {
   const { t } = useLocale();
   const isRunning = useAuiState((state) => state.thread.isRunning);
-  const showSend = useAuiState((state) => !state.thread.isRunning || (state.thread.capabilities.queue && state.composer.canSend));
+  const stopping = useConversationStore((state) => state.stoppingRunId !== undefined);
+  const showSend = useAuiState((state) => !state.thread.isRunning || (!stopping && state.thread.capabilities.queue && state.composer.canSend));
   const compacting = useConversationStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
   const editing = useConversationStore((state) => Boolean(state.editingQueueItem));
   const sendLabel = t(editing ? "chat.queueSave" : isRunning ? "chat.queueSend" : "chat.sendMessage");
+  // The same button forces the stop when the requested run is still active.
+  const stopLabel = t(stopping ? "chat.forceStop" : "chat.stopGenerating");
   return (
     <div className="aui-composer-action-wrapper relative flex min-h-7 items-center justify-between gap-2 px-2 pb-2 mt-1">
       <div className="q-composer-actions-leading flex min-w-0 items-center gap-1">
         <ComposerToolsPopover open={mentionOpen} onToggle={onToggleMention} />
         <RunOptionsPopover />
+        <ComposerServers open={serversOpen} onOpenChange={onServersOpenChange} />
       </div>
       <div className="q-composer-actions-trailing flex min-w-0 flex-1 items-center justify-end gap-1">
         <AssistantContext />
@@ -429,7 +436,7 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
           <span className="q-composer-submit-glyph pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
             <ComposerActionGlyph stopped={!showSend} />
           </span>
-          <AuiIf condition={(s) => !s.thread.isRunning || (s.thread.capabilities.queue && s.composer.canSend)}>
+          <AuiIf condition={() => showSend}>
             <ComposerPrimitive.Send asChild>
               <Button
                 type="button"
@@ -444,10 +451,10 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void }> 
               </Button>
             </ComposerPrimitive.Send>
           </AuiIf>
-          <AuiIf condition={(s) => s.thread.isRunning && !(s.thread.capabilities.queue && s.composer.canSend)}>
+          <AuiIf condition={() => !showSend}>
             <ComposerPrimitive.Cancel asChild>
-              <Button type="button" variant="default" size="icon" className="aui-composer-cancel absolute inset-0" aria-label={t("chat.stopGenerating")} title={t("chat.stopGenerating")}>
-                <span className="sr-only">{t("chat.stopGenerating")}</span>
+              <Button type="button" variant="default" size="icon" data-stopping={stopping || undefined} className="aui-composer-cancel absolute inset-0 data-[stopping]:animate-pulse motion-reduce:animate-none" aria-label={stopLabel} title={stopLabel}>
+                <span className="sr-only">{stopLabel}</span>
               </Button>
             </ComposerPrimitive.Cancel>
           </AuiIf>
@@ -473,6 +480,13 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
   });
   const runId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : messageById(state.messages, messageId)?.runId);
   const runIds = useMemo(() => runId ? [runId] : [], [runId]);
+  // A run can span several assistant messages; its files belong under the last one.
+  const lastOfRun = useConversationStore((state) => {
+    if (messageId === "streaming" || !runId) return true;
+    if (state.running && state.activeRunId === runId) return false;
+    const index = state.messages.findIndex((message) => message.id === messageId);
+    return !state.messages.slice(index + 1).some((message) => message.role === "assistant" && message.runId === runId);
+  });
   return (
       <MessagePair
         userMessage=""
@@ -505,7 +519,7 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
               </button>
             </div> : <AssistantParts />}
             {!answerError && <>
-              <GeneratedMediaArtifacts runIds={runIds} />
+              {lastOfRun && <DeliveredFiles runIds={runIds} />}
               <MessageSourcesView />
               <AssistantMemoryChips visible={showLatestExtras} />
             </>}

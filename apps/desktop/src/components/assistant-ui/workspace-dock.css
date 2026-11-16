@@ -45,7 +45,7 @@
 .q-workspace-dock-tab:focus-within .q-workspace-dock-tab-close { opacity: 1; pointer-events: auto; }
 .q-workspace-dock-actions .aui-button-icon { color: var(--muted-foreground); }
 .q-workspace-dock-actions .aui-button-icon:hover,
-.q-workspace-dock-actions .aui-button-icon[data-state="open"] { background: var(--q-hover); color: var(--foreground); }
+.q-workspace-dock-actions .aui-button-icon[data-state="open"] { color: var(--foreground); }
 
 .q-dock-terminal {
   padding-block: 8px 12px;

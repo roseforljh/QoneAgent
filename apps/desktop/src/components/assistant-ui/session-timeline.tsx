@@ -146,7 +146,7 @@ const GenericToolCallEntry: FC<ToolCallEntryProps> = ({ part, step, prepared = f
   return (
     <ToolCall
       icon={showIcon ? step.icon : undefined}
-      label={status === "queued" || status === "waiting" ? activeLabel : failed ? t("chat.toolActionFailed", { operation: step.integration?.name ?? step.verb })
+      label={status === "cancelled" ? t("servers.view.cancelled") : status === "queued" || status === "waiting" ? activeLabel : failed ? t("chat.toolActionFailed", { operation: step.integration?.name ?? step.verb })
         : step.integration ? t(step.integration.kind === "source" ? "chat.toolGroupSource" : "chat.toolGroupIntegrationOne", { sources: step.integration.name }) : operationLabels.completed}
       activeLabel={activeLabel}
       query={step.chip}
@@ -162,6 +162,7 @@ const GenericToolCallEntry: FC<ToolCallEntryProps> = ({ part, step, prepared = f
       running={status === "running" || status === "generating"}
       pending={status === "queued" || status === "generating"}
       waiting={status === "waiting"}
+      cancelled={status === "cancelled"}
       failed={failed}
       requestLabel={t("chat.toolRequest")}
       resultLabel={t("chat.toolResult")}

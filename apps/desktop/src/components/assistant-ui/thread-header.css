@@ -71,14 +71,13 @@
   border-radius: 8px;
   color: var(--q-subtle);
   cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
+  transition: color 150ms ease, transform 150ms ease;
 }
 
 .q-thread-header-actions .q-thread-header-action:hover,
 .q-thread-header-actions .q-thread-header-action:focus-visible,
 .q-thread-header-actions .q-thread-header-action[aria-pressed="true"],
 .q-thread-header-actions .q-thread-header-action[data-state="open"] {
-  background: var(--q-hover);
   color: var(--foreground);
 }
 

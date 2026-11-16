@@ -33,6 +33,8 @@ import { FadeScroll, mono } from "./elements/surfaces";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { onOpenBrowserInDock, type BrowserDockRequest } from "../../lib/browser-dock";
+import { ServerOperationsPanel } from "./server-operations-panel";
+import { CodexTerminalIcon } from "./execution-icons";
 import { SubagentPanel } from "./subagent-view";
 import { OPEN_SUBAGENT_EVENT } from "./subagent-navigation";
 import { OPEN_WORKSPACE_FILE_EVENT, resolveFileReferencePath, type WorkspaceFileTarget } from "../../lib/workspace-file-navigation";
@@ -69,7 +71,7 @@ import { useSelectedTextSideChat } from "../../hooks/use-selected-text-side-chat
 import { CodeContextMenu, DockTabContextMenu, WorkspacePathContextMenu } from "./dock-context-menu";
 import { FilesView, GitView, SessionDetails } from "./workspace-dock-views";
 
-const DOCK_VIEWS: readonly DockView[] = ["session", "terminal", "files", "git", "browser", "mcp", "skills", "subagents"];
+const DOCK_VIEWS: readonly DockView[] = ["session", "terminal", "files", "git", "browser", "mcp", "skills", "subagents", "servers"];
 const isDockView = (value: unknown): value is DockView =>
   typeof value === "string" && DOCK_VIEWS.some((view) => view === value);
 
@@ -324,7 +326,12 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
 
   const openTab = (next: DockView, browserTarget?: BrowserDockRequest) => {
     setLauncherOpen(false);
+    if (next === "servers") {
+      const existing = openTabsRef.current.find(tab => tab.view === next);
+      if (existing) { setActiveTabId(existing.id); setCollapsed(false); return; }
+    }
     const tab: DockTab = { id: rid(), view: next, workspaceId, browserTarget: next === "browser" ? browserTarget ?? { url: "https://www.bing.com" } : undefined };
+    if (next === "servers") openTabsRef.current = [...openTabsRef.current, tab];
     setOpenTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
     setCollapsed(false);
@@ -419,7 +426,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     };
   }, [activeTabId, openTabs, collapsed, scopeActive, workspaceId]);
 
-  const tabMeta: Record<DockView, { icon: LucideIcon; label: string }> = {
+  const tabMeta: Record<DockView, { icon: LucideIcon | typeof CodexTerminalIcon; label: string }> = {
     sideChat: { icon: BotMessageSquareIcon, label: t("chat.sideChat") },
     session: { icon: ListTodoIcon, label: t("dock.session") },
     terminal: { icon: SquareTerminalIcon, label: t("dock.terminal") },
@@ -431,6 +438,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     mcp: { icon: PlugIcon, label: t("dock.mcp") },
     skills: { icon: WandSparklesIcon, label: t("dock.skills") },
     subagents: { icon: BotMessageSquareIcon, label: t("nav.subagents") },
+    servers: { icon: CodexTerminalIcon, label: t("servers.title") },
   };
 
   return (
@@ -541,7 +549,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
                           : <Icon className="size-4 shrink-0 text-foreground/55" />}
                         <span className="truncate text-sm text-foreground/85">{tabLabel}</span>
                       </button>
-                      <button type="button" aria-label={`${t("dock.closePanel")}: ${tabLabel}`} onClick={() => closeTab(tab.id)} className="q-workspace-dock-tab-close me-1 flex size-6 shrink-0 items-center justify-center rounded-md text-foreground/45 hover:bg-foreground/10 hover:text-foreground">
+                      <button type="button" aria-label={`${t("dock.closePanel")}: ${tabLabel}`} onClick={() => closeTab(tab.id)} className="q-workspace-dock-tab-close me-1 flex size-6 shrink-0 items-center justify-center rounded-md text-foreground/45 hover:text-foreground">
                         <CodexIcon src={closeIcon} className="size-3.5" />
                       </button>
                     </div>
@@ -601,6 +609,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
                   {active && tab.view === "mcp" && <DockMcpView refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "skills" && <DockSkillsView workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "subagents" && <SubagentPanel selectedId={selectedSubagentId} onSelect={setSelectedSubagentId} onClose={() => closeTab(tab.id)} />}
+                  {active && tab.view === "servers" && <ServerOperationsPanel onClose={() => void closeTab(tab.id)} />}
                   {active && tab.view === "session" && <SessionDetails />}
                 </div>
               );
@@ -630,6 +639,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
               { view: "mcp", icon: PlugIcon, label: t("dock.mcp"), detail: t("dock.mcpDescription") },
               { view: "skills", icon: WandSparklesIcon, label: t("dock.skills"), detail: t("dock.skillsDescription") },
               { view: "subagents", icon: BotMessageSquareIcon, label: t("nav.subagents"), detail: t("dock.subagentsDescription") },
+              { view: "servers", icon: CodexTerminalIcon, label: t("servers.title"), detail: t("servers.view.operations") },
             ] as const).map(({ view: name, icon: Icon, label, detail }) => (
               <button
                 key={name}

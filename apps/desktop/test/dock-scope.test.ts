@@ -11,7 +11,7 @@ test("同项目的会话和新草稿拥有不同右侧栏作用域", () => {
   expect(dockScopeKey("session-a", "workspace-2")).toBe(first);
 });
 
-test("右侧栏每个会话的展开状态和标签页会持久化", async () => {
+test.each(["session", "servers"] as const)("右侧栏每个会话的 %s 标签页和展开状态会持久化", async view => {
   const saved = new Map<string, string>();
   const storage = createJSONStorage(() => ({
     getItem: (key: string) => saved.get(key) ?? null,
@@ -22,12 +22,13 @@ test("右侧栏每个会话的展开状态和标签页会持久化", async () =>
   const first = createDockStateStore(storage);
   first.getState().update(key, { sessionId: "session-a", workspaceId: "workspace-1" }, (scope) => ({
     ...scope,
-    openTabs: [{ id: "tab-a", view: "session" }],
+    openTabs: [{ id: "tab-a", view }],
     activeTabId: "tab-a",
     collapsed: false,
   }));
 
   const restored = createDockStateStore(storage);
   await restored.persist.rehydrate();
-  expect(restored.getState().scopes[key]).toMatchObject({ collapsed: false, activeTabId: "tab-a", openTabs: [{ id: "tab-a", view: "session" }] });
+  expect(restored.getState().scopes[key]).toMatchObject({ collapsed: false, activeTabId: "tab-a", openTabs: [{ id: "tab-a", view }] });
+  expect(restored.getState().scopes[dockScopeKey("session-b", "workspace-1")]).toBeUndefined();
 });

@@ -1,3 +1,4 @@
+import { limitPreviewText } from "@qone/protocol";
 import { editDiff, toolArg, type ToolPresentation } from "./tool-presentation";
 import { commandForTool } from "./tool-action-summary";
 import { isCommandTool } from "./tool-activity-category";
@@ -10,7 +11,7 @@ export function detectToolPreview(toolName: string, args: unknown): ToolPresenta
       const content = toolArg(args, "content");
       // A write without the old contents can preview its code, but cannot claim
       // that every line is an addition to an empty file.
-      return name && content !== undefined ? { kind: "file", name, content } : undefined;
+      return name && content !== undefined ? { kind: "file", name, content: limitPreviewText(content) } : undefined;
     }
     case "edit":
       return editDiff(args);

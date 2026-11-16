@@ -101,6 +101,7 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
     const call = toolCallsById.get(part.toolCallId);
     return call?.status === "success"
       || call?.status === "failed"
+      || call?.status === "cancelled"
       || part.result !== undefined
       || part.isError;
   });
