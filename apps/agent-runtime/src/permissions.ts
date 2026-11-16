@@ -324,12 +324,15 @@ export function withPermission<T extends ToolDefinition>(
     rules?: PermissionRuleStore;
     mode?: () => RunPermissionMode;
     internal?: boolean;
+    isActive?: () => boolean;
   }
 ): T {
   const inner = tool.execute;
   return {
     ...tool,
     execute: async (id, params, signal, onUpdate, ctx) => {
+      signal?.throwIfAborted();
+      if (opts.isActive && !opts.isActive()) throw new Error("run aborted");
       if (opts.internal) {
         return inner(id, params, signal, onUpdate, ctx);
       }
@@ -376,6 +379,8 @@ export function withPermission<T extends ToolDefinition>(
         }
       }
 
+      signal?.throwIfAborted();
+      if (opts.isActive && !opts.isActive()) throw new Error("run aborted");
       return inner(id, params, signal, onUpdate, ctx);
     },
   } as T;

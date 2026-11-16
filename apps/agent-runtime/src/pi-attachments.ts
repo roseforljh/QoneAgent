@@ -115,11 +115,14 @@ export function createPiSessionEntries(
   messages: PersistedPiMessage[],
   model?: { api: string; provider: string; id: string },
   allowedInput?: readonly MediaCapability[],
+  // Pi sends this id as prompt_cache_key / session-id; a rebuilt session must
+  // reuse it or provider cache routing restarts on every rebuild.
+  sessionId: string = crypto.randomUUID(),
 ): FileEntry[] {
   const header: FileEntry = {
     type: "session",
     version: 3,
-    id: crypto.randomUUID(),
+    id: sessionId,
     timestamp: new Date().toISOString(),
     cwd,
   };

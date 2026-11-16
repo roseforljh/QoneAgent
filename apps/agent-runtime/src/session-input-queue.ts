@@ -3,6 +3,8 @@
 export class SessionInputQueue {
   private readonly tails = new Map<string, Promise<void>>();
 
+  clear(sessionId: string): void { this.tails.delete(sessionId); }
+
   run<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
     const result = (this.tails.get(sessionId) ?? Promise.resolve()).then(operation);
     const tail = result.then(() => {}, () => {});

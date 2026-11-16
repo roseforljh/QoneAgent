@@ -49,6 +49,7 @@ test("integrations defer their schemas and restore only tools used in history", 
   expect(loadout.tools[1]!.exposure).toBeUndefined();
   expect(loadout.catalog).toContain("server_exec");
   expect(usedToolNames([null, { content: "text" }, { content: [{ type: "toolCall", name: "server_exec" }, { type: "text", text: "read" }] }])).toEqual(new Set(["server_exec"]));
+  expect([...usedToolNames([{ role: "toolResult", toolName: "tool_search", details: { loaded: ["qone_app_list", "server_exec"] } }, { content: [{ type: "toolCall", name: "server_exec" }, { type: "toolCall", name: "qone_rss_read" }] }])]).toEqual(["qone_app_list", "server_exec", "qone_rss_read"]);
 });
 
 test("tool_search loads deferred tools; scripts use live Qone approval modes", async () => {

@@ -131,7 +131,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
       skills: base.skills.filter((skill) => !isBuiltinSkillName(skill.name) || builtinSkills.some((builtin) => builtin.enabled && builtin.path === skill.filePath)),
     }),
     noExtensions: true,
-    extensionFactories: [toolPromptContextExtension, ...(enableCodemode ? [createCodemodeExtension({ models: false }), createToolSearchExtension()] : [])],
+    extensionFactories: extensionFactories(enableCodemode),
     // Qone.md is user-level global guidance. It stays separate from Qone's
     // built-in rules so updating the file never replaces product behavior.
     appendSystemPromptOverride: () => {
@@ -145,6 +145,37 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
   });
   await loader.reload();
   return { loader, skills: [...builtinSkills, ...loader.getSkills().skills.filter((skill) => !isBuiltinSkillName(skill.name)).map(toInfo)] };
+}
+
+function extensionFactories(enableCodemode: boolean) {
+  return [toolPromptContextExtension, ...(enableCodemode ? [createCodemodeExtension({ models: false }), createToolSearchExtension()] : [])];
+}
+
+/**
+ * Pi keeps one extension runtime per loader and rebinds it to whichever session
+ * bound last, so a loader shared by concurrent sessions would make tool_search
+ * and codemode act on another session's tools. Each session gets its own
+ * extensions; skills, prompts and instructions stay shared.
+ */
+export async function sessionResourceLoader(shared: ResourceLoader, cwd: string, enableCodemode = true): Promise<ResourceLoader> {
+  const own = new DefaultResourceLoader({
+    cwd, agentDir: qoneAgentDir(), noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true,
+    noExtensions: true, systemPrompt: "", appendSystemPrompt: [], extensionFactories: extensionFactories(enableCodemode),
+  });
+  await own.reload();
+  return {
+    getExtensions: () => own.getExtensions(),
+    getSkills: () => shared.getSkills(),
+    getPrompts: () => shared.getPrompts(),
+    getThemes: () => shared.getThemes(),
+    getAgentsFiles: () => shared.getAgentsFiles(),
+    getSystemPrompt: () => shared.getSystemPrompt(),
+    getSystemPromptSource: () => shared.getSystemPromptSource(),
+    getAppendSystemPrompt: () => shared.getAppendSystemPrompt(),
+    getAppendSystemPromptSources: () => shared.getAppendSystemPromptSources(),
+    extendResources: (paths) => shared.extendResources(paths),
+    reload: async (options) => { await shared.reload(options); await own.reload(options); },
+  };
 }
 
 function toInfo(skill: Skill): SkillInfo {

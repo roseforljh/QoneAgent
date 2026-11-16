@@ -8,10 +8,10 @@ describe("goal persistence", () => {
       const sessions = new SessionRepo(db);
       const session = sessions.create("Goal test", "workspace");
       const goals = new GoalRepo(db);
-      const goal = goals.create(session.id, "Make the test pass", { model: "openai/gpt-test", permissionMode: "auto", thinking: "high" });
+      const goal = goals.create(session.id, "Make the test pass", { model: "openai/gpt-test", permissionMode: "auto", thinking: "high", serverIds: ["a", "b"] });
 
       expect(goals.getBySession(session.id)).toMatchObject({ id: goal.id, status: "active", epoch: 1 });
-      expect(goals.getOptions(goal.id)).toEqual({ model: "openai/gpt-test", permissionMode: "auto", thinking: "high" });
+      expect(goals.getOptions(goal.id)).toEqual({ model: "openai/gpt-test", permissionMode: "auto", thinking: "high", serverIds: ["a", "b"] });
       const paused = goals.update(goal.id, { status: "paused", stopReason: "user pause", bumpEpoch: true });
       expect(paused).toMatchObject({ status: "paused", stopReason: "user pause", epoch: 2 });
       const resumed = goals.update(goal.id, { status: "active", stopReason: null, bumpEpoch: true });

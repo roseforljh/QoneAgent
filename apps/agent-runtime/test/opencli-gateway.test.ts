@@ -81,6 +81,37 @@ describe("OpenCLI gateway", () => {
     expect(buildOpenCliCommandArgs({ site: "example", command: "search", args: ["--query", "a;whoami"] })).toContain("a;whoami");
   });
 
+  test("browser release cancels queued work and a late preparation cannot replace the new session", async () => {
+    const releases: string[] = [], prepares: string[] = [];
+    const callbacks: ((value: { requestId: string; endpoint: string }) => void)[] = [];
+    const bridge = { prepare: async () => {
+      prepares.push("prepare");
+      return new Promise<{ requestId: string; endpoint: string }>(resolve => callbacks.push(resolve));
+    }, release: (id: string) => { releases.push(id); } };
+    const service = new BrowserSyncService(() => {}, async () => {}, bridge as never);
+    const state = service as unknown as { embeddedBrowser?: { requestId: string; endpoint: string } };
+    const tool = service.tools().find(item => item.name === "qone_browser_state")!;
+    const execute = (signal?: AbortSignal) => tool.execute("call", {}, signal, undefined, {} as never);
+    const old = execute().catch(error => error);
+    await new Promise(resolve => setImmediate(resolve));
+    const queued = execute().catch(error => error);
+    await service.release();
+    const controller = new AbortController();
+    const next = execute(controller.signal).catch(error => error);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(prepares).toHaveLength(2);
+    controller.abort();
+    callbacks[1]!({ requestId: "new", endpoint: "http://new" });
+    expect(await next).toBeInstanceOf(Error);
+    state.embeddedBrowser = { requestId: "replacement", endpoint: "http://replacement" };
+    callbacks[0]!({ requestId: "old", endpoint: "http://old" });
+    for (const error of await Promise.all([old, queued])) expect(error).toBeInstanceOf(Error);
+    expect(state.embeddedBrowser?.requestId).toBe("replacement");
+    expect(releases.sort()).toEqual(["new", "old"]);
+    await service.release();
+    expect(releases.at(-1)).toBe("replacement");
+  });
+
   test("exposes Bilibili discovery and adapter tools", async () => {
     const db = openDb(":memory:");
     try {

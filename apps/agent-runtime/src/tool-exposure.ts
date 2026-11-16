@@ -46,11 +46,20 @@ export function applyToolExposure(tools: ToolDefinition[], servers?: Namespace):
   };
 }
 
-/** Names of tools called in Pi assistant messages (`{ type: "toolCall", name }` content blocks). */
+/**
+ * Tools the transcript declared, in the order they first appeared: names called in
+ * assistant `toolCall` blocks and names `tool_search` loaded (`details.loaded`).
+ * A rebuilt session re-declares them in this order so the provider-visible tool
+ * list, and with it the cached prompt prefix, matches the one before the rebuild.
+ */
 export function usedToolNames(messages: unknown[]): Set<string> {
   const names = new Set<string>();
   for (const message of messages.flat()) {
-    const content = message && typeof message === "object" ? (message as { content?: unknown }).content : undefined;
+    if (!message || typeof message !== "object") continue;
+    const { content, toolName, details } = message as { content?: unknown; toolName?: unknown; details?: { loaded?: unknown } };
+    if (toolName === "tool_search" && Array.isArray(details?.loaded)) {
+      for (const name of details.loaded) if (typeof name === "string") names.add(name);
+    }
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       if (block && typeof block === "object" && (block as { type?: unknown }).type === "toolCall" && typeof (block as { name?: unknown }).name === "string") names.add((block as { name: string }).name);

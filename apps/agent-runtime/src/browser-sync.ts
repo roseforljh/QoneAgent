@@ -260,6 +260,7 @@ export function compactOpenCliCatalog(commands: OpenCliCommand[], site?: string,
 export class BrowserSyncService {
   private statusValue: BrowserSyncStatus;
   private pending: Promise<unknown> = Promise.resolve();
+  private operations = new AbortController();
   private browserUrl = "https://example.com/";
   private embeddedBrowser?: { requestId: string; endpoint: string };
   private openCliCatalog?: { loadedAt: number; commands: OpenCliCommand[] };
@@ -332,7 +333,7 @@ export class BrowserSyncService {
       }),
       execute: async (_id: string, value: { site: string; command: string; args?: string[]; format?: OpenCliFormat; window?: "foreground" | "background"; siteSession?: "ephemeral" | "persistent"; keepTab?: boolean; profile?: string }, signal?: AbortSignal) => {
         const args = buildOpenCliCommandArgs(value);
-        try { return result(await this.exclusive(() => this.runOpenCliAdapter(value.site, args, signal))) as never; }
+        try { return result(await this.exclusive(owner => this.runOpenCliAdapter(value.site, args, owner), signal)) as never; }
         catch (error) { return (loginRequiredResult(error, value.site) ?? Promise.reject(error)) as never; }
       },
     } as ToolDefinition;
@@ -356,8 +357,8 @@ export class BrowserSyncService {
   private browserCommand(name: string, description: string, parameters: ReturnType<typeof Type.Object>, args: (value: any) => string[]): ToolDefinition {
     return {
       name, label: `OpenCLI · ${name.replace("qone_browser_", "")}`, description, parameters,
-      execute: async (_id: string, value: any) => {
-        try { return result(await this.runBrowserCommand(args(value))) as never; }
+      execute: async (_id: string, value: any, signal?: AbortSignal) => {
+        try { return result(await this.runBrowserCommand(args(value), signal)) as never; }
         catch (error) { return (loginRequiredResult(error, this.browserSite()) ?? Promise.reject(error)) as never; }
       },
     } as ToolDefinition;
@@ -369,8 +370,8 @@ export class BrowserSyncService {
       label: "OpenCLI · screenshot",
       description: "Capture the current Qone built-in browser page as a PNG image and return it for visual inspection. Use this after qone_browser_extract when the page contains relevant images, charts, screenshots, or other visual content. This uses the shared built-in browser session and captures the full page.",
       parameters: Type.Object({}),
-      execute: async () => {
-        try { return browserScreenshotResult((await this.runBrowserCommand(["screenshot", "--full-page"])).stdout) as never; }
+      execute: async (_id, _value, signal) => {
+        try { return browserScreenshotResult((await this.runBrowserCommand(["screenshot", "--full-page"], signal)).stdout) as never; }
         catch (error) { return (loginRequiredResult(error, this.browserSite()) ?? Promise.reject(error)) as never; }
       },
     } as ToolDefinition;
@@ -382,9 +383,9 @@ export class BrowserSyncService {
       label: "OpenCLI · extract",
       description: "Extract the current Qone built-in browser page as readable Markdown. Use qone_browser_screenshot separately when visual inspection is required. Open the requested URL first so the current tab is the target page.",
       parameters: Type.Object({ includeScreenshot: Type.Optional(Type.Boolean({ description: "Capture a full-page screenshot only when visual inspection is required" })) }),
-      execute: async (_id, value: { includeScreenshot?: boolean }) => {
+      execute: async (_id, value: { includeScreenshot?: boolean }, signal) => {
         try {
-          const { extracted, screenshot } = await this.runBrowserExtraction(value.includeScreenshot === true);
+          const { extracted, screenshot } = await this.runBrowserExtraction(value.includeScreenshot === true, signal);
           const text = result(extracted).content;
           if (!screenshot) return { content: text } as never;
           try {
@@ -403,8 +404,8 @@ export class BrowserSyncService {
   private twitterCommand(name: string, description: string, parameters: ReturnType<typeof Type.Object>, args: (value: any) => string[]): ToolDefinition {
     return {
       name, label: `OpenCLI · ${name.replace("qone_twitter_", "Twitter ")}`, description, parameters,
-      execute: async (_id: string, value: any) => {
-        try { return result(await this.runTwitterCommand(args(value))) as never; }
+      execute: async (_id: string, value: any, signal?: AbortSignal) => {
+        try { return result(await this.runTwitterCommand(args(value), signal)) as never; }
         catch (error) { return (loginRequiredResult(error, "twitter") ?? Promise.reject(error)) as never; }
       },
     } as ToolDefinition;
@@ -423,8 +424,9 @@ export class BrowserSyncService {
     } as ToolDefinition;
   }
 
-  private exclusive<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.pending.then(work);
+  private exclusive<T>(work: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const owner = signal ? AbortSignal.any([signal, this.operations.signal]) : this.operations.signal;
+    const next = this.pending.then(() => { owner.throwIfAborted(); return work(owner); });
     this.pending = next.catch(() => undefined);
     return next;
   }
@@ -450,13 +452,13 @@ export class BrowserSyncService {
   }
 
   async release(): Promise<void> {
-    await this.exclusive(async () => {
-      if (this.embeddedBrowser) {
-        this.appOpenCliBridge?.release(this.embeddedBrowser.requestId);
-        this.embeddedBrowser = undefined;
-      }
-      this.update({ phase: "ready", targetConnected: false, lastError: undefined, errorCode: undefined });
-    });
+    this.operations.abort();
+    this.operations = new AbortController();
+    this.pending = Promise.resolve();
+    const browser = this.embeddedBrowser;
+    this.embeddedBrowser = undefined;
+    if (browser) this.appOpenCliBridge?.release(browser.requestId);
+    this.update({ phase: "ready", targetConnected: false, lastError: undefined, errorCode: undefined });
   }
 
   private async connectInner(): Promise<BrowserSyncStatus> {
@@ -466,30 +468,33 @@ export class BrowserSyncService {
     return this.status();
   }
 
-  private runBrowserCommand(args: string[]): Promise<CommandResult> {
-    return this.exclusive(async () => {
+  private runBrowserCommand(args: string[], signal?: AbortSignal): Promise<CommandResult> {
+    return this.exclusive(async owner => {
       if (!this.statusValue.targetConnected) await this.connectInner();
+      owner.throwIfAborted();
       const url = args[0] === "open" && /^https?:\/\//i.test(args[1] ?? "") ? args[1] : this.browserUrl;
       if (args[0] === "open" && url) this.browserUrl = url;
-      return this.runEmbeddedBrowser(["browser", SESSION, ...args], url);
-    });
+      return this.runEmbeddedBrowser(["browser", SESSION, ...args], url, owner);
+    }, signal);
   }
 
-  private runBrowserExtraction(includeScreenshot = false): Promise<{ extracted: CommandResult; screenshot?: CommandResult }> {
-    return this.exclusive(async () => {
+  private runBrowserExtraction(includeScreenshot = false, signal?: AbortSignal): Promise<{ extracted: CommandResult; screenshot?: CommandResult }> {
+    return this.exclusive(async owner => {
       if (!this.statusValue.targetConnected) await this.connectInner();
-      const extracted = await this.runEmbeddedBrowser(["browser", SESSION, "extract"], this.browserUrl);
+      owner.throwIfAborted();
+      const extracted = await this.runEmbeddedBrowser(["browser", SESSION, "extract"], this.browserUrl, owner);
       if (!includeScreenshot) return { extracted };
       try {
-        return { extracted, screenshot: await this.runEmbeddedBrowser(["browser", SESSION, "screenshot", "--full-page"], this.browserUrl) };
+        return { extracted, screenshot: await this.runEmbeddedBrowser(["browser", SESSION, "screenshot", "--full-page"], this.browserUrl, owner) };
       } catch {
+        owner.throwIfAborted();
         return { extracted };
       }
-    });
+    }, signal);
   }
 
-  private runTwitterCommand(args: string[]): Promise<CommandResult> {
-    return this.exclusive(() => this.runOpenCliAdapter("twitter", [...args, "--format", "json"]));
+  private runTwitterCommand(args: string[], signal?: AbortSignal): Promise<CommandResult> {
+    return this.exclusive(owner => this.runOpenCliAdapter("twitter", [...args, "--format", "json"], owner), signal);
   }
 
   private browserSite(): string | undefined {
@@ -510,9 +515,14 @@ export class BrowserSyncService {
 
   private async runEmbeddedBrowser(args: string[], target: string, signal?: AbortSignal): Promise<CommandResult> {
     if (!this.appOpenCliBridge) throw new Error("Built-in browser bridge is unavailable");
+    signal?.throwIfAborted();
     if (!this.embeddedBrowser) {
       const prepared = await this.appOpenCliBridge.prepare("browser", target, signal);
       if (!prepared) throw new Error("Built-in browser bridge did not prepare a page");
+      if (signal?.aborted) {
+        this.appOpenCliBridge.release(prepared.requestId);
+        signal.throwIfAborted();
+      }
       this.embeddedBrowser = prepared;
     }
     const targetPattern = new URL(target).hostname;

@@ -13,11 +13,12 @@ function fixture() {
   };
   const internals = adapter as unknown as {
     sessions: Map<string, typeof session>; runs: Map<string, typeof session>; activeRunIds: Map<string, string>;
+    forceRejects: Map<string, (error: Error) => void>; sessionInputs: { clear(sessionId: string): void };
   };
   internals.sessions.set("s", session);
   internals.runs.set("run", session);
   internals.activeRunIds.set("s", "run");
-  return { adapter, session, sent, runs: internals.activeRunIds };
+  return { adapter, session, sent, runs: internals.activeRunIds, state: internals };
 }
 
 test("live input delivery is serialized in submission order", async () => {
@@ -78,6 +79,29 @@ test("a queued request never targets the replacement run after waiting behind an
   expect(await second).toBe(false);
   expect(f.sent).toEqual(["first"]);
   expect(f.session.clears).toBe(0);
+});
+
+for (const reuseSession of [false, true]) test(`resuming the same child run id rejects queued old input without clearing the new queue (reuse session: ${reuseSession})`, async () => {
+  const f = fixture();
+  f.state.forceRejects.set("run", () => {});
+  let finish!: () => void;
+  const wait = new Promise<void>(resolve => { finish = resolve; });
+  f.session.steer = async text => { f.sent.push(text); await wait; };
+  const first = f.adapter.sendToSession("s", "old first", "steer");
+  const queued = f.adapter.sendToSession("s", "old queued", "steer");
+  await tick();
+  f.state.sessionInputs.clear("s");
+  f.state.forceRejects.set("run", () => {});
+  const resumed = reuseSession ? f.session : { ...f.session, clears: 0 };
+  resumed.steer = async text => { f.sent.push(text); };
+  f.state.sessions.set("s", resumed);
+  f.state.runs.set("run", resumed);
+  expect(await f.adapter.sendToSession("s", "new input", "steer")).toBe(true);
+  finish();
+  expect(await first).toBe(false);
+  expect(await queued).toBe(false);
+  expect(f.sent).toEqual(["old first", "new input"]);
+  expect(resumed.clears).toBe(0);
 });
 
 test("input left by Pi's asynchronous handlers is cleared if its run already ended", async () => {
