@@ -10,7 +10,6 @@ import {
 } from "electron";
 import path from "node:path";
 import fs from "node:fs";
-import netNode from "node:net";
 import { pathToFileURL } from "node:url";
 import { ensureGlobalInstructions, getRuntimeDir } from "./data-paths";
 import { SidecarManager } from "./sidecar";
@@ -49,24 +48,23 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-// 动态分配或读取 CDP 端口
-function getCdpPort(): number {
-  if (process.env.QONE_WEBVIEW_CDP_PORT) {
-    const parsed = parseInt(process.env.QONE_WEBVIEW_CDP_PORT.trim(), 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-  }
-  // 查找一个可用端口
-  const server = netNode.createServer();
-  server.listen(0, "127.0.0.1");
-  const address = server.address();
-  const port = typeof address === "object" && address ? address.port : 9222;
-  server.close();
-  return port;
-}
+// CDP 端口：0 让 Chromium 自己绑定空闲端口，并把实际端口写入 DevToolsActivePort。
+// 预先探测端口不可行：Node 的 listen 是异步的，探测结果总是落回固定端口，被占用时 DevTools 直接起不来。
+const devtoolsPortFile = path.join(app.getPath("userData"), "DevToolsActivePort");
+const configuredDevtoolsPort = process.env.QONE_WEBVIEW_CDP_PORT?.trim() || "0";
+app.commandLine.appendSwitch("remote-debugging-port", configuredDevtoolsPort);
 
-const cdpPort = getCdpPort();
-process.env.QONE_WEBVIEW_CDP_PORT = String(cdpPort);
-app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
+async function devtoolsPort(): Promise<number> {
+  if (configuredDevtoolsPort !== "0") return Number(configuredDevtoolsPort);
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      const port = parseInt(await fs.promises.readFile(devtoolsPortFile, "utf8"), 10);
+      if (port > 0) return port;
+    } catch { /* Chromium writes the file shortly after startup. */ }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("DevTools port is unavailable");
+}
 app.commandLine.appendSwitch("remote-allow-origins", "*");
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== "production";
@@ -76,7 +74,7 @@ let tray: Tray | null = null;
 
 const sidecar = new SidecarManager(() => mainWindow);
 const terminal = new TerminalManager(() => mainWindow);
-const browserDock = new BrowserDockManager(() => mainWindow, cdpPort);
+const browserDock = new BrowserDockManager(() => mainWindow, devtoolsPort);
 const updater = new DesktopUpdater();
 
 // 窗口状态管理
@@ -241,6 +239,8 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
+  // Only the lock owner may clear the previous run's generated endpoint.
+  fs.rmSync(devtoolsPortFile, { force: true });
   app.on("second-instance", () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -288,10 +288,9 @@ if (!gotTheLock) {
 
     registerIpcHandlers(() => mainWindow, sidecar, terminal, browserDock, updater);
 
+    void sidecar.start(systemPathReady);
     mainWindow = createMainWindow();
     createTray();
-
-    void systemPathReady.then(() => sidecar.start());
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {

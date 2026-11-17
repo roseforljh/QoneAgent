@@ -14,9 +14,9 @@ export class BrowserDockManager {
   /** Preview files this manager wrote; app exit removes exactly these. */
   private previewFiles = new Set<string>();
   private getMainWindow: () => BrowserWindow | null;
-  private cdpPort: number;
+  private cdpPort: () => Promise<number>;
 
-  constructor(getMainWindow: () => BrowserWindow | null, cdpPort: number) {
+  constructor(getMainWindow: () => BrowserWindow | null, cdpPort: () => Promise<number>) {
     this.getMainWindow = getMainWindow;
     this.cdpPort = cdpPort;
   }
@@ -156,20 +156,21 @@ export class BrowserDockManager {
     const session = this.sessions.get(browserId);
     if (!session) throw new Error("browser session not found");
 
+    const port = await this.cdpPort();
     try {
-      const res = await fetch(`http://127.0.0.1:${this.cdpPort}/json/list`);
+      const res = await fetch(`http://127.0.0.1:${port}/json/list`);
       const list = await res.json() as Array<{ id: string; url: string; webSocketDebuggerUrl?: string }>;
       const target = list.find((item) => item.url === session.url) || list[0];
       if (target && target.webSocketDebuggerUrl) {
         return target.webSocketDebuggerUrl;
       }
       if (target && target.id) {
-        return `ws://127.0.0.1:${this.cdpPort}/devtools/page/${target.id}`;
+        return `ws://127.0.0.1:${port}/devtools/page/${target.id}`;
       }
     } catch {
       // 容错
     }
-    return `ws://127.0.0.1:${this.cdpPort}/devtools/browser`;
+    return `ws://127.0.0.1:${port}/devtools/browser`;
   }
 
   public closeAll(): void {

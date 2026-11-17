@@ -26,7 +26,7 @@ function windowStub() {
 
 test("closing a dock browser destroys its WebContentsView instead of only detaching it", () => {
   const win = windowStub();
-  const dock = new BrowserDockManager(() => win as never, 9222);
+  const dock = new BrowserDockManager(() => win as never, async () => 9222);
   dock.open("b1", "https://example.com", 0, 0, 100, 100);
   const view = [...win.children][0] as View;
   expect(view.webContents.isDestroyed()).toBe(false);
@@ -39,7 +39,7 @@ test("closing a dock browser destroys its WebContentsView instead of only detach
 
 test("reopening the same dock id destroys the previous view and keeps one child", () => {
   const win = windowStub();
-  const dock = new BrowserDockManager(() => win as never, 9222);
+  const dock = new BrowserDockManager(() => win as never, async () => 9222);
   dock.open("b1", "https://first.example", 0, 0, 100, 100);
   const first = [...win.children][0] as View;
   dock.open("b1", "https://second.example", 0, 0, 100, 100);
@@ -51,7 +51,7 @@ test("reopening the same dock id destroys the previous view and keeps one child"
 
 test("closeAll destroys every view", () => {
   const win = windowStub();
-  const dock = new BrowserDockManager(() => win as never, 9222);
+  const dock = new BrowserDockManager(() => win as never, async () => 9222);
   for (const id of ["a", "b", "c"]) dock.open(id, "https://example.com", 0, 0, 10, 10);
   const views = [...win.children] as View[];
   expect(views).toHaveLength(3);
@@ -65,7 +65,7 @@ test("external previews are written under Qone's runtime dir and removed on clos
   const previous = process.env.QONE_DATA_DIR;
   process.env.QONE_DATA_DIR = dataDir;
   try {
-    const dock = new BrowserDockManager(() => windowStub() as never, 9222);
+    const dock = new BrowserDockManager(() => windowStub() as never, async () => 9222);
     dock.openPreviewExternal("<h1>preview</h1>");
     const directory = path.join(dataDir, "runtime", "previews");
     const files = existsSync(directory) ? require("node:fs").readdirSync(directory) as string[] : [];
