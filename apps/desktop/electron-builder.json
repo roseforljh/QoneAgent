@@ -1,6 +1,7 @@
 {
   "appId": "com.qone.agent",
   "productName": "QoneAgent",
+  "publish": null,
   "directories": {
     "output": "release"
   },
