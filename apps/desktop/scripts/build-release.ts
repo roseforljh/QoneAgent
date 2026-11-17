@@ -77,7 +77,7 @@ async function buildRelease() {
 
   // 6. 执行 Electron Builder 打包 Windows exe
   console.log("\n[5/5] 执行 Electron Builder 打包 Windows 独立 exe...");
-  await runCommand("bun", ["x", "electron-builder", "--config", "electron-builder.json"], desktopRoot);
+  await runCommand("bun", ["x", "electron-builder", "--config", "electron-builder.json", "--publish", "never"], desktopRoot);
 
   // 7. 编译完成后自动清理中间产物垃圾
   cleanIntermediates();
