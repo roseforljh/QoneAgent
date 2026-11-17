@@ -29,7 +29,10 @@ function localTransport(terminalId: string) {
 function createResource(tabId: string, target: DockTerminalTarget) {
   const element = document.createElement("div");
   element.className = "q-dock-terminal-renderer h-full min-h-0 w-full min-w-0 overflow-hidden";
-  const term = new Terminal({ cursorBlink: true, cursorStyle: "bar", cursorInactiveStyle: "bar", convertEol: false, scrollOnUserInput: true });
+  // A local shell runs in a Windows pseudo console; xterm adapts its
+  // wrapping and reflow to ConPTY's output only when told.
+  const term = new Terminal({ cursorBlink: true, cursorStyle: "bar", cursorInactiveStyle: "bar", convertEol: false, scrollOnUserInput: true,
+    ...("cwd" in target ? { windowsPty: { backend: "conpty" as const }, reflowCursorLine: true } : {}) });
   const fit = new FitAddon();
   term.loadAddon(fit);
   let opened = false;
@@ -43,7 +46,12 @@ function createResource(tabId: string, target: DockTerminalTarget) {
   });
   const input = term.onData(session.write);
   const resize = term.onResize(() => session.resize());
-  const fitTerminal = () => { if (element.isConnected && element.clientWidth > 0 && element.clientHeight > 0) fit.fit(); };
+  const fitNow = () => { if (element.isConnected && element.clientWidth > 0 && element.clientHeight > 0) fit.fit(); };
+  // ConPTY output carries absolute positions for the size it was rendered at.
+  // xterm parses written data on a timer, so resizing first would apply
+  // already-received old-size output to the new grid (and answer the shell's
+  // next cursor query from that wrong position). Resize after it is parsed.
+  const fitTerminal = () => term.write("", fitNow);
   let stopAppearance: (() => void) | undefined;
   return {
     session,
@@ -51,17 +59,21 @@ function createResource(tabId: string, target: DockTerminalTarget) {
       host.append(element);
       stopAppearance?.();
       term.options = readDockTerminalAppearance(element);
-      if (!opened) {
+      const first = !opened;
+      if (first) {
         term.open(element);
         opened = true;
       }
       const stop = bindDockTerminalAppearance(element, term, fitTerminal);
       stopAppearance = stop;
+      // Spawn the console at its visible size, not xterm's default 80×24;
+      // nothing has been written before the first start.
+      if (first) fitNow(); else fitTerminal();
       void session.start();
       return () => { if (element.parentElement === host) { stop(); stopAppearance = undefined; element.remove(); } };
     },
     fit: fitTerminal,
-    clear: () => term.clear(),
+    clear: () => { if ("cwd" in target) session.clear(); term.clear(); },
     focus: () => { if (element.isConnected) term.focus(); },
     dispose() {
       stopAppearance?.();

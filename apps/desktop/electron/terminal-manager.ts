@@ -1,9 +1,11 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import type { BrowserWindow } from "electron";
+import * as pty from "node-pty";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { app, type BrowserWindow } from "electron";
 import { killProcessTree } from "./process-tree";
 
 interface TerminalSession {
-  process: ChildProcess;
+  process: pty.IPty;
   terminalId: string;
 }
 
@@ -11,7 +13,7 @@ export class TerminalManager {
   private sessions = new Map<string, TerminalSession>();
   private getMainWindow: () => BrowserWindow | null;
 
-  constructor(getMainWindow: () => BrowserWindow | null, private spawnShell: typeof spawn = spawn) {
+  constructor(getMainWindow: () => BrowserWindow | null, private spawnPty: typeof pty.spawn = pty.spawn) {
     this.getMainWindow = getMainWindow;
   }
 
@@ -25,16 +27,26 @@ export class TerminalManager {
   ): void {
     this.kill(terminalId);
 
-    const child = this.spawnShell(shell, shellArgs, {
+    const env = { ...process.env, TERM: "xterm-256color" } as Record<string, string>;
+    if (["pwsh", "pwsh.exe"].includes(path.basename(shell).toLowerCase())) {
+      // Prefer our source-patched module without changing the user's installation,
+      // startup command, history, prediction or key bindings.
+      const binaries = app.isPackaged ? path.join(process.resourcesPath, "binaries") : path.resolve(__dirname, "../binaries");
+      const modules = path.join(binaries, "powershell");
+      const recipe = readFileSync(path.join(modules, "active.txt"), "utf8").trim();
+      env.PSModulePath = [path.join(modules, recipe), env.PSModulePath].filter(Boolean).join(path.delimiter);
+    }
+    // A pseudo console, never plain pipes: a shell on pipes runs
+    // non-interactively, so it neither echoes input nor ends lines with CRLF.
+    const child = this.spawnPty(shell, shellArgs, {
+      name: "xterm-256color",
+      cols,
+      rows,
+      // Bundled ConPTY synchronizes reflowed cursor positions and avoids the
+      // inbox backend's console-list helper racing an already-dead shell.
+      useConptyDll: true,
       cwd: cwd || process.cwd(),
-      env: {
-        ...process.env,
-        TERM: "xterm-256color",
-        COLUMNS: String(cols),
-        LINES: String(rows),
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
+      env,
     });
 
     const session: TerminalSession = { process: child, terminalId };
@@ -50,48 +62,39 @@ export class TerminalManager {
     // the session that still owns this id may delete it or report its exit;
     // otherwise a late close would drop the new terminal and close its UI.
     const owns = () => this.sessions.get(terminalId) === session;
-    const data = (payload: unknown) => { if (owns()) emit("terminal:data", payload); };
 
-    child.stdout?.on("data", (chunk: Buffer) => {
-      data({ terminalId, data: chunk.toString("utf8") });
-    });
-
-    child.stderr?.on("data", (chunk: Buffer) => {
-      data({ terminalId, data: chunk.toString("utf8") });
-    });
-
-    child.on("close", () => {
+    child.onData((data) => { if (owns()) emit("terminal:data", { terminalId, data }); });
+    child.onExit(() => {
       if (!owns()) return;
-      this.sessions.delete(terminalId);
-      emit("terminal:exit", { terminalId });
-    });
-
-    child.on("error", (error) => {
-      if (!owns()) return;
-      emit("terminal:data", { terminalId, data: `\r\n[terminal error: ${error.message}]\r\n` });
       this.sessions.delete(terminalId);
       emit("terminal:exit", { terminalId });
     });
   }
 
   public write(terminalId: string, data: string): void {
+    this.sessions.get(terminalId)?.process.write(data);
+  }
+
+  public resize(terminalId: string, cols: number, rows: number): void {
     const session = this.sessions.get(terminalId);
-    if (session && session.process.stdin && !session.process.stdin.destroyed) {
-      session.process.stdin.write(data, "utf8");
+    if (!session || !(cols > 0) || !(rows > 0)) return;
+    try {
+      session.process.resize(cols, rows);
+    } catch {
+      // The shell exited between the renderer's fit and this resize.
     }
   }
 
-  public resize(_terminalId: string, _cols: number, _rows: number): void {
-    // 纯 Node pipe 进程下无法原生发送 SIGWINCH，但保持 API 兼容
+  public clear(terminalId: string): void {
+    this.sessions.get(terminalId)?.process.clear();
   }
 
-  public kill(terminalId: string): void {
+  public kill(terminalId: string): Promise<void> {
     const session = this.sessions.get(terminalId);
-    if (session) {
-      this.sessions.delete(terminalId);
-      // A shell's children (builds, REPLs) outlive a plain kill on Windows.
-      killProcessTree(session.process);
-    }
+    if (!session) return Promise.resolve();
+    this.sessions.delete(terminalId);
+    // A shell's children (builds, REPLs) outlive a plain kill on Windows.
+    return killProcessTree(session.process);
   }
 
   public killAll(): void {

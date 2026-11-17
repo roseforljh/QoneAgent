@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Terminal as Xterm } from "@xterm/xterm";
 import { exposedGlobals, installElectronMock, rendererListeners } from "./helpers/electron-mock";
 
 // Real business chain: preload → ipcMain/ipcRenderer → SidecarManager → the
@@ -87,7 +88,15 @@ const send = (command: Record<string, unknown>) => bridge.invoke("runtime_send",
 beforeAll(async () => {
   // The preload listener forwards to `dispatch`; keep a real subscription path.
   unsubscribe = await bridge.listen("runtime-event", (event) => dispatch(event.payload));
-  await sidecar.start();
+  let releasePath!: () => void;
+  const pathReady = new Promise<void>((resolve) => { releasePath = resolve; });
+  const started = sidecar.start(pathReady);
+  // Production pages can ping before the asynchronous registry read finishes.
+  const firstPing = send({ type: "ping", requestId: "chain-early-ping" });
+  expect((sidecar as unknown as { child: unknown }).child).toBeNull();
+  releasePath();
+  await Promise.all([started, firstPing]);
+  await nextEvent((event) => event.type === "pong" && event.requestId === "chain-early-ping", "early pong");
 });
 
 afterAll(async () => {
@@ -134,16 +143,23 @@ test("workspace, session and snapshot commands round-trip over the real stdio pr
 }, 30_000);
 
 test("the dock terminal starts a real shell through preload IPC with separate executable and arguments", async () => {
+  const { preparePSReadLine } = await import("../scripts/prepare-psreadline");
+  await preparePSReadLine();
   const terminalId = `terminal-${crypto.randomUUID()}`;
   const marker = `qone-shell-${crypto.randomUUID()}`;
   const chunks: string[] = [];
+  const screen = new Xterm({ cols: 100, rows: 30, windowsPty: { backend: "conpty" }, reflowCursorLine: true });
+  const lines = () => Array.from({ length: screen.buffer.active.length }, (_, index) => screen.buffer.active.getLine(index)!.translateToString(true).trimEnd());
   let ready!: () => void;
   let fail!: (error: Error) => void;
   const output = new Promise<void>((resolve, reject) => { ready = resolve; fail = reject; });
   const timer = setTimeout(() => fail(new Error(`shell output timeout: ${chunks.join("")}`)), 15_000);
+  let dimensions = { cols: 100, rows: 30 };
   const session = createDockTerminalSession({
-    terminalId, cwd: workspaceDir, dimensions: () => ({ cols: 100, rows: 30 }),
-    invoke: bridge.invoke,
+    terminalId, cwd: workspaceDir, dimensions: () => dimensions,
+    invoke: (command, args) => bridge.invoke(command, command === "terminal_spawn" ? {
+      ...args, shellArgs: ["-NoProfile", "-NoExit", "-Command", `Set-PSReadLineOption -HistorySavePath '${path.join(dataDir, "terminal-history.txt").replaceAll("'", "''")}' -PredictionSource History`],
+    } : args),
     listen: async (callbacks) => {
       const offData = await bridge.listen("terminal:data", (event) => {
         const payload = event.payload as { terminalId: string; data: string };
@@ -156,23 +172,105 @@ test("the dock terminal starts a real shell through preload IPC with separate ex
     },
     output: data => {
       chunks.push(data);
-      if (chunks.join("").includes(marker)) ready();
+      screen.write(data, () => {
+        if (lines().includes(`${marker}-next`)) ready();
+      });
       if (data.includes("[terminal error:")) fail(new Error(data));
     },
   });
-  let child: import("node:child_process").ChildProcess | undefined;
+  const responses = screen.onData(session.write);
+  // Same order as the dock: parse output already received at the old size,
+  // then resize xterm and the pseudo console.
+  const resize = async (cols: number, rows: number) => {
+    await new Promise<void>((resolve) => screen.write("", resolve));
+    dimensions = { cols, rows };
+    screen.resize(cols, rows);
+    session.resize();
+  };
+  let exited: Promise<void> | undefined;
   try {
     await session.start();
-    child = (terminal as unknown as { sessions: Map<string, { process: import("node:child_process").ChildProcess }> }).sessions.get(terminalId)?.process;
+    const child = (terminal as unknown as { sessions: Map<string, { process: import("node-pty").IPty }> }).sessions.get(terminalId)?.process;
+    const started = Date.now() + 5_000;
+    while (!child?.pid && Date.now() < started) await Bun.sleep(20);
     expect(child?.pid).toBeGreaterThan(0);
-    session.write(`Write-Output ('qone-' + 'shell-${marker.slice("qone-shell-".length)}')\r\n`);
+    exited = new Promise<void>((resolve) => child!.onExit(() => resolve()));
+    expect([child!.cols, child!.rows]).toEqual([100, 30]);
+    await resize(88, 26);
+    session.write(`Write-Output ('qone-' + 'shell-${marker.slice("qone-shell-".length)}'); Write-Output '中文第二行'; Write-Output ('qone-' + 'shell-${marker.slice("qone-shell-".length)}-next')\r`);
     await output;
     expect(session.getSnapshot().status).toBe("ready");
-    expect(chunks.join("")).toContain(marker);
+    expect([child!.cols, child!.rows]).toEqual([88, 26]);
+    session.write(`Write-Output ('qone-' + 'shell-${marker.slice("qone-shell-".length)}-again')\r`);
+    const deadline = Date.now() + 5_000;
+    expect(lines().slice(lines().indexOf(marker), lines().indexOf(marker) + 3)).toEqual([marker, "中文第二行", `${marker}-next`]);
+    while (!lines().includes(`${marker}-again`) && Date.now() < deadline) await Bun.sleep(20);
+    expect(lines()).toContain(`${marker}-again`);
+    // Prediction draws below the input on narrow terminals. It must be erased
+    // when a shorter command is submitted, without leaving suggested text.
+    session.write("Write-Output ");
+    const predicted = Date.now() + 5_000;
+    const promptText = `PS ${workspaceDir}>`;
+    const promptRow = () => lines().findLastIndex((line, index, all) => line.startsWith("PS ") && all.slice(index).join("").startsWith(promptText));
+    const prediction = `shell-${marker.slice("qone-shell-".length)}-again`;
+    const inputDrawn = (text: string) => {
+      const buffer = screen.buffer.active;
+      let row = buffer.baseY + buffer.cursorY;
+      let beforeCursor = buffer.getLine(row)!.translateToString(false, 0, buffer.cursorX);
+      while (row > 0 && buffer.getLine(row)!.isWrapped) beforeCursor = buffer.getLine(--row)!.translateToString(false) + beforeCursor;
+      return beforeCursor.endsWith(text);
+    };
+    while ((!inputDrawn("Write-Output ") || !lines().slice(promptRow()).join("").includes(prediction)) && Date.now() < predicted) await Bun.sleep(20);
+    expect(inputDrawn("Write-Output ")).toBe(true);
+    expect(lines().slice(promptRow()).join("")).toContain(prediction);
+    // Resize and submit immediately after the input was drawn: no grace period.
+    await resize(72, 26);
+    session.write("'own'\r");
+    const cleared = Date.now() + 5_000;
+    while (!lines().includes("own") && Date.now() < cleared) await Bun.sleep(20);
+    expect(lines()).toContain("own");
+    const prompt = lines().findLastIndex((line) => line.startsWith(`PS ${workspaceDir}>`));
+    expect(lines().slice(prompt + 1).every((line) => line === "")).toBe(true);
+
+    // Submit an already-drawn command with Enter alone, immediately after
+    // shrinking or expanding; this exercises AcceptLine without another render key.
+    for (const [attempt, cols] of [60, 100, 60, 100, 60, 100].entries()) {
+      const result = `直接回车-${cols}-${attempt}`;
+      const text = `Write-Output '${result}'`;
+      session.write(text);
+      const drawn = Date.now() + 5_000;
+      while (!inputDrawn(text) && Date.now() < drawn) await Bun.sleep(1);
+      expect(inputDrawn(text)).toBe(true);
+      await resize(cols, 26);
+      session.write("\r");
+      const accepted = Date.now() + 5_000;
+      const promptLines = Math.ceil(promptText.length / cols);
+      const promptFinished = () => promptRow() > lines().indexOf(result) && lines().slice(promptRow(), promptRow() + promptLines).join("") === promptText;
+      // Output and the next prompt arrive in separate VT chunks; wait for the
+      // redraw to finish, not just the prompt prefix over the previous render.
+      while ((!lines().includes(result) || !promptFinished()) && Date.now() < accepted) await Bun.sleep(20);
+      expect(lines()).toContain(result);
+      const nextPrompt = promptRow();
+      expect(nextPrompt).toBeGreaterThan(lines().indexOf(result));
+      expect(lines().slice(nextPrompt, nextPrompt + promptLines).join("")).toBe(promptText);
+      expect(lines().slice(nextPrompt + promptLines).every((line) => line === "")).toBe(true);
+    }
+
+    await bridge.invoke("terminal_clear", { terminalId });
+    screen.clear();
+    await resize(96, 26);
+    session.write("Write-Output 'cleared'\r");
+    const clearing = Date.now() + 5_000;
+    while (!lines().includes("cleared") && Date.now() < clearing) await Bun.sleep(20);
+    expect(lines()).toContain("cleared");
+    expect(lines()).not.toContain(marker);
+    expect(lines()).not.toContain(`${marker}-again`);
   } finally {
     clearTimeout(timer);
     await session.dispose();
-    if (child && child.exitCode === null && child.signalCode === null) await new Promise<void>(resolve => child!.once("close", () => resolve()));
+    if (exited) await Promise.race([exited, Bun.sleep(5_000).then(() => { throw new Error("PTY did not exit after disposal"); })]);
+    responses.dispose();
+    screen.dispose();
   }
   expect((terminal as unknown as { sessions: Map<string, unknown> }).sessions.size).toBe(0);
 }, 30_000);

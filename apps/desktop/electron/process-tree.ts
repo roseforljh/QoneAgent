@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import path from "node:path";
 
 /**
@@ -9,7 +9,7 @@ import path from "node:path";
  * killing the parent first orphans them before the tree walk can reach them.
  * So the tree walk runs first and the plain kill only follows it.
  */
-export function killProcessTree(child: ChildProcess): Promise<void> {
+export function killProcessTree(child: { readonly pid?: number; kill(): unknown }): Promise<void> {
   const kill = () => { try { child.kill(); } catch { /* already gone */ } };
   const pid = child.pid;
   if (process.platform === "win32" && pid !== undefined) {

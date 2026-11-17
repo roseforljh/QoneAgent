@@ -1,10 +1,12 @@
 import { build } from "esbuild";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { preparePSReadLine } from "./prepare-psreadline";
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
 
 async function buildElectron() {
+  if (process.platform === "win32") await preparePSReadLine();
   await build({
     entryPoints: [path.join(root, "electron/main.ts")],
     bundle: true,
@@ -12,7 +14,9 @@ async function buildElectron() {
     target: "node20",
     outfile: path.join(root, "dist-electron/main.cjs"),
     format: "cjs",
-    external: ["electron"],
+    // Native modules load their .node binaries at runtime; the packaged app
+    // ships them from node_modules (runtime "dependencies").
+    external: ["electron", "node-pty"],
     sourcemap: true,
   });
 

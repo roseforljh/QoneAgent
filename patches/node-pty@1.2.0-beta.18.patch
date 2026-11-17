@@ -1,0 +1,18 @@
+diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
+index 81d885b51f22f2e1d3b05798b6b4b20a41a777a1..8939b40a41c1d5ae17b3cfd77b3047e7973007c7 100644
+--- a/lib/windowsPtyAgent.js
++++ b/lib/windowsPtyAgent.js
+@@ -259,6 +259,13 @@ var WindowsPtyAgent = /** @class */ (function () {
+             this._flushDataAndCleanUp();
+             this._outSocket.on('data', function () { return _this._flushDataAndCleanUp(); });
+         }
++        else {
++            // The bundled host exits with its last client, but its JS worker
++            // keeps a listening pipe open unless we explicitly finish draining.
++            this._inSocket.destroy();
++            this._conoutSocketWorker.dispose();
++            this._outSocket.on('data', function () { _this._conoutSocketWorker.dispose(); });
++        }
+     };
+     WindowsPtyAgent.prototype._flushDataAndCleanUp = function () {
+         var _this = this;

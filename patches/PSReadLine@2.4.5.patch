@@ -1,0 +1,42 @@
+diff --git a/PSReadLine/BasicEditing.cs b/PSReadLine/BasicEditing.cs
+--- a/PSReadLine/BasicEditing.cs
++++ b/PSReadLine/BasicEditing.cs
+@@ -328,7 +328,9 @@ namespace Microsoft.PowerShell
+             //
+             // Also - if there was an emphasis, we want to clear that before accepting
+             // and that requires rendering.
+-            bool renderNeeded = _emphasisStart >= 0 || _queuedKeys.Count > 0;
++            bool renderNeeded = _emphasisStart >= 0 || _queuedKeys.Count > 0 ||
++                                _previousRender.bufferWidth != _console.BufferWidth ||
++                                _previousRender.bufferHeight != _console.BufferHeight;
+
+             _emphasisStart = -1;
+             _emphasisLength = 0;
+diff --git a/PSReadLine/Render.cs b/PSReadLine/Render.cs
+--- a/PSReadLine/Render.cs
++++ b/PSReadLine/Render.cs
+@@ -225,9 +225,13 @@ namespace Microsoft.PowerShell
+         {
+             if (!force)
+             {
++                // A resize can happen between adjacent keys. Preserve batching and
++                // avoid cursor queries only while the actual dimensions are unchanged.
++                bool sizeUnchanged = _previousRender.bufferWidth == _console.BufferWidth &&
++                                     _previousRender.bufferHeight == _console.BufferHeight;
+                 // If there are a bunch of keys queued up, skip rendering if we've rendered very recently.
+                 long elapsedMs = _lastRenderTime.ElapsedMilliseconds;
+-                if (_queuedKeys.Count > 10 && elapsedMs < 50)
++                if (sizeUnchanged && _queuedKeys.Count > 10 && elapsedMs < 50)
+                 {
+                     // We won't render, but most likely the tokens will be different, so make
+                     // sure we don't use old tokens, also allow garbage to get collected.
+@@ -1189,6 +1193,8 @@ namespace Microsoft.PowerShell
+         private void RecomputeInitialCoords(bool isTextBufferUnchanged)
+         {
+-            if (!_handlePotentialResizing)
++            if (!_handlePotentialResizing &&
++                _previousRender.bufferWidth == _console.BufferWidth &&
++                _previousRender.bufferHeight == _console.BufferHeight)
+             {
+                 return;
+             }

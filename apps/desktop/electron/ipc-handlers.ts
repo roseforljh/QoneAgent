@@ -79,6 +79,9 @@ export function registerIpcHandlers(
       case "terminal_resize": {
         return terminal.resize(args.terminalId, args.cols, args.rows);
       }
+      case "terminal_clear": {
+        return terminal.clear(args.terminalId);
+      }
       case "terminal_kill": {
         return terminal.kill(args.terminalId);
       }

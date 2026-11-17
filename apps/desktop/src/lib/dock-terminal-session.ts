@@ -73,9 +73,16 @@ export function createDockTerminalSession(options: TerminalSessionOptions) {
       if (disposed) return;
       if (restart) await options.invoke("terminal_kill", { terminalId: options.terminalId });
       if (disposed) return;
-      await options.invoke("terminal_spawn", { terminalId: options.terminalId, shell: "pwsh.exe", shellArgs: ["-NoProfile"], cwd: options.cwd, ...options.dimensions() });
+      const initialDimensions = options.dimensions();
+      await options.invoke("terminal_spawn", { terminalId: options.terminalId, shell: "pwsh.exe", shellArgs: ["-NoProfile"], cwd: options.cwd, ...initialDimensions });
       if (disposed) return; // dispose's queued kill runs after spawn settles.
       setStatus("ready");
+      // A first fit can happen while spawn IPC is pending, when resize() is
+      // intentionally ignored. Reconcile before sending queued input.
+      const dimensions = options.dimensions();
+      if (dimensions.cols !== initialDimensions.cols || dimensions.rows !== initialDimensions.rows) {
+        await options.invoke("terminal_resize", { terminalId: options.terminalId, ...dimensions });
+      }
       for (const data of pendingInput.splice(0)) write(data);
     } catch (error) {
       pendingInput.length = 0;
@@ -107,6 +114,13 @@ export function createDockTerminalSession(options: TerminalSessionOptions) {
       void enqueueInput(async () => {
         if (!disposed && snapshot.status === "ready" && resizeGeneration === generation) await options.invoke("terminal_resize", { terminalId: options.terminalId, ...options.dimensions() });
       }).catch((error) => { if (resizeGeneration === generation && !restarting) setStatus("error", localizeError(error)); });
+    },
+    clear() {
+      if (disposed || snapshot.status !== "ready") return;
+      const clearGeneration = generation;
+      void enqueueInput(async () => {
+        if (!disposed && snapshot.status === "ready" && clearGeneration === generation) await options.invoke("terminal_clear", { terminalId: options.terminalId });
+      }).catch((error) => { if (clearGeneration === generation && !restarting) setStatus("error", localizeError(error)); });
     },
     dispose() {
       if (disposed) return queue;

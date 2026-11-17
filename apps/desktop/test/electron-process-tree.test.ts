@@ -66,9 +66,10 @@ test("stopping the sidecar kills the runtime it spawned through its wrapper", as
 
 test("killing a dock terminal kills the shell's children", async () => {
   const terminal = new TerminalManager(() => null);
+  const directory = mkdtempSync(path.join(os.tmpdir(), "qone-terminal-tree-"));
   const tag = marker();
   try {
-    terminal.spawn("tree", "powershell.exe");
+    terminal.spawn("tree", "powershell.exe", undefined, 120, 30, ["-NoProfile", "-NoExit", "-Command", `Set-PSReadLineOption -HistorySavePath '${path.join(directory, "history.txt").replaceAll("'", "''")}'`]);
     // The spawned shell starts a grandchild carrying the marker.
     terminal.write("tree", `Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 120 # ${tag}'\r`);
     const deadline = Date.now() + 15_000;
@@ -81,6 +82,7 @@ test("killing a dock terminal kills the shell's children", async () => {
     terminal.kill("tree");
     expect(await waitForNoProcesses(tag)).toEqual([]);
   } finally {
-    terminal.killAll();
+    await terminal.kill("tree");
+    rmSync(directory, { recursive: true, force: true });
   }
 }, 60_000);
