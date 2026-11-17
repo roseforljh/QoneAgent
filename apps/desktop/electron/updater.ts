@@ -1,8 +1,7 @@
 import { app, shell } from "electron";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 
 export interface GitHubReleaseAsset {
   name: string;
@@ -29,7 +28,8 @@ export interface PendingUpdate {
 
 const DEFAULT_REPO = "roseforljh/QoneAgent";
 const CHECK_TIMEOUT_MS = 10_000;
-const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+// Resumable, so a slow link continues on the next attempt instead of restarting.
+const DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 
 interface ParsedVersion {
   core: [number, number, number];
@@ -132,6 +132,8 @@ export function findAvailableUpdate(
 
 export class DesktopUpdater {
   private pending: PendingUpdate | null = null;
+  private readyPath: string | null = null;
+  private installOnQuit = false;
   private readonly repo: string;
 
   constructor(repo = process.env.QONE_UPDATE_REPO || DEFAULT_REPO) {
@@ -171,7 +173,11 @@ export class DesktopUpdater {
     return update ? { version: update.version } : null;
   }
 
-  async downloadAndInstall(expectedVersion?: string, fetchFn: typeof fetch = fetch): Promise<{ mode: "installer" | "external"; path?: string }> {
+  async download(
+    expectedVersion?: string,
+    onProgress?: (percent: number) => void,
+    fetchFn: typeof fetch = fetch,
+  ): Promise<{ mode: "ready" | "external" }> {
     const target = this.pending;
     if (!target || (expectedVersion && target.version !== expectedVersion)) {
       throw new Error("No pending update matches the requested version");
@@ -188,35 +194,71 @@ export class DesktopUpdater {
 
     const updateDir = path.join(app.getPath("temp"), "qone-updates");
     fs.mkdirSync(updateDir, { recursive: true });
-    const safeName = path.basename(target.assetName);
-    const destPath = path.join(updateDir, safeName);
+    const destPath = path.join(updateDir, path.basename(target.assetName));
     const partPath = `${destPath}.part`;
 
     if (!target.size || !fs.existsSync(destPath) || fs.statSync(destPath).size !== target.size) {
-      try {
-        const response = await fetchFn(target.downloadUrl, {
-          headers: { "User-Agent": `QoneAgent/${this.currentVersion()}` },
-          signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-        });
-        if (!response.ok || !response.body) {
-          throw new Error(`Update download failed (${response.status})`);
-        }
-        await pipeline(Readable.fromWeb(response.body as never), fs.createWriteStream(partPath));
-        const stat = fs.statSync(partPath);
-        if (stat.size === 0 || (target.size && stat.size !== target.size)) {
-          throw new Error("Downloaded update package is incomplete");
-        }
-        fs.renameSync(partPath, destPath);
-      } catch (error) {
+      // An interrupted download resumes from the bytes already on disk.
+      let offset = fs.existsSync(partPath) ? fs.statSync(partPath).size : 0;
+      if (target.size && offset >= target.size) {
         fs.rmSync(partPath, { force: true });
-        throw error;
+        offset = 0;
       }
+      const response = await fetchFn(target.downloadUrl, {
+        headers: { "User-Agent": `QoneAgent/${this.currentVersion()}`, ...(offset ? { Range: `bytes=${offset}-` } : {}) },
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`Update download failed (${response.status})`);
+      }
+      const resumed = offset > 0 && response.status === 206;
+      const total = target.size ?? (Number(response.headers.get("content-length")) || 0) + (resumed ? offset : 0);
+      let received = resumed ? offset : 0;
+      let reported = -1;
+      // Each chunk is on disk before the next is read, so a dropped connection keeps every byte received.
+      const file = await fs.promises.open(partPath, resumed ? "a" : "w");
+      try {
+        for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+          await file.write(chunk);
+          received += chunk.length;
+          const percent = total ? Math.min(100, Math.floor((received / total) * 100)) : 0;
+          if (percent !== reported) onProgress?.(reported = percent);
+        }
+      } finally { await file.close(); }
+      const size = fs.statSync(partPath).size;
+      if (size === 0 || (target.size && size !== target.size)) {
+        fs.rmSync(partPath, { force: true });
+        throw new Error("Downloaded update package is incomplete");
+      }
+      fs.renameSync(partPath, destPath);
     }
+    this.readyPath = destPath;
+    return { mode: "ready" };
+  }
 
-    const openError = await shell.openPath(destPath);
-    if (openError) {
-      throw new Error(openError);
+  /** Windows installers update silently in place; other platforms open the package. */
+  async install(now: boolean): Promise<void> {
+    const installer = this.readyPath;
+    if (!installer) throw new Error("No downloaded update to install");
+    if (process.platform !== "win32" || !installer.toLowerCase().endsWith(".exe")) {
+      const openError = await shell.openPath(installer);
+      if (openError) throw new Error(openError);
+      return;
     }
-    return { mode: "installer", path: destPath };
+    this.installOnQuit = !now;
+    if (!now) return;
+    this.launchInstaller(true);
+    app.quit();
+  }
+
+  /** Called from will-quit: finishes an update the user deferred. */
+  installDeferredUpdate(): void {
+    if (this.installOnQuit) this.launchInstaller(false);
+  }
+
+  private launchInstaller(relaunch: boolean): void {
+    this.installOnQuit = false;
+    // --updated lets the installer wait for this process to exit instead of prompting.
+    spawn(this.readyPath!, ["/S", "--updated", ...(relaunch ? ["--force-run"] : [])], { detached: true, stdio: "ignore" }).unref();
   }
 }

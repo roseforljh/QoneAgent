@@ -17,6 +17,7 @@ import { SidecarManager } from "./sidecar";
 import { TerminalManager } from "./terminal-manager";
 import { BrowserDockManager } from "./browser-dock-manager";
 import { registerIpcHandlers } from "./ipc-handlers";
+import { DesktopUpdater } from "./updater";
 import { installDevtoolsShortcutGuard } from "./devtools-policy";
 import { localRangeResponse } from "./local-file-range";
 import { refreshWindowsPath } from "./system-path";
@@ -76,6 +77,7 @@ let tray: Tray | null = null;
 const sidecar = new SidecarManager(() => mainWindow);
 const terminal = new TerminalManager(() => mainWindow);
 const browserDock = new BrowserDockManager(() => mainWindow, cdpPort);
+const updater = new DesktopUpdater();
 
 // 窗口状态管理
 const windowStateFile = path.join(getRuntimeDir(), "window-state.json");
@@ -284,7 +286,7 @@ if (!gotTheLock) {
       return net.fetch(pathToFileURL(filePath).toString());
     });
 
-    registerIpcHandlers(() => mainWindow, sidecar, terminal, browserDock);
+    registerIpcHandlers(() => mainWindow, sidecar, terminal, browserDock, updater);
 
     mainWindow = createMainWindow();
     createTray();
@@ -301,6 +303,7 @@ if (!gotTheLock) {
   app.on("will-quit", () => {
     saveWindowState();
     sidecar.stop();
+    updater.installDeferredUpdate();
     terminal.killAll();
     browserDock.closeAll();
   });

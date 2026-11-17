@@ -1,5 +1,10 @@
 export interface ConfirmationRequest {
   message: string;
+  /** Omitted fields fall back to the destructive "confirm / cancel / delete" wording. */
+  title?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  destructive?: boolean;
 }
 
 type PendingRequest = ConfirmationRequest & { resolve: (confirmed: boolean) => void };
@@ -12,15 +17,19 @@ function notify() {
   for (const listener of listeners) listener();
 }
 
-/** The single confirmation gate for all destructive UI actions. */
-export function confirmDestructiveAction(message: string): Promise<boolean> {
+export function confirmAction(options: ConfirmationRequest): Promise<boolean> {
   if (typeof window === "undefined") return Promise.resolve(false);
   return new Promise((resolve) => {
-    const request = { message, resolve };
+    const request = { ...options, resolve };
     if (activeRequest) queuedRequests.push(request);
     else activeRequest = request;
     notify();
   });
+}
+
+/** The single confirmation gate for all destructive UI actions. */
+export function confirmDestructiveAction(message: string): Promise<boolean> {
+  return confirmAction({ message, destructive: true });
 }
 
 export function getConfirmationRequest(): ConfirmationRequest | null {

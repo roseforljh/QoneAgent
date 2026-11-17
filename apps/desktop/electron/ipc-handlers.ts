@@ -11,7 +11,7 @@ export function registerIpcHandlers(
   sidecar: SidecarManager,
   terminal: TerminalManager,
   browserDock: BrowserDockManager,
-  updater: DesktopUpdater = new DesktopUpdater()
+  updater: DesktopUpdater
 ): void {
   // 统一 invoke 入口或分命 handlers
   ipcMain.handle("desktop_invoke", async (_event, cmd: string, args: Record<string, any> = {}) => {
@@ -156,8 +156,13 @@ export function registerIpcHandlers(
       case "update_check": {
         return updater.check(typeof args.timeout === "number" ? args.timeout : undefined);
       }
-      case "update_download_and_install": {
-        return updater.downloadAndInstall(typeof args.version === "string" ? args.version : undefined);
+      case "update_download": {
+        return updater.download(typeof args.version === "string" ? args.version : undefined, (percent) => {
+          getMainWindow()?.webContents.send("update:progress", percent);
+        });
+      }
+      case "update_install": {
+        return updater.install(args.now === true);
       }
       default:
         throw new Error(`unknown command: ${cmd}`);

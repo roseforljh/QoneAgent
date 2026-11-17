@@ -27,6 +27,11 @@ ipcRenderer.on("browser:loaded", (_event, payload) => {
   if (set) set.forEach((cb) => cb({ payload }));
 });
 
+ipcRenderer.on("update:progress", (_event, payload) => {
+  const set = listeners.get("update:progress");
+  if (set) set.forEach((cb) => cb({ payload }));
+});
+
 ipcRenderer.on("window:resized", () => {
   const set = listeners.get("window:resized");
   if (set) set.forEach((cb) => cb());

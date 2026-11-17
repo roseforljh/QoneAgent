@@ -34,7 +34,6 @@
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
     "shortcutName": "QoneAgent",
-    "deleteAppDataOnUninstall": false,
-    "include": "resources/installer.nsh"
+    "deleteAppDataOnUninstall": false
   }
 }

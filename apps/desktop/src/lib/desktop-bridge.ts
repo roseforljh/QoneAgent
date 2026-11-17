@@ -117,7 +117,10 @@ export async function revealItemInDir(path: string): Promise<void> {
 // Updater API
 export interface UpdateResult {
   version: string;
-  downloadAndInstall: () => Promise<void>;
+  /** Resolves "external" when the release has no installer and its page was opened instead. */
+  download: (onProgress: (percent: number) => void) => Promise<"ready" | "external">;
+  /** now = restart into the new version; otherwise it installs when Qone quits. */
+  install: (now: boolean) => Promise<void>;
 }
 
 export async function check(options?: { timeout?: number }): Promise<UpdateResult | null> {
@@ -125,8 +128,12 @@ export async function check(options?: { timeout?: number }): Promise<UpdateResul
   if (!result?.version) return null;
   return {
     version: result.version,
-    downloadAndInstall: async () => {
-      await invoke("update_download_and_install", { version: result.version });
+    download: async (onProgress) => {
+      const unlisten = await listen<number>("update:progress", (event) => onProgress(event.payload));
+      try {
+        return (await invoke<{ mode: "ready" | "external" }>("update_download", { version: result.version })).mode;
+      } finally { unlisten(); }
     },
+    install: (now) => invoke("update_install", { now }),
   };
 }

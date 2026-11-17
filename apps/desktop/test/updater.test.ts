@@ -59,7 +59,7 @@ test("compareVersions and selectReleaseAsset handle semver tags and platform ins
   });
 });
 
-test("DesktopUpdater checks GitHub releases, downloads installer and opens it", async () => {
+test("DesktopUpdater downloads with progress, resumes an interrupted download and installs", async () => {
   const updater = new DesktopUpdater("roseforljh/QoneAgent");
   expect(await updater.check(5000, async () => new Response("[]", { status: 200 }))).toBeNull();
 
@@ -76,16 +76,32 @@ test("DesktopUpdater checks GitHub releases, downloads installer and opens it", 
 
   const found = await updater.check(5000, async () => new Response(JSON.stringify(releases), { status: 200 }));
   expect(found).toEqual({ version: "0.0.2" });
-
-  // Incomplete downloads clean up .part and reject.
-  await expect(updater.downloadAndInstall("0.0.2", async () => new Response(new Uint8Array([77]), { status: 200 }))).rejects.toThrow("incomplete");
   const updateDir = path.join(tempRoot, "qone-updates");
-  expect(existsSync(path.join(updateDir, "QoneAgent-Setup-0.0.2-x64.exe.part"))).toBe(false);
+  const partPath = path.join(updateDir, "QoneAgent-Setup-0.0.2-x64.exe.part");
 
-  const installed = await updater.downloadAndInstall("0.0.2", async () => new Response(payload, { status: 200 }));
-  expect(installed.mode).toBe("installer");
-  expect(readFileSync(installed.path!)).toEqual(Buffer.from(payload));
-  expect(openedPaths.at(-1)).toBe(installed.path);
+  // A dropped connection keeps the partial bytes on disk.
+  let reads = 0;
+  const dropped = new ReadableStream({ pull(controller) { if (reads++ === 0) controller.enqueue(payload.slice(0, 2)); else controller.error(new Error("socket hang up")); } });
+  await expect(updater.download("0.0.2", undefined, async () => new Response(dropped, { status: 200 }))).rejects.toThrow("socket hang up");
+  expect(readFileSync(partPath)).toEqual(Buffer.from(payload.slice(0, 2)));
+
+  // The retry asks only for the missing range and reports progress up to 100%.
+  let range: string | null = null;
+  const progress: number[] = [];
+  const result = await updater.download("0.0.2", (percent) => progress.push(percent), async (_url, init) => {
+    range = new Headers(init?.headers).get("Range");
+    return new Response(payload.slice(2), { status: 206 });
+  });
+  expect(result).toEqual({ mode: "ready" });
+  expect(range).toBe("bytes=2-");
+  expect(progress.at(-1)).toBe(100);
+  expect(readFileSync(path.join(updateDir, "QoneAgent-Setup-0.0.2-x64.exe"))).toEqual(Buffer.from(payload));
+  expect(existsSync(partPath)).toBe(false);
+
+  // A size mismatch is rejected and never left behind for resumption.
+  rmSync(path.join(updateDir, "QoneAgent-Setup-0.0.2-x64.exe"));
+  await expect(updater.download("0.0.2", undefined, async () => new Response(new Uint8Array([77]), { status: 200 }))).rejects.toThrow("incomplete");
+  expect(existsSync(partPath)).toBe(false);
 });
 
 test("DesktopUpdater opens the GitHub release page when no matching asset exists", async () => {
@@ -96,7 +112,7 @@ test("DesktopUpdater opens the GitHub release page when no matching asset exists
     assets: [],
   }];
   await updater.check(5000, async () => new Response(JSON.stringify(releases), { status: 200 }));
-  const result = await updater.downloadAndInstall("0.0.2");
+  const result = await updater.download("0.0.2");
   expect(result).toEqual({ mode: "external" });
   expect(openedUrls.at(-1)).toBe("https://github.com/roseforljh/QoneAgent/releases/tag/v0.0.2");
 });

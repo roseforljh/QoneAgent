@@ -1,34 +1,61 @@
 import { useState } from "react";
 import { LoaderCircle } from "lucide-react";
-import { check } from "../../lib/desktop-bridge";
+import { check, type UpdateResult } from "../../lib/desktop-bridge";
+import { confirmAction } from "../../lib/confirm-action";
 import { localizeError } from "../../lib/error-localization";
 import { saveLanguageSetting, useLocale, type LanguageSetting, type LocalizedMessage } from "../../localization";
 import { AppearanceOptions } from "./AppearanceOptions";
 import { SectionHeader, SettingsPageHeader, SettingsSelect } from "./settings-chrome";
 
+type UpdatePhase = { kind: "idle" } | { kind: "checking" } | { kind: "downloading"; percent: number } | { kind: "ready"; update: UpdateResult };
+
 export function GeneralSection() {
   const { t, languageSetting } = useLocale();
   const [updateStatus, setUpdateStatus] = useState<LocalizedMessage | null>(null);
-  const [checking, setChecking] = useState(false);
+  const [phase, setPhase] = useState<UpdatePhase>({ kind: "idle" });
 
-  const checkForUpdates = async () => {
-    setChecking(true);
-    setUpdateStatus({ key: "general.checking" });
+  const offerRestart = async (update: UpdateResult) => {
+    const now = await confirmAction({
+      title: t("general.updateReadyTitle"),
+      message: t("general.updateReadyMessage", { version: update.version }),
+      confirmLabel: t("general.restartNow"),
+      cancelLabel: t("general.later"),
+      destructive: false,
+    });
+    await update.install(now);
+    setPhase({ kind: "ready", update });
+    setUpdateStatus({ key: "general.installOnQuit", values: { version: update.version } });
+  };
+
+  const runUpdate = async () => {
     try {
+      if (phase.kind === "ready") return await offerRestart(phase.update);
+      setPhase({ kind: "checking" });
+      setUpdateStatus(null);
       const update = await check({ timeout: 10_000 });
       if (!update) {
+        setPhase({ kind: "idle" });
         setUpdateStatus({ key: "general.latest" });
         return;
       }
+      setPhase({ kind: "downloading", percent: 0 });
       setUpdateStatus({ key: "general.foundUpdate", values: { version: update.version } });
-      await update.downloadAndInstall();
-      setUpdateStatus({ key: "general.installed" });
+      if (await update.download((percent) => setPhase({ kind: "downloading", percent })) === "external") {
+        setPhase({ kind: "idle" });
+        setUpdateStatus({ key: "general.releasePageOpened" });
+        return;
+      }
+      await offerRestart(update);
     } catch (error) {
+      setPhase({ kind: "idle" });
       setUpdateStatus({ key: "general.updateFailed", values: { error: localizeError(error) } });
-    } finally {
-      setChecking(false);
     }
   };
+
+  const busy = phase.kind === "checking" || phase.kind === "downloading";
+  const label = phase.kind === "checking" ? t("general.checking")
+    : phase.kind === "downloading" ? t("general.downloading", { percent: phase.percent })
+      : phase.kind === "ready" ? t("general.restartToUpdate") : t("general.checkForUpdates");
 
   return (
     <>
@@ -42,9 +69,9 @@ export function GeneralSection() {
       </div>
       <div className="settings-preference-row">
         <div><strong>{t("general.updates")}</strong><span>{t("general.updateDescription")}</span></div>
-        <button className="settings-secondary-action" type="button" disabled={checking} onClick={checkForUpdates}>
-          {checking && <LoaderCircle size={14} className="settings-spin" />}
-          {checking ? t("general.checking") : t("general.checkForUpdates")}
+        <button className="settings-secondary-action" type="button" disabled={busy} onClick={runUpdate}>
+          {busy && <LoaderCircle size={14} className="settings-spin" />}
+          {label}
         </button>
       </div>
       {updateStatus && <p className="settings-inline-status" role="status">{t(updateStatus.key, updateStatus.values)}</p>}
