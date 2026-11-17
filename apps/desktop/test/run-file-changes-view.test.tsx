@@ -78,6 +78,14 @@ test("missing saved diff displays a message rather than a blank panel", () => {
   expect(markup).toContain("No saved diff content");
 });
 
+test("review expands only the requested file in place, others stay collapsed rows", () => {
+  const multiple = { ...changes, nodes: [...changes.nodes, { ...changes.nodes[0]!, path: "src/B.ts", name: "B.ts" }] };
+  const markup = renderToStaticMarkup(<RunChangesPanel target={{ sessionId: "session", runId: "run", changes: multiple, path: "src/B.ts" }} />);
+  expect(markup.match(/aria-expanded="true"/g)).toHaveLength(1);
+  expect(markup.match(/aria-expanded="false"/g)).toHaveLength(1);
+  expect(markup.match(/No saved diff content/g)).toHaveLength(1);
+});
+
 test("attachment only renders on the completed run's last assistant message, never in streaming or another run", () => {
   // Zustand's server rendering reads getInitialState, not the live snapshot.
   const serverState = useStore.getInitialState();

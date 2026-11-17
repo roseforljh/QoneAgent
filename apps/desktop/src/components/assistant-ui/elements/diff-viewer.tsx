@@ -435,6 +435,8 @@ export type DiffViewerProps = Partial<SyntaxHighlighterProps> &
     showLineNumbers?: boolean;
     showIcon?: boolean;
     showStats?: boolean;
+    /** Off when an enclosing row already names the file and its counts. */
+    showHeader?: boolean;
     className?: string;
   };
 
@@ -447,6 +449,7 @@ function DiffViewer({
   showLineNumbers = true,
   showIcon = false,
   showStats = true,
+  showHeader = true,
   language,
   variant,
   size,
@@ -512,14 +515,14 @@ function DiffViewer({
           data-slot="diff-viewer-file"
           className="border-foreground/10 [contain-intrinsic-size:auto_240px] [content-visibility:auto] not-first:border-t"
         >
-          <DiffViewerHeader
+          {showHeader && <DiffViewerHeader
             oldName={file.oldName}
             newName={file.newName}
             additions={file.additions}
             deletions={file.deletions}
             showIcon={showIcon}
             showStats={showStats}
-          />
+          />}
           <div data-slot="diff-viewer-content" className="overflow-x-auto py-2">
             {viewMode === "split"
               ? (splitLinePairs[fileIndex] ?? []).map((pair, pairIndex) => (

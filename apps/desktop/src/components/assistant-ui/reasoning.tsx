@@ -39,12 +39,12 @@ export const Reasoning: ReasoningMessagePartComponent = () => {
   const preview = latestReasoningText(part.text);
 
   return <Collapsible open={open} onOpenChange={setOpen} className="q-reasoning" data-slot="reasoning" data-running={running}>
-    <CollapsibleTrigger title={preview} className="q-reasoning-trigger group/reasoning">
+    <div className="q-disclosure-sticky"><CollapsibleTrigger title={preview} className="q-reasoning-trigger group/reasoning">
       <OverflowFade className="q-reasoning-preview">
         <ShimmerLabel active={running}>{preview}</ShimmerLabel>
       </OverflowFade>
       <CodexChevronRightIcon className="q-reasoning-chevron size-3.5 shrink-0" />
-    </CollapsibleTrigger>
+    </CollapsibleTrigger></div>
     <MeasuredCollapse open={open}>
       <motion.div
         initial={false}

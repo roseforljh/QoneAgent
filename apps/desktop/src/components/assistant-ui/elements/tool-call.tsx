@@ -79,7 +79,7 @@ export function ToolCall({
       onOpenChange={onOpenChange}
       className={cn("min-w-0 w-full max-w-full", className)}
     >
-      {header ? header(panelId) : <div className="flex min-w-0 max-w-full items-center gap-1.5">
+      {header ? header(panelId) : <div className="q-disclosure-sticky flex min-w-0 max-w-full items-center gap-1.5">
         <CollapsibleTrigger disabled={!canExpand} aria-controls={panelId} title={title} className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent disabled:pointer-events-none">
           {Icon && <Icon className="size-3.5 shrink-0 opacity-60 transition-opacity group-hover/trigger:opacity-90" />}
           <OverflowFade title={target || undefined}>

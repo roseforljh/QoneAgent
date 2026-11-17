@@ -36,3 +36,15 @@
   content-visibility: auto;
   contain-intrinsic-size: auto 280px;
 }
+
+/* An expanded disclosure title scrolls with its content until it reaches the
+   top edge, then stays there fully visible (below the edge fade) so it can be
+   collapsed without scrolling back. Inside a nested scroll region it pins to
+   that region's own top. */
+.q-disclosure-sticky {
+  position: sticky;
+  top: var(--q-sticky-top, var(--q-thread-edge-fade));
+  z-index: 10;
+  background: var(--q-chat-bg, var(--background));
+}
+[data-scroll-region] { --q-sticky-top: 0px; }

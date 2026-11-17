@@ -139,7 +139,11 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
   const visibleOpen = !canCollapse || !collapsed;
   const disclosureRef = useRef<HTMLDivElement>(null);
   const statusLabel = <ExecutionStatus run={run} messageRunning={messageRunning} waitingSubagents={waitingSubagents} startedAt={startedAt} completedAt={completedAt} activeToolIndex={activeToolIndex} reasoningRunning={reasoningRunning} toolCount={toolParts.length} />;
-  const statusRow = showStatus && <div className="border-b border-border/50 pb-2">
+  const statusOnTop = canCollapse || statusAtStart;
+  // On top, the status row pins first and nested titles pin right beneath it.
+  const statusRow = showStatus && <div className={statusOnTop
+    ? "q-disclosure-sticky flex h-[var(--q-execution-status-height)] items-start border-b border-border/50"
+    : "border-b border-border/50 pb-2"}>
     {canCollapse ? <CollapsibleTrigger
       aria-label={t("chat.executionToggle")}
       className="group/execution-trigger text-muted-foreground/75 hover:text-foreground inline-flex items-center gap-1.5 py-0.5 text-start text-[13px] font-medium tabular-nums transition-colors outline-none bg-transparent"
@@ -154,21 +158,23 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
   return (
     <div data-slot="assistant-execution" className="q-assistant-execution w-full py-1">
       <Collapsible ref={disclosureRef} open={visibleOpen} onOpenChange={(nextOpen) => { setCollapsed(disclosureKey, !nextOpen); }} className="w-full">
-        {(canCollapse || statusAtStart) && statusRow}
+        {statusOnTop && statusRow}
         <AnimatePresence initial={false}>
           {visibleOpen && ranges.length > 0 && (
             <motion.div
-              initial={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6 }}
-              animate={{ height: "auto", opacity: 1, y: 0 }}
-              exit={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6, transition: { duration: reduceMotion ? 0 : 0.15 } }}
+              // Clip only while the height animates; a settled clip would stop
+              // nested disclosure titles from sticking to the viewport top.
+              initial={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6, overflow: "hidden" }}
+              animate={{ height: "auto", opacity: 1, y: 0, overflow: "hidden", transitionEnd: { overflow: "visible" } }}
+              exit={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6, overflow: "hidden", transition: { duration: reduceMotion ? 0 : 0.15 } }}
               transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.32, 0.72, 0, 1] }}
-              className="overflow-hidden outline-none"
+              className={showStatus && statusOnTop ? "q-execution-sticky-status outline-none" : "outline-none"}
             >
               <div className="flex flex-col gap-2">{children}</div>
             </motion.div>
           )}
         </AnimatePresence>
-        {!canCollapse && !statusAtStart && statusRow}
+        {!statusOnTop && statusRow}
       </Collapsible>
     </div>
   );

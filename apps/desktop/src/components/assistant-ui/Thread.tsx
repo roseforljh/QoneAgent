@@ -26,7 +26,7 @@ import { chatRunErrorMessageId } from "../../lib/chat-run-error-message";
 import { pairMessageIds } from "./message-pairing";
 import { messageDaySeparators } from "./message-day-separators";
 import { MessageSourcesView } from "./message-sources-view";
-import { AssistantContext, AssistantMemoryChips } from "./assistant-context";
+import { AssistantContext } from "./assistant-context";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { AssistantMessageActions, UserMessageActions } from "./message-actions";
 import { SelectedTextActions } from "./selected-text-actions";
@@ -160,7 +160,6 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           ? <UserMessage />
           : <AssistantMessage
             userMessageId={state.pairedUserIdByAssistant.get(message.id)}
-            showLatestExtras={message.id === state.latestAssistantId}
             betweenContent={state.compactionMarkersByMessage.between.get(message.id)?.map((marker) => (
               <ContextCompactionMarker key={marker.id} status={marker.status} source={marker.source} startedAt={marker.startedAt} />
             ))}
@@ -468,7 +467,7 @@ const continueFailedRun = (owner: ReturnType<typeof useConversationStoreApi>, pr
   owner.getState().runAgent(prompt, undefined, undefined, undefined, undefined, undefined, undefined, true);
 };
 
-const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; betweenContent?: ReactNode }> = memo(({ userMessageId, showLatestExtras, betweenContent }) => {
+const AssistantMessage: FC<{ userMessageId?: string; betweenContent?: ReactNode }> = memo(({ userMessageId, betweenContent }) => {
   const owner = useConversationStoreApi();
   const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
@@ -521,7 +520,6 @@ const AssistantMessage: FC<{ userMessageId?: string; showLatestExtras: boolean; 
             {!answerError && <>
               {lastOfRun && <DeliveredFiles runIds={runIds} />}
               <MessageSourcesView />
-              <AssistantMemoryChips visible={showLatestExtras} />
             </>}
           </AssistantMessageLayout>
         }

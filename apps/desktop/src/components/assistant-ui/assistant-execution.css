@@ -24,3 +24,9 @@
 @media (prefers-reduced-motion: reduce) {
   .q-execution-dots > span { animation: none; will-change: auto; }
 }
+
+/* Fixed so titles inside the run can pin flush beneath the pinned status row. */
+:root { --q-execution-status-height: 2rem; }
+.q-execution-sticky-status {
+  --q-sticky-top: calc(var(--q-thread-edge-fade) + var(--q-execution-status-height));
+}

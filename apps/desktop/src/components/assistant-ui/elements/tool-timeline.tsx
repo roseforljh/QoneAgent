@@ -88,6 +88,7 @@ export function ToolTimeline({
       onOpenChange={onOpenChange}
       className={cn("min-w-0 w-full max-w-full", className)}
     >
+      <div className="q-disclosure-sticky">
       <CollapsibleTrigger
         disabled={!canExpand}
         aria-controls={panelId}
@@ -112,6 +113,7 @@ export function ToolTimeline({
         {failureLabel && <span className="sr-only" aria-label={failureLabel}>{failureLabel}</span>}
         {canExpand && <ChevronRightIcon data-slot="tool-disclosure-chevron" className="size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover/trigger:opacity-75 group-focus-visible/trigger:opacity-100 group-data-[state=open]/trigger:opacity-100 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />}
       </CollapsibleTrigger>
+      </div>
       <MeasuredCollapse id={panelId} open={open && canExpand} className="outline-none">
         <FadeScroll className={cn(regionViewport, "overflow-x-hidden")} autoScrollToBottom={streaming}>
           <div className="flex flex-col gap-2 ps-3 pt-2">
