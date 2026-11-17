@@ -19,6 +19,10 @@ import { BrowserDockManager } from "./browser-dock-manager";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { installDevtoolsShortcutGuard } from "./devtools-policy";
 import { localRangeResponse } from "./local-file-range";
+import { refreshWindowsPath } from "./system-path";
+
+// Started before app ready so the registry read overlaps Electron startup.
+const systemPathReady = refreshWindowsPath();
 
 // 注册 app 与 asset 特权协议
 protocol.registerSchemesAsPrivileged([
@@ -285,7 +289,7 @@ if (!gotTheLock) {
     mainWindow = createMainWindow();
     createTray();
 
-    sidecar.start();
+    void systemPathReady.then(() => sidecar.start());
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
