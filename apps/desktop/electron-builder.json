@@ -12,6 +12,7 @@
     "resources/**/*",
     "package.json"
   ],
+  "npmRebuild": false,
   "asarUnpack": [
     "node_modules/node-pty/**"
   ],
