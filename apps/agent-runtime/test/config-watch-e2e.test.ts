@@ -69,10 +69,11 @@ test("external atomic saves reload MCP, models, permissions, parameters, skills 
     const from = events.length; send(command); return wait(event => event.type === type, from);
   };
   const stop = async () => { child.kill(); await child.exited; await collecting; };
+  const available = (id: string) => (event: RuntimeEvent) => event.type === "mcp.list" && event.servers.some(item => item.id === id && item.available && !item.connecting);
   try {
     await request({ type: "ping", requestId: "ready" }, "pong");
     let from = edit(config => { config.mcpServers.fixture = { type: "http", url: `http://127.0.0.1:${server.port}/mcp`, headers: { "X-Api-Key": "watch-test-secret" } }; });
-    await wait(event => event.type === "mcp.connected" && event.serverId === "fixture", from);
+    await wait(available("fixture"), from);
     expect(handshakes).toBe(1);
     expect(readFileSync(settings, "utf8")).not.toContain("watch-test-secret");
     expect(credentials.get("mcp.env:fixture/header-x-api-key")).toBe("watch-test-secret");
@@ -84,20 +85,20 @@ test("external atomic saves reload MCP, models, permissions, parameters, skills 
     await request({ type: "secret.set", requestId: "restore-disabled", key: "mcp.env:fixture/header-x-api-key", value: "watch-test-secret" }, "secret.saved");
     expect(handshakes).toBe(1);
     from = edit(config => { delete config.mcpServers.fixture.disabled; });
-    await wait(event => event.type === "mcp.connected" && event.serverId === "fixture", from);
+    await wait(available("fixture"), from);
     expect(handshakes).toBe(2);
 
     // Normalizing a changed key produces the same reference; the live transport must still reconnect.
     apiKey = "watch-updated-secret";
     from = edit(config => { config.mcpServers.fixture.headers["X-Api-Key"] = apiKey; });
-    await wait(event => event.type === "mcp.connected" && event.serverId === "fixture", from);
+    await wait(available("fixture"), from);
     expect(handshakes).toBe(3);
     expect(credentials.get("mcp.env:fixture/header-x-api-key")).toBe(apiKey);
     expect(readFileSync(settings, "utf8")).not.toContain(apiKey);
     expect(JSON.stringify(events)).not.toContain(apiKey);
     apiKey = "watch-test-secret";
     from = edit(config => { config.mcpServers.fixture.headers["X-Api-Key"] = apiKey; });
-    await wait(event => event.type === "mcp.connected" && event.serverId === "fixture", from);
+    await wait(available("fixture"), from);
     expect(handshakes).toBe(4);
 
     from = edit(config => {
@@ -138,7 +139,7 @@ test("external atomic saves reload MCP, models, permissions, parameters, skills 
     edit(config => { config.mcpServers.startup = { type: "http", url: `http://127.0.0.1:${server.port}/mcp`, headers: { "X-Api-Key": "watch-test-secret" } }; });
     await stop(); events = [];
     child = start(); collecting = collect(child);
-    await wait(event => event.type === "mcp.connected" && event.serverId === "startup");
+    await wait(available("startup"));
     expect(readFileSync(settings, "utf8")).not.toContain("watch-test-secret");
     const restored = await request({ type: "model.list", requestId: "restarted" }, "model.list");
     expect(restored.type === "model.list" && restored.configs.some(item => item.id === "local/example")).toBe(true);

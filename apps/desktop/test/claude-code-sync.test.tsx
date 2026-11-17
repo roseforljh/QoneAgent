@@ -54,6 +54,24 @@ afterAll(() => {
   for (const [key, descriptor] of previous) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
 });
 
+test("MCP standby stays enabled and opens its actions without connecting", async () => {
+  const server = { id: "standby-test", name: "Standby test", command: "node", args: ["server.js"], available: true, connected: false, toolCount: 3 };
+  const connectedServer = { id: "connected-test", name: "Connected test", command: "node", args: ["other.js"], available: true, connected: true, toolCount: 2 };
+  useStore.setState({ connected: true, mcpServers: [server, connectedServer], mcpConnectingIds: [] });
+  const before = commands.length;
+  await mounted(<McpSection />, async host => {
+    const findCard = (name: string) => [...host.querySelectorAll<HTMLElement>(".settings-mcp-card")].find(item => item.querySelector("strong")?.textContent === name)!;
+    const card = findCard(server.name);
+    expect(card.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(card.querySelector(".settings-mcp-badge.is-standby")?.textContent).toBe(t("mcp.standbyStatus"));
+    expect(card.classList.contains("is-error")).toBe(false);
+    expect(findCard(connectedServer.name).querySelector(".settings-mcp-badge.is-connected")?.textContent).toBe(t("mcp.connectedStatus"));
+    await act(async () => card.click());
+    expect(host.querySelector(".settings-mcp-action-dialog")).not.toBeNull();
+    expect(commands.slice(before).some(command => command.type === "mcp.connect")).toBe(false);
+  });
+});
+
 test("all three settings sections expose one sync entry", () => {
   useStore.setState({ connected: true, globalPromptLoaded: true });
   for (const Component of [PersonalizationSection, McpSection, SkillsSection]) {

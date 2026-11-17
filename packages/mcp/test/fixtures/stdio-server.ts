@@ -10,14 +10,16 @@ const record = (entry: Record<string, unknown>) => {
   if (logPath) appendFileSync(logPath, JSON.stringify(entry) + "\n");
 };
 
+record({ event: "start", pid: process.pid });
 const server = new McpServer({ name: "qone-test-mcp", version: "1.0.0" });
 
-server.registerTool("echo", {
+const echoTool = server.registerTool("echo", {
   description: "Echo text and a structured payload",
   inputSchema: { text: z.string() },
   outputSchema: { text: z.string(), length: z.number() },
 }, async ({ text }) => {
   record({ event: "call", tool: "echo", text });
+  if (process.env.QONE_MCP_TEST_MUTATE === "1") echoTool.remove();
   return {
     content: [{ type: "text" as const, text }],
     structuredContent: { text, length: text.length },

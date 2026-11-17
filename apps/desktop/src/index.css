@@ -928,9 +928,16 @@ a { text-decoration: none; }
 .settings-mcp-action-danger { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px; border: 1px solid color-mix(in srgb, var(--q-danger) 55%, transparent); border-radius: 8px; padding: 0 11px; background: transparent; color: var(--q-danger); font-size: var(--q-text-xs); cursor: pointer; transition: opacity .15s ease; }
 .settings-mcp-action-danger:hover { opacity: .78; }
 @keyframes settings-mcp-error-flash { 0% { box-shadow: 0 0 0 0 rgb(239 68 68 / 45%); } 100% { box-shadow: 0 0 0 10px rgb(239 68 68 / 0%); } }
-.settings-mcp-card em { flex: 0 0 auto; font-size: var(--q-text-xs); font-style: normal; }
-.settings-mcp-card em.is-connected { color: #16845b; }
-.settings-mcp-card em.is-disconnected { color: var(--q-subtle); }
+.settings-mcp-badge { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--q-hover); color: var(--muted-foreground); font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap; }
+.settings-mcp-badge::before { content: ""; width: 6px; height: 6px; flex: 0 0 auto; border-radius: 999px; background: currentColor; opacity: .8; }
+.settings-mcp-badge.is-connected { border-color: color-mix(in srgb, #16a34a 28%, transparent); background: color-mix(in srgb, #16a34a 11%, transparent); color: #16a34a; }
+.settings-mcp-badge.is-standby { border-color: color-mix(in srgb, #0ea5e9 26%, transparent); background: color-mix(in srgb, #0ea5e9 10%, transparent); color: #0284c7; }
+[data-theme="dark"] .settings-mcp-badge.is-connected { color: #4ade80; }
+[data-theme="dark"] .settings-mcp-badge.is-standby { color: #38bdf8; }
+.settings-mcp-badge.is-connecting { border-color: color-mix(in srgb, var(--primary) 28%, transparent); background: color-mix(in srgb, var(--primary) 10%, transparent); color: var(--primary); }
+.settings-mcp-badge.is-connecting::before { display: none; }
+.settings-mcp-badge.is-error { border-color: color-mix(in srgb, #ef4444 30%, transparent); background: color-mix(in srgb, #ef4444 10%, transparent); color: #ef4444; }
+.settings-mcp-badge.is-disconnected { border-color: var(--border); background: transparent; color: var(--q-subtle); }
 .settings-skill-card > svg { flex: 0 0 auto; color: var(--q-subtle); }
 .settings-skill-card { width: 100%; border: 1px solid var(--border); color: inherit; text-align: left; cursor: pointer; }
 .settings-memory-info { margin-top: 7px !important; color: var(--q-subtle) !important; }

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { LoaderCircle, Plus, Search, X } from "lucide-react";
-import { mcpServerIdentity, mcpValueSecretKeys, type McpServerInfo } from "@qone/protocol";
+import { mcpAvailable, mcpServerIdentity, mcpValueSecretKeys, type McpServerInfo } from "@qone/protocol";
 import { ClaudeCodeSyncButton } from "./ClaudeCodeSyncButton";
 import { useStore } from "../../store";
 import { useLocale, type MessageKey } from "../../localization";
@@ -46,7 +46,7 @@ export function McpSection() {
   const serverIcon = (server: McpServerInfo) => <span className="settings-provider-icon">
     {icons[server.id] ? <img className="settings-mcp-avatar" src={icons[server.id]} alt="" aria-hidden="true" draggable={false} /> : <span className="settings-mcp-logo settings-mcp-logo-mono" aria-hidden="true" style={{ maskImage: `url("${mcpLogo}")`, WebkitMaskImage: `url("${mcpLogo}")` }} />}
   </span>;
-  const [actionCard, setActionCard] = useState<{ name: string; icon: ReactNode; status: string; statusError?: boolean; actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] } | null>(null);
+  const [actionCard, setActionCard] = useState<{ server?: McpServerInfo; name: string; icon: ReactNode; status: string; statusError?: boolean; actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] } | null>(null);
   const [githubLoginOpen, setGithubLoginOpen] = useState(false);
   const [githubClientId, setGithubClientId] = useState(configuredGithubClientId);
   const [githubSaving, setGithubSaving] = useState(false);
@@ -162,7 +162,7 @@ export function McpSection() {
     const { mcpServers: current, mcpConnectingIds } = useStore.getState();
     for (const preset of [...MCP_PRESETS, ...KEY_PRESETS]) {
       const server = presetServer(current, preset);
-      if (server && !server.disabled && !server.connecting && !server.connected && !mcpConnectingIds.includes(server.id)) void connectAsUser(server);
+      if (server && !server.disabled && !server.connecting && !mcpAvailable(server) && !mcpConnectingIds.includes(server.id)) void connectAsUser(server);
     }
   };
 
@@ -186,7 +186,7 @@ export function McpSection() {
     const finish = (result: string) => result === "settled"
       ? setTimeout(() => {
         const state = useStore.getState();
-        resolve(state.mcpServers.find((server) => server.id === id)?.connected ? undefined : state.lastError || t("mcp.quickAdd.failed"));
+        resolve(mcpAvailable(state.mcpServers.find((server) => server.id === id)) ? undefined : state.lastError || t("mcp.quickAdd.failed"));
       }, 0)
       : resolve(undefined);
     const initial = outcome(useStore.getState());
@@ -272,7 +272,7 @@ export function McpSection() {
           { label: t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } },
         ]
       : [{ label: t("mcp.fillKey"), primary: true, onClick: () => { setActionCard(null); openKeyDialog(preset); } }];
-    setActionCard({ name: presetName(preset), icon, status, statusError, actions });
+    setActionCard({ server, name: presetName(preset), icon, status, statusError, actions });
   };
 
   // 预设卡操作框：OAuth/GitHub 类出登录/退出登录，stdio 类出重连/移除。
@@ -289,7 +289,7 @@ export function McpSection() {
     };
     const actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] = [{ label: server ? t("mcp.reconnect") : t(isAccount ? "mcp.signIn" : "mcp.connect"), primary: true, onClick: startConnect }];
     if (server) actions.push({ label: isAccount ? t("mcp.logout") : t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } });
-    setActionCard({ name: presetName(preset), icon, status, statusError, actions });
+    setActionCard({ server, name: presetName(preset), icon, status, statusError, actions });
   };
 
   // 凭证类卡操作框：凭证即配置，所以给"修改账号配置"入口；已添加的再给重连和移除。
@@ -302,7 +302,7 @@ export function McpSection() {
           { label: t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } },
         ]
       : [{ label: t("mcp.configureAccount"), primary: true, onClick: () => { setActionCard(null); openAdd(preset); } }];
-    setActionCard({ name: presetName(preset), icon, status, statusError, actions });
+    setActionCard({ server, name: presetName(preset), icon, status, statusError, actions });
   };
 
   // Custom services keep their configuration when switched off; only removal deletes them.
@@ -311,6 +311,20 @@ export function McpSection() {
     setPendingOn((current) => new Set(current).add(server.id));
     void connectAsUser(server);
   };
+
+  // 卡片状态胶囊：开关旁统一显示运行/待命/连接中/未连接，卡片副标题只留工具数或说明。
+  const statusBadge = (server: McpServerInfo | undefined, connecting: boolean, failed: boolean) => {
+    if (connecting) return { label: t("mcp.connectingStatus"), tone: "is-connecting", spin: true };
+    if (mcpAvailable(server)) return server?.connected ? { label: t("mcp.connectedStatus"), tone: "is-connected", spin: false } : { label: t("mcp.standbyStatus"), tone: "is-standby", spin: false };
+    if (server) return { label: t("mcp.disconnectedStatus"), tone: failed ? "is-error" : "is-disconnected", spin: false };
+    return null;
+  };
+  const renderBadge = (badge: ReturnType<typeof statusBadge>) => badge && (
+    <span className={cn("settings-mcp-badge", badge.tone)} role="status">
+      {badge.spin && <LoaderCircle size={11} className="settings-spin" aria-hidden="true" />}
+      <span>{badge.label}</span>
+    </span>
+  );
 
   // 自定义服务操作框：重连、OAuth 授权（如有）、删除。
   const openCustomActions = (server: (typeof servers)[number]) => {
@@ -321,7 +335,7 @@ export function McpSection() {
       { label: t("mcp.remove"), danger: true, onClick: async () => { if (!await confirmDestructiveAction(t("mcp.deleteConfirm", { name: server.name }))) return; setActionCard(null); await deleteServer(server); } },
     ];
     const connecting = connectingIds.includes(server.id);
-    setActionCard({ name: server.name, icon: serverIcon(server), status: connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus"), statusError: !server.disabled && !connecting && !server.connected, actions });
+    setActionCard({ server, name: server.name, icon: serverIcon(server), status: connecting ? t("mcp.connectingStatus") : mcpAvailable(server) ? t(server.connected ? "mcp.connectedStatus" : "mcp.standbyStatus") : t("mcp.disconnectedStatus"), statusError: !server.disabled && !connecting && !mcpAvailable(server), actions });
   };
 
   const connect = () => {
@@ -363,21 +377,23 @@ export function McpSection() {
         const serverId = server?.id ?? preset.id;
         const connecting = pendingOn.has(serverId) || connectingIds.includes(serverId);
         // 已配置但掉线（登录态丢失/连接失败）：开关回落为关 + 卡片爆红提示，点开=重连。
-        const failed = Boolean(server && !server.disabled && !server.connected && !connecting);
-        const enabled = connecting || Boolean(server?.connected);
+        const failed = Boolean(server && !server.disabled && !mcpAvailable(server) && !connecting);
+        const enabled = connecting || mcpAvailable(server);
         const authorization = oauthAuthorization?.serverId === serverId ? oauthAuthorization : undefined;
         const device = githubDeviceAuthorization?.serverId === serverId ? githubDeviceAuthorization : undefined;
-        const detail = connecting
-          ? authorization ? t("mcp.waitingForLogin") : device ? t("mcp.githubCode", { code: device.userCode }) : t("mcp.connectingStatus")
-          : server?.connected
-            ? `${server.toolCount ?? 0} ${t("mcp.tools")} · ${t("mcp.connectedStatus")}`
-            : server ? t("mcp.disconnectedStatus") : t(preset.descKey);
+        const badge = statusBadge(server, connecting, failed);
+        const subtitle = connecting
+          ? authorization ? t("mcp.waitingForLogin") : device ? t("mcp.githubCode", { code: device.userCode }) : t(preset.descKey)
+          : mcpAvailable(server)
+            ? `${server?.toolCount ?? 0} ${t("mcp.tools")}`
+            : t(preset.descKey);
         const icon = <span className="settings-provider-icon" style={preset.lightBadge ? { background: "#fff", color: "#0f0f0f" } : undefined}>
           {preset.mono ? <span className="settings-mcp-logo settings-mcp-logo-mono" aria-hidden="true" style={{ maskImage: `url("${preset.logo}")`, WebkitMaskImage: `url("${preset.logo}")` }} /> : <img className="settings-mcp-logo" src={preset.logo} alt="" aria-hidden="true" draggable={false} />}
         </span>;
-        return <div className={cn("settings-mcp-card", "is-actionable", failed && "is-error")} key={preset.id} role="button" tabIndex={0} onClick={() => openPresetActions(preset, icon, detail, failed)} onKeyDown={(event) => { if (event.key === "Enter") openPresetActions(preset, icon, detail, failed); }}>
+        return <div className={cn("settings-mcp-card", "is-actionable", failed && "is-error")} key={preset.id} role="button" tabIndex={0} onClick={() => openPresetActions(preset, icon, badge?.label ?? subtitle, failed)} onKeyDown={(event) => { if (event.key === "Enter") openPresetActions(preset, icon, badge?.label ?? subtitle, failed); }}>
           {icon}
-          <div><strong>{presetName(preset)}</strong><small className="settings-mcp-status" role="status">{connecting && <LoaderCircle size={13} className="settings-spin" aria-hidden="true" />}<span>{detail}</span></small>{device && <button type="button" className="settings-mcp-device-code" title={t("mcp.copyDeviceCode")} aria-label={t("mcp.copyDeviceCode")} onClick={(event) => { event.stopPropagation(); copyToClipboard(device.userCode); }}>{isDeviceCodeCopied ? t("mcp.deviceCodeCopied") : device.userCode}</button>}{authorization && <button type="button" className="settings-mcp-auth-link" onClick={(event) => { event.stopPropagation(); void openUrl(authorization.url); }}>{t("mcp.openLogin")}</button>}{device && <button type="button" className="settings-mcp-auth-link" onClick={(event) => { event.stopPropagation(); void openUrl(device.verificationUri); }}>{t("mcp.openLogin")}</button>}</div>
+          <div><strong>{presetName(preset)}</strong><small className="settings-mcp-status"><span>{subtitle}</span></small>{device && <button type="button" className="settings-mcp-device-code" title={t("mcp.copyDeviceCode")} aria-label={t("mcp.copyDeviceCode")} onClick={(event) => { event.stopPropagation(); copyToClipboard(device.userCode); }}>{isDeviceCodeCopied ? t("mcp.deviceCodeCopied") : device.userCode}</button>}{authorization && <button type="button" className="settings-mcp-auth-link" onClick={(event) => { event.stopPropagation(); void openUrl(authorization.url); }}>{t("mcp.openLogin")}</button>}{device && <button type="button" className="settings-mcp-auth-link" onClick={(event) => { event.stopPropagation(); void openUrl(device.verificationUri); }}>{t("mcp.openLogin")}</button>}</div>
+          {renderBadge(badge)}
           <button type="button" role="switch" aria-checked={enabled} aria-busy={connecting} aria-label={presetName(preset)} disabled={connecting && !server} className={cn("settings-switch", enabled && "is-on")} onClick={(event) => { event.stopPropagation(); togglePreset(preset, enabled); }}>
             <span />
           </button>
@@ -388,20 +404,18 @@ export function McpSection() {
         // Email presets share one package, so only key presets may adopt a same-service server.
         const server = isKeyPreset ? presetServer(servers, preset) : servers.find((item) => item.id === preset.id);
         const connecting = connectingIds.includes(server?.id ?? preset.id) || pendingOn.has(server?.id ?? preset.id);
-        const failed = Boolean(server && !server.disabled && !server.connected && !connecting);
-        const enabled = connecting || Boolean(server?.connected);
-        const detail = connecting
-          ? t("mcp.connectingStatus")
-          : server?.connected
-            ? `${server.toolCount ?? 0} ${t("mcp.tools")} · ${t("mcp.connectedStatus")}`
-            : server ? t("mcp.disconnectedStatus") : t(preset.descKey);
+        const failed = Boolean(server && !server.disabled && !mcpAvailable(server) && !connecting);
+        const enabled = connecting || mcpAvailable(server);
+        const badge = statusBadge(server, connecting, failed);
+        const subtitle = mcpAvailable(server) ? `${server?.toolCount ?? 0} ${t("mcp.tools")}` : t(preset.descKey);
         const LucideIcon = preset.lucide;
         const icon = <span className="settings-provider-icon" style={preset.badgeStyle}>
           {LucideIcon ? <LucideIcon size={16} /> : preset.mono ? <span className="settings-mcp-logo settings-mcp-logo-mono" aria-hidden="true" style={{ maskImage: `url("${preset.logo}")`, WebkitMaskImage: `url("${preset.logo}")` }} /> : <img className="settings-mcp-logo" src={preset.logo} alt="" aria-hidden="true" draggable={false} />}
         </span>;
-        return <div className={cn("settings-mcp-card", "is-actionable", failed && "is-error")} key={preset.id} role="button" tabIndex={0} onClick={() => isKeyPreset ? openKeyActions(preset, icon, detail, failed) : openEmailActions(preset, icon, detail, failed)} onKeyDown={(event) => { if (event.key === "Enter") isKeyPreset ? openKeyActions(preset, icon, detail, failed) : openEmailActions(preset, icon, detail, failed); }}>
+        return <div className={cn("settings-mcp-card", "is-actionable", failed && "is-error")} key={preset.id} role="button" tabIndex={0} onClick={() => isKeyPreset ? openKeyActions(preset, icon, badge?.label ?? subtitle, failed) : openEmailActions(preset, icon, badge?.label ?? subtitle, failed)} onKeyDown={(event) => { if (event.key === "Enter") isKeyPreset ? openKeyActions(preset, icon, badge?.label ?? subtitle, failed) : openEmailActions(preset, icon, badge?.label ?? subtitle, failed); }}>
           {icon}
-          <div><strong>{presetName(preset)}</strong><small className="settings-mcp-status" role="status">{connecting && <LoaderCircle size={13} className="settings-spin" aria-hidden="true" />}<span>{detail}</span></small></div>
+          <div><strong>{presetName(preset)}</strong><small className="settings-mcp-status"><span>{subtitle}</span></small></div>
+          {renderBadge(badge)}
           <button type="button" role="switch" aria-checked={enabled} aria-busy={connecting} aria-label={presetName(preset)} disabled={connecting && !server} className={cn("settings-switch", enabled && "is-on")} onClick={(event) => { event.stopPropagation(); isKeyPreset ? toggleKeyPreset(preset, enabled) : toggleEmailPreset(preset, enabled); }}>
             <span />
           </button>
@@ -409,11 +423,15 @@ export function McpSection() {
       })}</div>
       {customServers.length > 0 && <div className="settings-mcp-list">{customServers.filter((server) => { const q = query.trim().toLowerCase(); return !q || server.name.toLowerCase().includes(q) || (server.command ?? server.url ?? "").toLowerCase().includes(q); }).map((server) => {
         const connecting = connectingIds.includes(server.id) || pendingOn.has(server.id);
-        const enabled = connecting || Boolean(server.connected);
-        const detail = connecting ? t("mcp.connectingStatus") : server.connected ? `${server.toolCount ?? 0} ${t("mcp.tools")} · ${t("mcp.connectedStatus")}` : t("mcp.disconnectedStatus");
-        return <div className="settings-mcp-card is-actionable" key={server.id} role="button" tabIndex={0} onClick={() => openCustomActions(server)} onKeyDown={(event) => { if (event.key === "Enter") openCustomActions(server); }}>
+        const failed = Boolean(!server.disabled && !mcpAvailable(server) && !connecting);
+        const enabled = connecting || mcpAvailable(server);
+        const badge = statusBadge(server, connecting, failed);
+        const target = [server.command, ...(server.args ?? [])].filter(Boolean).join(" ") || server.url || "";
+        const subtitle = mcpAvailable(server) ? `${server.toolCount ?? 0} ${t("mcp.tools")}` : target;
+        return <div className={cn("settings-mcp-card", "is-actionable", failed && "is-error")} key={server.id} role="button" tabIndex={0} onClick={() => openCustomActions(server)} onKeyDown={(event) => { if (event.key === "Enter") openCustomActions(server); }}>
           {serverIcon(server)}
-          <div><strong>{server.name}</strong><small className="settings-mcp-status" role="status">{connecting && <LoaderCircle size={13} className="settings-spin" aria-hidden="true" />}<span>{detail}</span></small></div>
+          <div><strong>{server.name}</strong><small className="settings-mcp-status"><span>{subtitle}</span></small></div>
+          {renderBadge(badge)}
           <button type="button" role="switch" aria-checked={enabled} aria-busy={connecting} aria-label={server.name} disabled={connecting && !server} className={cn("settings-switch", enabled && "is-on")} onClick={(event) => { event.stopPropagation(); toggleCustom(server, enabled); }}>
             <span />
           </button>

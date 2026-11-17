@@ -1,3 +1,4 @@
+import { mcpAvailable } from "@qone/protocol";
 import { localizeError } from "../../lib/error-localization";
 "use client";
 
@@ -210,7 +211,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
     send({ type: "mcp.list", requestId: rid() });
   }, [send, refreshNonce]);
 
-  const connected = servers.filter((server) => server.connected).length;
+  const connected = servers.filter(mcpAvailable).length;
 
   const reconnect = async (serverId: string) => {
     const server = servers.find((item) => item.id === serverId);
@@ -251,16 +252,16 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
                 <span className="min-w-0 flex-1 truncate text-sm">{server.name}</span>
                 <span className={cn(mono, "shrink-0 text-xs text-foreground/40")}>{server.toolCount ?? 0} {t("mcp.tools")}</span>
                 <span
-                  className={cn("size-1.5 shrink-0 rounded-full", server.connected ? "bg-emerald-500" : server.oauth ? "bg-amber-500" : "bg-foreground/25")}
-                  title={connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}
+                  className={cn("size-1.5 shrink-0 rounded-full", mcpAvailable(server) ? "bg-emerald-500" : server.oauth ? "bg-amber-500" : "bg-foreground/25")}
+                  title={connecting ? t("mcp.connectingStatus") : mcpAvailable(server) ? t(server.connected ? "mcp.connectedStatus" : "mcp.standbyStatus") : t("mcp.disconnectedStatus")}
                 />
               </button>
               {open && (
                 <div className="px-3 pb-2.5 pt-1">
                   <p className={cn(mono, "truncate text-xs text-foreground/45")} title={transport}>{transport}</p>
-                  <p className="mt-1 flex items-center gap-1.5 text-xs text-foreground/50">{connecting && <LoaderCircleIcon className="settings-spin size-3 shrink-0" aria-hidden="true" />}{connecting ? t("mcp.connectingStatus") : server.connected ? t("mcp.connectedStatus") : t("mcp.disconnectedStatus")}</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-xs text-foreground/50">{connecting && <LoaderCircleIcon className="settings-spin size-3 shrink-0" aria-hidden="true" />}{connecting ? t("mcp.connectingStatus") : mcpAvailable(server) ? t(server.connected ? "mcp.connectedStatus" : "mcp.standbyStatus") : t("mcp.disconnectedStatus")}</p>
                   <div className="mt-2 flex items-center gap-1.5">
-                    {server.oauth && !server.connected && !connecting && (
+                    {server.oauth && !mcpAvailable(server) && !connecting && (
                       <button
                         type="button"
                         onClick={() => send({ type: "mcp.oauth.begin", requestId: rid(), serverId: server.id })}
@@ -269,7 +270,7 @@ export function DockMcpView({ refreshNonce }: { refreshNonce: number }) {
                         {t("mcp.authorize")}
                       </button>
                     )}
-                    {!server.connected && (
+                    {!mcpAvailable(server) && (
                       <button
                         type="button"
                         disabled={connecting}

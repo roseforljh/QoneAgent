@@ -34,16 +34,27 @@ const searchSchema = {
   additionalProperties: false,
 };
 
+/** A real McpManager.adaptTool() definition backed by a registered server whose live client is a stand-in. */
+function adaptTool(client: unknown, def: { name: string; inputSchema?: unknown }): ToolDefinition {
+  const manager = new McpManager() as unknown as {
+    registrations: Map<string, unknown>;
+    conns: Map<string, unknown>;
+    adaptTool(registration: unknown, def: unknown): ToolDefinition;
+  };
+  const config = { id: "demo", name: "Demo", command: "demo" };
+  const registration = { config, fingerprint: "demo", metadata: [def], tools: [], used: false, calls: 0 };
+  manager.registrations.set(config.id, registration);
+  manager.conns.set(config.id, { config, client });
+  return manager.adaptTool(registration, def);
+}
+
 /** A real McpManager.adaptTool() definition, with a recording stand-in for the MCP client. */
 function mcpTool(
   inputSchema?: unknown,
   extra: { outputSchema?: unknown; structuredContent?: unknown } = {},
 ) {
   const calls: { name: string; arguments: Record<string, unknown> }[] = [];
-  const manager = new McpManager();
-  const tool = (manager as unknown as {
-    adaptTool(config: { id: string; name: string }, client: unknown, def: unknown): ToolDefinition;
-  }).adaptTool({ id: "demo", name: "Demo" }, {
+  const tool = adaptTool({
     callTool: async (request: { name: string; arguments: Record<string, unknown> }) => {
       calls.push(request);
       return {
@@ -212,10 +223,7 @@ describe("Pi 1.5 pi-schema compatibility", () => {
     const signals: (AbortSignal | undefined)[] = [];
     let abortRequest: (() => void) | undefined;
     let rejectedByAbort = false;
-    const manager = new McpManager();
-    const tool = (manager as unknown as {
-      adaptTool(config: { id: string; name: string }, client: unknown, def: unknown): ToolDefinition;
-    }).adaptTool({ id: "demo", name: "Demo" }, {
+    const tool = adaptTool({
       callTool: async (_request: unknown, options?: { signal?: AbortSignal }) => {
         signals.push(options?.signal);
         // Without a forwarded signal the in-flight call could never be cancelled.

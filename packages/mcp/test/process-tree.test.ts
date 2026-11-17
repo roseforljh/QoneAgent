@@ -73,3 +73,17 @@ test("disconnect kills the whole stdio process tree, not just the direct child",
   expect(await waitGone(recorded!.pid!)).toBe(true);
   expect(await waitGone(grandchildPid)).toBe(true);
 }, 60_000);
+
+test("a sleeping connection releases its whole process tree and wakes the original tool handle", async () => {
+  const tools = await manager.connect(config);
+  const tree = tools.find(tool => (tool as { qoneToolName?: string }).qoneToolName?.endsWith(":tree"))!;
+  await tree.execute("idle-tree", {}, undefined, undefined, {} as never);
+  const recorded = entries().filter(entry => entry.event === "tree").at(-1)!;
+  manager.setIdleTimeout(config.id, 20);
+  expect(await waitGone(recorded.pid!)).toBe(true);
+  expect(await waitGone(recorded.grandchildPid!)).toBe(true);
+  expect(manager.isAvailable(config.id)).toBe(true);
+  manager.setIdleTimeout(config.id, undefined);
+  await tree.execute("wake-tree", {}, undefined, undefined, {} as never);
+  expect(manager.isConnected(config.id)).toBe(true);
+}, 30_000);

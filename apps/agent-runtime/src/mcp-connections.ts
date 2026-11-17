@@ -6,11 +6,42 @@ import type { runtimeCommandServices } from "./index";
 type Services = ReturnType<typeof runtimeCommandServices>;
 type Restored = Extract<RuntimeCommand, { type: "mcp.credentials.restored" }>;
 const pending = new Map<string, (reply: Restored) => void>();
+const queuedDiscovery = new Map<string, object>();
+let discoveryQueue: Promise<void> = Promise.resolve();
+
+/** Cache hits are synchronous; only first-time stdio discovery enters the background queue. */
+export async function registerMcp(config: McpServerInfo, services: Services): Promise<void> {
+  const cached = services.mcp.register(config);
+  await services.refreshCustomTools();
+  if (cached) { services.send({ type: "mcp.list", servers: mcpServerList(services) }); return; }
+  const ticket = {};
+  queuedDiscovery.set(config.id, ticket);
+  services.send({ type: "mcp.list", servers: mcpServerList(services) });
+  const discover = async () => {
+    try {
+      if (queuedDiscovery.get(config.id) !== ticket || !services.mcp.isRegistered(config) || services.permissionRepo.get(`mcp:${config.id}`, "mcp.connect") !== "allow") return;
+      await services.mcp.discover(config);
+      await services.refreshCustomTools();
+    } catch (error) { services.log.warn("MCP tool discovery failed", { serverId: config.id, err: String(error) }); }
+    finally {
+      if (queuedDiscovery.get(config.id) === ticket) queuedDiscovery.delete(config.id);
+      services.send({ type: "mcp.list", servers: mcpServerList(services) });
+    }
+  };
+  if (config.command) discoveryQueue = discoveryQueue.then(discover, discover);
+  else void discover();
+}
+
 export function acknowledgeMcpCredentials(reply: Restored) { pending.get(reply.requestId)?.(reply); }
 
 /** Runs inside the manager's connection flight, before resolving any secret references. */
 export async function restoreMcpCredentials(config: McpServerConfig, services: Pick<Services, "send" | "runtimeSecrets" | "mcp">, signal: AbortSignal) {
-  const keys = mcpCredentialKeys(config).filter(key => !services.runtimeSecrets.has(key));
+  const allKeys = mcpCredentialKeys(config);
+  for (const key of allKeys) {
+    const value = services.runtimeSecrets.get(key);
+    if (value !== undefined) applyMcpCredential(config, key, value, services);
+  }
+  const keys = allKeys.filter(key => !services.runtimeSecrets.has(key));
   if (!keys.length) return;
   const requestId = crypto.randomUUID();
   const values = await new Promise<Record<string, string>>((resolve, reject) => {
@@ -43,8 +74,8 @@ export function applyMcpCredential(config: McpServerConfig, key: string, value: 
 }
 
 export function mcpServerList(services: Pick<Services, "mcp" | "mcpServerRepo" | "pendingMcpAuthRequests">): McpServerInfo[] {
-  return services.mcpServerRepo.list().map(server => ({ ...server, connected: services.mcp.isConnected(server.id),
-    connecting: services.mcp.isConnecting(server.id) || services.pendingMcpAuthRequests.has(server.id), toolCount: services.mcp.toolCount(server.id) }));
+  return services.mcpServerRepo.list().map(server => ({ ...server, connected: services.mcp.isConnected(server.id), available: services.mcp.isAvailable(server.id),
+    connecting: services.mcp.isConnecting(server.id) || (!server.disabled && services.mcp.isRegistered(server) && queuedDiscovery.has(server.id)) || services.pendingMcpAuthRequests.has(server.id), toolCount: services.mcp.toolCount(server.id) }));
 }
 
 /** Automatic connections never launch a login; user connections try restored credentials first. */

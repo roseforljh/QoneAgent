@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { McpManager, resolveMcpEnvironment, resolveStdioLaunch, safeToolName } from "@qone/mcp";
+import { resolveMcpStdioLaunch } from "../../../packages/mcp/src/stdio-launch";
 import { HostedMcpOAuth } from "../../../packages/mcp/src/hosted-oauth";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 
 describe("MCP OAuth", () => {
@@ -28,6 +31,35 @@ describe("MCP OAuth", () => {
       expect(resolveStdioLaunch("npx", ["-y", "firecrawl-mcp"], "linux", directory))
         .toEqual({ command: "npx", args: ["-y", "firecrawl-mcp"] });
     } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  test.skipIf(process.platform !== "win32")("starts an npx package bin with Node instead of keeping npx resident", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "qone-mcp-direct-"));
+    const savedPath = process.env.Path;
+    try {
+      const root = path.join(directory, "_npx", "abc");
+      const binDirectory = path.join(root, "node_modules", ".bin");
+      const packageDirectory = path.join(root, "node_modules", "@scope", "fake-mcp");
+      mkdirSync(binDirectory, { recursive: true });
+      mkdirSync(packageDirectory, { recursive: true });
+      writeFileSync(path.join(root, "package.json"), JSON.stringify({ dependencies: { "@scope/fake-mcp": "^1.0.0" } }));
+      writeFileSync(path.join(packageDirectory, "package.json"), JSON.stringify({ bin: { "fake-mcp": "dist/cli.js", other: "x.js" } }));
+      const cli = path.join(directory, "node_modules", "npm", "bin", "npx-cli.js");
+      mkdirSync(path.dirname(cli), { recursive: true });
+      writeFileSync(path.join(directory, "npx.cmd"), "");
+      mkdirSync(path.join(packageDirectory, "dist"));
+      writeFileSync(path.join(packageDirectory, "dist", "cli.js"), "");
+      writeFileSync(cli, `process.stdout.write(${JSON.stringify([binDirectory, path.join(directory, "node_modules", ".bin")].join(";"))});`);
+      process.env.Path = `${directory};${savedPath}`;
+      const signal = new AbortController().signal;
+      const launch = await resolveMcpStdioLaunch("npx", ["-y", "@scope/fake-mcp@latest", "--port", "1"], { cwd: directory, signal });
+      expect(launch.args).toEqual([path.join(packageDirectory, "dist", "cli.js"), "--port", "1"]);
+      expect(path.basename(launch.command).toLowerCase()).toBe("node.exe");
+      // Unrecognised npx flags keep the plain npx launch.
+      expect((await resolveMcpStdioLaunch("npx", ["--registry=x", "pkg"], { cwd: directory, signal })).args).toEqual([cli, "--registry=x", "pkg"]);
+    } finally {
+      process.env.Path = savedPath;
       rmSync(directory, { recursive: true, force: true });
     }
   });
@@ -106,31 +138,31 @@ describe("MCP OAuth", () => {
 
   test("creates a PKCE authorization request without exposing a token", async () => {
     const manager = new McpManager();
-    const runtimeBun = (globalThis as { Bun: { serve: unknown } }).Bun;
-    const runtimeServe = runtimeBun.serve;
-    runtimeBun.serve = () => ({ stop() {} });
-    let result: Awaited<ReturnType<McpManager["beginOAuth"]>>;
-    try {
-      result = await manager.beginOAuth({
-        id: "demo",
-        name: "Demo",
-        url: "https://mcp.example.test/mcp",
-        oauth: {
-          authorizationUrl: "https://auth.example.test/authorize",
-          tokenUrl: "https://auth.example.test/token",
-          clientId: "qone-agent",
-          scopes: ["mcp:tools"],
-        },
-      });
-    } finally {
-      runtimeBun.serve = runtimeServe;
-    }
-    const url = new URL(result.url);
+    // A free loopback port keeps the test independent of a running Qone instance.
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const port = (probe.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    const result = await manager.beginOAuth({
+      id: "demo",
+      name: "Demo",
+      url: "https://mcp.example.test/mcp",
+      oauth: {
+        authorizationUrl: "https://auth.example.test/authorize",
+        tokenUrl: "https://auth.example.test/token",
+        clientId: "qone-agent",
+        scopes: ["mcp:tools"],
+        redirectUri: `http://127.0.0.1:${port}/mcp/oauth/callback`,
+      },
+    });
+    const url = new URL(result!.url);
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("client_id")).toBe("qone-agent");
-    expect(url.searchParams.get("state")).toBe(result.state);
+    expect(url.searchParams.get("state")).toBe(result!.state);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("code_challenge")).toBeString();
+    // The loopback callback server is live and rejects unknown state.
+    expect((await fetch(`http://127.0.0.1:${port}/mcp/oauth/callback?state=unknown&code=x`)).status).toBe(400);
     await manager.disconnectAll();
   });
 

@@ -270,6 +270,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       const subjectId = `mcp:${config.id}`;
       services.permissionRepo.ensure(subjectId, "mcp.connect", "ask");
       await services.authorizeCommand(subjectId, "mcp.connect", "mcp.connect", { id: config.id, name: config.name, command: config.command, url: config.url });
+      services.mcpConnectionApprovals.set(config.id, config);
       services.mcpServerRepo.upsert(config);
       await connectMcp(config, services, cmd.requestId);
       return true;
@@ -280,6 +281,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       const config = services.mcpServerRepo.list().find((server) => server.id === cmd.serverId);
       if (config) services.mcpServerRepo.upsert({ ...config, disabled: true });
       services.pendingMcpAuthRequests.delete(cmd.serverId);
+      services.mcpConnectionApprovals.delete(cmd.serverId);
       await services.mcp.disconnect(cmd.serverId);
       await services.refreshCustomTools();
       services.send({ type: "mcp.list", servers: mcpServerList(services) });
@@ -292,6 +294,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: `unknown MCP server ${cmd.serverId}` });
         return true;
       }
+      services.mcpConnectionApprovals.delete(cmd.serverId);
       await services.mcp.disconnect(cmd.serverId);
       services.mcp.clearCredentials(cmd.serverId);
       services.pendingMcpAuthRequests.delete(cmd.serverId);
@@ -330,6 +333,11 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
 
     case "permission.set": {
       const rule = services.permissionRepo.set(cmd.subjectId, cmd.permission, cmd.decision);
+      if (cmd.permission === "mcp.connect") {
+        services.mcpConnectionApprovals.delete(cmd.subjectId.slice("mcp:".length));
+        await services.refreshCustomTools();
+        services.send({ type: "mcp.list", servers: mcpServerList(services) });
+      }
       services.send({ type: "permission.updated", rule: {
         subjectId: rule.subjectId,
         permission: rule.permission,
@@ -467,12 +475,18 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       return true;
     }
 
-    case "secret.delete":
+    case "secret.delete": {
       services.runtimeSecrets.delete(cmd.key);
+      for (const config of services.mcpServerRepo.list().filter(server => mcpCredentialKeys(server).includes(cmd.key))) {
+        services.mcp.clearCredentials(config.id);
+        services.mcp.invalidateConnection(config.id);
+      }
+      await services.refreshCustomTools();
       await services.adapter.deleteSecret(cmd.key);
       services.send({ type: "pong", requestId: cmd.requestId });
       if (cmd.key === "reach.groq.apiKey") services.sendReachChannels();
       return true;
+    }
 
     case "agent.run": {
       await services.ensureModelsReady();
@@ -505,7 +519,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: "goal is not active" });
         return true;
       }
-      if (cmd.mcpServerId && (!services.mcp.isConnected(cmd.mcpServerId) || services.mcp.toolCount(cmd.mcpServerId) === 0)) {
+      if (cmd.mcpServerId && (!services.mcp.isAvailable(cmd.mcpServerId) || services.mcp.toolCount(cmd.mcpServerId) === 0)) {
         services.send({ type: "error", requestId: cmd.requestId, message: "selected MCP server is not connected or has no tools" });
         return true;
       }

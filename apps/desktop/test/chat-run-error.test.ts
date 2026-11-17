@@ -88,7 +88,7 @@ test("MCP loading survives the saved list and clears on success or failure", asy
     emit({ type: "mcp.connected", serverId: "preset", toolCount: 3 });
     expect(useStore.getState().mcpConnectingIds).toEqual([]);
     expect(useStore.getState().mcpServers).toEqual([
-      { id: "preset", name: "Preset", connected: true, connecting: false, toolCount: 3 },
+      { id: "preset", name: "Preset", connected: true, available: true, connecting: false, toolCount: 3 },
       { id: "other", name: "Other", connected: false },
     ]);
 

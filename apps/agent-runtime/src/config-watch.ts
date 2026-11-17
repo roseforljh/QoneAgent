@@ -1,4 +1,4 @@
-import { connectMcp, mcpServerList } from "./mcp-connections";
+import { registerMcp, mcpServerList } from "./mcp-connections";
 import { mkdirSync, watch } from "node:fs";
 import path from "node:path";
 import { mcpServersFrom, type ConfigFile } from "@qone/database";
@@ -51,6 +51,7 @@ async function applyMcp(previous: Json, next: Json, services: Services) {
   for (const [id, old] of before) {
     if (after.some(server => server.id === id) || mcpServersFrom(services.settingsFile.read("mcpServers")).some(server => server.id === id)) continue;
     const keys = [...mcpValueSecretKeys(old), old.oauth?.tokenSecretKey ?? `mcp.oauth:${id}`, `mcp.oauth:${id}.client`, `mcp.oauth:${id}.tokens`];
+    services.mcpConnectionApprovals.delete(id);
     await services.mcp.disconnect(id);
     services.mcp.clearCredentials(id);
     services.pendingMcpAuthRequests.delete(id);
@@ -59,6 +60,7 @@ async function applyMcp(previous: Json, next: Json, services: Services) {
   }
   for (const server of after) {
     if (same(before.get(server.id), server)) continue;
+    services.mcpConnectionApprovals.delete(server.id);
     const validated = decodeCommand(JSON.stringify({ type: "mcp.connect", requestId: crypto.randomUUID(), config: server }));
     if (validated?.type !== "mcp.connect") {
       services.send({ type: "error", message: `settings.json: MCP service ${JSON.stringify(server.id)} is not a valid configuration` });
@@ -74,8 +76,8 @@ async function applyMcp(previous: Json, next: Json, services: Services) {
     // Installing in the user's configuration grants startup consent, but never overrides an explicit denial.
     services.permissionRepo.ensure(`mcp:${server.id}`, "mcp.connect", "allow");
     if (services.permissionRepo.get(`mcp:${server.id}`, "mcp.connect") === "allow") {
-      void connectMcp(config, services).catch(error => services.log.warn("MCP configuration connection failed", { serverId: server.id, err: String(error) }));
-    }
+      void registerMcp(config, services).catch(error => services.log.warn("MCP configuration registration failed", { serverId: server.id, err: String(error) }));
+    } else services.mcp.register(config);
   }
   await services.refreshCustomTools();
   services.send({ type: "mcp.list", servers: mcpServerList(services) });
@@ -89,7 +91,12 @@ export async function applySettingsChange(previous: Json, next: Json, services: 
     await services.adapter.configureModels(configs);
     services.send({ type: "model.list", configs });
   }
-  if (!same(previous.permissions, next.permissions)) void run({ type: "permission.list", requestId: crypto.randomUUID() }, services);
+  if (!same(previous.permissions, next.permissions)) {
+    services.mcpConnectionApprovals.clear();
+    await services.refreshCustomTools();
+    services.send({ type: "mcp.list", servers: mcpServerList(services) });
+    void run({ type: "permission.list", requestId: crypto.randomUUID() }, services);
+  }
   const before = section(previous, "preferences"), after = section(next, "preferences");
   const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(key => !same(before[key], after[key]));
   if (changed.includes("subagents.config")) {

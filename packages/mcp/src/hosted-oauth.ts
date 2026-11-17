@@ -30,11 +30,14 @@ export class HostedMcpOAuth implements OAuthClientProvider {
   private authorizationStartedAt = 0;
   private authorizationUrl?: URL;
   private refreshFailure?: unknown;
+  private authorizationGeneration = 0;
   private readonly timedFetch = boundedFetch();
   private fetchFn: FetchLike = async (url, init) => {
+    const generation = this.authorizationGeneration;
     const refreshing = init?.body instanceof URLSearchParams && init.body.get("grant_type") === "refresh_token";
     try {
       const response = await this.timedFetch(url, init);
+      if (generation !== this.authorizationGeneration) throw new Error("MCP authorization was cancelled");
       // The SDK otherwise converts a refresh outage into a new interactive login.
       if (refreshing && !response.ok && (response.status === 429 || response.status >= 500)) {
         throw new Error(`MCP OAuth token refresh failed: HTTP ${response.status}`);
@@ -103,7 +106,14 @@ export class HostedMcpOAuth implements OAuthClientProvider {
   }
 
   hasToken() { return Boolean(this.tokens()?.access_token); }
+  cancelAuthorization() {
+    this.authorizationGeneration++;
+    this.pendingState = undefined;
+    this.verifier = undefined;
+    this.authorizationUrl = undefined;
+  }
   clear() {
+    this.cancelAuthorization();
     this.client = undefined;
     this.tokenSet = undefined;
     this.importedExpiresAt = undefined;

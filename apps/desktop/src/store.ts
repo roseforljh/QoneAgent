@@ -1,7 +1,7 @@
 import { localizeError } from "./lib/error-localization";
 import { alignToolCallIds } from "./lib/tool-call-alignment";
 import { initRuntimeBridge } from "./store-bridge";
-import { repeatedUserMessageId, serverOperationInfo } from "@qone/protocol";
+import { mcpAvailable, repeatedUserMessageId, serverOperationInfo } from "@qone/protocol";
 import { sessionStore, switchSessionState, type SessionExecutionState } from "./lib/session-execution-state";
 import { updateSessionActivity } from "./lib/session-recency";
 import { create } from "zustand";
@@ -639,7 +639,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     const mcpCommand = parseMcpCommand(message);
     if (mcpCommand) {
       const server = get().mcpServers.find((item) => item.id === mcpCommand.serverId);
-      if (!server?.connected || !(server.toolCount && server.toolCount > 0)) {
+      if (!mcpAvailable(server) || !(server?.toolCount && server.toolCount > 0)) {
         set({ lastError: t("error.mcpUnavailable") });
         return false;
       }

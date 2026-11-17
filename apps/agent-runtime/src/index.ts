@@ -1,4 +1,4 @@
-import { connectMcp, mcpServerList, restoreMcpCredentials } from "./mcp-connections";
+import { connectMcp, registerMcp, mcpServerList, restoreMcpCredentials } from "./mcp-connections";
 import { handleSessionCommand } from "./session-commands.js";
 import { handleRuntimeCommand } from "./runtime-commands.js";
 import { claudeMcpToken } from "./claude-code/mcp-auth";
@@ -53,6 +53,9 @@ import { MemoryService } from "./memory/memory-service.js";
 import { ServerService } from "./servers/server-service.js";
 
 const log = createLogger("runtime");
+// The desktop starts this process with Electron in Node mode. Never pass that
+// mode on to user commands: any Electron app they launch would fail to open.
+delete process.env.ELECTRON_RUN_AS_NODE;
 
 const eventBus = new EventBus<RuntimeBusEvent>();
 
@@ -502,6 +505,8 @@ for (const [permission, decision] of [
   ["tool.execute", "ask"],
 ] as const) permissionRepo.ensure("builtin", permission, decision);
 const pendingMcpAuthRequests = new Map<string, string>();
+// A one-time connection approval lives only with this exact configuration, never in settings.
+const mcpConnectionApprovals = new Map<string, McpServerInfo>();
 let browserSync: BrowserSyncService | undefined;
 let browserReady: Promise<void> = Promise.resolve();
 
@@ -554,6 +559,20 @@ const mcp = new McpManager(async (serverId, token) => {
   send({ type: "mcp.oauth.invalidated", serverId, key });
 }, claudeMcpToken, (config, signal) => restoreMcpCredentials(config, { send, runtimeSecrets, mcp }, signal), () => {
   send({ type: "mcp.list", servers: mcpServerList({ mcp, mcpServerRepo, pendingMcpAuthRequests }) });
+}, {
+  catalog: stateRepo,
+  canConnect: id => {
+    const decision = permissionRepo.get(`mcp:${id}`, "mcp.connect");
+    const approved = mcpConnectionApprovals.get(id);
+    return decision === "allow" || (decision === "ask" && !!approved && mcp.isRegistered(approved));
+  },
+  onAuthTargetChanged: config => {
+    for (const key of [config.oauth?.tokenSecretKey ?? `mcp.oauth:${config.id}`, `mcp.oauth:${config.id}.client`, `mcp.oauth:${config.id}.tokens`]) {
+      runtimeSecrets.delete(key);
+      send({ type: "mcp.oauth.invalidated", serverId: config.id, key });
+    }
+  },
+  onToolsChanged: () => { void refreshCustomTools().catch(error => log.warn("MCP tool refresh failed", { err: String(error) })); },
 });
 async function releaseBrowserSession() {
   if (adapter.getSessions().some(session => !session.isIdle)) return;
@@ -573,7 +592,7 @@ async function refreshCustomTools() {
 function sendReachChannels(requestId?: string) {
   send({ type: "reach.channels", requestId, channels: listReachChannels({
     browserConnected: browserSync?.status().targetConnected ?? false,
-    mcpConnected: (id) => mcp.isConnected(id),
+    mcpConnected: (id) => mcp.isAvailable(id),
     podcastConfigured: podcastConfigured(),
     hasGroqKey: Boolean(runtimeSecrets.get("reach.groq.apiKey")),
   }) });
@@ -599,8 +618,8 @@ async function initializeOptionalIntegrations() {
     try {
       const config = stored && (entry.env || entry.headers) ? await prepareMcpConfiguration(entry, runtimeCommandServices()) : entry;
       if (!config) return;
-      await connectMcp(config, runtimeCommandServices());
-      log.info("mcp connected", { serverId: config.id });
+      await registerMcp(config, runtimeCommandServices());
+      log.info("mcp registered", { serverId: config.id });
     } catch (err) {
       log.warn("mcp connection failed", { serverId: entry.id, err: String(err) });
     }
@@ -792,6 +811,7 @@ export function runtimeCommandServices() {
     log,
     mcp,
     mcpServerRepo,
+    mcpConnectionApprovals,
     messageRepo,
     modelConfigRepo,
     pendingMcpAuthRequests,
@@ -857,11 +877,8 @@ const stopConfigurationWatch = watchConfiguration(settingsFile, runtimeCommandSe
 
 // Read NDJSON commands from stdin.
 const decoder = new TextDecoder();
-const reader = Bun.stdin.stream().getReader();
 let buf = "";
-while (true) {
-  const { value, done } = await reader.read();
-  if (done) break;
+for await (const value of process.stdin as AsyncIterable<Uint8Array>) {
   buf += decoder.decode(value, { stream: true });
   let idx;
   while ((idx = buf.indexOf("\n")) >= 0) {

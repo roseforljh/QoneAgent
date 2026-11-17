@@ -1,4 +1,4 @@
-import { parseMcpCommand, type QueueItemInfo, type RuntimeCommand, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
+import { mcpAvailable, parseMcpCommand, type QueueItemInfo, type RuntimeCommand, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
 import { useStore } from "../store";
 import { DEFAULT_RUN_PERMISSION_MODE, saveRunOptions, type SessionRunOptions } from "./run-options";
 import { emptySessionState } from "./session-execution-state";
@@ -35,7 +35,7 @@ export function openQueuedSideConversation(item: QueueItemInfo): Promise<boolean
   const mcp = parseMcpCommand(prompt.text);
   if (mcp) {
     const server = state.mcpServers.find((candidate) => candidate.id === mcp.serverId);
-    if (!server?.connected || !server.toolCount) return Promise.reject(new Error(t("error.mcpUnavailable")));
+    if (!mcpAvailable(server) || !server?.toolCount) return Promise.reject(new Error(t("error.mcpUnavailable")));
     if (!mcp.text && !item.attachments?.length) return Promise.reject(new Error(t("error.mcpMessageRequired")));
     if (prompt.goal) return Promise.reject(new Error(t("error.goalMcpUnsupported")));
   }

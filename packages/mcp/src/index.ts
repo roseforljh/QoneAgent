@@ -1,5 +1,6 @@
 import { Client, StreamableHTTPClientTransport, SSEClientTransport, UnauthorizedError, DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/client";
 import { isDeepStrictEqual } from "node:util";
+import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
 import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import { TreeKillingStdioTransport } from "./stdio-transport";
@@ -7,8 +8,9 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSecureServiceUrl } from "@qone/protocol";
 import { HostedMcpOAuth, type HostedOAuthAuthorization, type HostedOAuthCredential } from "./hosted-oauth";
-import { resolveStdioLaunch } from "./stdio-launch";
+import { resolveMcpStdioLaunch } from "./stdio-launch";
 import { McpAccountLoginRequiredError } from "./auth-error";
+import { catalogKey, configFingerprint, connectionConfig, readCatalog, type McpCatalogStore, type McpToolMetadata } from "./tool-catalog";
 export { resolveStdioLaunch } from "./stdio-launch";
 export { McpAccountLoginRequiredError } from "./auth-error";
 
@@ -35,6 +37,22 @@ export interface McpServerConfig {
   oauthClientId?: string;
 }
 
+export interface McpLifecycleOptions {
+  catalog?: McpCatalogStore;
+  canConnect?: (id: string) => boolean;
+  onToolsChanged?: () => void;
+  onAuthTargetChanged?: (config: McpServerConfig) => void;
+}
+interface Registration {
+  config: McpServerConfig;
+  fingerprint: string;
+  metadata?: McpToolMetadata[];
+  tools: ToolDefinition[];
+  used: boolean;
+  calls: number;
+  authRequired?: boolean;
+}
+
 /** Resolve persisted MCP environment references without storing API keys in the database. */
 export function resolveMcpEnvironment(
   env: Record<string, string> | undefined,
@@ -54,7 +72,6 @@ export function resolveMcpEnvironment(
 interface Conn {
   config: McpServerConfig;
   client: Client;
-  tools: ToolDefinition[];
 }
 
 interface PendingOAuth {
@@ -63,10 +80,6 @@ interface PendingOAuth {
   redirectUri: string;
   config: McpServerConfig;
   createdAt: number;
-}
-
-interface BunHttpServer {
-  stop(): void;
 }
 
 export interface QoneMcpToolDefinition extends ToolDefinition {
@@ -102,18 +115,22 @@ export class McpManager {
   private refreshTokens = new Map<string, string>();
   private tokenRefreshes = new Map<string, Promise<void>>();
   private hostedOAuth = new Map<string, HostedMcpOAuth>();
+  private hostedTargets = new Map<string, string>();
   private pendingOAuth = new Map<string, PendingOAuth>();
   private pendingHostedOAuth = new Map<string, { config: McpServerConfig; createdAt: number }>();
   private deviceAuthGenerations = new Map<string, string>();
   private deviceAuthSessions = new Map<string, { userCode: string; verificationUri: string; expiresAt: number; completion: Promise<void> }>();
   private connecting = new Map<string, Promise<ToolDefinition[]>>();
   private staleConnections = new Set<string>();
-  private connectionConfigs = new Map<string, McpServerConfig>();
   private connectControllers = new Map<string, AbortController>();
   // Bumped by disconnect/delete so an in-flight connect cannot register itself
   // after the server was removed.
   private connectionGenerations = new Map<string, number>();
-  private oauthCallbackServers = new Map<string, BunHttpServer>();
+  private oauthCallbackServers = new Map<string, Server>();
+  private registrations = new Map<string, Registration>();
+  private closing = new Map<string, Promise<void>>();
+  private stopped = false;
+
 
   constructor(
     private readonly onOAuthComplete?: (serverId: string, token?: string) => void | Promise<void>,
@@ -128,6 +145,7 @@ export class McpManager {
     private readonly refreshImportedToken?: (config: McpServerConfig) => Promise<string | undefined>,
     private readonly beforeConnect?: (config: McpServerConfig, signal: AbortSignal) => Promise<void>,
     private readonly onConnectionChange?: () => void,
+    private readonly lifecycle: McpLifecycleOptions = {},
   ) {}
 
   private validateConfig(config: McpServerConfig) {
@@ -151,16 +169,27 @@ export class McpManager {
 
   private hosted(config: McpServerConfig) {
     if (!config.url) throw new Error("Hosted MCP OAuth requires a server URL");
+    const target = JSON.stringify([config.url, config.authMode, config.oauth, config.oauthClientId]);
+    if (this.hostedTargets.has(config.id) && this.hostedTargets.get(config.id) !== target) this.clearCredentials(config.id);
+    this.hostedTargets.set(config.id, target);
     let provider = this.hostedOAuth.get(config.id);
     if (!provider) {
       provider = new HostedMcpOAuth(config.url,
-        (kind, value) => this.onOAuthCredential?.(config.id, kind, value),
+        (kind, value) => {
+          if (this.hostedOAuth.get(config.id) === provider) return this.onOAuthCredential?.(config.id, kind, value);
+        },
         (authorization) => {
+          if (this.hostedOAuth.get(config.id) !== provider || this.stopped) return;
           this.pendingHostedOAuth.set(authorization.state, { config, createdAt: Date.now() });
-          this.ensureOAuthCallbackServer("http://127.0.0.1:17891/mcp/oauth/callback");
+          void this.ensureOAuthCallbackServer("http://127.0.0.1:17891/mcp/oauth/callback")
+            .catch((error) => this.onOAuthFailure?.(config.id, error instanceof Error ? error : new Error(String(error))));
           this.onOAuthAuthorization?.(config.id, authorization);
         },
-        (scope) => this.onOAuthInvalidate?.(config.id, scope),
+        (scope) => {
+          if (this.hostedOAuth.get(config.id) !== provider) return;
+          if (scope === "tokens") this.invalidateConnection(config.id);
+          return this.onOAuthInvalidate?.(config.id, scope);
+        },
         () => this.refreshImportedToken?.(config) ?? Promise.resolve(undefined));
       this.hostedOAuth.set(config.id, provider);
     }
@@ -181,6 +210,7 @@ export class McpManager {
     this.tokenRefreshes.delete(serverId);
     this.hostedOAuth.get(serverId)?.clear();
     this.hostedOAuth.delete(serverId);
+    this.hostedTargets.delete(serverId);
     for (const [state, pending] of this.pendingHostedOAuth) if (pending.config.id === serverId) this.pendingHostedOAuth.delete(state);
     for (const [state, pending] of this.pendingOAuth) if (pending.serverId === serverId) this.pendingOAuth.delete(state);
   }
@@ -205,8 +235,10 @@ export class McpManager {
       if (token && this.accessTokens.get(config.id) === token) {
         this.accessTokens.delete(config.id);
         this.refreshTokens.delete(config.id);
-        // A failed handshake is already unwinding; aborting it would hide login-required as cancellation.
-        if (this.conns.has(config.id)) await this.disconnect(config.id).catch(() => {});
+        const registration = this.registrations.get(config.id);
+        if (registration) registration.authRequired = true;
+        this.invalidateConnection(config.id);
+        if (!registration?.calls) await this.releaseConnection(config.id).catch(() => {});
         await this.onAccessTokenInvalidated?.(config);
       }
       throw new McpAccountLoginRequiredError(config.name);
@@ -308,7 +340,7 @@ export class McpManager {
       const authorization = await this.hosted(config).begin();
       if (authorization) {
         this.pendingHostedOAuth.set(authorization.state, { config, createdAt: Date.now() });
-        this.ensureOAuthCallbackServer("http://127.0.0.1:17891/mcp/oauth/callback");
+        await this.ensureOAuthCallbackServer("http://127.0.0.1:17891/mcp/oauth/callback");
       }
       return authorization;
     }
@@ -317,7 +349,7 @@ export class McpManager {
     const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
     const redirectUri = config.oauth.redirectUri ?? "http://127.0.0.1:17891/mcp/oauth/callback";
     this.pendingOAuth.set(state, { serverId: config.id, verifier, redirectUri, config, createdAt: Date.now() });
-    this.ensureOAuthCallbackServer(redirectUri);
+    await this.ensureOAuthCallbackServer(redirectUri);
     const challenge = base64Url(await sha256(verifier));
     const url = new URL(config.oauth.authorizationUrl);
     url.searchParams.set("response_type", "code");
@@ -335,7 +367,10 @@ export class McpManager {
       const pending = this.pendingHostedOAuth.get(state);
       if (!pending || pending.config.id !== config.id || Date.now() - pending.createdAt > 10 * 60_000) throw new Error("invalid or expired MCP OAuth state");
       this.pendingHostedOAuth.delete(state);
-      await this.hosted(config).complete(code, state, iss);
+      const provider = this.hosted(config);
+      const generation = this.connectionGenerations.get(config.id) ?? 0;
+      await provider.complete(code, state, iss);
+      if (this.hostedOAuth.get(config.id) !== provider || this.stopped || (this.connectionGenerations.get(config.id) ?? 0) !== generation) throw new Error("MCP authorization was cancelled");
       await this.onOAuthComplete?.(config.id);
       return undefined;
     }
@@ -347,6 +382,7 @@ export class McpManager {
     const oauth = pending.config.oauth;
     if (!oauth) throw new Error(`MCP server ${config.id} has no OAuth configuration`);
     this.pendingOAuth.delete(state);
+    const generation = this.connectionGenerations.get(config.id) ?? 0;
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       code,
@@ -362,75 +398,149 @@ export class McpManager {
     if (!response.ok) throw new Error(`MCP OAuth token exchange failed: HTTP ${response.status}`);
     const token = (await response.json()) as { access_token?: string };
     if (!token.access_token) throw new Error("MCP OAuth response did not contain access_token");
+    if (this.stopped || (this.connectionGenerations.get(config.id) ?? 0) !== generation) throw new Error("MCP authorization was cancelled");
     this.setAccessToken(config.id, token.access_token);
     await this.onOAuthComplete?.(config.id, token.access_token);
     return token.access_token;
   }
 
-  private ensureOAuthCallbackServer(redirectUri: string) {
+  private async ensureOAuthCallbackServer(redirectUri: string) {
     const url = new URL(redirectUri);
     if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname.toLowerCase())) return;
     const hostname = url.hostname === "localhost" ? "127.0.0.1" : url.hostname === "[::1]" ? "::1" : url.hostname;
     const key = `${hostname}:${url.port || "80"}`;
     if (this.oauthCallbackServers.has(key)) return;
-    const bun = (globalThis as unknown as {
-      Bun?: { serve(options: { hostname: string; port: number; fetch(request: Request): Response | Promise<Response> }): BunHttpServer };
-    }).Bun;
-    if (!bun) return;
-    const server = bun.serve({
-      hostname,
-      port: Number(url.port || 80),
-      fetch: async (request) => {
-        const requestUrl = new URL(request.url);
-        const state = requestUrl.searchParams.get("state") ?? "";
-        const code = requestUrl.searchParams.get("code") ?? "";
-        const manual = this.pendingOAuth.get(state);
-        const hosted = this.pendingHostedOAuth.get(state);
-        const config = manual?.config ?? hosted?.config;
-        const redirectUri = manual?.redirectUri ?? "http://127.0.0.1:17891/mcp/oauth/callback";
-        if (!config || !code || new URL(redirectUri).pathname !== requestUrl.pathname) {
-          return new Response("Invalid or expired OAuth state", { status: 400 });
-        }
-        try {
-          await this.completeOAuth(config, code, state, requestUrl.searchParams.get("iss") ?? undefined);
-          return new Response("QoneAgent authorization complete. You may close this tab.", {
-            headers: { "content-type": "text/plain; charset=utf-8" },
-          });
-        } catch (error) {
-          this.onOAuthFailure?.(config.id, error instanceof Error ? error : new Error(String(error)));
-          return new Response("QoneAgent authorization failed.", { status: 500 });
-        }
-      },
+    const server = createServer(async (request, response) => {
+      const reply = (status: number, body: string) => {
+        response.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
+        response.end(body);
+      };
+      const requestUrl = new URL(request.url ?? "/", `http://${key}`);
+      const state = requestUrl.searchParams.get("state") ?? "";
+      const code = requestUrl.searchParams.get("code") ?? "";
+      const manual = this.pendingOAuth.get(state);
+      const hosted = this.pendingHostedOAuth.get(state);
+      const config = manual?.config ?? hosted?.config;
+      const redirectUri = manual?.redirectUri ?? "http://127.0.0.1:17891/mcp/oauth/callback";
+      if (!config || !code || new URL(redirectUri).pathname !== requestUrl.pathname) {
+        reply(400, "Invalid or expired OAuth state");
+        return;
+      }
+      try {
+        await this.completeOAuth(config, code, state, requestUrl.searchParams.get("iss") ?? undefined);
+        reply(200, "QoneAgent authorization complete. You may close this tab.");
+      } catch (error) {
+        this.onOAuthFailure?.(config.id, error instanceof Error ? error : new Error(String(error)));
+        reply(500, "QoneAgent authorization failed.");
+      }
     });
     this.oauthCallbackServers.set(key, server);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(Number(url.port || 80), hostname, resolve);
+      });
+    } catch (error) {
+      this.oauthCallbackServers.delete(key);
+      throw error;
+    }
+  }
+
+  /** Register cached tools without restoring credentials or spawning a server. */
+  register(config: McpServerConfig): boolean {
+    if (this.stopped) throw new Error("MCP manager is shutting down");
+    this.validateConfig(config);
+    const normalized = connectionConfig(config);
+    const fingerprint = configFingerprint(normalized);
+    const previous = this.registrations.get(config.id);
+    if (previous?.fingerprint === fingerprint && !this.staleConnections.has(config.id)) {
+      return previous.metadata !== undefined;
+    }
+    if (previous) {
+      const a = previous.config, b = normalized;
+      const targetChanged = !isDeepStrictEqual([a.url, a.authMode, a.oauth, a.oauthClientId], [b.url, b.authMode, b.oauth, b.oauthClientId]);
+      void this.disconnect(config.id).catch(() => {});
+      if (targetChanged) { this.clearCredentials(config.id); this.lifecycle.onAuthTargetChanged?.(normalized); }
+    }
+    this.staleConnections.delete(config.id);
+    const registration: Registration = { config: structuredClone(normalized), fingerprint, tools: [], used: false, calls: 0 };
+    this.registrations.set(config.id, registration);
+    let cached: McpToolMetadata[] | undefined;
+    try { cached = readCatalog(this.lifecycle.catalog?.get(catalogKey(config.id)), fingerprint); } catch { /* Cache is not authoritative. */ }
+    if (cached) this.updateCatalog(registration, cached, false);
+    this.onConnectionChange?.();
+    return registration.metadata !== undefined;
+  }
+
+  private permitted(registration: Registration): boolean {
+    return !this.stopped && this.registrations.get(registration.config.id) === registration && (this.lifecycle.canConnect?.(registration.config.id) ?? true);
+  }
+
+  private updateCatalog(registration: Registration, metadata: McpToolMetadata[], persist = true) {
+    if (this.stopped || this.registrations.get(registration.config.id) !== registration) return;
+    const changed = !isDeepStrictEqual(registration.metadata, metadata);
+    registration.metadata = metadata;
+    if (changed) {
+      registration.tools = metadata.map(tool => this.adaptTool(registration, tool));
+      this.lifecycle.onToolsChanged?.();
+    }
+    if (persist) {
+      try { this.lifecycle.catalog?.set(catalogKey(registration.config.id), { fingerprint: registration.fingerprint, tools: metadata }); } catch { /* A successful handshake must survive cache write errors. */ }
+    }
+  }
+
+  /** Background discovery is the only connection that may be released immediately. */
+  async discover(config: McpServerConfig): Promise<void> {
+    this.register(config);
+    const registration = this.registrations.get(config.id)!;
+    if (registration.metadata !== undefined) return;
+    try { await this.ensureConnection(registration); }
+    finally {
+      if (this.registrations.get(config.id) === registration && !registration.used && !registration.calls && config.command) await this.releaseConnection(config.id);
+    }
   }
 
   async connect(config: McpServerConfig): Promise<ToolDefinition[]> {
-    this.validateConfig(config);
-    // Compare transport/auth configuration, never transient UI flags.
-    const { id, name, command, args, env, headers, url, transport, tokenEnv, cwd, oauth, authMode, oauthClientId } = config;
-    config = { id, name, command, args, env, headers, url, transport, tokenEnv, cwd, oauth, authMode, oauthClientId };
-    const previous = this.connectionConfigs.get(config.id);
-    const closing = previous && (this.staleConnections.has(config.id) || !isDeepStrictEqual(previous, config))
-      ? this.disconnect(config.id) : Promise.resolve();
+    this.register(config);
+    const registration = this.registrations.get(config.id)!;
+    registration.used = true;
+    await this.ensureConnection(registration);
+    return registration.tools;
+  }
+
+  private async ensureConnection(registration: Registration): Promise<Conn> {
+    const { config } = registration;
+    if (this.staleConnections.has(config.id) && this.registrations.get(config.id) === registration) throw new Error(`MCP server ${config.id} credentials changed`);
+    if (!this.permitted(registration)) throw new Error(`MCP server ${config.id} is disabled or not authorized`);
     const existing = this.conns.get(config.id);
-    if (existing) return existing.tools;
-    const pending = this.connecting.get(config.id);
-    if (pending) return pending;
-    const generation = this.connectionGenerations.get(config.id) ?? 0;
-    const controller = new AbortController();
-    this.connectControllers.set(config.id, controller);
-    this.connectionConfigs.set(config.id, structuredClone(config));
-    // Include teardown in the new flight so a concurrent edit/disable owns cancellation too.
-    const operation = closing.then(() => this.connectOnce(config, generation, controller));
-    this.connecting.set(config.id, operation);
-    this.onConnectionChange?.();
-    try { return await operation; }
-    finally {
-      if (this.connecting.get(config.id) === operation) this.connecting.delete(config.id);
-      if (this.connectControllers.get(config.id) === controller) this.connectControllers.delete(config.id);
+    if (existing) return existing;
+    let operation = this.connecting.get(config.id);
+    if (!operation) {
+      const generation = this.connectionGenerations.get(config.id) ?? 0;
+      const controller = new AbortController();
+      this.connectControllers.set(config.id, controller);
+      operation = (this.closing.get(config.id) ?? Promise.resolve()).then(() => this.connectOnce(config, generation, controller));
+      this.connecting.set(config.id, operation);
       this.onConnectionChange?.();
+      const flight = operation;
+      void operation.finally(() => {
+        if (this.connecting.get(config.id) === flight) this.connecting.delete(config.id);
+        if (this.connectControllers.get(config.id) === controller) this.connectControllers.delete(config.id);
+        this.onConnectionChange?.();
+      }).catch(() => {});
     }
+    try { await operation; }
+    catch (error) {
+      if (error instanceof McpAccountLoginRequiredError && this.registrations.get(config.id) === registration) {
+        registration.authRequired = true;
+        this.invalidateConnection(config.id);
+      }
+      throw error;
+    }
+    if (!this.permitted(registration)) throw new Error(`MCP server ${config.id} registration changed during connect`);
+    const connection = this.conns.get(config.id);
+    if (!connection) throw new Error(`MCP server ${config.id} closed during connect`);
+    return connection;
   }
 
   private async connectOnce(config: McpServerConfig, generation: number, controller: AbortController): Promise<ToolDefinition[]> {
@@ -451,15 +561,28 @@ export class McpManager {
         ...(config.authMode === "github-device" ? { onUnauthorized: () => this.refreshGitHubToken(config) } : {}),
       } : undefined;
     controller.signal.throwIfAborted();
-    const launch = config.command ? resolveStdioLaunch(config.command, config.args ?? []) : undefined;
+    const stdioEnv = resolvedEnv ? { ...getDefaultEnvironment(), ...resolvedEnv } : undefined;
+    // Do not let npm prepend the app workspace's node_modules/.bin (and its bundled Node).
+    const stdioCwd = config.cwd ?? homedir();
+    const launch = config.command
+      ? await resolveMcpStdioLaunch(config.command, config.args ?? [], { env: stdioEnv, cwd: stdioCwd, signal: controller.signal })
+      : undefined;
     const httpOptions = { ...(authProvider ? { authProvider } : {}), requestInit: { ...(headers ? { headers } : {}), signal: controller.signal } };
     const transport = config.url
       ? config.transport === "sse" ? new SSEClientTransport(new URL(config.url), httpOptions) : new StreamableHTTPClientTransport(new URL(config.url), httpOptions)
-      : new TreeKillingStdioTransport({ command: launch!.command, args: launch!.args,
-        env: resolvedEnv ? { ...getDefaultEnvironment(), ...resolvedEnv } : undefined,
-        // Do not let npm prepend the app workspace's node_modules/.bin (and its bundled Node).
-        cwd: config.cwd ?? homedir() });
-    const client = new Client({ name: "qone-agent", version: "0.0.1" }, { capabilities: {} });
+      : new TreeKillingStdioTransport({ command: launch!.command, args: launch!.args, env: stdioEnv, cwd: stdioCwd });
+    const registration = this.registrations.get(config.id)!;
+    const client = new Client({ name: "qone-agent", version: "0.0.1" }, {
+      capabilities: {},
+      listChanged: { tools: { onChanged: (error, tools) => {
+        if (!error && tools && this.conns.get(config.id)?.client === client && !this.staleConnections.has(config.id)) this.updateCatalog(registration, tools);
+      } } },
+    });
+    client.onclose = () => {
+      if (this.conns.get(config.id)?.client !== client) return;
+      this.conns.delete(config.id);
+      this.onConnectionChange?.();
+    };
     const timer = setTimeout(() => controller.abort(new Error(`MCP connection timed out: ${config.name}`)), DEFAULT_REQUEST_TIMEOUT_MSEC);
     const close = () => { void client.close().catch(() => {}); };
     controller.signal.addEventListener("abort", close, { once: true });
@@ -471,13 +594,14 @@ export class McpManager {
       });
       // A disconnect/delete during the handshake owns the teardown; never let
       // this late connection re-register itself as live.
-      if ((this.connectionGenerations.get(config.id) ?? 0) !== generation) {
+      if ((this.connectionGenerations.get(config.id) ?? 0) !== generation || !this.permitted(registration)) {
         await client.close().catch(() => {});
         throw new Error(`MCP server ${config.id} was disconnected during connect`);
       }
-      const defs = tools.map((t) => this.adaptTool(config, client, t));
-      this.conns.set(config.id, { config, client, tools: defs });
-      return defs;
+      registration.authRequired = false;
+      this.conns.set(config.id, { config, client });
+      if (this.registrations.get(config.id) === registration && !this.staleConnections.has(config.id)) this.updateCatalog(registration, tools);
+      return registration.tools;
     } catch (error) {
       await client.close().catch(() => {});
       if (controller.signal.aborted) throw controller.signal.reason;
@@ -490,11 +614,8 @@ export class McpManager {
     }
   }
 
-  private adaptTool(
-    config: McpServerConfig,
-    client: Client,
-    t: { name: string; description?: string; inputSchema?: unknown; outputSchema?: unknown }
-  ): ToolDefinition {
+  private adaptTool(registration: Registration, t: McpToolMetadata): ToolDefinition {
+    const config = registration.config;
     const serverId = config.id;
     const fullName = `mcp:${serverId}:${t.name}`;
     const usedNames = new Set(this.exposedToolNames.values());
@@ -516,10 +637,7 @@ export class McpManager {
       outputSchema: t.outputSchema && typeof t.outputSchema === "object"
         ? Type.Unsafe(t.outputSchema as Record<string, unknown>) : undefined,
       execute: async (_id, params, signal) => {
-        const res = await this.authenticated(config, () => client.callTool({
-          name: t.name,
-          arguments: params as Record<string, unknown>,
-        }, { signal }));
+        const res = await this.invoke(registration, t.name, params as Record<string, unknown>, signal, t);
         const text = Array.isArray(res.content)
           ? res.content
               .map((c: { type: string; text?: string }) => (c.type === "text" ? c.text ?? "" : `[${c.type}]`))
@@ -536,56 +654,123 @@ export class McpManager {
   }
 
   tools(): ToolDefinition[] {
-    return [...this.conns.values()].flatMap((c) => c.tools);
+    return [...this.registrations.values()].filter(registration => this.isAvailable(registration.config.id)).flatMap(registration => registration.tools);
   }
 
-  /** Secret edits take effect on the next explicit connect, not once per restored field. */
-  invalidateConnection(id: string) { if (this.connectionConfigs.has(id)) this.staleConnections.add(id); }
+  /** Secret edits invalidate the directory without starting a process once per field. */
+  invalidateConnection(id: string) {
+    this.staleConnections.add(id);
+    try { this.lifecycle.catalog?.delete(catalogKey(id)); } catch { /* Cache is optional. */ }
+    this.lifecycle.onToolsChanged?.();
+    this.onConnectionChange?.();
+  }
 
+  isRegistered(config: McpServerConfig): boolean {
+    return !this.stopped && this.registrations.get(config.id)?.fingerprint === configFingerprint(config);
+  }
+
+  isAvailable(id: string): boolean {
+    const registration = this.registrations.get(id);
+    return Boolean(registration && this.permitted(registration) && !registration.authRequired && !this.staleConnections.has(id) && registration.metadata !== undefined);
+  }
   isConnecting(id: string): boolean { return this.connecting.has(id); }
+  isConnected(id: string): boolean { return this.conns.has(id); }
+  toolCount(id: string): number { return this.registrations.get(id)?.metadata?.length ?? 0; }
 
-  isConnected(id: string): boolean {
-    return this.conns.has(id);
+  private async invoke(registration: Registration, name: string, args: Record<string, unknown>, signal?: AbortSignal, advertised?: McpToolMetadata) {
+    const { config } = registration;
+    const check = () => {
+      signal?.throwIfAborted();
+      if (!this.permitted(registration) || registration.authRequired || this.staleConnections.has(config.id)) throw new Error(`MCP server ${config.id} is disabled, changed or not authorized`);
+    };
+    check();
+    registration.calls++;
+    registration.used = true;
+    try {
+      const pending = this.ensureConnection(registration);
+      const connection = await waitForConnection(pending, signal);
+      check();
+      const current = registration.metadata?.find(tool => tool.name === name);
+      if (!current || (advertised && !isDeepStrictEqual(current.inputSchema, advertised.inputSchema))) throw new Error(`MCP tool ${name} changed; use the refreshed tool definition`);
+      return await this.authenticated(config, () => connection.client.callTool({ name, arguments: args }, { signal }));
+    } catch (error) {
+      if (error instanceof McpAccountLoginRequiredError) {
+        registration.authRequired = true;
+        this.invalidateConnection(config.id);
+      }
+      throw error;
+    } finally { registration.calls--; }
   }
 
-  toolCount(id: string): number {
-    return this.conns.get(id)?.tools.length ?? 0;
-  }
-
-  /** Internal application workflows can call a server tool without exposing it to the model. */
+  /** Internal workflows use the same lazy connection and permission checks as model tools. */
   async callTool(id: string, name: string, args: Record<string, unknown>): Promise<void> {
-    const connection = this.conns.get(id);
-    if (!connection) throw new Error(`MCP server ${id} is not connected`);
-    const result = await this.authenticated(connection.config, () => connection.client.callTool({ name, arguments: args }));
+    const registration = this.registrations.get(id);
+    if (!registration) throw new Error(`MCP server ${id} is not registered`);
+    const result = await this.invoke(registration, name, args);
     if (result.isError) {
       const detail = Array.isArray(result.content)
-        ? result.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n")
-        : "";
+        ? result.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map(part => part.text).join("\n") : "";
       throw new Error(detail || `${name} failed`);
     }
   }
 
+  private releaseConnection(id: string): Promise<void> {
+    const previous = this.closing.get(id);
+    const connection = this.conns.get(id);
+    if (!connection) return previous ?? Promise.resolve();
+    this.conns.delete(id);
+    const operation = (previous ?? Promise.resolve()).then(() => connection.client.close());
+    this.closing.set(id, operation);
+    this.onConnectionChange?.();
+    void operation.finally(() => { if (this.closing.get(id) === operation) this.closing.delete(id); }).catch(() => {});
+    return operation;
+  }
+
   async disconnect(id: string) {
-    // Invalidate any connect that is still negotiating before tearing down, so
-    // a late handshake cannot revive a deleted server.
     this.connectionGenerations.set(id, (this.connectionGenerations.get(id) ?? 0) + 1);
     this.connectControllers.get(id)?.abort(new Error(`MCP server ${id} was disconnected during connect`));
+    const pending = this.connecting.get(id);
     this.connecting.delete(id);
-    this.connectionConfigs.delete(id);
     this.staleConnections.delete(id);
-    const c = this.conns.get(id);
-    this.conns.delete(id);
+    this.registrations.delete(id);
+    this.deviceAuthGenerations.delete(id);
+    this.deviceAuthSessions.delete(id);
+    this.hostedOAuth.get(id)?.cancelAuthorization();
+    for (const [state, auth] of this.pendingOAuth) if (auth.serverId === id) this.pendingOAuth.delete(state);
+    for (const [state, auth] of this.pendingHostedOAuth) if (auth.config.id === id) this.pendingHostedOAuth.delete(state);
+    try { this.lifecycle.catalog?.delete(catalogKey(id)); } catch { /* Cache is optional. */ }
+    const closing = this.releaseConnection(id);
+    const operation = Promise.all([closing, pending?.catch(() => {})]).then(() => {});
+    this.closing.set(id, operation);
+    void operation.finally(() => { if (this.closing.get(id) === operation) this.closing.delete(id); }).catch(() => {});
+    this.lifecycle.onToolsChanged?.();
     this.onConnectionChange?.();
-    if (c) await c.client.close();
+    await operation;
   }
 
   async disconnectAll() {
-    await Promise.all([...new Set([...this.connecting.keys(), ...this.conns.keys()])].map(id => this.disconnect(id).catch(() => {})));
-    for (const server of this.oauthCallbackServers.values()) server.stop();
+    this.stopped = true;
+    // Preserve disk catalogs at application shutdown, unlike explicit removal.
+    for (const controller of this.connectControllers.values()) controller.abort(new Error("MCP manager is shutting down"));
+    await Promise.all([...this.connecting.values()].map(operation => operation.catch(() => {})));
+    await Promise.all([...this.conns.keys()].map(id => this.releaseConnection(id).catch(() => {})));
+    await Promise.all([...this.closing.values()].map(operation => operation.catch(() => {})));
+    this.registrations.clear();
+    for (const server of this.oauthCallbackServers.values()) server.close();
     this.oauthCallbackServers.clear();
     this.pendingOAuth.clear();
     this.pendingHostedOAuth.clear();
   }
+}
+
+function waitForConnection<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return pending;
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    void pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 function serializeCredential(accessToken: string, refreshToken?: string): string {

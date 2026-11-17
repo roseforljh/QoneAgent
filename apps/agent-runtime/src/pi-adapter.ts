@@ -868,7 +868,9 @@ export class PiAdapter {
           try {
             if (!session || opts.mcpServerId || ((this.restoreMessages || this.staleSessions.has(sessionId)) && session.isIdle)) await this.disposeSession(sessionId);
           } finally {
-            if (this.mediaRunControllers.get(runId) === mediaController && this.activeRunIds.get(sessionId) === runId) this.activeRunIds.delete(sessionId);
+            if (this.mediaRunControllers.get(runId) === mediaController && this.activeRunIds.get(sessionId) === runId) {
+              this.activeRunIds.delete(sessionId);
+            }
           }
         }
         if (this.mediaRunControllers.get(runId) === mediaController) {

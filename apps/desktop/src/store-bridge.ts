@@ -5,7 +5,7 @@ import { lastUserTurn } from "./lib/agent-communication";
 import { translateCurrent as t } from "./localization";
 import { localizeError } from "./lib/error-localization";
 import { invoke, listen, openUrl } from "./lib/desktop-bridge";
-import { assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
+import { mcpAvailable, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
 import { DEFAULT_RUN_PERMISSION_MODE, pruneRunOptionServers, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults } from "./lib/run-options";
 import { getQoneMessageQueue, prunePausedQueues } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
@@ -728,17 +728,17 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         useMcpIcons.setState(msg.icons, true);
         break;
       case "mcp.list":
-        for (const server of msg.servers) if (server.disabled || server.connected) finishMcpConnection(server.id);
+        for (const server of msg.servers) if (server.disabled || mcpAvailable(server)) finishMcpConnection(server.id);
         eventStore.setState(st => ({ mcpServers: msg.servers,
           mcpConnectingIds: [...new Set([...st.mcpConnectingIds.filter(id => [...mcpConnectRequests.values()].includes(id)), ...msg.servers.filter(server => server.connecting).map(server => server.id)])],
-          oauthAuthorization: msg.servers.some(server => server.id === st.oauthAuthorization?.serverId && !server.disabled && !server.connected) ? st.oauthAuthorization : undefined,
-          githubDeviceAuthorization: msg.servers.some(server => server.id === st.githubDeviceAuthorization?.serverId && !server.disabled && !server.connected) ? st.githubDeviceAuthorization : undefined,
+          oauthAuthorization: msg.servers.some(server => server.id === st.oauthAuthorization?.serverId && !server.disabled && !mcpAvailable(server)) ? st.oauthAuthorization : undefined,
+          githubDeviceAuthorization: msg.servers.some(server => server.id === st.githubDeviceAuthorization?.serverId && !server.disabled && !mcpAvailable(server)) ? st.githubDeviceAuthorization : undefined,
         }));
         break;
       case "mcp.connected":
         finishMcpConnection(msg.serverId);
         eventStore.setState((st) => ({
-          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connecting: false, connected: true, toolCount: msg.toolCount } : server),
+          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connecting: false, connected: true, available: true, toolCount: msg.toolCount } : server),
           githubDeviceAuthorization: st.githubDeviceAuthorization?.serverId === msg.serverId ? undefined : st.githubDeviceAuthorization,
           oauthAuthorization: st.oauthAuthorization?.serverId === msg.serverId ? undefined : st.oauthAuthorization,
         }));
@@ -763,7 +763,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         break;
       case "mcp.oauth.invalidated":
         eventStore.setState((st) => ({
-          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connected: false, toolCount: 0 } : server),
+          mcpServers: st.mcpServers.map((server) => server.id === msg.serverId ? { ...server, connected: false, available: false, toolCount: 0 } : server),
         }));
         break;
       case "mcp.oauth.token":

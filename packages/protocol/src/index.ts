@@ -60,7 +60,7 @@ export const GENERATIVE_UI_COMPONENTS = [
   "ListViewItem", "Table", "Markdown", "Chart", "Alert", "Icon",
 ] as const;
 export { isCodexSubscriptionEndpoint, modelBaseUrl, modelListUrl } from "./model-endpoint";
-export { mediaMimeTypeFromName } from "./media-mime";
+export { fileMimeTypeFromName, mediaMimeTypeFromName } from "./media-mime";
 export {
   mergeModelMetadata,
   modelNameCandidates,
@@ -597,6 +597,8 @@ export interface McpServerInfo {
   id: string;
   name: string;
   connected?: boolean;
+  /** Tool catalog is authorized and callable, even while the process is asleep. */
+  available?: boolean;
   connecting?: boolean;
   toolCount?: number;
   command?: string;
@@ -611,6 +613,10 @@ export interface McpServerInfo {
   oauthClientId?: string;
   /** Configured but switched off: not connected or started with the app. */
   disabled?: boolean;
+}
+
+export function mcpAvailable(server: Pick<McpServerInfo, "available" | "connected" | "disabled"> | undefined): boolean {
+  return Boolean(server && !server.disabled && (server.available ?? server.connected));
 }
 
 export function parseMcpCommand(message: string): { serverId: string; text: string } | undefined {

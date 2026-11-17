@@ -33,12 +33,18 @@ function harness(authMode?: "oauth" | "github-device") {
   const events: RuntimeEvent[] = [], secrets = new Map<string, string>();
   const services = {
     mcpServerRepo: repo, permissionRepo: new PermissionRepo(settings), runtimeSecrets: secrets,
-    pendingMcpAuthRequests: new Map<string, string>(), send: (event: RuntimeEvent) => { events.push(event); },
+    pendingMcpAuthRequests: new Map<string, string>(), mcpConnectionApprovals: new Map<string, McpServerInfo>(), send: (event: RuntimeEvent) => { events.push(event); },
     authorizeCommand: async () => {}, refreshCustomTools: async () => {}, adapter: { deleteSecret: async () => {} },
     mcp: undefined as unknown as McpManager,
   };
   const manager = new McpManager(undefined, undefined, undefined, undefined, key => secrets.get(key), undefined, undefined, undefined, undefined,
-    (config, signal) => restoreMcpCredentials(config, services, signal), () => services.send({ type: "mcp.list", servers: mcpServerList(services) }));
+    (config, signal) => restoreMcpCredentials(config, services, signal), () => services.send({ type: "mcp.list", servers: mcpServerList(services) }), {
+      canConnect: id => {
+        const decision = services.permissionRepo.get(`mcp:${id}`, "mcp.connect"), approved = services.mcpConnectionApprovals.get(id);
+        return decision === "allow" || (decision === "ask" && !!approved && manager.isRegistered(approved));
+      },
+    });
+  services.permissionRepo.set(`mcp:${config.id}`, "mcp.connect", "allow");
   services.mcp = manager;
   cleanup.push(async () => { await manager.disconnectAll(); server.stop(true); rmSync(root, { recursive: true, force: true }); });
   const requests = () => events.filter((event): event is Extract<RuntimeEvent, { type: "mcp.credentials.request" }> => event.type === "mcp.credentials.request");
@@ -99,6 +105,29 @@ test("unreadable native storage is retryable and never starts account login", as
   const retry = connectMcp(h.config, h.services as never, "retry");
   await tick(); expect(h.requests()).toHaveLength(2); h.restore(); await retry;
   expect(h.handshakes()).toBe(1);
+});
+
+test("one-time connect approval stays in memory and an explicit permission change revokes it", async () => {
+  const h = harness();
+  h.services.permissionRepo.set(`mcp:${h.config.id}`, "mcp.connect", "ask");
+  const config = { ...h.config, headers: { "X-One": "one", "X-Two": "two" } };
+  await handleRuntimeCommand({ type: "mcp.connect", requestId: "once", config }, h.services as never);
+  expect(h.manager.isAvailable(config.id)).toBe(true);
+  expect(h.services.permissionRepo.get(`mcp:${config.id}`, "mcp.connect")).toBe("ask");
+  expect(h.services.mcpConnectionApprovals.has(config.id)).toBe(true);
+  await handleRuntimeCommand({ type: "permission.set", requestId: "revoke", subjectId: `mcp:${config.id}`, permission: "mcp.connect", decision: "ask" }, h.services as never);
+  expect(h.manager.isAvailable(config.id)).toBe(false);
+  expect(h.services.mcpConnectionApprovals.has(config.id)).toBe(false);
+});
+
+test("credential deletion updates a sleeping server without starting it", async () => {
+  const h = harness();
+  h.manager.register(h.config);
+  expect(h.handshakes()).toBe(0);
+  expect(h.requests()).toHaveLength(0);
+  await handleRuntimeCommand({ type: "secret.delete", requestId: "delete-key", key: "mcp.env:fixture/one" }, h.services as never);
+  expect(h.manager.isAvailable(h.config.id)).toBe(false);
+  expect(h.handshakes()).toBe(0);
 });
 
 test("services without credential references connect immediately without a native request", async () => {

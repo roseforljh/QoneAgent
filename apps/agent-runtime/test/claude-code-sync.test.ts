@@ -36,10 +36,10 @@ function harness(saved = true) {
     adapter: { refreshSkills: async () => { refreshed++; } },
     send: (event: RuntimeEvent) => { events.push(event); if (event.type === "claude-code.credentials") acknowledgeClaudeCredentials(event.requestId, saved); }, runtimeSecrets,
     mcpServerRepo: { list: () => [...servers.values()], upsert: (c: McpServerInfo) => servers.set(c.id, c), delete: (id: string) => servers.delete(id) },
-    skillRepo: { delete: () => {} }, pendingMcpAuthRequests: new Map(),
+    skillRepo: { delete: () => {} }, pendingMcpAuthRequests: new Map(), mcpConnectionApprovals: new Map(),
     preferencesRepo: { get: (key: string) => prefs.get(key), set: (key: string, value: unknown) => prefs.set(key, value) },
     stateRepo: { get: (key: string) => prefs.get(key), set: (key: string, value: unknown) => prefs.set(key, value) },
-    mcp: { disconnect: async () => {}, clearCredentials: () => {}, restoreHostedCredential: () => {}, isConnecting: () => false, isConnected: () => false, toolCount: () => 0 },
+    mcp: { disconnect: async () => {}, clearCredentials: () => {}, restoreHostedCredential: () => {}, isConnecting: () => false, isConnected: () => false, isAvailable: () => false, isRegistered: () => false, toolCount: () => 0 },
     permissionRepo: { ensure: () => {} }, refreshCustomTools: async () => {},
   } as unknown as Parameters<typeof syncClaudeCode>[1];
   const sync = (target: "prompt" | "mcp" | "skills", revision?: string) => syncClaudeCode({ type: "claude-code.sync", requestId: "sync", target, ...(revision !== undefined ? { apply: true, revision } : {}) }, services);

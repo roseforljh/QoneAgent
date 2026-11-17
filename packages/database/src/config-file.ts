@@ -125,7 +125,7 @@ export class McpServerRepo {
 
   upsert(config: McpServerInfo) {
     // Configuration keeps only `$` references; secret values live in the encrypted store.
-    const { id, connected: _connected, connecting: _connecting, toolCount: _toolCount, transport, ...rest } = config;
+    const { id, connected: _connected, available: _available, connecting: _connecting, toolCount: _toolCount, transport, ...rest } = config;
     const entry: Json = { ...rest,
       ...(transport ? { type: transport } : {}),
       ...(config.env ? { env: Object.fromEntries(Object.entries(config.env).filter(([, value]) => value.startsWith("$"))) } : {}),

@@ -108,6 +108,7 @@ async function synchronize(cmd: Command, services: Services): Promise<ClaudeCode
         }
         const removeKeys = entry.old ? [...mcpValueSecretKeys(entry.old), ...(!keepAuth ? [entry.old.oauth?.tokenSecretKey ?? `mcp.oauth:${id}`, `mcp.oauth:${id}.client`, `mcp.oauth:${id}.tokens`] : [])] : [];
         await persistClaudeCredentials(services.send, id, values, removeKeys);
+        services.mcpConnectionApprovals.delete(id);
         await services.mcp.disconnect(id);
         if (!keepAuth) services.mcp.clearCredentials(id);
         for (const key of removeKeys) services.runtimeSecrets.delete(key);
@@ -146,6 +147,7 @@ async function unsynchronize(cmd: Command, services: Services): Promise<ClaudeCo
       const keys = [...mcpValueSecretKeys(server), server.oauth?.tokenSecretKey ?? `mcp.oauth:${server.id}`, `mcp.oauth:${server.id}.client`, `mcp.oauth:${server.id}.tokens`];
       try { await persistClaudeCredentials(services.send, server.id, {}, keys); }
       catch { result.failed++; result.issues.push({ name: server.name, code: "storage" }); continue; }
+      services.mcpConnectionApprovals.delete(server.id);
       await services.mcp.disconnect(server.id);
       services.mcp.clearCredentials(server.id);
       services.pendingMcpAuthRequests.delete(server.id);

@@ -250,6 +250,37 @@ test("settings show one package whose click opens all six independently managed 
   }
 });
 
+test("a cached sleeping MCP remains selectable from the slash menu without connecting", async () => {
+  const previous = useStore.getState();
+  useStore.setState({ connected: true, skills: [], mcpServers: [{ id: "sleeping", name: "Sleeping MCP", available: true, connected: false, toolCount: 3 }], workspaces: [{ id: "mcp-test", name: "MCP", path: "C:/MCP" }], currentWorkspaceId: "mcp-test", draftWorkspaceId: "mcp-test", currentSessionId: undefined });
+  const host = dom.window.document.createElement("div");
+  dom.window.document.body.append(host);
+  const root = createRoot(host);
+  let runtime!: ReturnType<typeof useExternalStoreRuntime>;
+  const selected: unknown[] = [], before = sent.length;
+  const ignore = () => {};
+  function Composer() {
+    runtime = useExternalStoreRuntime({ messages: [], isRunning: false, onNew: async () => {} });
+    return <AssistantRuntimeProvider runtime={runtime}><ComposerPrimitive.Unstable_TriggerPopoverRoot>
+      <ComposerPrimitive.Root><ComposerPrimitive.Input /><ComposerTriggers onToolSelect={ignore} onCommandSelect={command => selected.push(command)} onMentionStateChange={ignore} onSlashStateChange={ignore} /></ComposerPrimitive.Root>
+    </ComposerPrimitive.Unstable_TriggerPopoverRoot></AssistantRuntimeProvider>;
+  }
+  try {
+    await act(async () => root.render(<Composer />));
+    await act(async () => runtime.thread.composer.setText("/"));
+    const input = host.querySelector("textarea")!;
+    input.focus(); input.setSelectionRange(0, 0);
+    await act(async () => input.dispatchEvent(new dom.window.KeyboardEvent("keyup", { key: "Home", bubbles: true })));
+    input.setSelectionRange(1, 1);
+    await act(async () => input.dispatchEvent(new dom.window.KeyboardEvent("keyup", { key: "End", bubbles: true })));
+    const option = [...host.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(item => item.textContent?.includes("Sleeping MCP"));
+    expect(option).toBeDefined();
+    await act(async () => { option!.click(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(selected).toEqual([{ kind: "mcp", serverId: "sleeping" }]);
+    expect(sent.slice(before).some(command => command.type === "mcp.connect")).toBe(false);
+  } finally { await act(async () => root.unmount()); host.remove(); useStore.setState(previous, true); }
+});
+
 test("slash keyboard and pointer selection drill into a package before inserting a concrete skill, with back and escape", async () => {
   useStore.setState({ connected: true, skills: collection, workspaces: [{ id: "skills-test", name: "Skills", path: "C:/Skills" }], currentWorkspaceId: "skills-test", currentSessionId: undefined });
   const host = dom.window.document.createElement("div");
@@ -257,12 +288,14 @@ test("slash keyboard and pointer selection drill into a package before inserting
   const root = createRoot(host);
   let runtime!: ReturnType<typeof useExternalStoreRuntime>;
   const commands: Array<{ kind: string; name?: string }> = [];
+  const slashStateArguments: unknown[][] = [];
+  const slashState = (...args: unknown[]) => { slashStateArguments.push(args); };
   const ignore = () => {};
   const select = (command: { kind: string; name?: string }) => { commands.push(command); };
   function Composer() {
     runtime = useExternalStoreRuntime({ messages: [], isRunning: false, onNew: async () => {} });
     return <AssistantRuntimeProvider runtime={runtime}><ComposerPrimitive.Unstable_TriggerPopoverRoot>
-      <ComposerPrimitive.Root><ComposerPrimitive.Input /><ComposerTriggers onToolSelect={ignore} onCommandSelect={select} onMentionStateChange={ignore} onSlashStateChange={ignore} /></ComposerPrimitive.Root>
+      <ComposerPrimitive.Root><ComposerPrimitive.Input /><ComposerTriggers onToolSelect={ignore} onCommandSelect={select} onMentionStateChange={ignore} onSlashStateChange={slashState} /></ComposerPrimitive.Root>
     </ComposerPrimitive.Unstable_TriggerPopoverRoot></AssistantRuntimeProvider>;
   }
   const open = async () => {
@@ -280,6 +313,8 @@ test("slash keyboard and pointer selection drill into a package before inserting
   try {
     await act(async () => root.render(<Composer />));
     const input = await open();
+    expect(slashStateArguments.some(([open]) => open === true)).toBe(true);
+    expect(slashStateArguments.every(args => args.length === 1 && typeof args[0] === "boolean")).toBe(true);
     expect([...host.querySelectorAll('[role="option"]')].map((item) => item.textContent)).toEqual([`/ponytail${t("skills.package.count", { count: 6 })}`]);
     await key(input, "Enter");
     expect(commands).toEqual([]);

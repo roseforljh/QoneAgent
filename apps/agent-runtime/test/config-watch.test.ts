@@ -14,15 +14,18 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 function harness() {
   const root = mkdtempSync(path.join(tmpdir(), "qone-config-watch-")); roots.push(root);
   const settings = new ConfigFile(path.join(root, "settings.json"), validateSettings);
-  const events: RuntimeEvent[] = [], connected: McpServerInfo[] = [], disconnected: string[] = [];
+  const events: RuntimeEvent[] = [], connected: McpServerInfo[] = [], registered: McpServerInfo[] = [], disconnected: string[] = [];
   const runtimeSecrets = new Map<string, string>();
   let broadcasts = 0, skillRefreshes = 0, models: unknown[] = [];
   const services = {
     settingsFile: settings, mcpServerRepo: new McpServerRepo(settings), modelConfigRepo: new ModelConfigRepo(settings),
-    permissionRepo: new PermissionRepo(settings), preferencesRepo: new PreferencesRepo(settings), runtimeSecrets, pendingMcpAuthRequests: new Map(),
+    permissionRepo: new PermissionRepo(settings), preferencesRepo: new PreferencesRepo(settings), runtimeSecrets, pendingMcpAuthRequests: new Map(), mcpConnectionApprovals: new Map(),
     send: (event: RuntimeEvent) => { events.push(event); if (event.type === "claude-code.credentials") acknowledgeClaudeCredentials(event.requestId, true); },
     mcp: {
-      connect: async (config: McpServerInfo) => { connected.push(config); return []; }, disconnect: async (id: string) => { disconnected.push(id); },
+      register: (config: McpServerInfo) => { registered.push(config); return false; },
+      discover: async (config: McpServerInfo) => { connected.push(config); },
+      isRegistered: () => true, isAvailable: () => false,
+      disconnect: async (id: string) => { disconnected.push(id); },
       clearCredentials: () => {}, invalidateConnection: () => {}, isConnecting: () => false, isConnected: () => false, toolCount: () => 0, hasHostedToken: () => true, hasAccessToken: () => true,
     },
     authorizeCommand: async () => {}, refreshCustomTools: async () => {},
@@ -41,7 +44,7 @@ function harness() {
   };
   settings.onInvalid(error => services.send({ type: "error", message: error.message }));
   settings.write("mcpServers", {});
-  return { settings, services, events, connected, disconnected, runtimeSecrets, edit, broadcasts: () => broadcasts, skillRefreshes: () => skillRefreshes, models: () => models };
+  return { settings, services, events, connected, registered, disconnected, runtimeSecrets, edit, broadcasts: () => broadcasts, skillRefreshes: () => skillRefreshes, models: () => models };
 }
 
 test("an agent adding an MCP service to settings.json connects it with its key moved to encrypted storage", async () => {
@@ -63,6 +66,16 @@ test("an agent adding an MCP service to settings.json connects it with its key m
   expect(h.services.mcpServerRepo.list()).toEqual([]);
   expect(h.runtimeSecrets.has("mcp.env:exa/EXA_API_KEY")).toBe(false);
   expect(h.events.filter(event => event.type === "claude-code.credentials").at(-1)).toMatchObject({ removeKeys: expect.arrayContaining(["mcp.env:exa/EXA_API_KEY"]) });
+});
+
+test("denied configuration edits replace the registered target without starting discovery", async () => {
+  const h = harness();
+  h.services.permissionRepo.set("mcp:denied", "mcp.connect", "deny");
+  await h.edit(data => { data.mcpServers.denied = { name: "Denied", command: "npx", args: ["first"] }; });
+  await h.edit(data => { data.mcpServers.denied.args = ["replacement"]; });
+  expect(h.connected).toHaveLength(0);
+  expect(h.registered.map(config => config.args)).toEqual([["first"], ["replacement"]]);
+  expect(h.services.permissionRepo.get("mcp:denied", "mcp.connect")).toBe("deny");
 });
 
 test("an invalid entry is reported, other sections reload their consumers", async () => {

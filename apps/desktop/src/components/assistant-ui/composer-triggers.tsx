@@ -1,5 +1,6 @@
+import { mcpAvailable } from "@qone/protocol";
 import { useConversationStore } from "../../lib/conversation-context";
-import { useEffect, useMemo, type FC } from "react";
+import { useCallback, useEffect, useMemo, type FC } from "react";
 import {
   ComposerPrimitive,
   unstable_useMentionAdapter,
@@ -32,6 +33,7 @@ export const ComposerTriggers: FC<{
   onMentionStateChange: (open: boolean, close: () => void) => void;
   onSlashStateChange: (open: boolean) => void;
 }> = ({ onToolSelect, onCommandSelect, onMentionStateChange, onSlashStateChange }) => {
+  const onSlashPopoverState = useCallback((open: boolean) => onSlashStateChange(open), [onSlashStateChange]);
   const { t } = useLocale();
   const send = useConversationStore((state) => state.send);
   const connected = useConversationStore((state) => state.connected);
@@ -56,7 +58,7 @@ export const ComposerTriggers: FC<{
   const compactTool = tools.find((tool) => tool.id === "compact");
   const slashEntries = useMemo<ComposerSlashEntry[]>(() => [
     ...(connected && workspacePath ? skills.filter((skill) => skill.enabled !== false).map((skill) => ({ id: `skill:${skill.id}`, label: `/skill:${skill.name}`, description: skill.description, kind: "skill" as const, skill })) : []),
-    ...(connected && workspacePath ? mcpServers.filter((server) => server.connected && (server.toolCount ?? 0) > 0).map((server) => ({
+    ...(connected && workspacePath ? mcpServers.filter((server) => mcpAvailable(server) && (server.toolCount ?? 0) > 0).map((server) => ({
       id: `mcp:${server.id}`, label: server.name, description: `${server.toolCount} ${t("mcp.tools")}`,
       kind: "mcp" as const, serverId: server.id, icon: PlugZapIcon,
     })) : []),
@@ -131,7 +133,7 @@ export const ComposerTriggers: FC<{
     </ComposerPrimitive.Unstable_TriggerPopover>
 
     {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="/" adapter={slashAdapter} className={`${popoverClass} max-h-[min(24rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.slashCommands")}>
-      <MentionPopoverState onStateChange={onSlashStateChange} />
+      <MentionPopoverState onStateChange={onSlashPopoverState} />
       <ComposerPrimitive.Unstable_TriggerPopover.Action {...slash.action} />
       <ComposerSlashNavigation groups={skillGroups} entries={slashEntries} />
       <ComposerPrimitive.Unstable_TriggerPopoverCategories>
