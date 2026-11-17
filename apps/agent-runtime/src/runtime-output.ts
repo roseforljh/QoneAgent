@@ -41,7 +41,10 @@ export function createRuntimeOutput(options: {
       if (message.type !== "agent.event" || (message.event.type !== "message.delta" && message.event.type !== "message.reasoning.delta")) {
         flush(); options.write(encode(message)); return;
       }
-      const last = pending.at(-1);
+      // Concurrent runs interleave their tokens; merge into this run's latest
+      // pending entry so per-run order holds and the batch stays one entry per run.
+      const last = pending.filter((entry) => entry.message.event.sessionId === message.event.sessionId
+        && entry.message.event.runId === message.event.runId).at(-1);
       if (last && canMerge(last.message, message)) {
         last.chunks.push((message.event.payload as { delta: string }).delta);
         last.message = message;

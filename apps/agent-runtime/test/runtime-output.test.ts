@@ -45,3 +45,13 @@ test("bounded batches flush at their limit and disposal flush preserves unsent o
   output.send(token(3, "c")); output.flush(); tick();
   expect(lines.map((line) => JSON.parse(line))).toEqual([[token(1, "a"), token(2, "b", "other")], [token(3, "c")]]);
 });
+
+test("interleaved tokens from concurrent runs merge per run instead of one event per token", () => {
+  const { output, lines, tick } = fixture();
+  for (let index = 0; index < 100; index++) for (const run of ["a", "b", "c"]) output.send(token(index, `${run}${index},`, run));
+  tick();
+  expect(lines).toHaveLength(1);
+  const batch = JSON.parse(lines[0]!) as Array<{ event: { runId: string; payload: { delta: string } } }>;
+  expect(batch.map((entry) => entry.event.runId)).toEqual(["a", "b", "c"]);
+  expect(batch[1]!.event.payload.delta).toBe(Array.from({ length: 100 }, (_, index) => `b${index},`).join(""));
+});
