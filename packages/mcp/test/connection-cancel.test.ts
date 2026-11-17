@@ -24,3 +24,10 @@ test("disconnect cancels a silent stdio handshake and kills its unregistered pro
     expect(() => process.kill(pid, 0)).toThrow();
   } finally { await manager.disconnectAll(); rmSync(root, { recursive: true, force: true }); }
 }, 8000);
+
+test("a stdio server that exits during connect reports its stderr", async () => {
+  const manager = new McpManager();
+  const config = { id: "crash", name: "Crash", command: process.execPath, args: ["-e", 'console.error("missing FIRECRAWL_API_KEY");process.exit(1)'] };
+  const error = await manager.connect(config).then(() => undefined, (error: Error) => error);
+  expect(error?.message).toContain("missing FIRECRAWL_API_KEY");
+}, 8000);

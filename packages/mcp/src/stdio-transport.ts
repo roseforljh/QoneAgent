@@ -14,8 +14,14 @@ import { StdioClientTransport, type StdioServerParameters } from "@modelcontextp
  */
 export class TreeKillingStdioTransport extends StdioClientTransport {
   private closing?: Promise<void>;
+  /** Last stderr output; a packaged GUI app has no console, so this is the only trace of why a server exited. */
+  stderrTail = "";
   constructor(server: StdioServerParameters) {
-    super(server);
+    super({ ...server, stderr: "pipe" });
+    this.stderr?.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      this.stderrTail = (this.stderrTail + chunk.toString()).slice(-2000);
+    });
   }
 
   close(): Promise<void> {

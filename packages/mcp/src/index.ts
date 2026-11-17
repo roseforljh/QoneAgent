@@ -480,7 +480,10 @@ export class McpManager {
       return defs;
     } catch (error) {
       await client.close().catch(() => {});
-      throw controller.signal.aborted ? controller.signal.reason : error;
+      if (controller.signal.aborted) throw controller.signal.reason;
+      const stderr = transport instanceof TreeKillingStdioTransport ? transport.stderrTail.trim() : "";
+      if (stderr && error instanceof Error) error.message += `\n${stderr}`;
+      throw error;
     } finally {
       clearTimeout(timer);
       controller.signal.removeEventListener("abort", close);
