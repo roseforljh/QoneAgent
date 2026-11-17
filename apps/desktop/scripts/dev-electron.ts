@@ -45,8 +45,9 @@ async function waitForServer(url: string, timeoutMs = 15000): Promise<boolean> {
 
 await waitForServer("http://127.0.0.1:1480");
 
-// 4. 启动 electron
-const electron = spawn(electronBin, [path.join(root, "dist-electron/main.cjs")], {
+// 4. 启动 electron：传应用目录而非 main 文件，Electron 才会读取 package.json 的 name，
+// 与安装版共用同一 userData（safeStorage 密钥按 userData 区分，否则两边凭据互相解不开）
+const electron = spawn(electronBin, [root], {
   cwd: root,
   stdio: "inherit",
   env: {
