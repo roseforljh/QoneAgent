@@ -5,6 +5,26 @@ import { createConversationStore } from "../src/lib/conversation-store";
 import { emptySessionState, sessionStore, switchSessionState } from "../src/lib/session-execution-state";
 import { isolateBackgroundSubscriptions } from "../src/lib/store-subscriptions";
 
+test("subscription caches release previous streaming snapshots", async () => {
+  const { source, side } = fixture();
+  const unsubscribe = side.subscribe(() => {});
+  const unsubscribeRoot = source.subscribe(() => {});
+  let old!: WeakRef<AgentState>;
+  for (let index = 0; index < 100; index++) {
+    source.setState({ streaming: `chunk-${index}`, streamingParts: [{ type: "text", text: `chunk-${index}` }] });
+    if (index === 1) old = new WeakRef(source.getState());
+  }
+  try {
+    // WeakRef targets stay alive for the current job; collect in a new turn.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      Bun.gc(true);
+    }
+    expect(old.deref()).toBeUndefined();
+    expect(source.getState().streaming).toBe("chunk-99");
+  } finally { unsubscribe(); unsubscribeRoot(); }
+});
+
 function fixture() {
   const initial = {
     ...emptySessionState(), currentSessionId: "main", connected: true, creatingSession: false,

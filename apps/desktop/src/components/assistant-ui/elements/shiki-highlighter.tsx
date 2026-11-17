@@ -44,6 +44,7 @@ const HighlightedCode: FC<{
   lineMarkers?: boolean;
 }> = ({ code, language, theme, options, lineMarkers }) => {
   const highlighted = useShikiHighlighter(code, language, theme, {
+    engine: "javascript",
     ...options,
     defaultColor: "light-dark()",
     ...(lineMarkers ? { transformers: [...(options.transformers ?? []), lineTransformer] } : {}),

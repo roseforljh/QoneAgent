@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { requestDiagnostics } from "./scripts/vite-request-diagnostics";
-import { dependencyPatches } from "./scripts/vite-dependency-patches";
+import { requestDiagnostics } from "./scripts/vite-request-diagnostics.ts";
+import { dependencyPatches } from "./scripts/vite-dependency-patches.ts";
+import { externalSourcemaps } from "./scripts/vite-external-sourcemaps.ts";
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 
@@ -32,7 +33,7 @@ export default defineConfig({
   // Keep the repository-level .env available to the desktop client. Only
   // VITE_* values are exposed to the renderer; the GitHub client ID is public.
   envDir: "../..",
-  plugins: [react(), tailwindcss(), requestDiagnostics(), reactPreviewRuntime(), dependencyPatches(fileURLToPath(new URL("../../", import.meta.url)))],
+  plugins: [react(), tailwindcss(), requestDiagnostics(), externalSourcemaps(), reactPreviewRuntime(), dependencyPatches(fileURLToPath(new URL("../../", import.meta.url)))],
   resolve: {
     // The desktop renderer talks to Electron only through this module.
     alias: {},

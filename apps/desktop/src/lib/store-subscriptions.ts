@@ -3,12 +3,13 @@ import type { AgentState } from "../store";
 import { sessionStateKeys } from "./session-execution-state";
 
 const sources = new WeakMap<StoreApi<AgentState>["getState"], StoreApi<AgentState>["subscribe"]>();
-const sharedChanges = new WeakMap<AgentState, { previous: AgentState; changed: boolean }>();
+// Cache comparisons without linking each live state to the entire update history.
+const sharedChanges = new WeakMap<AgentState, { previous: WeakRef<AgentState>; changed: boolean }>();
 
 export function conversationStateChanged(state: AgentState, previous: AgentState, sessionId: string) {
   let shared = sharedChanges.get(state);
-  if (!shared || shared.previous !== previous) {
-    shared = { previous, changed: Object.keys(state).some((key) => key !== "backgroundSessions" && !sessionStateKeys.has(key)
+  if (!shared || shared.previous.deref() !== previous) {
+    shared = { previous: new WeakRef(previous), changed: Object.keys(state).some((key) => key !== "backgroundSessions" && !sessionStateKeys.has(key)
       && state[key as keyof AgentState] !== previous[key as keyof AgentState]) };
     sharedChanges.set(state, shared);
   }
@@ -25,12 +26,12 @@ export function sameVisibleState(left: AgentState, right: AgentState) {
 
 export function isolateBackgroundSubscriptions(store: StoreApi<AgentState>) {
   const subscribe = store.subscribe;
-  const visibility = new WeakMap<AgentState, { previous: AgentState; changed: boolean }>();
+  const visibility = new WeakMap<AgentState, { previous: WeakRef<AgentState>; changed: boolean }>();
   sources.set(store.getState, subscribe);
   store.subscribe = (listener) => subscribe((state, previous) => {
     let result = visibility.get(state);
-    if (!result || result.previous !== previous) {
-      result = { previous, changed: !sameVisibleState(state, previous) };
+    if (!result || result.previous.deref() !== previous) {
+      result = { previous: new WeakRef(previous), changed: !sameVisibleState(state, previous) };
       visibility.set(state, result);
     }
     if (result.changed) listener(state, previous);
