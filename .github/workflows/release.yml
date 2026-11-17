@@ -12,8 +12,33 @@ permissions:
   contents: write
 
 jobs:
+  ffmpeg:
+    name: Build FFmpeg
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore FFmpeg
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-out
+          key: ffmpeg-${{ hashFiles('apps/desktop/scripts/build-ffmpeg.sh') }}
+
+      - name: Cross-compile FFmpeg
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: mkdir -p ffmpeg-out && bash apps/desktop/scripts/build-ffmpeg.sh ffmpeg-out
+
+      - name: Upload FFmpeg
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg
+          path: ffmpeg-out
+
   build-and-release:
     name: Build & Release Windows
+    needs: ffmpeg
     runs-on: windows-latest
 
     steps:
@@ -21,6 +46,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Download FFmpeg
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg
+          path: apps/desktop/binaries
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
