@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { DatabaseSync as Database } from "node:sqlite";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

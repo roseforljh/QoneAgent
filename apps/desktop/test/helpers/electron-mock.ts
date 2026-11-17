@@ -14,6 +14,7 @@ export function installElectronMock() {
   if (installed) return;
   installed = true;
   mock.module("electron", () => ({
+    app: { isPackaged: false },
     ipcMain: {
       handle: (channel: string, handler: (...args: unknown[]) => unknown) => { ipcHandlers.set(channel, handler); },
       removeHandler: (channel: string) => { ipcHandlers.delete(channel); },
@@ -34,7 +35,7 @@ export function installElectronMock() {
       exposeInMainWorld: (key: string, value: unknown) => { exposedGlobals[key] = value; },
     },
     webUtils: { getPathForFile: (file: { path?: string }) => file.path ?? "" },
-    safeStorage: { isEncryptionAvailable: () => false },
+    safeStorage: { isAsyncEncryptionAvailable: async () => false },
     Notification: class { show() {} },
     shell: { openExternal: async () => undefined, openPath: async () => "", showItemInFolder: () => undefined },
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showSaveDialog: async () => ({ canceled: true }) },

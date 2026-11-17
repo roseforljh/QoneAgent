@@ -44,7 +44,11 @@ test("parallel runtime sessions preserve streamed answers and their persisted hi
     contextWindow: 128000, maxTokens: 8192, input: ["text"], output: ["text"],
   } });
   closeDb(db);
-  const spawn = () => Bun.spawn([Bun.which("bun")!, "run", "src/index.ts"], {
+  // Exercise the shipped Electron Node bundle as well as the source entrypoint.
+  const runtime = Bun.env.QONE_AGENT_RUNTIME;
+  const command = runtime ? [Bun.env.QONE_NODE_EXECUTABLE ?? Bun.which("node")!, path.resolve(runtime)]
+    : [Bun.which("bun")!, "run", "src/index.ts"];
+  const spawn = () => Bun.spawn(command, {
     cwd: path.resolve(import.meta.dir, ".."), stdin: "pipe", stdout: "pipe", stderr: "pipe",
     env: { ...Bun.env, QONE_DATA_DIR: directory, QONE_DB: database, APPDATA: directory,
       QONE_LOG_DIR: path.join(directory, "logs"), QONE_PLUGINS_DIR: path.join(directory, "plugins") },

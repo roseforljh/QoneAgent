@@ -1,4 +1,6 @@
 import { mkdirSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import net from "node:net";
 import path from "node:path";
 import { Type } from "typebox";
@@ -273,7 +275,7 @@ export function createServerTools(context: ServerToolContext): ToolDefinition[] 
         if (args.action === "write") {
           const interrupt = () => { terminal.channel.signal("INT"); terminal.channel.write(""); };
           signal?.addEventListener("abort", interrupt, { once: true });
-          try { signal?.throwIfAborted(); terminal.channel.write(args.input ?? ""); await abortable(Bun.sleep(300), signal); }
+          try { signal?.throwIfAborted(); terminal.channel.write(args.input ?? ""); await abortable(sleep(300), signal); }
           finally { signal?.removeEventListener("abort", interrupt); }
         }
         const cursor = Math.max(args.cursor ?? 0, terminal.base);
@@ -293,7 +295,7 @@ export function createServerTools(context: ServerToolContext): ToolDefinition[] 
           const source = path.resolve(context.workspacePath, args.local_path);
           signal?.throwIfAborted();
           await promisify<void>((done) => channel.fastPut(source, target, { step: (bytes, _chunk, total) => onUpdate?.(json({ bytes, total })) }, (error) => done(error)));
-          return json({ local_path: source, remote_path: target, bytes: Bun.file(source).size });
+          return json({ local_path: source, remote_path: target, bytes: (await stat(source)).size });
         } finally { channel.end(); }
       },
     },
@@ -310,7 +312,7 @@ export function createServerTools(context: ServerToolContext): ToolDefinition[] 
           mkdirSync(path.dirname(target), { recursive: true });
           signal?.throwIfAborted();
           await promisify<void>((done) => channel.fastGet(source, target, { step: (bytes, _chunk, total) => onUpdate?.(json({ bytes, total })) }, (error) => done(error)));
-          return json({ remote_path: source, local_path: target, bytes: Bun.file(target).size });
+          return json({ remote_path: source, local_path: target, bytes: (await stat(target)).size });
         } finally { channel.end(); }
       },
     },

@@ -1,4 +1,4 @@
-import { readdir, readFile, mkdir } from "node:fs/promises";
+import { readdir, readFile, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { PluginManifest, type PluginContext, type PluginSetupFn, type PluginToolDefinition } from "@qone/plugin-sdk";
@@ -93,13 +93,13 @@ export async function loadPlugins(
             await mkdir(storageDir, { recursive: true });
             const data = existsSync(storageFile) ? JSON.parse(await readFile(storageFile, "utf8")) : {};
             data[key] = value;
-            await Bun.write(storageFile, JSON.stringify(data, null, 2));
+            await writeFile(storageFile, JSON.stringify(data, null, 2));
           },
           async delete(key) {
             if (!existsSync(storageFile)) return;
             const data = JSON.parse(await readFile(storageFile, "utf8"));
             delete data[key];
-            await Bun.write(storageFile, JSON.stringify(data, null, 2));
+            await writeFile(storageFile, JSON.stringify(data, null, 2));
           },
         },
         permissions: {

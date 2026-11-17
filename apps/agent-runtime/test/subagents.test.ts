@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { decodeCommand, ECC_BUILTIN_SUBAGENTS, isBuiltinSubagentId, isEccBuiltinSubagentId, type SubagentConfigInfo } from "@qone/protocol";
 import { buildSubagentPrompt, normalizeSubagentConfig, resolveSubagent, subagentCatalog } from "../src/subagents";
-import { Database } from "bun:sqlite";
+import { DatabaseSync as Database } from "node:sqlite";
 import { closeDb, MessageRepo, openDb, RunRepo, SessionRepo, SubagentRunRepo, WorkspaceRepo } from "@qone/database";
 import { evaluatePermission } from "../src/permissions";
 import { registerSubagentDispatcher } from "../src/subagent-runner";
 import { SubagentScheduler } from "../src/subagent-scheduler";
 import type { PiAdapter } from "../src/pi-adapter";
+import { snapshotDb } from "./db-snapshot";
 
 const config: SubagentConfigInfo = {
   profiles: [{ id: "researcher", name: "研究员", instructions: "只输出有来源的结论。", modelId: "provider/research", enabled: true, updatedAt: 1 }],
@@ -141,10 +142,10 @@ test("keeps parallel subagent transcripts separate across restart and removes th
   repo.save(second.id, "测试通过", [{ type: "text", text: "测试通过", messageSequence: 4 }]);
   runs.finish(first.id, "completed");
   runs.finish(second.id, "completed");
-  const snapshot = db.$client.serialize();
+  const snapshot = snapshotDb(db);
   closeDb(db);
 
-  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot) });
+  const reopened = openDb(snapshot);
   try {
     const saved = new SubagentRunRepo(reopened).listBySession(session.id);
     expect(saved).toHaveLength(2);
@@ -428,7 +429,7 @@ test("registers every workflow dependency before starting the first step", async
 
 test("nested dependencies belong to the nested parent and survive database reopen", async () => {
   const db = openDb(":memory:");
-  let snapshot: Uint8Array;
+  let snapshot: string;
   let sessionId: string;
   let parentId: string;
   let childId: string;
@@ -462,12 +463,12 @@ test("nested dependencies belong to the nested parent and survive database reope
     expect(controller.finalize(outer.runId, [nested.runId])).toEqual({ ok: true, missing: [] });
     expect(controller.dependencyStatus(parent.id).blocking).toEqual([]);
     expect(controller.finalize(parent.id, [outer.runId, nested.runId])).toEqual({ ok: true, missing: [] });
-    snapshot = db.$client.serialize();
+    snapshot = snapshotDb(db);
   } finally {
     closeDb(db);
   }
 
-  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot!) });
+  const reopened = openDb(snapshot!);
   try {
     const sessionRepo = new SessionRepo(reopened);
     const runRepo = new RunRepo(reopened);
@@ -495,7 +496,7 @@ test("nested dependencies belong to the nested parent and survive database reope
 
 test("a new parent run still inherits unresolved children from a parent interrupted by restart", () => {
   const db = openDb(":memory:");
-  let snapshot: Uint8Array;
+  let snapshot: string;
   let sessionId: string;
   let childId: string;
   try {
@@ -509,12 +510,12 @@ test("a new parent run still inherits unresolved children from a parent interrup
     const child = runRepo.create(session.id);
     childId = child.id;
     new SubagentRunRepo(db).create({ runId: child.id, parentSessionId: session.id, parentRunId: parent.id, toolCallId: "restart-child", title: "重启后的子代理", task: "继续任务" });
-    snapshot = db.$client.serialize();
+    snapshot = snapshotDb(db);
   } finally {
     closeDb(db);
   }
 
-  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot!) });
+  const reopened = openDb(snapshot!);
   try {
     const workspaceRepo = new WorkspaceRepo(reopened);
     const sessionRepo = new SessionRepo(reopened);

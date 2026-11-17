@@ -3,7 +3,7 @@
 // When the two drift, a migrated database and a shipped one disagree — this
 // test fails instead of that.
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { DatabaseSync as Database } from "node:sqlite";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,11 +20,11 @@ function applyChain(): Database {
   return db;
 }
 
-function describeSchema(db: { query(sql: string): { all(): unknown[] } }): Map<string, string[]> {
+function describeSchema(db: { prepare(sql: string): { all(): unknown[] } }): Map<string, string[]> {
   const tables = new Map<string, string[]>();
-  const rows = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+  const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
   for (const { name } of rows) {
-    const columns = db.query(`PRAGMA table_info(${name})`).all() as { name: string; type: string }[];
+    const columns = db.prepare(`PRAGMA table_info(${name})`).all() as { name: string; type: string }[];
     tables.set(name, columns.map((c) => `${c.name}:${c.type}`));
   }
   return tables;
@@ -37,7 +37,7 @@ describe("drizzle migration chain", () => {
     const boot = openDb(tmp);
     try {
       const fromChain = describeSchema(chain);
-      const fromBootstrap = describeSchema(boot.$client as unknown as { query(sql: string): { all(): unknown[] } });
+      const fromBootstrap = describeSchema(boot.$client as unknown as { prepare(sql: string): { all(): unknown[] } });
       expect(fromBootstrap.has("settings")).toBe(true);
       expect([...fromBootstrap.keys()].filter(table => ["model_configs", "permission_rules", "mcp_servers"].includes(table))).toEqual([]);
 

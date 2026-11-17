@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { DatabaseSync as Database } from "node:sqlite";
 import { closeDb, MessageRepo, openDb, RunRepo, SessionRepo, ToolCallRepo } from "@qone/database";
 import { applyAssistantToolEvent, assistantPartsFromPiMessage } from "@qone/protocol";
 import { createPiSessionEntries } from "../src/pi-attachments";
+import { snapshotDb } from "./db-snapshot";
 
 test("Pi content-block order and message sequence survive a database reopen", () => {
     const db = openDb(":memory:");
@@ -30,10 +31,10 @@ test("Pi content-block order and message sequence survive a database reopen", ()
       content: [{ type: "thinking", thinking: "reason" }, { type: "toolCall", id: "call-a", name: "read", arguments: { path: "a" } }, { type: "text", text: "完成" }],
       usage: { input: 4, output: 5, totalTokens: 9, cost: { total: 0.01 } }, stopReason: "toolUse", timestamp: 42,
     });
-    const snapshot = db.$client.serialize();
+    const snapshot = snapshotDb(db);
     closeDb(db);
 
-    const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot) });
+    const reopened = openDb(snapshot);
     const history = new MessageRepo(reopened).listBySession(session.id);
     expect(history.find((message) => message.id === legacy.id)).toMatchObject({ content: "旧总结", parts: null });
     expect(JSON.parse(history.find((message) => message.id === saved.id)!.parts!)).toEqual(parts);
@@ -98,10 +99,10 @@ test("tool call duration survives a database reopen", () => {
   const tools = new ToolCallRepo(db);
   const started = tools.start(run.id, "powershell", { command: "echo" }, "pi-call");
   tools.finish(started.id, "success", { content: [{ type: "text", text: "ok" }] }, 1234);
-  const snapshot = db.$client.serialize();
+  const snapshot = snapshotDb(db);
   closeDb(db);
 
-  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot) });
+  const reopened = openDb(snapshot);
   expect(new ToolCallRepo(reopened).listBySession(session.id)[0]).toMatchObject({ durationMs: 1234, status: "success" });
   closeDb(reopened);
 });

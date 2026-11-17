@@ -1,6 +1,7 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { isDouyinUrl, isSecureServiceUrl, type BrowserSyncStatus } from "@qone/protocol";
 import { Type } from "typebox";
@@ -9,6 +10,9 @@ import { ffmpegExecutable, ytDlpExecutable } from "./reach-channels.js";
 import { findSite, siteMatchesHost } from "@qone/protocol";
 import { browserScreenshotResult } from "./web-image.js";
 import type { AppOpenCliBridge } from "./app-opencli-bridge.js";
+
+// Source directory in development; the bundle's own directory (binaries) when packaged.
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 const SESSION = "qone";
 const COMMAND_TIMEOUT = 90_000;
@@ -80,7 +84,7 @@ function runOpenCliProcess(args: string[], timeout: number, signal?: AbortSignal
   const toolDirectories = [...new Set([ytDlpExecutable(), ffmpegExecutable()].filter((value): value is string => Boolean(value)).map((value) => path.dirname(value)))];
   return new Promise((resolve, reject) => {
     const child = spawn(launch.command, launch.args, {
-      cwd: process.cwd(), env: { ...process.env, ...extraEnv, NO_COLOR: "1", PATH: [...toolDirectories, process.env.PATH].filter(Boolean).join(path.delimiter) }, windowsHide: true, signal,
+      cwd: process.cwd(), env: { ...process.env, ...extraEnv, ...launch.env, NO_COLOR: "1", PATH: [...toolDirectories, process.env.PATH].filter(Boolean).join(path.delimiter) }, windowsHide: true, signal,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -104,17 +108,17 @@ export function normalizeBrowserWaitValue(kind: string, value: string): string {
   return String(Math.min(Math.floor(seconds), BROWSER_WAIT_MAX_SECONDS));
 }
 
-export function bundledOpenCli(args: string[]): { command: string; args: string[] } | undefined {
+export function bundledOpenCli(args: string[]): { command: string; args: string[]; env: Record<string, string> } | undefined {
+  // The desktop shell passes its Electron binary; a standalone dev runtime uses the system Node.
+  const node = process.env.QONE_NODE_EXECUTABLE || "node";
   const roots = [
-    path.dirname(process.execPath),
-    path.join(path.dirname(process.execPath), "binaries"),
-    path.resolve(import.meta.dir, "../../desktop/binaries"),
+    moduleDirectory,
+    path.resolve(moduleDirectory, "../../desktop/binaries"),
     path.join(process.cwd(), "apps", "desktop", "binaries"),
   ];
   for (const root of roots) {
-    const node = path.join(root, process.platform === "win32" ? "node.exe" : "node");
     const entry = path.join(root, "opencli", "qone-entry.mjs");
-    if (existsSync(node) && existsSync(entry)) return { command: node, args: [entry, ...args] };
+    if (existsSync(entry)) return { command: node, args: [entry, ...args], env: { ELECTRON_RUN_AS_NODE: "1" } };
   }
   return undefined;
 }

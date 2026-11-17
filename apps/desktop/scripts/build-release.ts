@@ -4,7 +4,6 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const desktopRoot = path.resolve(fileURLToPath(import.meta.url), "../..");
-const repoRoot = path.resolve(desktopRoot, "../..");
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -56,11 +55,14 @@ async function buildRelease() {
   fs.mkdirSync(binariesDir, { recursive: true });
   cleanIntermediates();
 
-  // 2. 编译 agent-runtime 独立可执行程序
-  console.log("\n[1/5] 编译 agent-runtime 独立进程...");
-  const runtimeEntry = path.join(repoRoot, "apps/agent-runtime/src/index.ts");
-  const runtimeOut = path.join(binariesDir, "qone-runtime.exe");
-  await runCommand("bun", ["build", runtimeEntry, "--compile", "--outfile", runtimeOut], desktopRoot);
+  // 2. 打包 agent-runtime：运行在 Electron 自带的 Node 上，不再附带独立的 Bun 运行时
+  console.log("\n[1/5] 打包 agent-runtime 与外部工具...");
+  fs.rmSync(path.join(binariesDir, "qone-runtime.exe"), { force: true });
+  await runCommand("bun", ["run", "scripts/build-runtime.ts"], desktopRoot);
+  // 各脚本按固定版本与 SHA-256 缓存，已就绪时立即跳过
+  for (const script of ["prepare-opencli.ts", "prepare-reach-tools.ts", "prepare-ffmpeg.ts", "prepare-bilibili-cli.ts"]) {
+    await runCommand("bun", ["run", `scripts/${script}`], desktopRoot);
+  }
 
   // 3. 生成 boot locale
   console.log("\n[2/5] 生成初始国际化语言包...");

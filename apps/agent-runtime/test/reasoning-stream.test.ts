@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { PiAdapter } from "../src/pi-adapter";
 import { ModelResponseTiming } from "../src/model-response-timing";
 import { applyReasoningDelta, assistantPartsFromPiMessage, type AgentEvent, type AssistantMessagePart } from "@qone/protocol";
-import { Database } from "bun:sqlite";
+import { DatabaseSync as Database } from "node:sqlite";
 import { openDb, closeDb, SessionRepo, RunRepo, MessageRepo } from "@qone/database";
+import { snapshotDb } from "./db-snapshot";
 
 test("reasoning stays separate and survives interruption and persistence", () => {
   let parts: AssistantMessagePart[] = [];
@@ -20,8 +21,8 @@ test("reasoning stays separate and survives interruption and persistence", () =>
   const session = new SessionRepo(db).create();
   const run = new RunRepo(db).create(session.id);
   new MessageRepo(db).addAssistant(session.id, "", run.id, undefined, parts);
-  const snapshot = db.$client.serialize(); closeDb(db);
-  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot) });
+  const snapshot = snapshotDb(db); closeDb(db);
+  const reopened = openDb(snapshot);
   expect(JSON.parse(new MessageRepo(reopened).listBySession(session.id)[0]!.parts!)).toEqual(parts);
   closeDb(reopened);
 });

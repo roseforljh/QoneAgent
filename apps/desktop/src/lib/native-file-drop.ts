@@ -1,7 +1,7 @@
 import { localizeError } from "../lib/error-localization";
 import { invoke } from "./desktop-bridge";
 import { translateCurrent } from "../localization";
-import { DIRECTORY_MIME_TYPE, mediaMimeTypeFromName } from "@qone/protocol";
+import { DIRECTORY_MIME_TYPE, fileMimeTypeFromName } from "@qone/protocol";
 import type { EventCallback } from "./desktop-bridge";
 import { getCurrentWebview } from "./desktop-bridge";
 import type { DragDropEvent } from "./desktop-bridge";
@@ -12,30 +12,7 @@ import { createNativeAttachmentFile } from "./native-attachment-file";
 export type NativeFileInfo = { name: string; path: string; size: number; isDirectory: boolean };
 type DropPosition = { x: number; y: number };
 
-const MIME_TYPES: Record<string, string> = {
-  csv: "text/csv",
-  doc: "application/msword",
-  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  gif: "image/gif",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  json: "application/json",
-  md: "text/markdown",
-  pdf: "application/pdf",
-  png: "image/png",
-  ppt: "application/vnd.ms-powerpoint",
-  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  txt: "text/plain",
-  webp: "image/webp",
-  xls: "application/vnd.ms-excel",
-  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  zip: "application/zip",
-};
-
-const getMimeType = (name: string) => {
-  const extension = name.split(".").pop()?.toLowerCase();
-  return mediaMimeTypeFromName(name) ?? (extension ? MIME_TYPES[extension] : undefined) ?? "application/octet-stream";
-};
+const getMimeType = (name: string) => fileMimeTypeFromName(name) ?? "application/octet-stream";
 
 export const fileFromNativeInfo = (file: NativeFileInfo): File =>
   createNativeAttachmentFile(file.name, file.isDirectory ? DIRECTORY_MIME_TYPE : getMimeType(file.name), file.path, file.size, file.isDirectory);

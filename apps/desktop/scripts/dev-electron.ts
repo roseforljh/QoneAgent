@@ -21,7 +21,11 @@ const buildElec = spawn("bun", ["run", "scripts/build-electron.ts"], {
 });
 await new Promise((resolve) => buildElec.on("close", resolve));
 
-// 3. 启动 vite
+// 3. 打包 agent-runtime 并持续监听源码变更（运行时重启即用最新代码）
+const { watchRuntime } = await import("./build-runtime");
+const runtimeWatch = await watchRuntime();
+
+// 4. 启动 vite
 const vite = spawn("bun", ["run", "vite"], {
   cwd: root,
   stdio: "inherit",
@@ -45,7 +49,7 @@ async function waitForServer(url: string, timeoutMs = 15000): Promise<boolean> {
 
 await waitForServer("http://127.0.0.1:1480");
 
-// 4. 启动 electron：传应用目录而非 main 文件，Electron 才会读取 package.json 的 name，
+// 5. 启动 electron：传应用目录而非 main 文件，Electron 才会读取 package.json 的 name，
 // 与安装版共用同一 userData（safeStorage 密钥按 userData 区分，否则两边凭据互相解不开）
 const electron = spawn(electronBin, [root], {
   cwd: root,
@@ -53,12 +57,12 @@ const electron = spawn(electronBin, [root], {
   env: {
     ...process.env,
     NODE_ENV: "development",
-    QONE_AGENT_RUNTIME: process.env.QONE_AGENT_RUNTIME || path.resolve(root, "../agent-runtime/src/index.ts"),
     VITE_DEV_SERVER_URL: "http://127.0.0.1:1480",
   },
 });
 
 function cleanup() {
+  void runtimeWatch.dispose();
   try {
     electron.kill();
   } catch {}
@@ -72,6 +76,7 @@ process.on("SIGINT", cleanup);
 process.on("SIGTERM", cleanup);
 
 electron.on("close", (code) => {
+  void runtimeWatch.dispose();
   try {
     vite.kill();
   } catch {}

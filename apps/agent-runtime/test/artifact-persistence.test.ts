@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { DatabaseSync as Database } from "node:sqlite";
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -6,14 +6,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ArtifactRepo, SessionRepo, openDb } from "@qone/database";
 import { GeneratedArtifacts } from "../src/generated-artifacts";
+import { snapshotDb } from "./db-snapshot";
 
 test("generated artifact keeps its run association after reopening the database", () => {
   const first = openDb(":memory:");
   const session = new SessionRepo(first).create("Speech", undefined);
   const saved = new ArtifactRepo(first).add({ sessionId: session.id, runId: "run-1", type: "audio", name: "speech.mp3", path: "C:\\media\\speech.mp3", mimeType: "audio/mpeg", size: 4 });
-  const snapshot = first.$client.serialize();
+  const snapshot = snapshotDb(first);
   first.$client.close();
-  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot) });
+  const reopened = openDb(snapshot);
   const [artifact] = new ArtifactRepo(reopened).listBySession(session.id);
   expect(artifact).toMatchObject({ id: saved.id, runId: "run-1", type: "audio", mimeType: "audio/mpeg", size: 4 });
   expect(new ArtifactRepo(reopened).deleteByRunIds(session.id, ["other-run"])).toEqual([]);
@@ -26,7 +27,7 @@ test("existing artifact tables gain a nullable run ID column", () => {
   const legacy = new Database(":memory:");
   legacy.exec("CREATE TABLE artifacts (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL, mime_type TEXT, size INTEGER, created_at INTEGER NOT NULL)");
   const db = openDb(":memory:", { open: () => legacy });
-  const columns = db.$client.query("PRAGMA table_info(artifacts)").all() as Array<{ name: string }>;
+  const columns = db.$client.prepare("PRAGMA table_info(artifacts)").all() as Array<{ name: string }>;
   expect(columns.some((column) => column.name === "run_id")).toBe(true);
   db.$client.close();
 });

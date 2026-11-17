@@ -52,7 +52,7 @@ test("session search picks the first inserted match on equal timestamps and titl
     const content = sessions.create("ordinary", workspace.id);
     messages.add(content.id, "user", "first needle");
     messages.add(content.id, "assistant", "second needle");
-    db.$client.query("UPDATE messages SET created_at = 1 WHERE session_id = ?").run(content.id);
+    db.$client.prepare("UPDATE messages SET created_at = 1 WHERE session_id = ?").run(content.id);
     const title = sessions.create("needle title", workspace.id);
     messages.add(title.id, "user", "needle body");
     const matches = sessions.search("needle");
@@ -74,7 +74,7 @@ test("session search merges recent title and content hits before applying the re
       for (let index = 0; index < 60; index++) {
         const session = sessions.create(index % 2 ? "needle title" : "ordinary", workspace.id);
         if (!(index % 2)) messages.add(session.id, "user", "needle content");
-        db.$client.query("UPDATE sessions SET updated_at = ? WHERE id = ?").run(index, session.id);
+        db.$client.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(index, session.id);
         expected.unshift(session.id);
       }
     })();

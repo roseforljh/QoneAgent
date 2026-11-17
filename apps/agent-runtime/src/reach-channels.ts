@@ -1,7 +1,11 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { findSite, SITE_CONFIG, type ReachChannelInfo } from "@qone/protocol";
 import { reachChannelEnglish, type ReachChannelId } from "./reach-channel-copy.js";
+
+// Source directory in development; the bundle's own directory (binaries) when packaged.
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 const openCliSiteIds = SITE_CONFIG.filter((site) => site.reachMode === "opencli").map((site) => site.id as ReachChannelId);
 
@@ -9,9 +13,8 @@ function executable(name: string): string | undefined {
   const file = process.platform === "win32" ? `${name}.exe` : name;
   const candidates = [
     process.env.QONE_TOOLS_DIR && path.join(process.env.QONE_TOOLS_DIR, file),
-    path.join(path.dirname(process.execPath), file),
-    path.join(path.dirname(process.execPath), "binaries", file),
-    path.resolve(import.meta.dir, "../../desktop/binaries", file),
+    path.join(moduleDirectory, file),
+    path.resolve(moduleDirectory, "../../desktop/binaries", file),
     path.join(process.cwd(), "apps", "desktop", "binaries", file),
     ...((process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map((dir) => path.join(dir, file))),
   ];

@@ -33,4 +33,12 @@ BrowserBridge.prototype.close = async function () {
   return originalClose.call(this);
 };
 
+// Qone runs this file with its own Electron binary in ELECTRON_RUN_AS_NODE mode.
+// Commander treats an Electron process without defaultApp as a packaged app and
+// would read the script path as the command; children must not inherit node mode.
+if (process.versions.electron) {
+  process.defaultApp = true;
+  delete process.env.ELECTRON_RUN_AS_NODE;
+}
+
 await import("./node_modules/@jackwener/opencli/dist/src/main.js");

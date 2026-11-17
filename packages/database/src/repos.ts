@@ -53,28 +53,22 @@ export class SessionRepo {
     // CROSS JOIN fixes the traversal order: indexed sessions, then indexed
     // messages. SQLite can stream this order without sorting all message text.
     // lower() cannot replace JS folding: even ASCII "k" must match Unicode K.
-    const cursor = this.db.$client.prepare<{ sessionId: string; content: string }, []>(`
+    const cursor = this.db.$client.prepare(`
       SELECT s.id AS sessionId, m.content
       FROM sessions s
       CROSS JOIN workspaces w ON w.id = s.workspace_id
       CROSS JOIN messages m ON m.session_id = s.id
       ORDER BY s.updated_at DESC, s.rowid DESC, m.created_at ASC, m.rowid ASC
     `);
-    try {
-      for (const row of cursor.iterate()) {
-        const rank = ranks.get(row.sessionId)!;
-        if (rank > lastRank) break;
-        if (matched.has(row.sessionId) || !row.content.toLocaleLowerCase().includes(needle)) continue;
-        const position = results.findIndex((result) => ranks.get(result.session.id)! > rank);
-        results.splice(position < 0 ? results.length : position, 0, { session: rows[rank]!, match: "content", content: row.content });
-        matched.add(row.sessionId);
-        if (results.length > limit) matched.delete(results.pop()!.session.id);
-        if (results.length >= limit) lastRank = ranks.get(results.at(-1)!.session.id)!;
-      }
-    } finally {
-      // Bun's cached query iterator retains its position after an early break.
-      // Own and finalize this cursor so later searches always start at the top.
-      cursor.finalize();
+    for (const row of cursor.iterate() as Iterable<{ sessionId: string; content: string }>) {
+      const rank = ranks.get(row.sessionId)!;
+      if (rank > lastRank) break;
+      if (matched.has(row.sessionId) || !row.content.toLocaleLowerCase().includes(needle)) continue;
+      const position = results.findIndex((result) => ranks.get(result.session.id)! > rank);
+      results.splice(position < 0 ? results.length : position, 0, { session: rows[rank]!, match: "content", content: row.content });
+      matched.add(row.sessionId);
+      if (results.length > limit) matched.delete(results.pop()!.session.id);
+      if (results.length >= limit) lastRank = ranks.get(results.at(-1)!.session.id)!;
     }
     return results;
   }

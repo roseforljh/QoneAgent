@@ -3,7 +3,7 @@ import path from "node:path";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ArtifactRepo } from "@qone/database";
-import { mediaMimeTypeFromName, type ArtifactInfo } from "@qone/protocol";
+import { fileMimeTypeFromName, type ArtifactInfo } from "@qone/protocol";
 
 type ArtifactRow = ReturnType<ArtifactRepo["listBySession"]>[number];
 
@@ -37,7 +37,7 @@ export class FileDelivery {
     for (const input of new Set(inputs)) {
       const target = await realpath(path.resolve(cwd, input));
       const info = await stat(target);
-      const mimeType = info.isDirectory() ? undefined : mediaMimeTypeFromName(target) ?? (Bun.file(target).type.split(";", 1)[0] || undefined);
+      const mimeType = info.isDirectory() ? undefined : fileMimeTypeFromName(target);
       // Delivering the same file again moves its card to the latest answer.
       for (const previous of this.repo.listBySession(sessionId).filter((row) => row.path === target)) {
         this.repo.delete(previous.id);

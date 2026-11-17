@@ -71,47 +71,72 @@ function fallbackDecrypt(encoded: string): string {
   return decipher.update(data) + decipher.final("utf8");
 }
 
-export function setSecret(key: string, value: string): void {
-  storeSecrets({ [key]: value }, []);
+// Every file access runs in order, so an awaiting encrypt can never land after a later delete.
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(task: () => T | Promise<T>): Promise<T> {
+  const next = queue.then(task);
+  queue = next.catch(() => {});
+  return next;
 }
 
-function storeSecrets(values: Record<string, string>, removeKeys: string[]): void {
+export function setSecret(key: string, value: string): Promise<void> {
+  return storeSecrets({ [key]: value }, []);
+}
+
+function storeSecrets(values: Record<string, string>, removeKeys: string[]): Promise<void> {
+  return serial(() => writeEntries(values, removeKeys));
+}
+
+async function writeEntries(values: Record<string, string>, removeKeys: string[]): Promise<void> {
   for (const key of [...Object.keys(values), ...removeKeys]) validateSecretKey(key);
+  readSecretFile(); // Refuse corrupt storage before spending time on encryption.
+  const available = await safeStorage.isAsyncEncryptionAvailable();
+  const entries = await Promise.all(Object.entries(values).map(async ([key, value]) => [key, {
+    data: available ? (await safeStorage.encryptStringAsync(value)).toString("base64") : fallbackEncrypt(value),
+    isSafeStorage: available,
+  }] as const));
   const content = readSecretFile();
   for (const key of removeKeys) delete content[key];
-  const available = safeStorage.isEncryptionAvailable();
-  for (const [key, value] of Object.entries(values)) {
-    content[key] = { data: available ? safeStorage.encryptString(value).toString("base64") : fallbackEncrypt(value), isSafeStorage: available };
-  }
+  Object.assign(content, Object.fromEntries(entries));
   writeSecretFile(content);
 }
 
 /** Read a batch atomically; missing entries are omitted, unreadable entries are errors. */
-export function getSecrets(keys: string[]): Record<string, string> {
-  for (const key of keys) validateSecretKey(key);
-  const content = readSecretFile();
-  return Object.fromEntries(keys.flatMap(key => {
-    const entry = content[key];
-    if (!entry) return [];
-    try {
-      if (entry.isSafeStorage && !safeStorage.isEncryptionAvailable()) throw new Error();
-      const value = entry.isSafeStorage ? safeStorage.decryptString(Buffer.from(entry.data, "base64")) : fallbackDecrypt(entry.data);
-      return [[key, value]];
-    } catch { throw new Error("Stored credentials could not be decrypted"); }
-  }));
+export function getSecrets(keys: string[]): Promise<Record<string, string>> {
+  return serial(async () => {
+    for (const key of keys) validateSecretKey(key);
+    const content = readSecretFile();
+    const values: Record<string, string> = {}, rotated: Record<string, string> = {};
+    for (const key of keys) {
+      const entry = content[key];
+      if (!entry) continue;
+      try {
+        if (!entry.isSafeStorage) { values[key] = fallbackDecrypt(entry.data); continue; }
+        if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error();
+        const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(Buffer.from(entry.data, "base64"));
+        values[key] = result;
+        if (shouldReEncrypt) rotated[key] = result;
+      } catch { throw new Error("Stored credentials could not be decrypted"); }
+    }
+    // OS key rotation: rewrite under the new key; a failed rewrite must not fail the read.
+    if (Object.keys(rotated).length) await writeEntries(rotated, []).catch(() => {});
+    return values;
+  });
 }
 
-export function getSecret(key: string): string | null {
-  return getSecrets([key])[key] ?? null;
+export async function getSecret(key: string): Promise<string | null> {
+  return (await getSecrets([key]))[key] ?? null;
 }
 
-export function deleteSecret(key: string): void {
-  validateSecretKey(key);
-  const content = readSecretFile();
-  if (key in content) {
-    delete content[key];
-    writeSecretFile(content);
-  }
+export function deleteSecret(key: string): Promise<void> {
+  return serial(() => {
+    validateSecretKey(key);
+    const content = readSecretFile();
+    if (key in content) {
+      delete content[key];
+      writeSecretFile(content);
+    }
+  });
 }
 
 /**
@@ -120,7 +145,7 @@ export function deleteSecret(key: string): void {
  * events never reach the renderer; they become a redacted `mcp.oauth.saved`
  * acknowledgement. Returns null when the event must not be forwarded at all.
  */
-export function persistRuntimeSecret(event: unknown, acknowledge?: (requestId: string, saved: boolean) => void): unknown | null {
+export async function persistRuntimeSecret(event: unknown, acknowledge?: (requestId: string, saved: boolean) => void): Promise<unknown | null> {
   if (!event || typeof event !== "object") return event;
   const record = event as Record<string, unknown>;
   if (record.type === "claude-code.credentials") {
@@ -128,7 +153,7 @@ export function persistRuntimeSecret(event: unknown, acknowledge?: (requestId: s
     if (typeof requestId !== "string" || typeof serverId !== "string") return null;
     try {
       if (!values || typeof values !== "object" || Array.isArray(values) || Object.values(values).some(value => typeof value !== "string") || !Array.isArray(removeKeys) || removeKeys.some(key => typeof key !== "string")) throw new Error();
-      storeSecrets(values as Record<string, string>, removeKeys as string[]);
+      await storeSecrets(values as Record<string, string>, removeKeys as string[]);
     } catch { acknowledge?.(requestId, false); return null; }
     acknowledge?.(requestId, true);
     return [...new Set([...removeKeys as string[], ...Object.keys(values as object)])].map(key => ({ type: "mcp.oauth.saved", serverId, key }));
@@ -138,7 +163,7 @@ export function persistRuntimeSecret(event: unknown, acknowledge?: (requestId: s
     const secret = record.type === "mcp.oauth.token" ? record.accessToken : record.value;
     if (typeof key !== "string" || typeof secret !== "string" || secret.length === 0) return null;
     try {
-      setSecret(key, secret);
+      await setSecret(key, secret);
     } catch {
       // Never fall back to forwarding the secret when it cannot be stored.
       return { type: "error", message: "OAuth credential could not be stored" };
@@ -147,7 +172,7 @@ export function persistRuntimeSecret(event: unknown, acknowledge?: (requestId: s
   }
   if (record.type === "mcp.oauth.invalidated" && typeof key === "string") {
     try {
-      deleteSecret(key);
+      await deleteSecret(key);
     } catch {
       // Invalidation carries no credential; forwarding it is safe.
     }

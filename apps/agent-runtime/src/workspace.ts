@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { openAsBlob } from "node:fs";
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { WorkspaceFileInfo, WorkspaceGitEntry } from "@qone/protocol";
@@ -39,7 +41,7 @@ export async function listWorkspaceFiles(root: string, relative = ""): Promise<W
 export async function readWorkspaceFile(root: string, relative: string) {
   const target = await resolveWorkspacePath(root, relative);
   if (!(await stat(target)).isFile()) throw new Error("Not a regular file");
-  const bytes = new Uint8Array(await Bun.file(target).slice(0, MAX_PREVIEW_BYTES + 1).arrayBuffer());
+  const bytes = new Uint8Array(await (await openAsBlob(target)).slice(0, MAX_PREVIEW_BYTES + 1).arrayBuffer());
   const truncated = bytes.length > MAX_PREVIEW_BYTES;
   const preview = bytes.subarray(0, MAX_PREVIEW_BYTES);
   if (preview.includes(0)) return { content: "", binary: true, truncated: false };
@@ -47,12 +49,16 @@ export async function readWorkspaceFile(root: string, relative: string) {
 }
 
 async function git(root: string, args: string[], allowed = [0], limit = MAX_PREVIEW_BYTES) {
-  const child = Bun.spawn(["git", "--literal-pathspecs", "-C", root, ...args], {
-    stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+  const child = spawn("git", ["--literal-pathspecs", "-C", root, ...args], {
+    stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+  });
+  const exited = new Promise<number>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code ?? -1));
   });
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; child.kill(); }, 15_000);
-  const consume = async (stream: ReadableStream<Uint8Array>, max: number) => {
+  const consume = async (stream: AsyncIterable<Uint8Array>, max: number) => {
     const chunks: Uint8Array[] = [];
     let size = 0;
     let truncated = false;
@@ -68,7 +74,7 @@ async function git(root: string, args: string[], allowed = [0], limit = MAX_PREV
     return { text: new TextDecoder().decode(bytes, { stream: truncated }), truncated };
   };
   try {
-    const [out, err, code] = await Promise.all([consume(child.stdout, limit), consume(child.stderr, 8000), child.exited]);
+    const [out, err, code] = await Promise.all([consume(child.stdout, limit), consume(child.stderr, 8000), exited]);
     if (timedOut) throw new Error("Git command timed out");
     if (!allowed.includes(code)) throw new Error(err.text.trim() || `Git exited with code ${code}`);
     return { ...out, code };

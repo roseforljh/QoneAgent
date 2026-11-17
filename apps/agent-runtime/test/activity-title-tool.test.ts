@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { DatabaseSync as Database } from "node:sqlite";
 import { ACTIVITY_TITLE_MAX_LENGTH, ACTIVITY_TITLE_TOOL, activityTitleFromArgs, applyAssistantToolEvent, assistantPartsFromPiMessage } from "@qone/protocol";
 import { closeDb, MessageRepo, openDb, RunRepo, SessionRepo } from "@qone/database";
 import { createActivityTitleTool } from "../src/activity-title-tool";
 import { ApprovalQueue, withPermission } from "../src/permissions";
+import { snapshotDb } from "./db-snapshot";
 
 const execute = (tool: ReturnType<typeof createActivityTitleTool>, args: unknown) => tool.execute("stage-1", args as never, undefined, undefined, undefined);
 
@@ -40,9 +41,9 @@ test("stage purposes survive the ordinary Pi event and database reopen path", as
   const session = new SessionRepo(db).create();
   const run = new RunRepo(db).create(session.id);
   const saved = new MessageRepo(db).addAssistant(session.id, "", run.id, undefined, parts);
-  const snapshot = db.$client.serialize();
+  const snapshot = snapshotDb(db);
   closeDb(db);
-  const reopened = openDb(":memory:", { open: () => Database.deserialize(snapshot) });
+  const reopened = openDb(snapshot);
   try {
     const history = new MessageRepo(reopened).listBySession(session.id);
     const restored = JSON.parse(history.find((message) => message.id === saved.id)!.parts!);

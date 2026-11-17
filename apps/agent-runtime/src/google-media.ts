@@ -1,5 +1,6 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { openAsBlob } from "node:fs";
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -174,7 +175,7 @@ async function uploadGoogleFile(baseUrl: string, apiKey: string, mimeType: strin
       "X-Goog-Upload-Offset": "0",
       "X-Goog-Upload-Command": "upload, finalize",
     },
-    body: bytes ?? Bun.file((data as { path: string }).path),
+    body: bytes ?? await openAsBlob((data as { path: string }).path),
     signal,
   });
   if (!finish.ok) throw new Error(await readResponseError(finish));

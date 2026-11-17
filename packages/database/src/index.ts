@@ -1,5 +1,6 @@
-import { Database } from "bun:sqlite";
-import { drizzle } from "drizzle-orm/bun-sqlite";
+import { mkdirSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { drizzleSqlite, SqliteClient } from "./sqlite-client.js";
 import * as schema from "./schema.js";
 
 export * from "./repos.js";
@@ -26,43 +27,41 @@ export {
 
 export type Db = ReturnType<typeof openDb>;
 
+export { SqliteClient } from "./sqlite-client.js";
+
 export interface SqliteDriver {
-  open(path: string): Database;
+  open(path: string): DatabaseSync;
 }
 
-/** Default Bun driver. A Node sqlite driver can be supplied without changing
- * repositories if the Runtime compatibility gate ever selects Node. */
-export const bunSqliteDriver: SqliteDriver = {
-  open: (path) => new Database(path, { create: true }),
+/** Node's built-in SQLite; Bun implements the same module for tests. */
+export const nodeSqliteDriver: SqliteDriver = {
+  open: (path) => new DatabaseSync(path),
 };
 
-export function openDb(path: string, driver: SqliteDriver = bunSqliteDriver) {
+export function openDb(path: string, driver: SqliteDriver = nodeSqliteDriver) {
   return openDatabase(path, driver, migrate);
 }
 
 
-function openDatabase(path: string, driver: SqliteDriver, initialize: (sqlite: Database) => void) {
+function openDatabase(path: string, driver: SqliteDriver, initialize: (sqlite: SqliteClient) => void) {
   const dir = path.replace(/[/\\][^/\\]+$/, "");
-  if (dir && dir !== path) {
-    const fs = require("node:fs");
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  const sqlite = driver.open(path);
+  if (dir && dir !== path) mkdirSync(dir, { recursive: true });
+  const sqlite = new SqliteClient(driver.open(path));
   sqlite.exec("PRAGMA journal_mode = WAL;");
   sqlite.exec("PRAGMA synchronous = NORMAL;");
   sqlite.exec("PRAGMA foreign_keys = ON;");
   sqlite.exec("PRAGMA busy_timeout = 5000;");
   initialize(sqlite);
-  return drizzle(sqlite, { schema });
+  return drizzleSqlite(sqlite, schema);
 }
 
 export function closeDb(db: Db) {
-  db.$client.close(true);
+  db.$client.close();
 }
 
 // Bootstrap migration mirrors drizzle/0000_initial.sql plus later schema changes.
 // Keeping this small fallback makes first launch self-contained.
-function migrate(sqlite: Database) {
+function migrate(sqlite: SqliteClient) {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -221,40 +220,40 @@ function migrate(sqlite: Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_goal_events_goal ON goal_events(goal_id, created_at);
   `);
-  const messageColumns = new Set(sqlite.query("PRAGMA table_info(messages)").all().map((column) => (column as { name: string }).name));
-  const sessionColumns = new Set(sqlite.query("PRAGMA table_info(sessions)").all().map((column) => (column as { name: string }).name));
+  const messageColumns = new Set(sqlite.prepare("PRAGMA table_info(messages)").all().map((column) => (column as { name: string }).name));
+  const sessionColumns = new Set(sqlite.prepare("PRAGMA table_info(sessions)").all().map((column) => (column as { name: string }).name));
   if (!sessionColumns.has("last_user_message_at")) {
     sqlite.exec("ALTER TABLE sessions ADD COLUMN last_user_message_at INTEGER NOT NULL DEFAULT 0");
     sqlite.exec("UPDATE sessions SET last_user_message_at = COALESCE((SELECT MAX(created_at) FROM messages WHERE messages.session_id = sessions.id AND messages.role = 'user'), created_at)");
   }
-  if (!sqlite.query("PRAGMA table_info(artifacts)").all().some((column) => (column as { name: string }).name === "run_id")) {
+  if (!sqlite.prepare("PRAGMA table_info(artifacts)").all().some((column) => (column as { name: string }).name === "run_id")) {
     sqlite.exec("ALTER TABLE artifacts ADD COLUMN run_id TEXT");
   }
   if (!messageColumns.has("goal_id")) sqlite.exec("ALTER TABLE messages ADD COLUMN goal_id TEXT");
   if (!messageColumns.has("quote")) sqlite.exec("ALTER TABLE messages ADD COLUMN quote TEXT");
   if (!messageColumns.has("communication")) sqlite.exec("ALTER TABLE messages ADD COLUMN communication TEXT");
-  const runColumns = new Set(sqlite.query("PRAGMA table_info(runs)").all().map((column) => (column as { name: string }).name));
+  const runColumns = new Set(sqlite.prepare("PRAGMA table_info(runs)").all().map((column) => (column as { name: string }).name));
   if (!runColumns.has("origin")) sqlite.exec("ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'");
   if (!runColumns.has("goal_id")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_id TEXT");
   if (!runColumns.has("goal_epoch")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_epoch INTEGER");
   if (!runColumns.has("finalization_authorized")) sqlite.exec("ALTER TABLE runs ADD COLUMN finalization_authorized INTEGER NOT NULL DEFAULT 0");
-  if (!sqlite.query("PRAGMA table_info(tool_calls)").all().some((column) => (column as { name: string }).name === "duration_ms")) {
+  if (!sqlite.prepare("PRAGMA table_info(tool_calls)").all().some((column) => (column as { name: string }).name === "duration_ms")) {
     sqlite.exec("ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER");
   }
   for (const column of ["parent_tool_call_id", "server_operation"]) {
-    if (!sqlite.query("PRAGMA table_info(tool_calls)").all().some(item => (item as { name: string }).name === column)) {
+    if (!sqlite.prepare("PRAGMA table_info(tool_calls)").all().some(item => (item as { name: string }).name === column)) {
       sqlite.exec(`ALTER TABLE tool_calls ADD COLUMN ${column} TEXT`);
     }
   }
-  const goalColumns = new Set(sqlite.query("PRAGMA table_info(goals)").all().map((column) => (column as { name: string }).name));
+  const goalColumns = new Set(sqlite.prepare("PRAGMA table_info(goals)").all().map((column) => (column as { name: string }).name));
   if (!goalColumns.has("run_options")) sqlite.exec("ALTER TABLE goals ADD COLUMN run_options TEXT");
-  if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "attachments")) {
+  if (!sqlite.prepare("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "attachments")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN attachments TEXT");
   }
-  if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "parts")) {
+  if (!sqlite.prepare("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "parts")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN parts TEXT");
   }
-  if (!sqlite.query("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "raw_message")) {
+  if (!sqlite.prepare("PRAGMA table_info(messages)").all().some((column) => (column as { name: string }).name === "raw_message")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN raw_message TEXT");
   }
   sqlite.exec(`
@@ -316,7 +315,7 @@ function migrate(sqlite: Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_subagent_messages_run ON subagent_messages(subagent_run_id, sequence);
   `);
-  const subagentColumns = new Set(sqlite.query("PRAGMA table_info(subagent_runs)").all().map((column) => (column as { name: string }).name));
+  const subagentColumns = new Set(sqlite.prepare("PRAGMA table_info(subagent_runs)").all().map((column) => (column as { name: string }).name));
   const additions: [string, string][] = [
     ["media_attachment", "TEXT"],
     ["parent_subagent_id", "TEXT"], ["depth", "INTEGER NOT NULL DEFAULT 0"],
@@ -330,7 +329,7 @@ function migrate(sqlite: Database) {
     ["context_message_count", "INTEGER NOT NULL DEFAULT 0"], ["token_usage", "TEXT"],
   ];
   for (const [name, definition] of additions) if (!subagentColumns.has(name)) sqlite.exec(`ALTER TABLE subagent_runs ADD COLUMN ${name} ${definition}`);
-  const subagentMessageColumns = new Set(sqlite.query("PRAGMA table_info(subagent_messages)").all().map(column => (column as { name: string }).name));
+  const subagentMessageColumns = new Set(sqlite.prepare("PRAGMA table_info(subagent_messages)").all().map(column => (column as { name: string }).name));
   if (!subagentMessageColumns.has("raw_message")) sqlite.exec("ALTER TABLE subagent_messages ADD COLUMN raw_message TEXT");
   if (!subagentMessageColumns.has("communication")) sqlite.exec("ALTER TABLE subagent_messages ADD COLUMN communication TEXT");
 }

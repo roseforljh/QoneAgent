@@ -36,8 +36,9 @@ function assertAppUrl(app: MediaAppId, url: string): void {
 /** Share the mature extractor/format selection used by upstream's yt-dlp plugin. */
 export class AppMediaService {
   constructor(
+    // yt-dlp runs YouTube's JS challenges on Qone's Electron binary in Node mode.
     private readonly runner: Runner = async (command, args, signal) => execFileAsync(command, args,
-      { signal, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }),
+      { signal, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }),
     private readonly extractor = ytDlpExecutable) {}
 
   private async run<T>(app: MediaAppId, stage: "inspect" | "download", url: string, args: string[], signal: AbortSignal | undefined,
@@ -56,7 +57,7 @@ export class AppMediaService {
       const timeout = AbortSignal.timeout(stage === "download" ? 300_000 : 120_000);
       const operationSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
       const common = ["--no-warnings", "--no-progress", "--socket-timeout", "30", "--retries", "2"];
-      if (app === "youtube") common.push("--js-runtimes", `bun:${process.execPath}`);
+      if (app === "youtube") common.push("--js-runtimes", `node:${process.execPath}`);
       const ffmpeg = ffmpegExecutable();
       if (ffmpeg) common.push("--ffmpeg-location", path.dirname(ffmpeg));
       let stdout: string;

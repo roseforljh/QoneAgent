@@ -1,8 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
-import fs from "node:fs";
-import { Notification, type BrowserWindow } from "electron";
+import { app, Notification, type BrowserWindow } from "electron";
 import { getRootDataDir } from "./data-paths";
 import { getSecrets, persistRuntimeSecret } from "./secret-store";
 import { killProcessTree } from "./process-tree";
@@ -11,6 +10,7 @@ export class SidecarManager {
   private child: ChildProcess | null = null;
   private exiting: Promise<void> = Promise.resolve();
   private generation = 0;
+  private starting: Promise<void> | undefined;
   private batchQueue: unknown[] = [];
   private batchTimer: NodeJS.Timeout | null = null;
   private getMainWindow: () => BrowserWindow | null;
@@ -24,54 +24,34 @@ export class SidecarManager {
     this.completedCopy = copy;
   }
 
-  private resolveRuntimeEntry(): { command: string; args: string[]; cwd: string } {
-    if (process.env.QONE_AGENT_RUNTIME) {
-      const explicit = path.resolve(process.env.QONE_AGENT_RUNTIME);
-      if (explicit.endsWith(".exe")) {
-        return { command: explicit, args: [], cwd: path.dirname(explicit) };
-      }
-      return { command: "bun", args: ["run", explicit], cwd: path.dirname(path.dirname(explicit)) };
-    }
-
-    // 优先检查打包资源目录
-    const packagedCandidate = typeof process.resourcesPath === "string"
-      ? path.join(process.resourcesPath, "binaries", "qone-runtime.exe")
-      : null;
-    if (packagedCandidate && fs.existsSync(packagedCandidate)) {
-      return { command: packagedCandidate, args: [], cwd: path.dirname(packagedCandidate) };
-    }
-
-    const localBinaryCandidate = path.resolve(__dirname, "../binaries/qone-runtime.exe");
-    if (fs.existsSync(localBinaryCandidate)) {
-      return { command: localBinaryCandidate, args: [], cwd: path.dirname(localBinaryCandidate) };
-    }
-
-    // 默认查找 apps/agent-runtime/src/index.ts
-    const devPath = path.resolve(__dirname, "../../agent-runtime/src/index.ts");
-    if (fs.existsSync(devPath)) {
-      return { command: "bun", args: ["run", devPath], cwd: path.resolve(__dirname, "../../agent-runtime") };
-    }
-
-    return { command: "bun", args: ["run", devPath], cwd: path.dirname(devPath) };
+  /** The runtime bundle runs on this Electron binary in Node mode; dev mode keeps it rebuilt by esbuild watch. */
+  private runtimeScript(): string {
+    if (process.env.QONE_AGENT_RUNTIME) return path.resolve(process.env.QONE_AGENT_RUNTIME);
+    return app.isPackaged
+      ? path.join(process.resourcesPath, "binaries", "qone-runtime.mjs")
+      : path.resolve(__dirname, "../binaries/qone-runtime.mjs");
   }
 
-  public start(): Promise<void> {
+  public start(ready: Promise<void> = Promise.resolve()): Promise<void> {
     this.stop();
     const generation = ++this.generation;
-    // A newer start/stop invalidates this queued spawn while teardown settles.
-    return this.exiting.then(() => {
+    // Gate sends while PATH is refreshed or the previous process tree exits.
+    return this.starting = Promise.all([this.exiting, ready]).then(() => {
       if (generation === this.generation) this.spawnRuntime(generation);
     });
   }
 
   private spawnRuntime(currentGen: number): void {
-    const { command, args, cwd } = this.resolveRuntimeEntry();
+    const script = this.runtimeScript();
 
-    const child = spawn(command, args, {
-      cwd,
+    const child = spawn(process.execPath, [script], {
+      cwd: path.dirname(script),
       env: {
         ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
         QONE_DATA_DIR: getRootDataDir(),
+        // Bundled Node tools run on this Electron binary with ELECTRON_RUN_AS_NODE.
+        QONE_NODE_EXECUTABLE: process.execPath,
       },
       stdio: ["pipe", "pipe", "inherit"],
       windowsHide: true,
@@ -88,14 +68,16 @@ export class SidecarManager {
 
     rl.on("line", (line) => {
       if (this.generation !== currentGen || !line.trim()) return;
-      this.handleRuntimeLine(line);
+      void this.handleRuntimeLine(line, currentGen);
     });
 
     child.on("close", (code) => {
-      if (this.generation === currentGen) {
+      // Lines still awaiting secret storage reach the renderer before the exit notice.
+      void this.lines.then(() => {
+        if (this.generation !== currentGen) return;
         this.flushBatch();
         this.emitToWindow([{ type: "runtime.exited", code }]);
-      }
+      });
     });
 
     child.on("error", (error) => {
@@ -103,7 +85,16 @@ export class SidecarManager {
     });
   }
 
-  private handleRuntimeLine(rawLine: string): void {
+  // Secret storage is async; chaining keeps runtime events in their original order.
+  private lines: Promise<void> = Promise.resolve();
+  private handleRuntimeLine(rawLine: string, generation = this.generation): Promise<void> {
+    this.lines = this.lines
+      .then(() => { if (this.generation === generation) return this.processRuntimeLine(rawLine); })
+      .catch(error => console.error("[sidecar] runtime line failed:", error));
+    return this.lines;
+  }
+
+  private async processRuntimeLine(rawLine: string): Promise<void> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(rawLine);
@@ -114,25 +105,25 @@ export class SidecarManager {
 
     // Batched payloads arrive as NDJSON arrays; intercept every event so no
     // credential-bearing event slips through to the renderer.
-    const events = (Array.isArray(parsed) ? parsed : [parsed])
-      .flatMap((event) => {
+    const events = (await Promise.all((Array.isArray(parsed) ? parsed : [parsed])
+      .map(async (event): Promise<unknown[]> => {
         if (event?.type === "mcp.credentials.request") {
           const { requestId, keys } = event;
           if (typeof requestId !== "string") return [];
           let values: Record<string, string> = {}, ok = false;
           try {
             if (!Array.isArray(keys) || keys.some(key => typeof key !== "string")) throw new Error();
-            values = getSecrets(keys);
+            values = await getSecrets(keys);
             ok = true;
           } catch { /* A read failure is not a missing credential or an expired login. */ }
           void this.send(JSON.stringify({ type: "mcp.credentials.restored", requestId, values, ok })).catch(() => {});
           return [];
         }
-        const persisted = persistRuntimeSecret(event, (requestId, saved) => {
+        const persisted = await persistRuntimeSecret(event, (requestId, saved) => {
           void this.send(JSON.stringify({ type: "claude-code.credentials.saved", requestId, saved })).catch(() => {});
         });
         return Array.isArray(persisted) ? persisted : [persisted];
-      })
+      }))).flat()
       .filter((event): event is object => event !== null);
 
     for (const event of events) {
@@ -181,9 +172,11 @@ export class SidecarManager {
     }
   }
 
-  public send(cmd: string): Promise<void> {
+  public async send(cmd: string): Promise<void> {
+    const generation = this.generation;
+    await this.starting;
     return new Promise((resolve, reject) => {
-      if (!this.child || !this.child.stdin || this.child.stdin.destroyed) {
+      if (generation !== this.generation || !this.child || !this.child.stdin || this.child.stdin.destroyed) {
         return reject(new Error("agent runtime is not running"));
       }
       this.child.stdin.write(cmd + "\n", "utf8", (error) => {
