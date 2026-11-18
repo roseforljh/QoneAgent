@@ -487,7 +487,7 @@ export const useStore = create<AgentState>((set, get, api) => {
         } else {
           set({ lastError: localizeError(error) });
         }
-      } else {
+      } else if (cmd.type !== "session.context.get") {
         set({ lastError: localizeError(error) });
       }
       return false;
@@ -800,8 +800,10 @@ export const useStore = create<AgentState>((set, get, api) => {
     if (!connected || !currentSessionId || !selectedModelId) return;
     const requestId = rid();
     set({ contextUsageRequestId: requestId });
+    pendingContextUsageRequests.set(requestId, currentSessionId);
     void get().send({ type: "session.context.get", requestId, sessionId: currentSessionId, model: selectedModelId }).then((sent) => {
-      if (!sent) set((state) => state.contextUsageRequestId === requestId ? { contextUsageRequestId: undefined } : state);
+      if (sent || !pendingContextUsageRequests.delete(requestId)) return;
+      set((state) => state.contextUsageRequestId === requestId ? { contextUsageRequestId: undefined } : state);
     });
   },
 
@@ -950,6 +952,8 @@ const pendingMessageReplacements = new Map<string, string>();
 const pendingSessionMessageRequests = new Map<string, { sessionId: string }>();
 const latestSessionMessageRequest = new Map<string, string>();
 const pendingTitleRequests = new Map<string, string>();
+// Keep request ownership after a live update or a new snapshot supersedes it.
+const pendingContextUsageRequests = new Map<string, string>();
 
 function requestSessionMessages(sessionId: string, includeSessionState = false) {
   const requestId = rid();
@@ -978,7 +982,7 @@ function clearSessionMessageRequests(sessionId: string) {
 }
 
 export function bridgeDependencies() {
-  return { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, queueToolUpdate, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
+  return { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, queueToolUpdate, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, pendingContextUsageRequests, mcpConnectRequests, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported: (supported: boolean) => { metadataLookupSupported = supported; } };
 }
 
 export function initBridge() { initRuntimeBridge(bridgeDependencies()); }

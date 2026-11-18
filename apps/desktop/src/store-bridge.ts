@@ -49,7 +49,7 @@ let wired = false;
 let lastSequence = -1;
 const lastRunSequences = new Map<string, number>();
 export function initRuntimeBridge(dependencies: ReturnType<typeof import("./store").bridgeDependencies>) {
-  const { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, mcpConnectRequests, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
+  const { useStore, hasDesktopBridge, clearDelta, flushNow, queueDelta, queueReasoning, deltas, pendingAgentRuns, stopRequestedSessionIds, forceStopRequestedSessionIds, stopRequests, pendingTitleRequests, pendingContextUsageRequests, mcpConnectRequests, metadataRequests, finishMcpConnection, handshakeRequests, steerRequests, workspaceRequests, cloudRequests, skillMutationRequests, browserUrlRequests, pendingMessageReplacements, pendingSessionMessageRequests, latestSessionMessageRequest, requestSessionMessages, clearSessionMessageRequests, stopRun, finishStopRequest, rememberBrowserConnection, browserAutoReconnectEnabled, displayRuntimeError, isCompactionMarker, alignToolCallIds, ensureStreamingToolPart, setMetadataLookupSupported } = dependencies;
   if (wired) return;
   if (!hasDesktopBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
@@ -68,6 +68,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       forceStopRequestedSessionIds.clear();
       stopRequests.clear();
       pendingTitleRequests.clear();
+      pendingContextUsageRequests.clear();
       pendingSessionMessageRequests.clear();
       for (const request of browserUrlRequests.values()) request.reject(new Error(t("error.runtimeExited")));
       browserUrlRequests.clear();
@@ -103,6 +104,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           activeMessageSequence: undefined,
           preparedToolCallIds: [],
           messagesLoadingSessionId: undefined,
+          contextUsageRequestId: undefined,
           queueItems: [],
           queueLoadedSessionId: undefined,
           ...(st.running && st.currentSessionId && userMessage ? {
@@ -149,6 +151,15 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     if (msg.type === "error" && msg.requestId && metadataRequests.has(msg.requestId)) {
       metadataRequests.get(msg.requestId)?.reject(new Error(msg.message));
       continue;
+    }
+    if (msg.type === "error" && msg.requestId) {
+      const ownerId = pendingContextUsageRequests.get(msg.requestId);
+      if (ownerId) {
+        pendingContextUsageRequests.delete(msg.requestId);
+        sessionStore(useStore, ownerId).setState((state) => state.contextUsageRequestId === msg.requestId
+          ? { contextUsageRequestId: undefined } : state);
+        continue;
+      }
     }
     const targetSessionId = msg.type === "agent.event" ? msg.event.sessionId
       : "sessionId" in msg ? msg.sessionId
@@ -813,10 +824,6 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           eventStore.setState((state) => ({ titleGeneratingSessionIds: state.titleGeneratingSessionIds.filter((id) => id !== sessionId) }));
           break;
         }
-        if (msg.requestId && msg.requestId === eventStore.getState().contextUsageRequestId) {
-          eventStore.setState({ contextUsageRequestId: undefined });
-          break;
-        }
         const compactingSessionId = msg.requestId && Object.entries(eventStore.getState().compactionStatuses).find(([, status]) => status.requestId === msg.requestId)?.[0];
         if (compactingSessionId) {
           eventStore.setState((state) => {
@@ -911,6 +918,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         });
         break;
       case "session.context":
+        pendingContextUsageRequests.delete(msg.requestId);
         eventStore.setState((state) => state.contextUsageRequestId === msg.requestId &&
           state.currentSessionId === msg.sessionId && state.selectedModelId === msg.model
           ? { contextUsageRequestId: undefined, contextUsage: { sessionId: msg.sessionId, model: msg.model, tokens: msg.tokens, contextWindow: msg.contextWindow } }

@@ -63,13 +63,23 @@ test("live usage replaces the snapshot while running and rejects late replies an
   push(43_000);
   expect(useStore.getState().running).toBe(true);
   expect(useStore.getState().contextUsage?.tokens).toBe(43_000);
-  emit({ type: "session.context", requestId, ...usage });
+  emit({ type: "error", requestId, message: "run aborted" });
+  expect(useStore.getState().lastError).toBeUndefined();
+  expect(useStore.getState().running).toBe(true);
   expect(useStore.getState().contextUsage?.tokens).toBe(43_000);
   push(1, "chat", "other/model");
   push(2, "chat", usage.model, "old-run");
   expect(useStore.getState().contextUsage?.tokens).toBe(43_000);
   useStore.getState().refreshContextUsage();
-  emit({ type: "error", requestId: useStore.getState().contextUsageRequestId!, message: "context temporarily unavailable" });
+  const staleRequest = useStore.getState().contextUsageRequestId!;
+  useStore.getState().refreshContextUsage();
+  const latestRequest = useStore.getState().contextUsageRequestId!;
+  emit({ type: "session.context", requestId: staleRequest, ...usage });
+  expect(useStore.getState().contextUsageRequestId).toBe(latestRequest);
+  expect(useStore.getState().contextUsage?.tokens).toBe(43_000);
+  emit({ type: "error", requestId: latestRequest, message: "context temporarily unavailable" });
+  expect(useStore.getState().contextUsageRequestId).toBeUndefined();
+  expect(useStore.getState().lastError).toBeUndefined();
   expect(useStore.getState().contextUsage?.tokens).toBe(43_000);
 });
 
