@@ -52,6 +52,7 @@ test("integrations defer their schemas and restore only tools used in history", 
   const mcpTool = { ...tool, name: "mcp_fixture_read_record", qoneToolName: "mcp:fixture:read_record" };
   const mcp = applyToolExposure([mcpTool]);
   expect(mcp.catalog).toContain("- mcp_fixture: MCP server fixture");
+  expect(mcp.catalog).toContain("MCP server fixture, connected. Execute an SSH server command");
   expect(mcp.catalog).not.toContain(mcpTool.name);
   expect(applyToolExposure([mcpTool, { ...mcpTool, name: "mcp_fixture_search", qoneToolName: "mcp:fixture:search" }]).catalog).toBe(mcp.catalog);
   expect(usedToolNames([null, { content: "text" }, { content: [{ type: "toolCall", name: "server_exec" }, { type: "text", text: "read" }] }])).toEqual(new Set(["server_exec"]));

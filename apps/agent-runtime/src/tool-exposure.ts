@@ -27,13 +27,35 @@ export function namespaceFor(tool: ToolDefinition, servers?: Namespace): Namespa
 
 export interface ToolLoadout { tools: ToolDefinition[]; catalog: string }
 
+const firstSentence = (text: string) => text.trim().split(/(?<=[.!?。])\s|\n/)[0]!.trim().slice(0, 160);
+
+/**
+ * A server id alone ("mcp-cloudflare-docs") hides what an MCP server can do, so the
+ * model never thinks to search it. Its tools' own first sentences name the service
+ * and capability; tool_search and codemode index this text with the namespace.
+ */
+function mcpDescription(namespace: Namespace, tools: ToolDefinition[]): Namespace {
+  const sentences = [...new Set(tools.map((tool) => firstSentence(tool.description ?? "")).filter(Boolean))];
+  const summary = sentences.join(" ");
+  const capped = summary.length > 600 ? `${summary.slice(0, 600)}…` : summary;
+  return { ...namespace, description: `${namespace.description}, connected. ${capped}`.trim() };
+}
+
 export function applyToolExposure(tools: ToolDefinition[], servers?: Namespace): ToolLoadout {
-  const groups = new Map<string, string>();
-  const result = tools.map((tool) => {
+  const members = new Map<string, { namespace: Namespace; tools: ToolDefinition[] }>();
+  for (const tool of tools) {
     const namespace = namespaceFor(tool, servers);
-    if (!namespace) return tool;
-    if (!groups.has(namespace.name)) groups.set(namespace.name, namespace.description);
-    return { ...tool, exposure: "deferred", namespace } as ToolDefinition;
+    if (!namespace) continue;
+    const entry = members.get(namespace.name) ?? { namespace, tools: [] };
+    entry.tools.push(tool);
+    members.set(namespace.name, entry);
+  }
+  const resolved = new Map([...members].map(([name, { namespace, tools: group }]) =>
+    [name, name.startsWith("mcp_") ? mcpDescription(namespace, group) : namespace]));
+  const groups = new Map([...resolved].map(([name, namespace]) => [name, namespace.description]));
+  const result = tools.map((tool) => {
+    const namespace = resolved.get(namespaceFor(tool, servers)?.name ?? "");
+    return namespace ? { ...tool, exposure: "deferred", namespace } as ToolDefinition : tool;
   });
   const catalog = [...groups].map(([name, description]) => `- ${name}: ${description}`).join("\n");
   return {
