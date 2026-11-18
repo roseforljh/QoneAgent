@@ -318,6 +318,17 @@ function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pe
     return () => window.removeEventListener("qone-open-settings", openSettings);
   }, []);
   useEffect(() => {
+    // 用户在当前会话里有任何交互（点击、按键、滚轮）即视为已读，清掉侧栏完成小圆点。
+    // selectSession 传入当前会话 id 时只做"已读"处理，不会触发切换。
+    const acknowledge = () => {
+      const { currentSessionId, completedSessionIds, selectSession } = useStore.getState();
+      if (currentSessionId && completedSessionIds.includes(currentSessionId)) selectSession(currentSessionId);
+    };
+    const events = ["pointerdown", "keydown", "wheel"] as const;
+    events.forEach((type) => window.addEventListener(type, acknowledge, { capture: true, passive: true }));
+    return () => events.forEach((type) => window.removeEventListener(type, acknowledge, { capture: true }));
+  }, []);
+  useEffect(() => {
     const toggleSidebar = () => setSidebarCollapsed((collapsed) => !collapsed);
     const openSearch = () => setSearchOpen(true);
     window.addEventListener("qone-toggle-sidebar", toggleSidebar);

@@ -192,17 +192,29 @@ test("reasoning without tools creates an execution region before the final answe
   expect(assistantRangeSections([{ type: "text", index: 0 }]).activity).toEqual([]);
 });
 
-test("explicit phases keep commentary and pending text in activity until a final answer exists", () => {
+test("explicit commentary stays in activity while trailing streamed conclusion starts answer", () => {
   const parts: AssistantMessagePart[] = [
     { type: "text", text: "先查", messageSequence: 1, phase: "commentary" },
     { type: "tool-call", toolCallId: "read", toolName: "read", args: {}, messageSequence: 1 },
   ];
-  const pending = assistantMessageContent({ content: "准备继续", parts }, [], true) as PartState[];
-  const pendingRanges = assistantPartRanges(pending);
-  expect(pendingRanges.at(-1)).toMatchObject({ type: "text", phase: "pending" });
-  const active = assistantRangeSections(pendingRanges);
-  expect(active.activity).toHaveLength(3);
-  expect(active.answer).toEqual([]);
+  const activeOnly = assistantMessageContent({ content: "", parts }, [], true) as PartState[];
+  const activeSections = assistantRangeSections(assistantPartRanges(activeOnly));
+  expect(activeSections.activity).toHaveLength(2);
+  expect(activeSections.answer).toEqual([]);
+
+  const streamingAnswer = assistantMessageContent({ content: "结论如下", parts }, [], true) as PartState[];
+  const streamingSections = assistantRangeSections(assistantPartRanges(streamingAnswer));
+  expect(streamingSections.activity).toHaveLength(2);
+  expect(streamingSections.answer).toEqual([{ type: "text", index: 2 }]);
+  expect(hasVisibleAnswer(streamingAnswer, streamingSections.answer)).toBe(true);
+
+  const explicitCommentary = assistantMessageContent({ content: "", parts: [
+    ...parts,
+    { type: "text", text: "阶段说明", messageSequence: 2, phase: "commentary" },
+  ] }, [], false) as PartState[];
+  const commentarySections = assistantRangeSections(assistantPartRanges(explicitCommentary));
+  expect(commentarySections.activity).toHaveLength(3);
+  expect(commentarySections.answer).toEqual([]);
 
   const final = assistantMessageContent({ content: "", parts: [
     ...parts,

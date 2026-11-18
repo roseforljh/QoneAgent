@@ -21,6 +21,11 @@
       "from": "binaries",
       "to": "binaries",
       "filter": ["**/*"]
+    },
+    {
+      "from": "binaries/node_modules",
+      "to": "binaries/node_modules",
+      "filter": ["**/*"]
     }
   ],
   "win": {

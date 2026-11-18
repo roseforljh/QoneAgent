@@ -1,6 +1,6 @@
 import {
   nextThreadFollowMode, THREAD_BOTTOM_SCROLL_DURATION_MS, THREAD_BOTTOM_TOLERANCE_PX,
-  type ThreadFollowSnapshot, type ThreadPhase,
+  THREAD_RESERVE_RELEASE_DURATION_MS, type ThreadFollowSnapshot, type ThreadPhase,
 } from "./thread-scroll-policy";
 import { captureThreadReadingAnchor, type ThreadReadingAnchor } from "./thread-scroll-position";
 
@@ -23,15 +23,29 @@ export function measureThreadBottom({ content, footer, endContent }: Pick<Contro
   const reserve = content.querySelector<HTMLElement>("[data-aui-top-anchor-reserve]");
   const reserveHeight = reserve?.getBoundingClientRect().height ?? 0;
   let contentBottom = content.getBoundingClientRect().bottom;
-  if (endContent && endContent.getBoundingClientRect().height > 0) contentBottom = Math.max(contentBottom, endContent.getBoundingClientRect().bottom);
+  const endHeight = endContent ? endContent.getBoundingClientRect().height : 0;
+  if (endContent && endHeight > 0) contentBottom = Math.max(contentBottom, endContent.getBoundingClientRect().bottom);
+  const release = endHeight > 0 ? content.parentElement?.querySelector<HTMLElement>(":scope > [data-q-reserve-release]") : null;
+  const releaseHeight = release?.getBoundingClientRect().height ?? 0;
   const footerTop = footer.getBoundingClientRect().top;
   return {
     // The reserve is excluded while deciding when streamed content overflows.
-    distance: contentBottom - reserveHeight - footerTop,
+    distance: contentBottom - reserveHeight - releaseHeight - footerTop,
     // The reserve remains part of the native tail used by explicit bottom navigation.
     nativeDistance: contentBottom - footerTop,
     reserveHeight,
   };
+}
+
+function readReserveHeight(reserve: HTMLElement | null): number {
+  if (!reserve) return 0;
+  const rectHeight = reserve.getBoundingClientRect().height;
+  if (rectHeight > 0) return rectHeight;
+  return Number.parseFloat(reserve.style?.height ?? "0") || 0;
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
 // A wheel/key gesture inside a code block belongs to that block while it can scroll.
@@ -55,6 +69,9 @@ export function mountThreadScrollController(options: ControllerOptions) {
   else if (!restored) mode = nextThreadFollowMode(mode, { type: "phase", previous: "idle", phase: turn.phase });
   let frame: number | null = null;
   let animation: number | null = null;
+  let releaseAnimation: number | null = null;
+  let releaseSpacer: HTMLElement | null = null;
+  let lastReserveHeight = 0;
   let programmatic = false;
   let held = false;
   let disposed = false;
@@ -69,6 +86,12 @@ export function mountThreadScrollController(options: ControllerOptions) {
   const cancelAnimation = () => {
     if (animation !== null) cancelAnimationFrame(animation);
     animation = null;
+  };
+  const cancelRelease = () => {
+    if (releaseAnimation !== null) cancelAnimationFrame(releaseAnimation);
+    releaseAnimation = null;
+    releaseSpacer?.remove();
+    releaseSpacer = null;
   };
   const writeTop = (top: number) => {
     programmatic = true;
@@ -95,8 +118,9 @@ export function mountThreadScrollController(options: ControllerOptions) {
     held = false;
     mode = nextThreadFollowMode(mode, { type: "bottom", phase: turn.phase });
     cancelAnimation();
+    cancelRelease();
     if (turn.running || geometry().reserveHeight > THREAD_BOTTOM_TOLERANCE_PX
-      || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      || prefersReducedMotion()) {
       writeTop(bottomTop());
       publish();
       return;
@@ -123,7 +147,7 @@ export function mountThreadScrollController(options: ControllerOptions) {
     if (!held) {
       mode = nextThreadFollowMode(mode, { type: "content", phase: turn.phase, overflow: distance });
     }
-    if (isFollowing() && animation === null) writeTop(bottomTop());
+    if (isFollowing() && animation === null && releaseAnimation === null) writeTop(bottomTop());
     publish();
     previousTop = viewport.scrollTop;
   };
@@ -131,6 +155,11 @@ export function mountThreadScrollController(options: ControllerOptions) {
   const scroll = () => {
     if (programmatic) return;
     const { distance, reserveHeight } = geometry();
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    // 收起动画或释放动画导致容器缩短并把 scrollTop 夹到新底部时，不属于用户主动上滚。
+    const clampedAtBottom = !pointerActive && touchY === undefined
+      && Math.abs(viewport.scrollTop - maxScrollTop) <= 1
+      && distance <= THREAD_BOTTOM_TOLERANCE_PX;
     // Only a real change in scroll position releases intent; content growth does not.
     // Pointer dragging the scrollbar can happen while content height is being
     // measured, so it must not depend on scrollHeight staying unchanged.
@@ -138,7 +167,7 @@ export function mountThreadScrollController(options: ControllerOptions) {
       && viewport.scrollTop !== previousTop) hold();
     else if (animation === null && pointerActive && viewport.scrollTop !== pointerStartTop
       && (distance > THREAD_BOTTOM_TOLERANCE_PX || reserveHeight > THREAD_BOTTOM_TOLERANCE_PX)) hold();
-    else if (animation === null && viewport.scrollTop < previousTop) hold();
+    else if (animation === null && releaseAnimation === null && !clampedAtBottom && viewport.scrollTop < previousTop) hold();
     // A top-anchor placement also scrolls downward, but its blank response
     // reserve is not a user request to resume tail following.
     else if (animation === null && viewport.scrollTop > previousTop && distance <= THREAD_BOTTOM_TOLERANCE_PX
@@ -201,7 +230,10 @@ export function mountThreadScrollController(options: ControllerOptions) {
   viewport.addEventListener("touchmove", touchMove, { passive: true });
   viewport.addEventListener("touchend", touchEnd, { passive: true });
   viewport.addEventListener("touchcancel", touchEnd, { passive: true });
-  const resize = new ResizeObserver(schedule);
+  const resize = new ResizeObserver(() => {
+    if (observedReserve?.isConnected) lastReserveHeight = readReserveHeight(observedReserve);
+    schedule();
+  });
   [viewport, content, footer, endContent].forEach((element) => { if (element) resize.observe(element); });
   // Reserve shrinkage can exactly cancel message growth in the outer box.
   // Observe the reserve itself as well; rediscover it when the primitive moves
@@ -209,13 +241,61 @@ export function mountThreadScrollController(options: ControllerOptions) {
   let observedReserve: HTMLElement | null = null;
   const observeReserve = () => {
     const reserve = content.querySelector<HTMLElement>("[data-aui-top-anchor-reserve]");
+    if (reserve) lastReserveHeight = readReserveHeight(reserve);
     if (reserve === observedReserve) return;
     if (observedReserve) resize.unobserve(observedReserve);
     observedReserve = reserve;
     if (reserve) resize.observe(reserve);
   };
   observeReserve();
-  const mutation = new MutationObserver(schedule);
+  const startReserveRelease = (dropPx: number) => {
+    if (!content.parentElement || typeof content.after !== "function" || prefersReducedMotion()) return;
+    const doc = content.ownerDocument ?? document;
+    cancelAnimation();
+    cancelRelease();
+    const spacer = doc.createElement("div");
+    spacer.dataset.qReserveRelease = "";
+    spacer.style.height = `${dropPx}px`;
+    spacer.style.flexShrink = "0";
+    spacer.style.pointerEvents = "none";
+    spacer.setAttribute("aria-hidden", "true");
+    content.after(spacer);
+    // 若容器在无留白时靠 footer 的 mt-auto 贴底，需补齐这部分差值，让缓动恰好在触底时归零。
+    const actualMax = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    const deficit = Math.max(0, previousTop - actualMax);
+    const startHeight = dropPx + deficit;
+    const endHeight = deficit;
+    if (deficit > 0) spacer.style.height = `${startHeight}px`;
+    releaseSpacer = spacer;
+    writeTop(previousTop);
+    const startTime = performance.now();
+    const step = (time: number) => {
+      releaseAnimation = null;
+      if (disposed || releaseSpacer !== spacer) return;
+      const progress = Math.max(0, Math.min(1, (time - startTime) / THREAD_RESERVE_RELEASE_DURATION_MS));
+      const eased = 1 - (1 - progress) ** 3;
+      const nextHeight = progress >= 1 ? endHeight : Math.max(endHeight, startHeight - (startHeight - endHeight) * eased);
+      const previousMax = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      const shouldFollowClamp = viewport.scrollTop >= previousMax - 2;
+      spacer.style.height = `${nextHeight}px`;
+      const nextMax = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      if (shouldFollowClamp || viewport.scrollTop > nextMax) writeTop(nextMax);
+      else previousTop = viewport.scrollTop;
+      if (progress < 1) {
+        releaseAnimation = requestAnimationFrame(step);
+      } else {
+        spacer.remove();
+        if (releaseSpacer === spacer) releaseSpacer = null;
+        previousTop = viewport.scrollTop;
+        publish();
+      }
+    };
+    releaseAnimation = requestAnimationFrame(step);
+  };
+  const mutation = new MutationObserver(() => {
+    observeReserve();
+    schedule();
+  });
   mutation.observe(content, { childList: true, subtree: true, characterData: true });
 
   // The primitive restores native anchor state. Never overwrite it with a second restore.
@@ -225,7 +305,12 @@ export function mountThreadScrollController(options: ControllerOptions) {
   return {
     scrollToBottom,
     sync(next: ThreadScrollTurn) {
-      if (next.turnId !== turn.turnId) {
+      const wasRunning = turn.running;
+      const sameTurn = next.turnId === turn.turnId;
+      const previousReserve = observedReserve;
+      if (!sameTurn || next.running) cancelRelease();
+      if (!sameTurn) {
+        lastReserveHeight = 0;
         cancelAnimation();
         // Placement is not a user hold. Watch the new reply for overflow once
         // prework starts, without consuming its initial response reserve.
@@ -237,6 +322,16 @@ export function mountThreadScrollController(options: ControllerOptions) {
         mode = nextThreadFollowMode(mode, { type: "phase", previous: turn.phase, phase: next.phase });
       }
       turn = next;
+      observeReserve();
+      if (sameTurn && wasRunning && !next.running && !observedReserve) {
+        const hadReserve = Math.max(lastReserveHeight, readReserveHeight(previousReserve)) > 1;
+        lastReserveHeight = 0;
+        if (hadReserve) {
+          const naturalMaxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+          const dropPx = previousTop - naturalMaxTop;
+          if (dropPx > 1) startReserveRelease(dropPx);
+        }
+      }
       schedule();
     },
     reveal(message: HTMLElement) {
@@ -246,16 +341,20 @@ export function mountThreadScrollController(options: ControllerOptions) {
       const vpTop = viewport.getBoundingClientRect().top;
       const target = viewport.scrollTop + rect.top - (vpTop + topInset);
       cancelAnimation();
+      cancelRelease();
       held = false;
       mode = nextThreadFollowMode("static", { type: "phase", previous: "idle", phase: turn.phase });
       writeTop(target);
       publish();
     },
     dispose() {
-      options.onPosition?.(captureThreadReadingAnchor(viewport, content));
+      // 卸载时不能再采样阅读位置：父级 Viewport 的 layout cleanup 先于本组件执行，
+      // 已移除 top-anchor reserve，scrollTop 被浏览器夹到更小的最大值，
+      // 此刻量到的是被夹过的错位位置。阅读位置以最后一次真实 scroll 事件为准。
       options.onSave({ turnId: turn.turnId, mode });
       disposed = true;
       cancelAnimation();
+      cancelRelease();
       if (frame !== null) cancelAnimationFrame(frame);
       resize.disconnect();
       mutation.disconnect();

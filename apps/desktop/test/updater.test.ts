@@ -1,4 +1,5 @@
-import { afterAll, expect, mock, test } from "bun:test";
+import { afterAll, expect, mock, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,12 +7,14 @@ import path from "node:path";
 const tempRoot = mkdtempSync(path.join(tmpdir(), "qone-updater-"));
 const openedPaths: string[] = [];
 const openedUrls: string[] = [];
+const quit = mock(() => {});
 
 mock.module("electron", () => ({
   app: {
     isPackaged: true,
     getVersion: () => "0.0.1",
     getPath: (name: string) => (name === "temp" ? tempRoot : tempRoot),
+    quit,
   },
   shell: {
     openPath: async (target: string) => {
@@ -97,6 +100,34 @@ test("DesktopUpdater downloads with progress, resumes an interrupted download an
   expect(progress.at(-1)).toBe(100);
   expect(readFileSync(path.join(updateDir, "QoneAgent-Setup-0.0.2-x64.exe"))).toEqual(Buffer.from(payload));
   expect(existsSync(partPath)).toBe(false);
+
+  // Restart shows NSIS, and Qone only quits once it has started.
+  let child = new childProcess.ChildProcess();
+  const launch = spyOn(childProcess, "spawn").mockImplementation(() => child);
+  try {
+    const failed = updater.install(true);
+    child.emit("error", new Error("installer could not start"));
+    await expect(failed).rejects.toThrow("installer could not start");
+    expect(quit).not.toHaveBeenCalled();
+
+    child = new childProcess.ChildProcess();
+    const restart = updater.install(true);
+    expect(launch.mock.lastCall?.[1]).toEqual(["--updated"]);
+    expect(quit).not.toHaveBeenCalled();
+    child.emit("spawn");
+    await restart;
+    expect(quit).toHaveBeenCalledTimes(1);
+
+    // Later still schedules a silent install without relaunching Qone.
+    await updater.install(false);
+    expect(launch).toHaveBeenCalledTimes(2);
+    updater.installDeferredUpdate();
+    expect(launch.mock.lastCall?.[1]).toEqual(["/S", "--updated"]);
+    child.emit("spawn");
+    expect(quit).toHaveBeenCalledTimes(1);
+  } finally {
+    launch.mockRestore();
+  }
 
   // A size mismatch is rejected and never left behind for resumption.
   rmSync(path.join(updateDir, "QoneAgent-Setup-0.0.2-x64.exe"));

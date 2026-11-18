@@ -85,7 +85,11 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
     if (!viewport || !content || !topAnchorReady || !anchor) return;
     let frame: number | null = requestAnimationFrame(() => {
       frame = null;
-      if (restoreThreadReadingAnchor(viewport, content, anchor)) pendingReadingAnchor.current = undefined;
+      // 进入会话的阅读位置只尝试恢复一次，找不到目标就作废。
+      // 流式回复的占位 id 固定为 "streaming"，若一直挂起，下一轮发送时新的
+      // "streaming" 消息会被误认成旧锚点，把刚置顶的用户气泡拉走。
+      restoreThreadReadingAnchor(viewport, content, anchor);
+      pendingReadingAnchor.current = undefined;
     });
     return () => { if (frame !== null) cancelAnimationFrame(frame); };
   }, [contentRef, sessionId, topAnchorReady, viewport]);

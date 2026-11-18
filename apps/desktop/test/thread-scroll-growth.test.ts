@@ -310,3 +310,156 @@ test.each(["wheel", "touch", "pointer"])("scrolling down into the top-anchor res
   ResizeStub.change(f.reserve); flush();
   expect(f.viewport.scrollTop).toBe(780);
 });
+
+test("reserve release on completion animates the bottom space drop smoothly instead of teleporting", () => {
+  (globalThis as { window: { matchMedia: () => { matches: boolean } } }).window.matchMedia = () => ({ matches: false });
+  class SpacerElement extends EventTarget {
+    style: Record<string, string> = {};
+    dataset: Record<string, string> = {};
+    removed = false;
+    setAttribute() {}
+    remove() { this.removed = true; onRemove(); }
+  }
+  let activeSpacer: SpacerElement | null = null;
+  let naturalScrollHeight = 1100;
+  const viewport = new ElementStub();
+  viewport.clientHeight = 600;
+  Object.defineProperty(viewport, "scrollHeight", {
+    configurable: true,
+    get: () => naturalScrollHeight + (content.reserve ? content.reserve.height : 0) + (activeSpacer && !activeSpacer.removed ? Number.parseFloat(activeSpacer.style.height || "0") : 0),
+  });
+  const onRemove = () => { activeSpacer = null; };
+  const content = new ElementStub();
+  content.height = 1100;
+  content.viewport = viewport;
+  content.parentElement = viewport;
+  (content as unknown as { after: (el: SpacerElement) => void }).after = (el) => { activeSpacer = el; };
+  content.ownerDocument = {
+    defaultView: { getComputedStyle: (element: ElementStub) => ({ scrollPaddingTop: element.scrollPaddingTop }) },
+    createElement: () => new SpacerElement(),
+  } as unknown as ElementStub["ownerDocument"];
+  const footer = new ElementStub(); footer.top = 500;
+  const reserve = new ElementStub(); reserve.height = 400; reserve.viewport = viewport;
+  content.reserve = reserve;
+  Object.defineProperty(reserve, "isConnected", { configurable: true, get: () => content.reserve === reserve });
+  viewport.scrollTop = 900; // 1100 + 400 - 600
+
+  let visible = false;
+  const controller = mountThreadScrollController({
+    viewport: viewport.dom(), content: content.dom(), footer: footer.dom(), endContent: null,
+    turn: { turnId: "u", running: true, phase: "final_answer" },
+    restored: { turnId: "u", mode: "user_follow" }, hasRestoration: true,
+    onVisibility: (value) => { visible = value; }, onSave: () => {},
+  });
+  disposers.push(controller.dispose);
+  viewport.dispatchEvent(new Event("scroll"));
+
+  // 运行结束且 "streaming" 卸载导致 reserve 消失，sync 应在首帧前无缝保住 scrollTop 并插入过渡占位。
+  content.reserve = null;
+  controller.sync({ turnId: "u", running: false, phase: "idle" });
+  expect(activeSpacer).not.toBeNull();
+  expect(Number.parseFloat(activeSpacer!.style.height!)).toBe(400);
+  expect(viewport.scrollTop).toBe(900);
+  expect(visible).toBe(false);
+
+  // 逐帧推进动画，验证高度与 scrollTop 平滑缓动下落而非一步跳变。
+  const baseNow = performance.now();
+  const originalNow = performance.now;
+  try {
+    performance.now = () => baseNow + 140;
+    flush();
+    expect(viewport.scrollTop).toBeLessThan(900);
+    expect(viewport.scrollTop).toBeGreaterThan(500);
+    expect(activeSpacer).not.toBeNull();
+
+    performance.now = () => baseNow + 320;
+    flush();
+    expect(viewport.scrollTop).toBe(500);
+    expect(activeSpacer).toBeNull();
+  } finally {
+    performance.now = originalNow;
+  }
+});
+
+test("upward wheel during reserve release keeps user scroll position while spacer finishes cleaning up", () => {
+  (globalThis as { window: { matchMedia: () => { matches: boolean } } }).window.matchMedia = () => ({ matches: false });
+  class SpacerElement extends EventTarget {
+    style: Record<string, string> = {};
+    dataset: Record<string, string> = {};
+    removed = false;
+    setAttribute() {}
+    remove() { this.removed = true; activeSpacer = null; }
+  }
+  let activeSpacer: SpacerElement | null = null;
+  const viewport = new ElementStub();
+  viewport.clientHeight = 600;
+  Object.defineProperty(viewport, "scrollHeight", {
+    configurable: true,
+    get: () => 1100 + (content.reserve ? content.reserve.height : 0) + (activeSpacer && !activeSpacer.removed ? Number.parseFloat(activeSpacer.style.height || "0") : 0),
+  });
+  const content = new ElementStub();
+  content.height = 1100;
+  content.viewport = viewport;
+  content.parentElement = viewport;
+  (content as unknown as { after: (el: SpacerElement) => void }).after = (el) => { activeSpacer = el; };
+  content.ownerDocument = {
+    defaultView: { getComputedStyle: (element: ElementStub) => ({ scrollPaddingTop: element.scrollPaddingTop }) },
+    createElement: () => new SpacerElement(),
+  } as unknown as ElementStub["ownerDocument"];
+  const footer = new ElementStub(); footer.top = 500;
+  const reserve = new ElementStub(); reserve.height = 400;
+  content.reserve = reserve;
+  viewport.scrollTop = 900;
+
+  const controller = mountThreadScrollController({
+    viewport: viewport.dom(), content: content.dom(), footer: footer.dom(), endContent: null,
+    turn: { turnId: "u", running: true, phase: "final_answer" },
+    restored: { turnId: "u", mode: "user_follow" }, hasRestoration: true,
+    onVisibility: () => {}, onSave: () => {},
+  });
+  disposers.push(controller.dispose);
+  viewport.dispatchEvent(new Event("scroll"));
+
+  content.reserve = null;
+  controller.sync({ turnId: "u", running: false, phase: "idle" });
+  expect(activeSpacer).not.toBeNull();
+
+  // 用户在释放动画期间向上滚到自然底部之上（300 < 500）。
+  const wheel = new Event("wheel");
+  Object.defineProperties(wheel, { deltaY: { value: -120 }, deltaX: { value: 0 } });
+  viewport.dispatchEvent(wheel);
+  viewport.scrollTo({ top: 300 });
+
+  const baseNow = performance.now();
+  const originalNow = performance.now;
+  try {
+    performance.now = () => baseNow + 320;
+    flush();
+    expect(viewport.scrollTop).toBe(300);
+    expect(activeSpacer).toBeNull();
+  } finally {
+    performance.now = originalNow;
+  }
+});
+
+test("collapse-induced bottom clamp does not pause follow mode", () => {
+  const f = fixture();
+  f.reserve.height = 0;
+  f.content.height = 1500;
+  f.viewport.scrollHeight = 1600; // 1500 内容 + 100 页脚
+  f.viewport.scrollTop = 1000;
+  f.viewport.dispatchEvent(new Event("scroll"));
+
+  // 收起动画让内容从 1500 缩到 1300，浏览器将 scrollTop 夹到 800（底部极限）。
+  f.content.height = 1300;
+  f.viewport.scrollHeight = 1400;
+  f.viewport.scrollTop = 800;
+  f.viewport.dispatchEvent(new Event("scroll"));
+
+  // 随后结论输出使内容增长到 1400，控制器仍保持跟随到底部 900。
+  f.content.height = 1400;
+  f.viewport.scrollHeight = 1500;
+  ResizeStub.change(f.content);
+  flush();
+  expect(f.viewport.scrollTop).toBe(900);
+});

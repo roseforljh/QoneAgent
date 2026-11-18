@@ -1,14 +1,16 @@
 import { build, context, type BuildOptions } from "esbuild";
+import { cp } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktopRoot = path.resolve(fileURLToPath(import.meta.url), "../..");
+const runtimeEntry = path.resolve(desktopRoot, "../agent-runtime/src/index.ts");
+const codemodePackages = ["@earendil-works/pi-codemode", "quickjs-wasi"];
 export const runtimeBundle = path.join(desktopRoot, "binaries", "qone-runtime.mjs");
 
 /** The agent runtime runs on Qone's own Electron binary in Node mode; no separate JS runtime ships. */
 const options: BuildOptions = {
-  entryPoints: [path.resolve(desktopRoot, "../agent-runtime/src/index.ts")],
-  outfile: runtimeBundle,
+  entryPoints: [runtimeEntry],
   bundle: true,
   platform: "node",
   target: "node24",
@@ -16,7 +18,8 @@ const options: BuildOptions = {
   loader: { ".md": "text" },
   // Optional native accelerators (ssh2 crypto, cpu-features) are compiled for
   // another ABI; their callers already fall back to JavaScript when absent.
-  external: ["*.node", "cpu-features"],
+  // Codemode locates its worker relative to its own module and QuickJS through Node package resolution.
+  external: ["*.node", "cpu-features", ...codemodePackages],
   // CommonJS dependencies inside an ES module bundle still expect these.
   banner: { js: [
     'import { createRequire as __qoneCreateRequire } from "node:module";',
@@ -33,13 +36,29 @@ const options: BuildOptions = {
   logLevel: "warning",
 };
 
-export async function buildRuntime() {
-  await build(options);
+async function runtimeOptions(outfile: string): Promise<BuildOptions> {
+  const piEntry = Bun.resolveSync("@earendil-works/pi-coding-agent", path.dirname(runtimeEntry));
+  for (const name of codemodePackages) {
+    const entry = Bun.resolveSync(name, path.dirname(piEntry));
+    for (let dir = path.dirname(entry); ; dir = path.dirname(dir)) {
+      const manifest = Bun.file(path.join(dir, "package.json"));
+      if (await manifest.exists() && (await manifest.json()).name === name) {
+        await cp(dir, path.join(path.dirname(outfile), "node_modules", name), { recursive: true });
+        break;
+      }
+      if (dir === path.dirname(dir)) throw new Error(`Could not find package root for ${name} from ${entry}`);
+    }
+  }
+  return { ...options, outfile };
+}
+
+export async function buildRuntime(outfile = runtimeBundle) {
+  await build(await runtimeOptions(outfile));
 }
 
 /** Development: rebuild on every source change, so a runtime restart picks up edits. Readable stacks. */
 export async function watchRuntime() {
-  const ctx = await context({ ...options, minify: false });
+  const ctx = await context({ ...await runtimeOptions(runtimeBundle), minify: false });
   await ctx.rebuild();
   await ctx.watch();
   return ctx;

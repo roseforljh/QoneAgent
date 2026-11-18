@@ -2,13 +2,13 @@ import { useConversationStore } from "../../lib/conversation-context";
 import { CodexChevronRightIcon as ChevronRightIcon } from "./execution-icons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useAuiState } from "@assistant-ui/react";
-import { useEffect, useMemo, useRef, useState, type FC, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FC, type ReactNode } from "react";
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { useLocale } from "../../localization";
 import { formatDuration } from "../../lib/utils";
 import { ACTIVITY_TITLE_TOOL, type RunInfo } from "@qone/protocol";
 import type { AssistantPartRange } from "./assistant-part-ranges";
-import { executionCollapsed, useExecutionDisclosureState } from "./execution-disclosure-state";
+import { clearCollapseHandoff, executionCollapsed, saveCollapseHandoff, takeCollapseHandoff, useExecutionDisclosureState } from "./execution-disclosure-state";
 import "./assistant-execution.css";
 import { createPartToolsSelector, messageById, runById } from "../../lib/store-indexes";
 
@@ -95,7 +95,9 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
     () => new Map(toolCalls.map((call) => [call.toolCallId, call] as const)),
     [toolCalls],
   );
-  const runId = messageId === "streaming" ? activeRunId : messageRunId;
+  const liveRunIdRef = useRef<string | undefined>(undefined);
+  if (messageId === "streaming" && activeRunId) liveRunIdRef.current = activeRunId;
+  const runId = messageId === "streaming" ? (activeRunId ?? liveRunIdRef.current) : messageRunId;
   const run = useConversationStore((state) => runById(state.runs, runId));
   const allToolsFinished = toolParts.every((part) => {
     const call = toolCallsById.get(part.toolCallId);
@@ -138,6 +140,46 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
   const collapsed = executionCollapsed(override, finalAnswerStarted, activitySettled || !messageRunning, cancelled);
   const visibleOpen = !canCollapse || !collapsed;
   const disclosureRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const lastHeightRef = useRef(0);
+  const exitCompletedRef = useRef(false);
+  const handoffKey = `${disclosureKey}:${firstIndex ?? 0}`;
+  const [handoffHeight, setHandoffHeight] = useState<number | null>(null);
+  const latestRef = useRef({ messageId, handoffKey, reduceMotion, visibleOpen });
+  latestRef.current = { messageId, handoffKey, reduceMotion, visibleOpen };
+  if (visibleOpen) exitCompletedRef.current = false;
+
+  useLayoutEffect(() => {
+    if (messageId !== "streaming") {
+      if (!visibleOpen && ranges.length > 0 && !reduceMotion) {
+        const height = takeCollapseHandoff(handoffKey);
+        if (height !== null) setHandoffHeight(height);
+      }
+      return;
+    }
+    const element = bodyRef.current;
+    if (!element) return;
+    const measure = () => {
+      const height = element.getBoundingClientRect().height;
+      if (height > 0) lastHeightRef.current = height;
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [messageId, visibleOpen, ranges.length, reduceMotion, handoffKey]);
+
+  useLayoutEffect(() => () => {
+    const latest = latestRef.current;
+    if (latest.messageId === "streaming" && !latest.reduceMotion && lastHeightRef.current > 1 && !exitCompletedRef.current) {
+      saveCollapseHandoff(latest.handoffKey, lastHeightRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if ((visibleOpen || reduceMotion) && handoffHeight !== null) setHandoffHeight(null);
+  }, [visibleOpen, reduceMotion, handoffHeight]);
   const statusLabel = <ExecutionStatus run={run} messageRunning={messageRunning} waitingSubagents={waitingSubagents} startedAt={startedAt} completedAt={completedAt} activeToolIndex={activeToolIndex} reasoningRunning={reasoningRunning} toolCount={toolParts.length} />;
   const statusOnTop = canCollapse || statusAtStart;
   // On top, the status row pins first and nested titles pin right beneath it.
@@ -159,14 +201,23 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
     <div data-slot="assistant-execution" className="q-assistant-execution w-full py-1">
       <Collapsible ref={disclosureRef} open={visibleOpen} onOpenChange={(nextOpen) => { setCollapsed(disclosureKey, !nextOpen); }} className="w-full">
         {statusOnTop && statusRow}
-        <AnimatePresence initial={false}>
+        <AnimatePresence
+          initial={false}
+          onExitComplete={() => {
+            if (latestRef.current.visibleOpen) return;
+            exitCompletedRef.current = true;
+            lastHeightRef.current = 0;
+            clearCollapseHandoff(latestRef.current.handoffKey);
+          }}
+        >
           {visibleOpen && ranges.length > 0 && (
             <motion.div
+              ref={bodyRef}
               // Clip only while the height animates; a settled clip would stop
               // nested disclosure titles from sticking to the viewport top.
               initial={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6, overflow: "hidden" }}
               animate={{ height: "auto", opacity: 1, y: 0, overflow: "hidden", transitionEnd: { overflow: "visible" } }}
-              exit={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6, overflow: "hidden", transition: { duration: reduceMotion ? 0 : 0.15 } }}
+              exit={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6, overflow: "hidden", transition: { duration: reduceMotion ? 0 : 0.22, ease: [0.32, 0.72, 0, 1] } }}
               transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.32, 0.72, 0, 1] }}
               className={showStatus && statusOnTop ? "q-execution-sticky-status outline-none" : "outline-none"}
             >
@@ -174,6 +225,17 @@ export const AssistantExecution: FC<AssistantExecutionProps> = ({ ranges, status
             </motion.div>
           )}
         </AnimatePresence>
+        {!visibleOpen && handoffHeight !== null && ranges.length > 0 && (
+          <motion.div
+            initial={{ height: handoffHeight, opacity: 1, y: 0, overflow: "hidden" }}
+            animate={{ height: 0, opacity: 0, y: reduceMotion ? 0 : -6, overflow: "hidden" }}
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.32, 0.72, 0, 1] }}
+            onAnimationComplete={() => setHandoffHeight(null)}
+            className={showStatus && statusOnTop ? "q-execution-sticky-status outline-none" : "outline-none"}
+          >
+            <div className="flex flex-col gap-2">{children}</div>
+          </motion.div>
+        )}
         {!statusOnTop && statusRow}
       </Collapsible>
     </div>

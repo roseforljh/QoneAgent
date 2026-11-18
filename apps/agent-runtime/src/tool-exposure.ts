@@ -28,21 +28,17 @@ export function namespaceFor(tool: ToolDefinition, servers?: Namespace): Namespa
 export interface ToolLoadout { tools: ToolDefinition[]; catalog: string }
 
 export function applyToolExposure(tools: ToolDefinition[], servers?: Namespace): ToolLoadout {
-  const groups = new Map<string, { namespace: Namespace; names: string[] }>();
+  const groups = new Map<string, string>();
   const result = tools.map((tool) => {
     const namespace = namespaceFor(tool, servers);
     if (!namespace) return tool;
-    const group = groups.get(namespace.name) ?? { namespace, names: [] };
-    group.names.push(tool.name);
-    groups.set(namespace.name, group);
+    if (!groups.has(namespace.name)) groups.set(namespace.name, namespace.description);
     return { ...tool, exposure: "deferred", namespace } as ToolDefinition;
   });
-  const catalog = [...groups.values()]
-    .map(({ namespace, names }) => `- ${namespace.name}: ${namespace.description} (${names.join(", ")})`)
-    .join("\n");
+  const catalog = [...groups].map(([name, description]) => `- ${name}: ${description}`).join("\n");
   return {
     tools: result,
-    catalog: catalog && `<on-demand-tools>\nThese tools are not loaded yet. Load the ones you need with tool_search (for example tool_search "server exec"), or call them from codemode as tools.<name>(…). Each group:\n${catalog}\n</on-demand-tools>`,
+    catalog: catalog && `<on-demand-tools>\nFind tools by task with tool_search, or discover and call them in one codemode script with searchTools(query, { namespace }) and tools[name](args). Available namespaces:\n${catalog}\n</on-demand-tools>`,
   };
 }
 

@@ -30,6 +30,8 @@ describe("OpenCLI gateway", () => {
       const screenshot = service.tools().find((tool) => tool.name === "qone_browser_screenshot");
       expect(open?.description).toContain("built-in browser profile");
       expect(discover?.description).toContain("Pass a site");
+      expect(discover?.description).not.toContain("qone_browser_open");
+      expect(service.tools().find((tool) => tool.name === "qone_browser_open")?.description).toContain("when direct fetch is unavailable or insufficient");
       expect(screenshot?.description).toContain("full page");
       expect(service.tools().find((tool) => tool.name === "qone_browser_extract")?.description).toContain("readable Markdown");
       expect(toolRefreshes).toBe(1);
@@ -57,6 +59,19 @@ describe("OpenCLI gateway", () => {
     expect(compactOpenCliCatalog(commands, "example")).toMatchObject({ totalMatches: 1 });
   });
 
+  test("discovery finds the article reader from mixed keywords without returning the entire site catalog", () => {
+    const commands = parseOpenCliCatalog(JSON.stringify([
+      { command: "twitter/accept", site: "twitter", name: "accept", description: "Auto-accept DM requests", access: "write" },
+      { command: "twitter/search", site: "twitter", name: "search", description: "Search Twitter for tweets" },
+      { command: "twitter/article", site: "twitter", name: "article", description: "Fetch a Twitter Article and export as Markdown", strategy: "cookie", args: [{ name: "tweet-id", required: true, positional: true }] },
+      { command: "other/article", site: "other", name: "article", description: "Read article" },
+    ]));
+    expect(compactOpenCliCatalog(commands, "twitter", "tweet article read detail status", 1)).toMatchObject({
+      totalMatches: 2, commands: [{ site: "twitter", command: "article", strategy: "cookie", args: [{ name: "tweet-id", required: true, positional: true }] }],
+    });
+    expect(compactOpenCliCatalog(commands, "twitter", "no-match")).toEqual({ totalMatches: 0, commands: [] });
+  });
+
   test("passes adapter arguments through without forcing browser options", () => {
     expect(buildOpenCliCommandArgs({ site: "example", command: "search", args: ["hello", "--limit", "10"] })).toEqual([
       "example", "search", "hello", "--limit", "10", "--format", "json",
@@ -72,7 +87,9 @@ describe("OpenCLI gateway", () => {
   test("turns OpenCLI auth failures into a structured login result", () => {
     const result = loginRequiredResult(new OpenCliError("Not logged in to example.com", 77), "example");
     expect(result).toBeDefined();
-    expect(JSON.parse(result!.content[0].text)).toMatchObject({ status: "login_required", site: "example" });
+    expect(JSON.parse(result!.content[0].text)).toMatchObject({
+      status: "login_required", site: "example", scope: "operation", next: expect.stringContaining("follow the direct URL reading policy before asking"),
+    });
     expect(loginRequiredResult(new OpenCliError("failed", 1), "example")).toBeUndefined();
   });
 

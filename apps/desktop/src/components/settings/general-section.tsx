@@ -22,9 +22,14 @@ export function GeneralSection() {
       cancelLabel: t("general.later"),
       destructive: false,
     });
-    await update.install(now);
     setPhase({ kind: "ready", update });
-    setUpdateStatus({ key: "general.installOnQuit", values: { version: update.version } });
+    setUpdateStatus(null);
+    try {
+      await update.install(now);
+      if (!now) setUpdateStatus({ key: "general.installOnQuit", values: { version: update.version } });
+    } catch (error) {
+      setUpdateStatus({ key: "general.installFailed", values: { error: localizeError(error) } });
+    }
   };
 
   const runUpdate = async () => {

@@ -99,18 +99,32 @@ function PhaseFixture({ content, running = false }: { content: ThreadMessageLike
   }} /></AssistantRuntimeProvider>;
 }
 
-test("assistant-ui preserves the pending phase after a tool and does not expose the outer toggle", () => {
+test("settled execution collapses with its toggle as soon as the conclusion begins streaming", () => {
   const parts: AssistantMessagePart[] = [
     { type: "text", text: "先查", messageSequence: 1, phase: "commentary" },
     { type: "tool-call", toolName: "read", toolCallId: "phase-read", args: {}, result: "ok", messageSequence: 1 },
   ];
-  const content = assistantMessageContent({ content: "继续分析", parts }, [], true);
+  const content = assistantMessageContent({ content: "开始输出结论", parts }, [], true);
+  const html = renderToStaticMarkup(<PhaseFixture content={content} running />);
+  expect(html).toContain('data-slot="assistant-execution"');
+  expect(html).toContain('aria-label="Expand or collapse execution details"');
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).not.toContain("先查");
+  expect(html).toContain("开始输出结论");
+  expect(html.indexOf('aria-label="Expand or collapse execution details"')).toBeLessThan(html.indexOf("开始输出结论"));
+});
+
+test("unfinished tool keeps execution open even if text is present", () => {
+  const parts: AssistantMessagePart[] = [
+    { type: "text", text: "先查", messageSequence: 1, phase: "commentary" },
+    { type: "tool-call", toolName: "read", toolCallId: "running-read", args: {}, messageSequence: 1 },
+  ];
+  const content = assistantMessageContent({ content: "等待结果", parts }, [], true);
   const html = renderToStaticMarkup(<PhaseFixture content={content} running />);
   expect(html).toContain('data-slot="assistant-execution"');
   expect(html).toContain("先查");
-  expect(html).toContain("继续分析");
-  expect(html).not.toContain('aria-label="Expand or collapse execution details"');
-  expect(html.indexOf('border-b border-border/50 pb-2')).toBeLessThan(html.indexOf("先查"));
+  expect(html).toContain("等待结果");
+  expect(html).toContain('aria-expanded="true"');
 });
 
 test("a completed process without a final answer keeps its status after the activity", () => {

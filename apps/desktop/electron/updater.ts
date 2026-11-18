@@ -236,7 +236,7 @@ export class DesktopUpdater {
     return { mode: "ready" };
   }
 
-  /** Windows installers update silently in place; other platforms open the package. */
+  /** On Windows, restarting shows the installer; only deferred updates are silent. */
   async install(now: boolean): Promise<void> {
     const installer = this.readyPath;
     if (!installer) throw new Error("No downloaded update to install");
@@ -247,18 +247,28 @@ export class DesktopUpdater {
     }
     this.installOnQuit = !now;
     if (!now) return;
-    this.launchInstaller(true);
+    await this.launchInstaller(false);
     app.quit();
   }
 
   /** Called from will-quit: finishes an update the user deferred. */
   installDeferredUpdate(): void {
-    if (this.installOnQuit) this.launchInstaller(false);
+    if (this.installOnQuit) {
+      void this.launchInstaller(true).catch((error) => console.error("[updater] Deferred installer failed to start:", error));
+    }
   }
 
-  private launchInstaller(relaunch: boolean): void {
+  private launchInstaller(silent: boolean): Promise<void> {
     this.installOnQuit = false;
     // --updated lets the installer wait for this process to exit instead of prompting.
-    spawn(this.readyPath!, ["/S", "--updated", ...(relaunch ? ["--force-run"] : [])], { detached: true, stdio: "ignore" }).unref();
+    const args = silent ? ["/S", "--updated"] : ["--updated"];
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.readyPath!, args, { detached: true, stdio: "ignore" });
+      child.once("error", reject);
+      child.once("spawn", () => {
+        child.unref();
+        resolve();
+      });
+    });
   }
 }
