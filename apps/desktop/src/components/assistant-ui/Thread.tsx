@@ -38,7 +38,7 @@ import { RunOptionsPopover } from "./run-options-popover";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { RunFileChangesSummary } from "./run-file-changes-summary";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
-import { ThreadScrollFollower } from "./thread-scroll-follower";
+import { SessionThreadViewport, ThreadScrollFollower } from "./thread-scroll-follower";
 import { ThreadScrollToBottom } from "./thread-scroll-to-bottom";
 import "./thread-viewport.css";
 import "./composer-actions.css";
@@ -46,7 +46,7 @@ import { ComposerQueue } from "./composer-queue";
 import { useStore } from "../../store";
 import { messageById } from "../../lib/store-indexes";
 import { createMessageStructureSelector } from "../../lib/thread-message-structure";
-import { getThreadScrollState, pruneThreadScrollStates } from "../../lib/thread-scroll-state";
+import { pruneThreadScrollStates } from "../../lib/thread-scroll-state";
 import { useLocale } from "../../localization";
 import { pickNativeAttachmentFiles, pickNativeAttachmentFolder } from "../../lib/native-file-drop";
 import { hasDesktopBridge } from "../../store";
@@ -206,9 +206,8 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
         <EmptyState canChat={canChat} creatingSession={creatingSession} />
       </AuiIf>
 
-      <AuiIf condition={(s) => !s.thread.isEmpty}>
-        <ThreadPrimitive.Viewport
-          key={currentSessionId}
+        <SessionThreadViewport
+          sessionId={currentSessionId}
           turnAnchor="top"
           // assistant-ui's default clamp over-scrolls any message taller than
           // 10em, pushing ordinary multi-line bubbles above the viewport top.
@@ -216,7 +215,6 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           // this ceiling only matters for attachment-heavy messages; when it
           // does trigger, keep most of the viewport visible.
           topAnchorMessageClamp={{ tallerThan: "100em", visibleHeight: "60em" }}
-          scrollRestoration={getThreadScrollState(currentSessionId)}
           scrollToBottomOnInitialize={false}
           scrollToBottomOnRunStart={false}
           scrollToBottomOnThreadSwitch={false}
@@ -240,8 +238,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
             </div>
           </ThreadPrimitive.ViewportFooter>
           </ThreadScrollFollower>
-        </ThreadPrimitive.Viewport>
-      </AuiIf>
+        </SessionThreadViewport>
       </>}
     </ThreadPrimitive.Root>
   );

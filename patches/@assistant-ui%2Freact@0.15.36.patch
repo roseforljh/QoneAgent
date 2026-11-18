@@ -15,7 +15,7 @@ diff --git a/dist/primitives/thread/ThreadViewport.d.ts b/dist/primitives/thread
 index eb86914c66e2ed70a144c8d70d344bdba548427d..dc87fdce9414e56536fa33580570147d80c20893 100644
 --- a/dist/primitives/thread/ThreadViewport.d.ts
 +++ b/dist/primitives/thread/ThreadViewport.d.ts
-@@ -1,5 +1,16 @@
+@@ -1,5 +1,18 @@
  import { Primitive } from "../../utils/Primitive.js";
  import { type ComponentRef, type ComponentPropsWithoutRef } from "react";
 +export type ViewportScrollRestoration = {
@@ -23,6 +23,8 @@ index eb86914c66e2ed70a144c8d70d344bdba548427d..dc87fdce9414e56536fa33580570147d
 +        scrollTop: number;
 +        /** Native distance from the scrollable tail, stable when history grows. */
 +        distanceFromBottomPx?: number;
++        /** Scroll offset relative to the submitted user message's placement. */
++        offsetFromAnchorPx?: number | undefined;
 +        topAnchorTurn: {
 +            anchorId: string;
 +            targetId: string;
@@ -32,7 +34,7 @@ index eb86914c66e2ed70a144c8d70d344bdba548427d..dc87fdce9414e56536fa33580570147d
  export declare namespace ThreadPrimitiveViewport {
      type Element = ComponentRef<typeof Primitive.div>;
      type Props = ComponentPropsWithoutRef<typeof Primitive.div> & {
-@@ -10,6 +21,8 @@ export declare namespace ThreadPrimitiveViewport {
+@@ -10,6 +23,8 @@ export declare namespace ThreadPrimitiveViewport {
           * Default false if `turnAnchor` is "top", otherwise defaults to true.
           */
          autoScroll?: boolean | undefined;
@@ -41,7 +43,7 @@ index eb86914c66e2ed70a144c8d70d344bdba548427d..dc87fdce9414e56536fa33580570147d
          /**
           * Controls scroll anchoring behavior for new messages.
           * - "bottom" (default): Messages anchor at the bottom, classic chat behavior.
-@@ -83,6 +96,8 @@ export declare const ThreadPrimitiveViewport: import("react").ForwardRefExoticCo
+@@ -83,6 +98,8 @@ export declare const ThreadPrimitiveViewport: import("react").ForwardRefExoticCo
       * Default false if `turnAnchor` is "top", otherwise defaults to true.
       */
      autoScroll?: boolean | undefined;
@@ -639,10 +641,10 @@ index 77191695eadd115185c3f2ff0328604b84e22e5d..145e6e2f661b70c738128ee8c4a5b0bb
  //# sourceMappingURL=mountTopAnchorReserve.d.ts.map
 \ No newline at end of file
 diff --git a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js b/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js
-index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a72364c987 100644
+index d054826556100492005c41bcd1ad3426b5121b47..add4b4de1deaff0e5024ae286ccf77a6da789152 100644
 --- a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js
 +++ b/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js
-@@ -1,139 +1,186 @@
+@@ -1,139 +1,206 @@
  "use client";
 -import { createReserveElement, getAnchorId, setReserveHeight, snapScrollTop } from "./topAnchorUtils.js";
 -import { computeTopAnchorReserve, computeTopAnchorTargetScrollTop } from "./computeTopAnchorSlack.js";
@@ -804,17 +806,22 @@ index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a7
 -		listenViewport(null);
 -		reserve?.remove();
 -	};
+-};
+-export { mountTopAnchorReserve };
 +const mountTopAnchorReserve = (store, restoration) => {
 +  let reserve = null;
 +  const saved = restoration?.current;
 +  let pendingRestore = saved ?? null;
 +  let lastScrolledAnchorId = saved ? store.getState().topAnchorTurn?.anchorId : void 0;
 +  const viewportAtMount = store.getState().element.viewport;
-+  const restore = () => {
++  const restore = (anchorTop) => {
 +    const viewport = store.getState().element.viewport;
 +    if (!pendingRestore || !viewport) return;
 +    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-+    const top = pendingRestore.distanceFromBottomPx === void 0 ? pendingRestore.scrollTop : maxScrollTop - pendingRestore.distanceFromBottomPx;
++    const { offsetFromAnchorPx, distanceFromBottomPx, scrollTop } = pendingRestore;
++    const top = anchorTop !== void 0 && offsetFromAnchorPx !== void 0
++      ? anchorTop + offsetFromAnchorPx
++      : distanceFromBottomPx === void 0 ? scrollTop : maxScrollTop - distanceFromBottomPx;
 +    viewport.scrollTo({ top: Math.max(0, top), behavior: "instant" });
 +    pendingRestore = null;
 +  };
@@ -856,7 +863,7 @@ index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a7
 +      lastScrollTop = viewport.scrollTop;
 +    }
 +  };
-+  function apply() {
++  function apply(rangeClamped = false) {
 +    const state = store.getState();
 +    const { viewport, anchor, target } = state.element;
 +    const clamp = state.targetConfig;
@@ -889,6 +896,13 @@ index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a7
 +      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
 +      return;
 +    }
++    const anchorId = getAnchorId(anchor);
++    const keepPinned = !pendingRestore && anchorId !== void 0 && anchorId === lastScrolledAnchorId
++      && lastAppliedTarget !== null && (Math.abs(viewport.scrollTop - lastAppliedTarget) <= 1
++        || (rangeClamped && wasPinnedAtLastScroll()));
+ 
+-//# sourceMappingURL=mountTopAnchorReserve.js.map
+\ No newline at end of file
 +    reserve ??= createReserveElement();
 +    if (reserve.parentElement !== target.parentElement || reserve.previousElementSibling !== target) {
 +      target.after(reserve);
@@ -900,16 +914,17 @@ index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a7
 +    );
 +    if (reserveChanged) {
 +      scheduler.schedule();
-+      if (!pendingRestore) return;
++      if (!pendingRestore && !keepPinned) return;
 +    }
-+    if (pendingRestore) {
-+      lastScrolledAnchorId = getAnchorId(anchor);
-+      restore();
-+    }
-+    const anchorId = getAnchorId(anchor);
 +    const targetScrollTop = snapScrollTop(
 +      computeTopAnchorTargetScrollTop({ viewport, anchor, ...clamp })
 +    );
++    if (pendingRestore) {
++      lastScrolledAnchorId = anchorId;
++      restore(anchorId === pendingRestore.topAnchorTurn?.anchorId ? targetScrollTop : void 0);
++      lastScrollTop = viewport.scrollTop;
++    }
++    const movedPinnedTarget = keepPinned && targetScrollTop !== lastAppliedTarget;
 +    if (anchorId === void 0 || anchorId !== lastScrolledAnchorId) {
 +      restoreScrollTop = null;
 +      restoredThisTurn = false;
@@ -917,6 +932,13 @@ index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a7
 +        viewport.scrollTo({ top: targetScrollTop, behavior: "smooth" });
 +      }
 +      if (anchorId !== void 0) lastScrolledAnchorId = anchorId;
++    } else if (movedPinnedTarget) {
++      // Reflow above a pinned turn must not push its user message down.
++      if (Math.abs(viewport.scrollTop - targetScrollTop) > 1) {
++        viewport.scrollTo({ top: targetScrollTop, behavior: "instant" });
++      }
++      lastScrollTop = viewport.scrollTop;
++      restoreScrollTop = null;
 +    } else if (restoreScrollTop !== null && lastAppliedTarget !== null) {
 +      const desired = snapScrollTop(
 +        restoreScrollTop + (targetScrollTop - lastAppliedTarget)
@@ -928,12 +950,12 @@ index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a7
 +      }
 +    }
 +    lastAppliedTarget = targetScrollTop;
++    return movedPinnedTarget;
 +  }
 +  const settleResize = () => {
 +    const viewport = listenedViewport;
 +    const clamped = viewport !== null && viewport.scrollTop < lastScrollTop - 1 && Math.abs(viewport.scrollTop - (viewport.scrollHeight - viewport.clientHeight)) <= 1;
-+    apply();
-+    if (!clamped || !viewport) return;
++    if (apply(clamped) || !clamped || !viewport) return;
 +    const top = Math.min(lastScrollTop, viewport.scrollHeight - viewport.clientHeight);
 +    if (top > viewport.scrollTop + 1) viewport.scrollTo({ top, behavior: "instant" });
 +  };
@@ -944,10 +966,14 @@ index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a7
 +  const unsubscribe = store.subscribe(scheduler.schedule);
 +  return () => {
 +    if (restoration && viewportAtMount) {
++      const { scrollTop } = viewportAtMount;
++      const { topAnchorTurn } = store.getState();
 +      restoration.current = {
-+        scrollTop: viewportAtMount.scrollTop,
-+        distanceFromBottomPx: Math.max(0, viewportAtMount.scrollHeight - viewportAtMount.clientHeight - viewportAtMount.scrollTop),
-+        topAnchorTurn: store.getState().topAnchorTurn
++        scrollTop,
++        distanceFromBottomPx: Math.max(0, viewportAtMount.scrollHeight - viewportAtMount.clientHeight - scrollTop),
++        offsetFromAnchorPx: lastAppliedTarget !== null && topAnchorTurn?.anchorId === lastScrolledAnchorId
++          ? scrollTop - lastAppliedTarget : void 0,
++        topAnchorTurn
 +      };
 +    }
 +    scheduler.cancel();
@@ -959,11 +985,7 @@ index d054826556100492005c41bcd1ad3426b5121b47..b0e92e849fff95785a3d9d6f36de33a7
 +};
 +export {
 +  mountTopAnchorReserve
- };
--export { mountTopAnchorReserve };
--
--//# sourceMappingURL=mountTopAnchorReserve.js.map
-\ No newline at end of file
++};
 diff --git a/dist/primitives/thread/topAnchor/useTopAnchorReserve.d.ts b/dist/primitives/thread/topAnchor/useTopAnchorReserve.d.ts
 index c6ea7e20bd90edf5be24cb593074fb5410bbea13..3c9543cd0933c375cff596850955203276943bb2 100644
 --- a/dist/primitives/thread/topAnchor/useTopAnchorReserve.d.ts
@@ -1044,7 +1066,7 @@ diff --git a/src/primitives/thread/ThreadViewport.tsx b/src/primitives/thread/Th
 index e4be094faa88d25d158ed575dd0ac5946418c728..928439c01eadfd98f83387af0ac1b975f3cf6b40 100644
 --- a/src/primitives/thread/ThreadViewport.tsx
 +++ b/src/primitives/thread/ThreadViewport.tsx
-@@ -26,6 +26,15 @@ import {
+@@ -26,6 +26,17 @@ import {
    isTopAnchorTurnValid,
  } from "./topAnchor/topAnchorTurn";
  
@@ -1053,6 +1075,8 @@ index e4be094faa88d25d158ed575dd0ac5946418c728..928439c01eadfd98f83387af0ac1b975
 +    scrollTop: number;
 +    /** Native distance from the scrollable tail, stable when history grows. */
 +    distanceFromBottomPx?: number;
++    /** Scroll offset relative to the submitted user message's placement. */
++    offsetFromAnchorPx?: number | undefined;
 +    topAnchorTurn: { anchorId: string; targetId: string } | null;
 +  } | null;
 +};
@@ -1060,7 +1084,7 @@ index e4be094faa88d25d158ed575dd0ac5946418c728..928439c01eadfd98f83387af0ac1b975
  export namespace ThreadPrimitiveViewport {
    export type Element = ComponentRef<typeof Primitive.div>;
    export type Props = ComponentPropsWithoutRef<typeof Primitive.div> & {
-@@ -36,6 +45,8 @@ export namespace ThreadPrimitiveViewport {
+@@ -36,6 +47,8 @@ export namespace ThreadPrimitiveViewport {
       * Default false if `turnAnchor` is "top", otherwise defaults to true.
       */
      autoScroll?: boolean | undefined;
@@ -1069,7 +1093,7 @@ index e4be094faa88d25d158ed575dd0ac5946418c728..928439c01eadfd98f83387af0ac1b975
  
      /**
       * Controls scroll anchoring behavior for new messages.
-@@ -101,7 +112,7 @@ const useViewportElementRef = () => {
+@@ -101,7 +114,7 @@ const useViewportElementRef = () => {
    return useManagedRef(registerViewportElement);
  };
  
@@ -1078,7 +1102,7 @@ index e4be094faa88d25d158ed575dd0ac5946418c728..928439c01eadfd98f83387af0ac1b975
    const threadViewportStore = useThreadViewportStore();
    const activeAnchorId = useAuiState((s) => {
      if (!enabled) return undefined;
-@@ -111,11 +122,24 @@ const useTopAnchorTurn = (enabled: boolean) => {
+@@ -111,11 +124,24 @@ const useTopAnchorTurn = (enabled: boolean) => {
      if (!enabled) return undefined;
      return getActiveTopAnchorTargetId(s.thread);
    });
@@ -1105,7 +1129,7 @@ index e4be094faa88d25d158ed575dd0ac5946418c728..928439c01eadfd98f83387af0ac1b975
  
    const topAnchorTurnIsValid = useAuiState(
      (s) =>
-@@ -153,6 +177,7 @@ const ThreadPrimitiveViewportScrollable = forwardRef<
+@@ -153,6 +179,7 @@ const ThreadPrimitiveViewportScrollable = forwardRef<
    (
      {
        autoScroll,
@@ -1113,7 +1137,7 @@ index e4be094faa88d25d158ed575dd0ac5946418c728..928439c01eadfd98f83387af0ac1b975
        scrollToBottomOnRunStart,
        scrollToBottomOnInitialize,
        scrollToBottomOnThreadSwitch,
-@@ -172,8 +197,8 @@ const ThreadPrimitiveViewportScrollable = forwardRef<
+@@ -172,8 +199,8 @@ const ThreadPrimitiveViewportScrollable = forwardRef<
      const threadViewportStore = useThreadViewportStore();
      const turnAnchor = threadViewportStore.getState().turnAnchor;
      const topAnchorEnabled = turnAnchor === "top";
@@ -1186,7 +1210,7 @@ index 74793e04d0a765b57bb275e2f1e94e48e44eb42b..6649679a27945f6360b9ee59da30f2a4
      const { viewport, setNaturalScrollHeight, notifyLayout } =
        mountPinnedViewport();
 diff --git a/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts b/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
-index 787754632270e8f290bae82b26e51b36c3cedadb..aae092c9a40fff710c4ab277be07edf41dabf16f 100644
+index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d05d4f772 100644
 --- a/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
 +++ b/src/primitives/thread/topAnchor/mountTopAnchorReserve.ts
 @@ -1,5 +1,7 @@
@@ -1197,7 +1221,7 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..aae092c9a40fff710c4ab277be07edf4
  import {
    computeTopAnchorReserve,
    computeTopAnchorTargetScrollTop,
-@@ -57,9 +59,23 @@ const createFrameScheduler = (fn: () => void) => {
+@@ -57,9 +59,24 @@ const createFrameScheduler = (fn: () => void) => {
    };
  };
  
@@ -1210,20 +1234,30 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..aae092c9a40fff710c4ab277be07edf4
 +  // The currently running turn is already present on entry, not a new submit.
 +  let lastScrolledAnchorId = saved ? store.getState().topAnchorTurn?.anchorId : undefined;
 +  const viewportAtMount = store.getState().element.viewport;
-+  const restore = () => {
++  const restore = (anchorTop?: number) => {
 +    const viewport = store.getState().element.viewport;
 +    if (!pendingRestore || !viewport) return;
 +    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-+    const top = pendingRestore.distanceFromBottomPx === undefined
-+      ? pendingRestore.scrollTop
-+      : maxScrollTop - pendingRestore.distanceFromBottomPx;
++    const { offsetFromAnchorPx, distanceFromBottomPx, scrollTop } = pendingRestore;
++    const top = anchorTop !== undefined && offsetFromAnchorPx !== undefined
++      ? anchorTop + offsetFromAnchorPx
++      : distanceFromBottomPx === undefined ? scrollTop : maxScrollTop - distanceFromBottomPx;
 +    viewport.scrollTo({ top: Math.max(0, top), behavior: "instant" });
 +    pendingRestore = null;
 +  };
  
    let listenedViewport: HTMLElement | null = null;
    let lastScrollTop = 0;
-@@ -126,6 +142,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -112,7 +129,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+     }
+   };
+ 
+-  function apply() {
++  function apply(rangeClamped = false) {
+     const state = store.getState();
+     const { viewport, anchor, target } = state.element;
+     const clamp = state.targetConfig;
+@@ -126,6 +143,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
          setReserveHeight(reserve, 0);
          reserve.remove();
        }
@@ -1231,7 +1265,7 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..aae092c9a40fff710c4ab277be07edf4
        return;
      }
  
-@@ -151,6 +168,8 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -151,9 +169,16 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
          setReserveHeight(reserve, 0);
          reserve.remove();
        }
@@ -1240,23 +1274,55 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..aae092c9a40fff710c4ab277be07edf4
        return;
      }
  
-@@ -172,9 +191,13 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
++    const anchorId = getAnchorId(anchor);
++    const keepPinned = !pendingRestore && anchorId !== undefined && anchorId === lastScrolledAnchorId
++      && lastAppliedTarget !== null && (Math.abs(viewport.scrollTop - lastAppliedTarget) <= 1
++        || (rangeClamped && wasPinnedAtLastScroll()));
++
+     reserve ??= createReserveElement();
+ 
+     if (
+@@ -172,14 +197,19 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
  
      if (reserveChanged) {
        scheduler.schedule();
 -      return;
-+      if (!pendingRestore) return;
++      if (!pendingRestore && !keepPinned) return;
      }
  
-+    if (pendingRestore) {
-+      lastScrolledAnchorId = getAnchorId(anchor);
-+      restore();
-+    }
-     const anchorId = getAnchorId(anchor);
+-    const anchorId = getAnchorId(anchor);
      const targetScrollTop = snapScrollTop(
        computeTopAnchorTargetScrollTop({ viewport, anchor, ...clamp }),
-@@ -205,13 +228,41 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+     );
++    if (pendingRestore) {
++      lastScrolledAnchorId = anchorId;
++      restore(anchorId === pendingRestore.topAnchorTurn?.anchorId ? targetScrollTop : undefined);
++      lastScrollTop = viewport.scrollTop;
++    }
+ 
++    const movedPinnedTarget = keepPinned && targetScrollTop !== lastAppliedTarget;
+     if (anchorId === undefined || anchorId !== lastScrolledAnchorId) {
+       restoreScrollTop = null;
+       restoredThisTurn = false;
+@@ -187,6 +217,13 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+         viewport.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+       }
+       if (anchorId !== undefined) lastScrolledAnchorId = anchorId;
++    } else if (movedPinnedTarget) {
++      // Reflow above a pinned turn must not push its user message down.
++      if (Math.abs(viewport.scrollTop - targetScrollTop) > 1) {
++        viewport.scrollTo({ top: targetScrollTop, behavior: "instant" });
++      }
++      lastScrollTop = viewport.scrollTop;
++      restoreScrollTop = null;
+     } else if (restoreScrollTop !== null && lastAppliedTarget !== null) {
+       // Restore the anchor-relative position: if content above the anchor
+       // changed height and the browser already adjusted scrollTop to match
+@@ -203,15 +240,47 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+     }
+ 
      lastAppliedTarget = targetScrollTop;
++    return movedPinnedTarget;
    }
  
 +  // Resizes settle in the observer callback, before paint. A frame-late reserve
@@ -1271,8 +1337,7 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..aae092c9a40fff710c4ab277be07edf4
 +    const clamped = viewport !== null
 +      && viewport.scrollTop < lastScrollTop - 1
 +      && Math.abs(viewport.scrollTop - (viewport.scrollHeight - viewport.clientHeight)) <= 1;
-+    apply();
-+    if (!clamped || !viewport) return;
++    if (apply(clamped) || !clamped || !viewport) return;
 +    const top = Math.min(lastScrollTop, viewport.scrollHeight - viewport.clientHeight);
 +    if (top > viewport.scrollTop + 1) viewport.scrollTo({ top, behavior: "instant" });
 +  };
@@ -1290,10 +1355,14 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..aae092c9a40fff710c4ab277be07edf4
  
    return () => {
 +    if (restoration && viewportAtMount) {
++      const { scrollTop } = viewportAtMount;
++      const { topAnchorTurn } = store.getState();
 +      restoration.current = {
-+        scrollTop: viewportAtMount.scrollTop,
-+        distanceFromBottomPx: Math.max(0, viewportAtMount.scrollHeight - viewportAtMount.clientHeight - viewportAtMount.scrollTop),
-+        topAnchorTurn: store.getState().topAnchorTurn,
++        scrollTop,
++        distanceFromBottomPx: Math.max(0, viewportAtMount.scrollHeight - viewportAtMount.clientHeight - scrollTop),
++        offsetFromAnchorPx: lastAppliedTarget !== null && topAnchorTurn?.anchorId === lastScrolledAnchorId
++          ? scrollTop - lastAppliedTarget : undefined,
++        topAnchorTurn,
 +      };
 +    }
      scheduler.cancel();

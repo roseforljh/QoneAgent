@@ -89,14 +89,14 @@ function BottomButton() {
 function Fixture({ sessionId = "mount-order", running = true, messageRoots = false, readingRoots = false }: { sessionId?: string; running?: boolean; messageRoots?: boolean; readingRoots?: boolean }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const runtime = aui.useExternalStoreRuntime({
-    messages: [{ id: "u", role: "user", content: [{ type: "text", text: "question" }] },
-      { id: "a", role: "assistant", content: [{ type: "tool-call", toolName: "read", toolCallId: "t", args: {} }] }],
+    messages: [{ id: `user-${sessionId}`, role: "user", content: [{ type: "text", text: "question" }] },
+      { id: running ? "streaming" : `reply-${sessionId}`, role: "assistant", content: [{ type: "tool-call", toolName: "read", toolCallId: "t", args: {} }] }],
+    adapters: { threadList: { threadId: sessionId } },
     convertMessage: (message) => message,
     isRunning: running, onNew: async () => {},
   });
   return <aui.AssistantRuntimeProvider runtime={runtime}>
-    <aui.ThreadPrimitive.Viewport key={sessionId} data-test-viewport turnAnchor="top"
-      scrollRestoration={getThreadScrollState(sessionId)}
+    <follower.SessionThreadViewport sessionId={sessionId} data-test-viewport turnAnchor="top"
       scrollToBottomOnInitialize={false} scrollToBottomOnRunStart={false} scrollToBottomOnThreadSwitch={false}>
       <follower.ThreadScrollFollower contentRef={contentRef}>
         <div ref={contentRef} data-test-content>{messageRoots
@@ -104,7 +104,7 @@ function Fixture({ sessionId = "mount-order", running = true, messageRoots = fal
           : "tool output"}</div>
         <aui.ThreadPrimitive.ViewportFooter data-thread-scroll-footer><BottomButton /></aui.ThreadPrimitive.ViewportFooter>
       </follower.ThreadScrollFollower>
-    </aui.ThreadPrimitive.Viewport>
+    </follower.SessionThreadViewport>
   </aui.AssistantRuntimeProvider>;
 }
 async function flush() {
@@ -196,6 +196,7 @@ test.each([false, true])("switching away and back restores the actual reading po
   await flush();
   expect(getThreadScrollState("reading-a")?.current?.scrollTop).toBe(320);
   const b = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  if (running) scrollHeight -= 180;
   await act(async () => {
     b.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
     b.scrollTo({ top: 420 });
@@ -254,7 +255,10 @@ test("native restoration scroll cannot overwrite the entry reading anchor when h
   const originalRect = view.HTMLElement.prototype.getBoundingClientRect;
   view.HTMLElement.prototype.getBoundingClientRect = function () {
     const id = this.dataset.messageId;
-    if (id) return new view.DOMRect(0, (id === "a" ? 700 : 0) - (this.closest("[data-test-viewport]")?.scrollTop ?? 0), 600, id === "a" ? 500 : 200);
+    if (id) {
+      const reply = id.startsWith("reply-");
+      return new view.DOMRect(0, (reply ? 700 : 0) - (this.closest("[data-test-viewport]")?.scrollTop ?? 0), 600, reply ? 500 : 200);
+    }
     return originalRect.call(this);
   };
   try {
