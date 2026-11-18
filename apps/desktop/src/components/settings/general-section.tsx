@@ -5,6 +5,7 @@ import { confirmAction } from "../../lib/confirm-action";
 import { localizeError } from "../../lib/error-localization";
 import { saveLanguageSetting, useLocale, type LanguageSetting, type LocalizedMessage } from "../../localization";
 import { AppearanceOptions } from "./AppearanceOptions";
+import { AdministratorLaunchOption } from "./administrator-launch-option";
 import { SectionHeader, SettingsPageHeader, SettingsSelect } from "./settings-chrome";
 
 type UpdatePhase = { kind: "idle" } | { kind: "checking" } | { kind: "downloading"; percent: number } | { kind: "ready"; update: UpdateResult };
@@ -72,6 +73,7 @@ export function GeneralSection() {
           <SettingsSelect value={languageSetting} onChange={(value) => saveLanguageSetting(value as LanguageSetting)} options={[{ value: "auto", label: t("general.auto") }, { value: "zh-CN", label: t("general.chinese") }, { value: "en", label: "English" }]} />
         </div>
       </div>
+      <AdministratorLaunchOption />
       <div className="settings-preference-row">
         <div><strong>{t("general.updates")}</strong><span>{t("general.updateDescription")}</span></div>
         <button className="settings-secondary-action" type="button" disabled={busy} onClick={runUpdate}>

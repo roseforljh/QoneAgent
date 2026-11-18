@@ -5,18 +5,33 @@ import { BrowserDockManager } from "./browser-dock-manager";
 import { DesktopUpdater } from "./updater";
 import * as secretStore from "./secret-store";
 import * as fileDialogs from "./file-dialogs";
+import { administratorLaunchEnabled, setAdministratorLaunchEnabled } from "./windows-administrator";
 
 export function registerIpcHandlers(
   getMainWindow: () => BrowserWindow | null,
   sidecar: SidecarManager,
   terminal: TerminalManager,
   browserDock: BrowserDockManager,
-  updater: DesktopUpdater
+  updater: DesktopUpdater,
+  privilege = { elevated: false, restricted: false },
 ): void {
   // 统一 invoke 入口或分命 handlers
-  ipcMain.handle("desktop_invoke", async (_event, cmd: string, args: Record<string, any> = {}) => {
+  ipcMain.handle("desktop_invoke", async (event, cmd: string, args: Record<string, any> = {}) => {
     const mainWindow = getMainWindow();
+    if (privilege.restricted || cmd === "administrator_launch_get" || cmd === "administrator_launch_set") {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame?.parent !== null) {
+        throw new Error("Desktop command requires the main window");
+      }
+    }
     switch (cmd) {
+      case "administrator_launch_get": {
+        return process.platform === "win32" ? { enabled: administratorLaunchEnabled(), elevated: privilege.elevated } : null;
+      }
+      case "administrator_launch_set": {
+        if (process.platform !== "win32" || typeof args.enabled !== "boolean") throw new Error("Invalid administrator launch preference");
+        setAdministratorLaunchEnabled(args.enabled);
+        return;
+      }
       case "frontend_diagnostic": {
         console.log("[qone:frontend]", args.message);
         return;

@@ -564,6 +564,7 @@ a { text-decoration: none; }
 .settings-dialog-heading h2 { margin: 0 0 5px; color: var(--foreground); font-size: 16px; letter-spacing: -.02em; }
 .settings-dialog-heading p { margin: 0; color: var(--muted-foreground); font-size: var(--q-text-xs); line-height: 1.5; }
 .settings-preference-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.settings-preference-row + .settings-preference-row { border-top: 0; }
 .settings-general-options { border-top: 1px solid var(--border); }
 .settings-option-row { position: relative; display: flex; min-height: 62px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--border); }
 .settings-option-row > strong { color: var(--foreground); font-size: 13px; }

@@ -14,9 +14,9 @@ export class BrowserDockManager {
   /** Preview files this manager wrote; app exit removes exactly these. */
   private previewFiles = new Set<string>();
   private getMainWindow: () => BrowserWindow | null;
-  private cdpPort: () => Promise<number>;
+  private cdpPort: (() => Promise<number>) | null;
 
-  constructor(getMainWindow: () => BrowserWindow | null, cdpPort: () => Promise<number>) {
+  constructor(getMainWindow: () => BrowserWindow | null, cdpPort: (() => Promise<number>) | null) {
     this.getMainWindow = getMainWindow;
     this.cdpPort = cdpPort;
   }
@@ -37,6 +37,8 @@ export class BrowserDockManager {
 
     const view = new WebContentsView({
       webPreferences: {
+        // Untrusted pages must not share the privileged main window’s app/asset protocols.
+        partition: this.cdpPort ? undefined : "persist:qone-administrator-browser",
         sandbox: true,
         contextIsolation: true,
       },
@@ -153,6 +155,7 @@ export class BrowserDockManager {
   }
 
   public async getCdpEndpoint(browserId: string): Promise<string> {
+    if (!this.cdpPort) throw new Error("Browser remote debugging is disabled in administrator mode");
     const session = this.sessions.get(browserId);
     if (!session) throw new Error("browser session not found");
 
