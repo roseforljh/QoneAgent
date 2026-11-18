@@ -64,10 +64,10 @@ export function assistantMessageContent(
         : `pi:${part.messageSequence}`;
       return orderedPart(part, parentId, streaming);
     });
+    // 工具与思考结束后开始流式输出的正文即作为结论展示，触发上方执行过程收起；
+    // 若后续模型继续调用工具，agent-events 会将该段文本归并回 commentary。
     if (streaming && message.content) content.push({
       type: "text", text: message.content,
-      ...(parts.some((part) => part.type === "tool-call" || part.type === "reasoning" || (part.type === "text" && part.phase === "commentary"))
-        ? { parentId: textParentId("pending", "stream") } : {}),
     });
     if (!streaming && content.length === 0 && message.content) content.push({ type: "text", text: message.content });
     return content;
@@ -84,6 +84,6 @@ export function assistantMessageContent(
       ...(call.status === "success" || call.status === "failed" ? { result: call.result ?? call.summary ?? "" } : {}),
       ...(call.status === "failed" ? { isError: true } : {}),
     })),
-    ...(message.content ? [{ type: "text" as const, text: message.content, ...(streaming && legacyCalls.length > 0 ? { parentId: textParentId("pending", "legacy") } : {}) }] : []),
+    ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
   ];
 }

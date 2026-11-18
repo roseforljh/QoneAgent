@@ -44,8 +44,18 @@ export function assistantRangeSections(ranges: readonly AssistantPartRange[]): A
     }
   }
   const finalIndex = ranges.findIndex((range) => range.type === "text" && range.phase === "final_answer");
-  const hasPhasedText = ranges.some((range) => range.type === "text" && range.phase !== undefined);
-  const answerIndex = finalIndex >= 0 ? finalIndex : hasPhasedText ? ranges.length : lastActivityIndex + 1;
+  // 若尚未出现显式 final_answer，则仅保留明确标记为 commentary/pending 的尾部文本在执行过程内；
+  // 紧跟在最后一次工具或思考之后、未带阶段标记的流式结论文本应立即作为 answer 呈现。
+  let answerIndex = finalIndex;
+  if (answerIndex < 0) {
+    answerIndex = ranges.length;
+    for (let index = lastActivityIndex + 1; index < ranges.length; index++) {
+      const range = ranges[index]!;
+      if (range.type === "text" && (range.phase === "commentary" || range.phase === "pending")) continue;
+      answerIndex = index;
+      break;
+    }
+  }
   const firstActivityIndex = ranges.findIndex((range, index) => index < answerIndex && (range.type === "text" || range.type === "tools" || range.type === "reasoning" || range.type === "compaction"));
   if (firstActivityIndex < 0) return { leading: ranges.slice(0, answerIndex), process: [], activity: [], persistent: [], answer: ranges.slice(answerIndex) };
 
