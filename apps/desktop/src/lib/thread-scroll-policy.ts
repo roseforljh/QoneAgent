@@ -4,6 +4,7 @@ import { textPhaseFromParentId } from "./assistant-message-parts";
 // Codex 26.928.2636 Pe/vk: the real tail excludes the response spacer.
 export const THREAD_BOTTOM_TOLERANCE_PX = 24;
 export const THREAD_BOTTOM_SCROLL_DURATION_MS = 260;
+export const THREAD_RESERVE_RELEASE_DURATION_MS = 280;
 export type ThreadPhase = "idle" | "prework" | "final_answer";
 export type ThreadFollowMode = "static" | "prework_watch" | "prework_follow" | "user_follow";
 export interface ThreadFollowSnapshot { turnId?: string; mode: ThreadFollowMode }

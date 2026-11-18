@@ -136,3 +136,36 @@ test("expanding a disclosure at the bottom keeps the animated content above the 
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
   }
 });
+
+test("卸载时不覆盖阅读位置：父级已移除 reserve，此刻 DOM 已被夹过", () => {
+  const originals = [globalThis.ResizeObserver, globalThis.MutationObserver] as const;
+  class ObserverStub { observe() {} unobserve() {} disconnect() {} }
+  class NodeStub extends EventTarget {
+    scrollTop = 0; scrollHeight = 1000; clientHeight = 400;
+    scrollTo() {}
+    getBoundingClientRect() { return { top: 0, bottom: 0, height: 0 } as DOMRect; }
+    querySelector() { return null; }
+    querySelectorAll() { return []; }
+  }
+  try {
+    globalThis.ResizeObserver = ObserverStub as unknown as typeof ResizeObserver;
+    globalThis.MutationObserver = ObserverStub as unknown as typeof MutationObserver;
+    const positions: unknown[] = [];
+    const controller = mountThreadScrollController({
+      viewport: new NodeStub() as unknown as HTMLElement,
+      content: new NodeStub() as unknown as HTMLElement,
+      footer: new NodeStub() as unknown as HTMLElement,
+      endContent: null,
+      turn: { turnId: "turn-1", running: true, phase: "final_answer" },
+      hasRestoration: true,
+      onVisibility: () => {},
+      onSave: () => {},
+      onPosition: (anchor) => positions.push(anchor),
+    });
+    controller.dispose();
+    expect(positions).toEqual([]);
+  } finally {
+    globalThis.ResizeObserver = originals[0];
+    globalThis.MutationObserver = originals[1];
+  }
+});
