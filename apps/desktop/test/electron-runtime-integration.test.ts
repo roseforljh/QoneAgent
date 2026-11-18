@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { once } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -122,6 +124,20 @@ test("renderer ping travels through preload IPC and the real runtime sidecar", a
   const pong = await nextEvent((event) => event.type === "pong" && event.requestId === "chain-ping", "pong");
   expect(String(pong.capabilities)).toContain("session.snapshot");
   expect(received.length).toBeGreaterThan(0);
+}, 30_000);
+
+test("sidecar pipe errors stay local and the renderer can start a replacement", async () => {
+  const { child } = sidecar as unknown as { child: ChildProcess };
+  const closed = once(child, "close");
+  child.stdin!.destroy(Object.assign(new Error("test closed input pipe"), { code: "EPIPE" }));
+  child.stdout!.destroy(Object.assign(new Error("test closed output pipe"), { code: "EPIPE" }));
+  try {
+    await expect(send({ type: "ping", requestId: "chain-broken-pipe" })).rejects.toThrow("agent runtime is not running");
+  } finally { child.kill(); await closed; }
+  await nextEvent((event) => event.type === "runtime.exited", "runtime exit notice");
+  await bridge.invoke("runtime_restart");
+  await send({ type: "ping", requestId: "chain-restarted" });
+  await nextEvent((event) => event.type === "pong" && event.requestId === "chain-restarted", "replacement pong");
 }, 30_000);
 
 test("workspace, session and snapshot commands round-trip over the real stdio protocol", async () => {
