@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
-import { closeDb, openDb, SessionRepo, WorkspaceRepo } from "@qone/database";
+import { closeDb, EventRepo, GoalRepo, openDb, SessionRepo, SettingsRepo, WorkspaceRepo } from "@qone/database";
 import type { RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 import { buildRuntime, runtimeBundle } from "../../desktop/scripts/build-runtime";
 import builderConfig from "../../desktop/electron-builder.json";
@@ -14,11 +14,49 @@ const desktopRoot = path.resolve(path.dirname(runtimeBundle), "..");
 const requireFromBuilder = createRequire(Bun.resolveSync("electron-builder", desktopRoot));
 const { copyFiles, getFileMatchers } = requireFromBuilder("app-builder-lib/out/fileMatcher");
 
-test("the standalone Electron sidecar runs Codemode without the source dependency tree", async () => {
+function electronExecutable() {
   const electron = Bun.spawnSync([process.execPath, "--print", 'require("electron")'], {
     cwd: desktopRoot,
   });
   if (electron.exitCode !== 0) throw new Error(electron.stderr.toString());
+  return electron.stdout.toString().trim();
+}
+
+test("Electron sidecar survives cancellation during the read tool's file stat", () => {
+  const child = Bun.spawnSync([electronExecutable(), "--input-type=module", "--eval", `
+    import assert from "node:assert/strict";
+    import { open } from "node:fs/promises";
+    import { createReadTool } from ${JSON.stringify(import.meta.resolve("@earendil-works/pi-coding-agent"))};
+    const file = ${JSON.stringify(import.meta.path)};
+    const handle = await open(file);
+    const prototype = Object.getPrototypeOf(handle);
+    await handle.close();
+    const read = createReadTool(process.cwd());
+    const args = { path: file, offset: 1, limit: 1 };
+    const result = await read.execute("normal", args);
+    assert.match(result.content[0].text, /import/);
+    const controller = new AbortController();
+    const stat = prototype.stat;
+    prototype.stat = async function (...options) {
+      const result = await stat.apply(this, options);
+      controller.abort();
+      return result;
+    };
+    await assert.rejects(read.execute("cancelled", args, controller.signal), /Operation aborted/);
+    assert(controller.signal.aborted);
+  `], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 10_000 });
+  if (child.exitCode !== 0) throw new Error(child.stderr.toString());
+});
+
+async function waitFor(check: () => boolean, label: string) {
+  const deadline = Date.now() + 5000;
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${label}`);
+    await Bun.sleep(25);
+  }
+}
+
+test("the standalone Electron sidecar survives goal and journal write failures and runs Codemode", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "qone-codemode-bundle-"));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (!new URL(request.url).pathname.endsWith("/chat/completions")) return Response.json({ data: [] });

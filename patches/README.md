@@ -4,6 +4,12 @@ JavaScript dependency patches use Bun's `patchedDependencies`; run `bun install`
 Do not edit installed packages by hand. The app-local PSReadLine source patch is
 built separately as described below.
 
+## Cancelled file reads — `@earendil-works/pi-coding-agent@1.5.2`
+
+Check the abort signal after `FileHandle.stat()` and before opening the read
+stream. On Electron’s Node runtime, a pre-aborted stream can emit an unhandled
+`AbortError` before async iteration attaches its handler, exiting the shared sidecar.
+
 ## Viewport restoration — `@assistant-ui/react@0.15.36`
 
 The additive `ThreadPrimitive.Viewport.scrollRestoration` prop accepts a stable
