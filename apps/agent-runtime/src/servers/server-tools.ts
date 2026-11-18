@@ -68,12 +68,19 @@ export class ServerSessions {
     const existing = [...this.tunnels.values()].find((item) => item.info.serverId === server.id && item.info.remotePort === remotePort);
     if (existing) return existing.info;
     const listener = net.createServer((socket) => {
-      void this.pool.get(server).then((client) => client.forwardOut("127.0.0.1", socket.localPort ?? 0, "127.0.0.1", remotePort, (error, stream) => {
-        if (error) { socket.destroy(); return; }
-        socket.pipe(stream).pipe(socket);
-        socket.on("error", () => stream.close());
-        stream.on("error", () => socket.destroy());
-      }), () => socket.destroy());
+      let channel: ClientChannel | undefined;
+      socket.on("error", () => socket.destroy());
+      socket.on("close", () => channel?.close());
+      void Promise.resolve().then(() => this.pool.get(server)).then((client) => {
+        if (socket.destroyed) return;
+        client.forwardOut("127.0.0.1", socket.localPort ?? 0, "127.0.0.1", remotePort, (error, stream) => {
+          if (error) { socket.destroy(); return; }
+          stream.on("error", () => socket.destroy());
+          if (socket.destroyed) { stream.close(); return; }
+          channel = stream;
+          socket.pipe(stream).pipe(socket);
+        });
+      }).catch(() => socket.destroy());
     });
     await new Promise<void>((resolve, reject) => listener.once("error", reject).listen(0, "127.0.0.1", resolve));
     if (signal?.aborted) { listener.close(); signal.throwIfAborted(); }

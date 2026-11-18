@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type FC, type ReactNode, type RefObject } from "react";
-import { useAuiState, useThreadViewport, useThreadViewportStore } from "@assistant-ui/react";
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type FC, type ReactNode, type RefObject } from "react";
+import { AuiIf, ThreadPrimitive, useAuiState, useThreadViewport, useThreadViewportStore } from "@assistant-ui/react";
 import { useConversationStore } from "../../lib/conversation-context";
 import { getThreadScrollState } from "../../lib/thread-scroll-state";
 import { mountThreadScrollController, type ThreadScrollTurn } from "../../lib/thread-scroll-controller";
@@ -18,6 +18,16 @@ export function useThreadBottomControl() {
   const control = useContext(ThreadBottomContext);
   if (!control) throw new Error("Thread bottom navigation requires ThreadScrollFollower");
   return control;
+}
+
+type SessionViewportProps = Omit<ComponentProps<typeof ThreadPrimitive.Viewport>, "scrollRestoration"> & { sessionId?: string };
+
+export function SessionThreadViewport({ sessionId, ...props }: SessionViewportProps) {
+  // The external store updates assistant-ui after React commits. Do not restore
+  // the selected session against the outgoing session’s still-mounted messages.
+  return <AuiIf condition={(s) => !s.thread.isEmpty && (!sessionId || s.threads.mainThreadId === sessionId)}>
+    <ThreadPrimitive.Viewport {...props} key={sessionId} scrollRestoration={getThreadScrollState(sessionId)} />
+  </AuiIf>;
 }
 
 /** Share the scroll owner with footer navigation; the primitive owns top anchoring/restoration. */

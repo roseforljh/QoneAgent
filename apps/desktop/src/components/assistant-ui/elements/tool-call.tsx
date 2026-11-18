@@ -109,8 +109,8 @@ export function ToolCall({
           {stat.removed > 0 && <span className="text-rose-600 dark:text-rose-400 font-medium">−{stat.removed}</span>}
         </span>}
       </div>}
-      <MeasuredCollapse id={panelId} open={open && canExpand} className="outline-none">
-        {open && canExpand && <div data-slot="tool-result-panel" className={cn("mt-1.5", !resultHasOwnFrame && "overflow-hidden rounded-lg border border-border/40 bg-muted/20 dark:bg-muted/10 shadow-xs")}>
+      <MeasuredCollapse id={panelId} open={open && canExpand} className="outline-none" unmountOnClose>
+        {canExpand && <div data-slot="tool-result-panel" className={cn("mt-1.5", !resultHasOwnFrame && "overflow-hidden rounded-lg border border-border/40 bg-muted/20 dark:bg-muted/10 shadow-xs")}>
           <FadeScroll
             className={cn(failed ? detailViewport : regionViewport, resultHasOwnFrame ? "pe-2" : "p-2.5")}
             autoScrollToBottom={running}

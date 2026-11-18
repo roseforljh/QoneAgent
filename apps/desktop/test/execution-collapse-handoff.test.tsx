@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, jest, test } from "bun:test";
+import { ACTIVITY_TITLE_TOOL } from "@qone/protocol";
 import { JSDOM } from "jsdom";
 import { act } from "react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
@@ -207,5 +208,95 @@ test("instant completion from open streaming directly to persisted message still
   } finally {
     view.HTMLElement.prototype.getBoundingClientRect = originalRect;
     await act(async () => { useStore.setState(previous); });
+  }
+});
+
+test.each([false, true])("live reasoning samples only the latest text (stage: %s)", async (stage) => {
+  let reasoning = "";
+  let complete = false;
+  const stageTitle = "检查启动流程";
+  function Message() {
+    return <aui.MessagePrimitive.Root><AssistantParts /></aui.MessagePrimitive.Root>;
+  }
+  function Fixture() {
+    const content: ThreadMessageLike["content"] = [
+      ...(stage ? [{ type: "tool-call" as const, toolCallId: "stage-heading", toolName: ACTIVITY_TITLE_TOOL, args: { title: stageTitle }, result: "ok" }] : []),
+      { type: "reasoning", text: reasoning, status: { type: complete ? "complete" : "running" } },
+    ];
+    const messages: ThreadMessageLike[] = [{ id: "reasoning-preview", role: "assistant", content, status: { type: "running" } }];
+    const runtime = aui.useExternalStoreRuntime({ messages, isRunning: true, convertMessage: (message) => message, onNew: async () => {} });
+    return <aui.AssistantRuntimeProvider runtime={runtime}>
+      <aui.ThreadPrimitive.Messages components={{ AssistantMessage: Message }} />
+    </aui.AssistantRuntimeProvider>;
+  }
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  const render = () => act(async () => { root!.render(<Fixture />); });
+  const tick = (ms: number) => act(async () => { jest.advanceTimersByTime(ms); });
+  const trigger = () => container.querySelector<HTMLButtonElement>(stage ? '[data-slot="tool-timeline"] button' : '.q-reasoning-trigger');
+  const layer = (value: string) => Array.from(trigger()!.querySelectorAll(".q-reasoning-preview > span"))
+    .find((node) => node.textContent === value);
+
+  jest.useFakeTimers();
+  try {
+    await render();
+    expect(trigger()?.title).toBe(stage ? stageTitle : undefined);
+    reasoning = "我";
+    await render();
+    expect(trigger()?.title).toMatch(stage ? /^检查启动流程$/u : /^(正在思考|Thinking)$/u);
+    reasoning += "先检查";
+    await render();
+    await tick(1000);
+    expect(trigger()?.title).toBe("我先检查");
+    const firstLayer = layer("我先检查");
+    expect(firstLayer).toBeDefined();
+    expect(trigger()?.querySelector(".q-shine-text")).toBeNull();
+    if (!stage) await act(async () => { trigger()!.click(); });
+
+    reasoning += "日志配置";
+    await render();
+    reasoning += "和启动参数";
+    await render();
+    await tick(999);
+    expect(trigger()?.title).toBe("我先检查");
+    if (!stage) expect(container.querySelector('[role="region"]')?.textContent).toBe(reasoning);
+    await tick(1);
+    expect(trigger()?.title).toBe(reasoning);
+    expect(layer(reasoning)).toBe(firstLayer);
+
+    reasoning += "。然后验证。好。是啊。\n我";
+    await render();
+    await tick(1000);
+    expect(trigger()?.title).toBe("然后验证。");
+    const secondLayer = layer("然后验证。");
+    expect(secondLayer).toBeDefined();
+    expect(secondLayer).not.toBe(firstLayer);
+
+    reasoning += "先";
+    await render();
+    await tick(1000);
+    expect(trigger()?.title).toBe("然后验证。");
+    expect(layer("然后验证。")).toBe(secondLayer);
+
+    const longSentence = "我先准备" + "运行结果和启动参数".repeat(100);
+    reasoning += longSentence.slice("我先".length);
+    await render();
+    await tick(1000);
+    expect(trigger()?.title).toBe(longSentence);
+    const overflow = layer(longSentence)?.querySelector('[data-slot="overflow-fade"]');
+    expect(overflow?.classList.contains("whitespace-nowrap")).toBe(true);
+    expect(overflow?.textContent).toBe(longSentence);
+
+    reasoning += "并记录\n好。";
+    complete = true;
+    await render();
+    const finalTitle = stage ? stageTitle : longSentence + "并记录";
+    expect(trigger()?.title).toBe(finalTitle);
+    await tick(1000);
+    expect(trigger()?.title).toBe(finalTitle);
+  } finally {
+    jest.useRealTimers();
   }
 });

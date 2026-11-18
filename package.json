@@ -30,6 +30,7 @@
     "typescript": "^7.0.2"
   },
   "patchedDependencies": {
+    "@earendil-works/pi-coding-agent@1.5.2": "patches/@earendil-works%2Fpi-coding-agent@1.5.2.patch",
     "@assistant-ui/react@0.15.36": "patches/@assistant-ui%2Freact@0.15.36.patch",
     "@assistant-ui/react-lexical@0.2.23": "patches/@assistant-ui%2Freact-lexical@0.2.23.patch",
     "@assistant-ui/core@0.3.36": "patches/@assistant-ui%2Fcore@0.3.36.patch",

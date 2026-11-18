@@ -1,0 +1,12 @@
+diff --git a/dist/core/tools/read.js b/dist/core/tools/read.js
+--- a/dist/core/tools/read.js
++++ b/dist/core/tools/read.js
+@@ -43,6 +43,8 @@ async function* readLocalFileChunks(path, { signal }) {
+     try {
+         const stats = await handle.stat();
+         const end = stats.isFile() && stats.size > 0 ? stats.size - 1 : undefined;
++        // An already-aborted stream can emit 'error' before iteration subscribes.
++        signal?.throwIfAborted();
+         yield* handle.createReadStream({ end, signal, autoClose: false });
+     }
+     finally {

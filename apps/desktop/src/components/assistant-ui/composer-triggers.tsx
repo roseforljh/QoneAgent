@@ -1,6 +1,6 @@
 import { mcpAvailable } from "@qone/protocol";
 import { useConversationStore } from "../../lib/conversation-context";
-import { useCallback, useEffect, useMemo, type FC } from "react";
+import { useEffect, useMemo, type FC } from "react";
 import {
   ComposerPrimitive,
   unstable_useMentionAdapter,
@@ -9,9 +9,8 @@ import {
   type Unstable_SlashCommand,
 } from "@assistant-ui/react";
 import { useLocale } from "../../localization";
-import { hasDesktopBridge } from "../../store";
 import { ComposerMenuItem } from "./elements/composer";
-import { ComposerSlashRow, ComposerToolRow, getComposerTools, type ComposerSlashEntry, type ComposerTool } from "./composer-tools";
+import { ComposerSlashRow, ComposerToolRow, composerSuggestionsClass, type ComposerSlashEntry, type ComposerTool } from "./composer-tools";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
 import { bindTopPopupHeight } from "../../lib/popup-height";
 import { ChevronRight, PlugZapIcon } from "lucide-react";
@@ -20,20 +19,21 @@ import { SkillIcon } from "../skills/SkillIcon";
 import { ComposerSlashNavigation } from "./composer-slash-navigation";
 
 // Codex's composer suggestions span their composer anchor and sit 8px above it.
-const popoverClass = "q-composer-suggestions absolute inset-x-0 bottom-full z-50 mb-2 flex flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border/60 bg-background p-1 text-sm dark:bg-popover";
-const MentionPopoverState: FC<{ onStateChange: (open: boolean, close: () => void) => void }> = ({ onStateChange }) => {
-  const resource = unstable_useTriggerPopoverScopeContext();
-  useEffect(() => onStateChange(resource.open, resource.close), [onStateChange, resource.close, resource.open]);
+const popoverClass = `${composerSuggestionsClass} absolute inset-x-0 bottom-full z-50 mb-2`;
+const TriggerPopoverState: FC<{ onStateChange: (open: boolean) => void }> = ({ onStateChange }) => {
+  const { open } = unstable_useTriggerPopoverScopeContext();
+  useEffect(() => onStateChange(open), [onStateChange, open]);
   return null;
 };
 
 export const ComposerTriggers: FC<{
+  tools: readonly ComposerTool[];
+  suspended?: boolean;
   onToolSelect: (tool: ComposerTool) => void;
   onCommandSelect: (command: ComposerCommand) => void;
-  onMentionStateChange: (open: boolean, close: () => void) => void;
+  onMentionStateChange: (open: boolean) => void;
   onSlashStateChange: (open: boolean) => void;
-}> = ({ onToolSelect, onCommandSelect, onMentionStateChange, onSlashStateChange }) => {
-  const onSlashPopoverState = useCallback((open: boolean) => onSlashStateChange(open), [onSlashStateChange]);
+}> = ({ tools, suspended, onToolSelect, onCommandSelect, onMentionStateChange, onSlashStateChange }) => {
   const { t } = useLocale();
   const send = useConversationStore((state) => state.send);
   const connected = useConversationStore((state) => state.connected);
@@ -42,19 +42,8 @@ export const ComposerTriggers: FC<{
   const currentWorkspaceId = useConversationStore((state) => state.currentWorkspaceId);
   const draftWorkspaceId = useConversationStore((state) => state.draftWorkspaceId);
   const currentSessionId = useConversationStore((state) => state.currentSessionId);
-  const selectedModelId = useConversationStore((state) => state.selectedModelId);
-  const compacting = useConversationStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
-  const messageCount = useConversationStore((state) => state.messages.length);
-  const messagesLoadingSessionId = useConversationStore((state) => state.messagesLoadingSessionId);
-  const running = useConversationStore((state) => state.running);
   const workspaceId = currentSessionId ? currentWorkspaceId : draftWorkspaceId ?? currentWorkspaceId;
   const workspacePath = useConversationStore((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.path);
-  const canCompact = connected && !!currentSessionId && !!selectedModelId && messageCount > 0 && messagesLoadingSessionId !== currentSessionId && !running
-    && !compacting;
-  const canUseGoal = connected && !!(currentWorkspaceId || draftWorkspaceId);
-  const tools = useMemo(() => getComposerTools(t).filter((tool) =>
-    (tool.id !== "compact" || canCompact) && (tool.id !== "goal" || canUseGoal) && (tool.id !== "folder" || hasDesktopBridge()),
-  ), [canCompact, canUseGoal, t]);
   const compactTool = tools.find((tool) => tool.id === "compact");
   const slashEntries = useMemo<ComposerSlashEntry[]>(() => [
     ...(connected && workspacePath ? skills.filter((skill) => skill.enabled !== false).map((skill) => ({ id: `skill:${skill.id}`, label: `/skill:${skill.name}`, description: skill.description, kind: "skill" as const, skill })) : []),
@@ -109,8 +98,8 @@ export const ComposerTriggers: FC<{
   }, [onSlashStateChange, slashEntries.length]);
 
   return <>
-    <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="@" adapter={mention.adapter} className={`${popoverClass} max-h-[min(15rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.openTools")}>
-      <MentionPopoverState onStateChange={onMentionStateChange} />
+    <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="@" adapter={suspended ? undefined : mention.adapter} className={`${popoverClass} max-h-[min(15rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.openTools")}>
+      <TriggerPopoverState onStateChange={onMentionStateChange} />
       <ComposerPrimitive.Unstable_TriggerPopover.Action
         removeOnExecute
         onExecute={(item) => {
@@ -132,8 +121,8 @@ export const ComposerTriggers: FC<{
       </ComposerPrimitive.Unstable_TriggerPopoverItems>
     </ComposerPrimitive.Unstable_TriggerPopover>
 
-    {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="/" adapter={slashAdapter} className={`${popoverClass} max-h-[min(24rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.slashCommands")}>
-      <MentionPopoverState onStateChange={onSlashPopoverState} />
+    {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="/" adapter={suspended ? undefined : slashAdapter} className={`${popoverClass} max-h-[min(24rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.slashCommands")}>
+      <TriggerPopoverState onStateChange={onSlashStateChange} />
       <ComposerPrimitive.Unstable_TriggerPopover.Action {...slash.action} />
       <ComposerSlashNavigation groups={skillGroups} entries={slashEntries} />
       <ComposerPrimitive.Unstable_TriggerPopoverCategories>

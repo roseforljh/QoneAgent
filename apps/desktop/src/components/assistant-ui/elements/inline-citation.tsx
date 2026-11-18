@@ -37,11 +37,11 @@ function Citation({ index, source, open, onOpenChange, onOpenSource }: CitationP
         {source.label ?? index + 1}
       </PreviewCard.Trigger>
       <PreviewCard.Portal>
-        <PreviewCard.Positioner side="top" sideOffset={8}>
+        <PreviewCard.Positioner className="z-50" side="top" sideOffset={8}>
           <PreviewCard.Popup
             className={cn(
               floating,
-              "z-50 w-64 origin-(--transform-origin) rounded-2xl p-3.5 outline-none",
+              "w-64 origin-(--transform-origin) rounded-2xl p-3.5 outline-none",
               "transition-[opacity,scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
               "data-[starting-style]:scale-[0.97] data-[starting-style]:opacity-0",
               "data-[ending-style]:scale-[0.97] data-[ending-style]:opacity-0",

@@ -1,5 +1,5 @@
 import { registerMcp, mcpServerList } from "./mcp-connections";
-import { mkdirSync, watch } from "node:fs";
+import { watch } from "node:fs";
 import path from "node:path";
 import { mcpServersFrom, type ConfigFile } from "@qone/database";
 import { decodeCommand, mcpValueSecretKeys, type McpServerInfo, type RuntimeCommand } from "@qone/protocol";
@@ -138,7 +138,7 @@ export function watchConfiguration(settings: ConfigFile, services: () => Service
       services().send({ type: "error", message: `settings.json: ${error instanceof Error ? error.message : String(error)}` });
     });
   });
-  const invalid = settings.onInvalid(error => services().send({ type: "error", message: `settings.json: ${error.message}; changes apply once it is fixed` }));
+  const invalid = settings.onInvalid(error => services().send({ type: "error", message: `settings.json: ${error.message}` }));
   settings.watch();
 
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -153,11 +153,23 @@ export function watchConfiguration(settings: ConfigFile, services: () => Service
       timers.add(timer);
     };
   };
-  mkdirSync(qoneSkillsDir(), { recursive: true });
-  const skills = watch(qoneSkillsDir(), { recursive: true }, debounce(async () => {
+  const watchDirectory = (directory: string, recursive: boolean, listener: (_event: string, name: string | Buffer | null) => void) => {
+    const report = (error: unknown) => services().log.warn("configuration watcher failed", { directory, err: String(error) });
+    try {
+      const watcher = watch(directory, { recursive }, listener);
+      return watcher.on("error", (error) => { watcher.close(); report(error); });
+    } catch (error) { report(error); }
+  };
+  const skillsDir = qoneSkillsDir();
+  const reloadSkills = debounce(async () => {
     await services().adapter.refreshSkills();
     await run({ type: "skills.list", requestId: crypto.randomUUID() }, services());
-  }));
+  });
+  // Watching installed/ itself loses new files when it is replaced and can
+  // produce a stream of rename events when the watched root is removed on Windows.
+  const skills = watchDirectory(path.dirname(skillsDir), true, (_event, name) => {
+    if (!name || path.normalize(String(name)).split(path.sep, 1)[0] === path.basename(skillsDir)) reloadSkills();
+  });
   let instructions = readGlobalInstructions();
   const reloadInstructions = debounce(async () => {
     const content = readGlobalInstructions();
@@ -166,8 +178,8 @@ export function watchConfiguration(settings: ConfigFile, services: () => Service
     await services().adapter.refreshSkills();
     services().send({ type: "global-prompt", requestId: crypto.randomUUID(), content, path: globalInstructionsPath(), directory: globalInstructionsDirectory() });
   });
-  const prompt = watch(path.dirname(globalInstructionsPath()), (_event, name) => {
+  const prompt = watchDirectory(path.dirname(globalInstructionsPath()), false, (_event, name) => {
     if (name && path.basename(String(name)) === path.basename(globalInstructionsPath())) reloadInstructions();
   });
-  return () => { off(); invalid(); settings.close(); skills.close(); prompt.close(); for (const timer of timers) clearTimeout(timer); };
+  return () => { off(); invalid(); settings.close(); skills?.close(); prompt?.close(); for (const timer of timers) clearTimeout(timer); };
 }

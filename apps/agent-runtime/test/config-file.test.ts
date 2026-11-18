@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ConfigFile, McpServerRepo, ModelConfigRepo, PreferencesRepo } from "@qone/database";
@@ -41,6 +41,23 @@ test("the file keeps Claude Code's shape, never stores literal secrets and survi
   expect(repo.list()).toHaveLength(1);
   expect(settings.error).toBeDefined();
   expect(() => repo.delete("local")).toThrow("syntax error");
+});
+
+test("a failed settings restore is reported without dropping the last good configuration", async () => {
+  const settings = fixture();
+  settings.write("preferences", { first: 1 });
+  const staging = `${settings.file}.${process.pid}.tmp`;
+  mkdirSync(staging);
+  const reported = new Promise<Error>(resolve => settings.onInvalid(resolve));
+  settings.watch();
+  try {
+    rmSync(settings.file);
+    expect(await reported).toMatchObject({ code: "EISDIR" });
+    expect(settings.read("preferences")).toEqual({ first: 1 });
+    rmSync(staging, { recursive: true });
+    settings.reload();
+    expect(JSON.parse(readFileSync(settings.file, "utf8")).preferences).toEqual({ first: 1 });
+  } finally { settings.close(); }
 });
 
 test("a UI save merges external changes before the watch debounce, and reads cannot mutate stored state", () => {

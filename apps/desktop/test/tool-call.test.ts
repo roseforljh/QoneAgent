@@ -45,6 +45,8 @@ test("official ToolCall displays actual request, result, and failure state", () 
   expect(html).toContain("file content");
   expect(html).toContain("file.ts");
   expect(html).toContain('data-slot="tool-result-panel"');
+  // An open result must grow naturally, not start from a measured pixel height.
+  expect(html).toContain("height:auto");
   expect(html).toContain("border-border/40");
   expect(html).toContain('data-slot="codex-icon"');
   expect(html).not.toContain("text-red-");

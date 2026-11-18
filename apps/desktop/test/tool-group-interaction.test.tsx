@@ -5,6 +5,7 @@ import type { ThreadMessageLike } from "@assistant-ui/react";
 import type { SubagentRunInfo } from "@qone/protocol";
 import { useStore } from "../src/store";
 import { OPEN_SUBAGENT_EVENT } from "../src/components/assistant-ui/subagent-navigation";
+import { assistantPartRanges } from "../src/components/assistant-ui/assistant-part-ranges";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
 const view = dom.window;
@@ -46,18 +47,21 @@ afterAll(() => {
   dom.window.close();
 });
 
-test("tool details require a click, retain user choices during growth, and close on completion", async () => {
+test("tool group shows the active command over narration and retains disclosure choices", async () => {
   let running = true;
   let command = "bun test";
   let completed = false;
+  const narration = "Run the tests with a timeout";
   function Message() {
-    return <aui.MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={2} /></aui.MessagePrimitive.Root>;
+    const parts = aui.useAuiState((state) => state.message.parts);
+    return <aui.MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={parts.length} activityRanges={assistantPartRanges(parts)} /></aui.MessagePrimitive.Root>;
   }
   function Fixture() {
     const messages: ThreadMessageLike[] = [{
       id: "interactive-group", role: "assistant", status: running ? { type: "running" } : { type: "complete", reason: "stop" },
       content: [
         { type: "tool-call", toolName: "read", toolCallId: "source", args: { path: "src/source.ts" }, result: "done" },
+        { type: "reasoning", text: narration },
         { type: "tool-call", toolName: "powershell", toolCallId: "command", args: { command }, ...(completed ? { result: "passed" } : {}) },
       ],
     }];
@@ -74,11 +78,14 @@ test("tool details require a click, retain user choices during growth, and close
   await render();
   expect(trigger().getAttribute("aria-expanded")).toBe("false");
   expect(panel().textContent).toBe("");
-  expect(trigger().title).toContain("bun test");
+  expect(trigger().title).toContain(command);
+  expect(trigger().textContent).toContain(command);
+  expect(trigger().textContent).not.toContain(narration);
 
   await toggle();
   expect(trigger().getAttribute("aria-expanded")).toBe("true");
   expect(panel().textContent).toContain("source.ts");
+  expect(panel().textContent).toContain(narration);
   expect(panel().textContent).toContain("bun test");
   expect(panel().textContent!.indexOf("source.ts")).toBeLessThan(panel().textContent!.indexOf("bun test"));
   expect(panel().querySelectorAll('[data-slot="tool-call"][data-state="closed"]')).toHaveLength(2);

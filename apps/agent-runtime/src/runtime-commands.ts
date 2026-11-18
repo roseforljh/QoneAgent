@@ -552,7 +552,8 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           await services.subagentController.dispose(cmd.sessionId, [...removedRunIds]);
           // Pi keeps an in-memory conversation; it must be rebuilt from the trimmed DB history.
           await services.adapter.disposeSession(cmd.sessionId);
-          services.flushEvents();
+          // Do not truncate until the retry queue can no longer restore deleted rows.
+          services.flushEvents({ required: true });
           services.messageRepo.truncateFrom(cmd.sessionId, cmd.replaceFromMessageId);
           for (const child of childRuns) if (removedRunIds.has(child.runId)) {
             services.subagentPublisher.forget(child.runId);
@@ -679,6 +680,9 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
               services.publishGoal(updated);
             }
           }
+        }).catch((error) => {
+          services.log.error("run finalization failed", { sessionId: cmd.sessionId, runId: run.id, err: String(error) });
+          services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
         });
 
       services.send({ type: "pong", requestId: cmd.requestId });

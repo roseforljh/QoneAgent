@@ -58,6 +58,9 @@ export class SidecarManager {
     });
 
     this.child = child;
+    // A failed write rejects its caller and also emits a separate stream error.
+    child.stdin?.on("error", (error) => console.error("[sidecar] input pipe failed:", error));
+    child.on("error", (error) => console.error("[sidecar] process error:", error));
 
     if (!child.stdout) {
       console.error("[sidecar] agent-runtime stdout not available");
@@ -65,6 +68,7 @@ export class SidecarManager {
     }
 
     const rl = readline.createInterface({ input: child.stdout, terminal: false });
+    rl.on("error", (error) => console.error("[sidecar] output pipe failed:", error));
 
     rl.on("line", (line) => {
       if (this.generation !== currentGen || !line.trim()) return;
@@ -78,10 +82,6 @@ export class SidecarManager {
         this.flushBatch();
         this.emitToWindow([{ type: "runtime.exited", code }]);
       });
-    });
-
-    child.on("error", (error) => {
-      console.error("[sidecar] process error:", error);
     });
   }
 

@@ -73,7 +73,9 @@ function findIdentity(candidate: ServerCandidate, identities: string[], agent: s
     let found: string | undefined;
     const timer = setTimeout(() => client.end(), 10_000);
     client.once("ready", () => { clearTimeout(timer); client.end(); resolve(found); });
-    client.once("error", () => { clearTimeout(timer); resolve(undefined); });
+    const failed = () => { clearTimeout(timer); resolve(undefined); };
+    client.on("error", failed);
+    client.once("close", failed);
     client.connect({
       host: candidate.host, port: candidate.port, username, readyTimeout: 8_000,
       hostVerifier: () => true,

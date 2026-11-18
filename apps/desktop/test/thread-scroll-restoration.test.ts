@@ -50,10 +50,17 @@ let originals: PropertyDescriptor[];
 const frames = new Map<number, () => void>();
 let nextFrame = 0;
 class ObserverStub { observe() {} disconnect() {} }
+class ResizeStub {
+  static callbacks = new Map<ElementStub, () => void>();
+  private observed: ElementStub[] = [];
+  constructor(private callback: () => void) {}
+  observe(element: ElementStub) { this.observed.push(element); ResizeStub.callbacks.set(element, this.callback); }
+  disconnect() { for (const element of this.observed) ResizeStub.callbacks.delete(element); this.observed = []; }
+}
 beforeEach(() => {
   originals = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key)!);
   const values = [
-    { createElement: () => new ElementStub() }, { devicePixelRatio: 1 }, ObserverStub, ObserverStub,
+    { createElement: () => new ElementStub() }, { devicePixelRatio: 1 }, ResizeStub, ObserverStub,
     (fn: () => void) => { frames.set(++nextFrame, fn); return nextFrame; },
     (id: number) => frames.delete(id),
   ];
@@ -61,6 +68,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   frames.clear();
+  ResizeStub.callbacks.clear();
   globals.forEach((key, i) => {
     if (originals[i]) Object.defineProperty(globalThis, key, originals[i]!);
     else Reflect.deleteProperty(globalThis, key);
@@ -99,6 +107,66 @@ test("returning to a running turn restores before frames and never replays smoot
   f.viewport.scrollTop = 420;
   dispose();
   expect(snapshot.current.scrollTop).toBe(420);
+});
+
+test.each([0, 80])("returning from another running session keeps the bubble stationary after the tail shrinks (reading offset %ipx)", (readingOffset) => {
+  const a = fixture();
+  const aSnapshot = getThreadScrollState("running-a")!;
+  a.viewport.scrollPaddingTop = "32px";
+  a.viewport.contentHeight = 1900;
+  const leaveA = mountTopAnchorReserve(a.store, aSnapshot);
+  flushFrames();
+  a.viewport.scrollTop -= readingOffset;
+  const bubbleOffset = a.anchor.offsetTop - a.viewport.scrollTop;
+  leaveA();
+
+  const b = fixture();
+  b.anchor.dataset.messageId = "user-b";
+  b.state.topAnchorTurn.anchorId = "user-b";
+  const leaveB = mountTopAnchorReserve(b.store, getThreadScrollState("running-b"));
+  flushFrames();
+  leaveB();
+
+  const returned = fixture();
+  returned.viewport.scrollPaddingTop = "32px";
+  returned.anchor.offsetTop += 60; // Earlier turns reflowed.
+  returned.viewport.contentHeight = 1600; // The trailing output collapsed on remount.
+  const leaveReturned = mountTopAnchorReserve(returned.store, aSnapshot);
+  expect(returned.anchor.offsetTop - returned.viewport.scrollTop).toBe(bubbleOffset);
+  flushFrames();
+  expect(returned.anchor.offsetTop - returned.viewport.scrollTop).toBe(bubbleOffset);
+  expect(returned.viewport.calls.every((call) => call.behavior === "instant")).toBe(true);
+  leaveReturned();
+});
+
+test("a restored running bubble stays pinned through a delayed layout reflow without pulling back manual scrolling", () => {
+  const f = fixture();
+  f.viewport.scrollPaddingTop = "32px";
+  const dispose = mountTopAnchorReserve(f.store, {
+    current: { scrollTop: 1368, offsetFromAnchorPx: 0, topAnchorTurn: f.state.topAnchorTurn },
+  });
+  flushFrames();
+  const resize = ResizeStub.callbacks.get(f.viewport)!;
+  const reflow = (anchorDelta: number, heightDelta = anchorDelta) => {
+    // Dock width changes rewrap earlier turns and the reply, without changing IDs.
+    f.anchor.offsetTop += anchorDelta;
+    f.viewport.contentHeight += heightDelta;
+    f.viewport.scrollTop = Math.min(f.viewport.scrollTop, f.viewport.scrollHeight - f.viewport.clientHeight);
+    resize();
+  };
+  reflow(128, 144); // Also changes the bottom reserve.
+  expect(f.anchor.offsetTop - f.viewport.scrollTop).toBe(32);
+  reflow(60);
+  expect(f.anchor.offsetTop - f.viewport.scrollTop).toBe(32);
+  reflow(-48, -72); // The browser clamps before dispatching its scroll event.
+  expect(f.anchor.offsetTop - f.viewport.scrollTop).toBe(32);
+  f.viewport.scrollTop -= 100;
+  const readingTop = f.viewport.scrollTop;
+  reflow(80);
+  flushFrames();
+  expect(f.viewport.scrollTop).toBe(readingTop);
+  expect(f.viewport.calls.every((call) => call.behavior === "instant")).toBe(true);
+  dispose();
 });
 
 test("restoration leaves the next new user turn's official smooth placement intact", () => {

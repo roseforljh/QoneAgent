@@ -49,6 +49,15 @@ test("reopening the same dock id destroys the previous view and keeps one child"
   expect(win.children.size).toBe(0);
 });
 
+test("administrator mode still opens views but never exposes their debugging endpoint", async () => {
+  const win = windowStub();
+  const dock = new BrowserDockManager(() => win as never, null);
+  dock.open("admin", "https://example.com", 0, 0, 10, 10);
+  expect(win.children.size).toBe(1);
+  await expect(dock.getCdpEndpoint("admin")).rejects.toThrow("remote debugging is disabled");
+  dock.closeAll();
+});
+
 test("closeAll destroys every view", () => {
   const win = windowStub();
   const dock = new BrowserDockManager(() => win as never, async () => 9222);

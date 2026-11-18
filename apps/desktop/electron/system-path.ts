@@ -18,6 +18,10 @@ export function mergePathEntries(registry: string, inherited: string): string {
     .join(";");
 }
 
+export function windowsPowerShellPath(): string {
+  return path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
 /**
  * Explorer keeps the PATH it had at logon, so tools installed since then (bun,
  * cargo, …) are missing for apps started from the desktop. Re-read the current
@@ -27,8 +31,7 @@ export function refreshWindowsPath(): Promise<void> {
   if (process.platform !== "win32") return Promise.resolve();
   return new Promise((resolve) => {
     // Absolute path: the PATH being repaired may not even reach PowerShell.
-    const powershell = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    execFile(powershell, ["-NoProfile", "-NonInteractive", "-Command", READ_REGISTRY_PATH],
+    execFile(windowsPowerShellPath(), ["-NoProfile", "-NonInteractive", "-Command", READ_REGISTRY_PATH],
       { encoding: "utf8", windowsHide: true, timeout: 5_000 }, (error, stdout) => {
         // Unreadable registry: keep the inherited PATH rather than block startup.
         if (!error && stdout.trim()) process.env.Path = mergePathEntries(stdout, process.env.Path ?? "");

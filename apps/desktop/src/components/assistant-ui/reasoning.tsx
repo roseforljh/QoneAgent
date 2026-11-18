@@ -6,9 +6,9 @@ import { splitMarkdownBlocks, type MarkdownBlockState } from "../../lib/markdown
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { CodexChevronRightIcon } from "./execution-icons";
 import { MeasuredCollapse } from "./elements/measured-collapse";
-import { FadeScroll, ShimmerLabel } from "./elements/surfaces";
-import { OverflowFade } from "./elements/overflow-fade";
-import { latestReasoningText } from "./reasoning-preview";
+import { FadeScroll } from "./elements/surfaces";
+import { useReasoningPreview } from "./reasoning-preview";
+import { ReasoningPreviewLabel } from "./reasoning-preview-label";
 import { useLocale } from "../../localization";
 import "./reasoning.css";
 
@@ -32,17 +32,17 @@ export const Reasoning: ReasoningMessagePartComponent = () => {
   const reduceMotion = useReducedMotion();
   const part = useAuiState((s) => s.part.type === "reasoning" ? s.part : null);
   const messageRunning = useAuiState((s) => s.message.status?.type === "running");
-  const running = messageRunning && part?.status.type === "running";
+  const hasText = Boolean(part?.text.trim());
+  const running = hasText && messageRunning && part?.status.type === "running";
   const [open, setOpen] = useState(false);
+  const preview = useReasoningPreview(part?.text ?? "", running);
 
-  if (!part?.text.trim()) return null;
-  const preview = latestReasoningText(part.text);
+  if (!part || !hasText) return null;
+  const label = preview.text || t("chat.reasoningActive");
 
   return <Collapsible open={open} onOpenChange={setOpen} className="q-reasoning" data-slot="reasoning" data-running={running}>
-    <div className="q-disclosure-sticky"><CollapsibleTrigger title={preview} className="q-reasoning-trigger group/reasoning">
-      <OverflowFade className="q-reasoning-preview">
-        <ShimmerLabel active={running}>{preview}</ShimmerLabel>
-      </OverflowFade>
+    <div className="q-disclosure-sticky"><CollapsibleTrigger title={label} aria-label={label} className="q-reasoning-trigger group/reasoning">
+      {preview.text ? <ReasoningPreviewLabel preview={preview} running={running} /> : label}
       <CodexChevronRightIcon className="q-reasoning-chevron size-3.5 shrink-0" />
     </CollapsibleTrigger></div>
     <MeasuredCollapse open={open}>

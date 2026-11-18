@@ -135,7 +135,7 @@ export function useSideConversationRuntime(sessionId: string) {
       current.runAgent(prompt.text, sourceId, attachments, undefined, prompt.goal || Boolean(source?.goalId), sessionId, prompt.quote ?? source?.quote);
     },
     onCancel: async () => useStore.getState().stopAgent(sessionId),
-    adapters: { attachments: attachmentAdapter },
+    adapters: { threadList: { threadId: sessionId }, attachments: attachmentAdapter },
     queue: queueAdapter,
   });
   useEffect(() => bindComposerDrafts(runtime, sessionId, () => Boolean(useStore.getState().sideChats[sessionId])), [runtime, sessionId]);
