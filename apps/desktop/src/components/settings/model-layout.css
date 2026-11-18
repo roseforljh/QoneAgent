@@ -145,3 +145,6 @@
   .settings-sync-dialog .settings-sync-row { align-items: flex-start; flex-direction: column; gap: 4px; }
   .settings-sync-row code { max-width: 100%; }
 }
+.settings-sync-dialog .settings-tabs .settings-sync-select-all { margin-left: auto; color: var(--muted-foreground); }
+.settings-sync-dialog .settings-tabs .settings-sync-select-all:hover:not(:disabled) { color: var(--foreground); }
+.settings-sync-dialog .settings-tabs .settings-sync-select-all:disabled { opacity: .4; cursor: default; }

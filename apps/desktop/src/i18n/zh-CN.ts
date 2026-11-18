@@ -399,6 +399,8 @@ export const zh = {
   "common.close": "关闭",
   "common.search": "搜索",
   "common.cancel": "取消",
+  "common.selectAll": "全选",
+  "common.deselectAll": "取消全选",
   "common.confirmAction": "确认操作",
   "common.save": "保存",
   "common.delete": "删除",

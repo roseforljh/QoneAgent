@@ -400,6 +400,8 @@ export const en: Messages = {
   "common.close": "Close",
   "common.search": "Search",
   "common.cancel": "Cancel",
+  "common.selectAll": "Select all",
+  "common.deselectAll": "Deselect all",
   "common.confirmAction": "Confirm action",
   "common.save": "Save",
   "common.delete": "Delete",

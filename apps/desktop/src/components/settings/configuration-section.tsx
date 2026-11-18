@@ -60,12 +60,19 @@ function ModelSyncDialog({ open, fetched, existing, onClose, onAdd, onRemove }: 
   });
   const selectedNew = newModels.filter((model) => !unselectedNew.has(model.id));
   const selectedMissingIds = missingModels.filter((model) => selectedMissing.has(model.id)).map((model) => model.id);
+  const allSelected = listed.length > 0 && listed.every((model) => isSelected(model.id));
+  // New tab tracks unselected ids, missing tab tracks selected ids, so "all" means opposite sets per tab.
+  const toggleAll = () => {
+    const ids = new Set(listed.map((model) => model.id));
+    if (tab === "new") setUnselectedNew(allSelected ? ids : new Set());
+    else setSelectedMissing(allSelected ? new Set() : ids);
+  };
   return createPortal(
     <div className="settings-sync-layer">
       <div ref={dialogRef} tabIndex={-1} className="settings-subdialog settings-sync-dialog" role="dialog" aria-modal="true" aria-label={t("provider.sync")}>
         <div className="settings-subdialog-header"><div><span>{t("provider.sync")}</span><h3>{t("provider.providerModels")}</h3></div><button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button></div>
         <p className="settings-inline-status" role="status">{t("provider.metadataSummary", { count: configuredCount, total: fetched.length })}</p>
-        <div className="settings-tabs"><button type="button" className={cn(tab === "new" && "is-active")} onClick={() => setTab("new")}>{t("provider.newModels")} <em>{newModels.length}</em></button><button type="button" className={cn(tab === "missing" && "is-active")} onClick={() => setTab("missing")}>{t("provider.missingModels")} <em>{missingModels.length}</em></button></div>
+        <div className="settings-tabs"><button type="button" className={cn(tab === "new" && "is-active")} onClick={() => setTab("new")}>{t("provider.newModels")} <em>{newModels.length}</em></button><button type="button" className={cn(tab === "missing" && "is-active")} onClick={() => setTab("missing")}>{t("provider.missingModels")} <em>{missingModels.length}</em></button><button type="button" className="settings-sync-select-all" disabled={!listed.length} onClick={toggleAll}>{t(allSelected ? "common.deselectAll" : "common.selectAll")}</button></div>
         <div className="settings-sync-list">
           {listed.map((model) => (
             <button type="button" role="checkbox" aria-checked={isSelected(model.id)} className="settings-sync-row is-selectable" key={model.id} onClick={() => toggle(model.id)}>
@@ -236,6 +243,9 @@ export function ConfigurationSection() {
     setProfiles(next);
     window.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, profile.id);
     saveProviderProfiles(next);
+    // Runtime records are authoritative and get merged back on every model.list, so removed models must be deleted there too.
+    const kept = new Set(profile.models.map((model) => model.id));
+    for (const config of modelConfigs) if (config.provider === profile.id && !kept.has(config.model)) send({ type: "model.delete", requestId: crypto.randomUUID(), id: config.id });
     for (const model of profile.models) send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${profile.id}/${model.id}`, provider: profile.id, model: model.id, config: { apiType: profile.apiType, baseUrl: profile.baseUrl, ...withProviderInputDefaults(model.settings ?? defaultModelSettings(profile.apiType), model.settings?.apiType ?? profile.apiType) }, enabled: true, updatedAt: Date.now() } });
   };
   const deleteProfile = (profile: ProviderProfile) => {
