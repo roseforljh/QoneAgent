@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
+import { createConnection } from "node:net";
 import type { Client, ClientChannel } from "ssh2";
 import { exec, sftp, abortable } from "../src/servers/ssh";
 import { createServerTools, ServerSessions } from "../src/servers/server-tools";
@@ -51,6 +52,13 @@ test("synchronous SSH connection failures release cancellation listeners and exe
   }
 });
 
+test("an SFTP error after channel handoff does not escape the tool boundary", async () => {
+  const channel = new Channel();
+  const client = { sftp(callback: Function) { callback(null, channel); } } as unknown as Client;
+  await sftp(client);
+  expect(() => channel.emit("error", new Error("SFTP channel failed"))).not.toThrow();
+});
+
 test("exec handles cancellation before start, during channel creation and during execution", async () => {
   const early = new AbortController(); early.abort();
   let calls = 0;
@@ -63,6 +71,7 @@ test("exec handles cancellation before start, during channel creation and during
   expect((await pending).cancelled).toBe(true);
   const late = new Channel(); callback!(null, late);
   expect(late.signals).toEqual(["KILL"]); expect(late.closed).toBe(true);
+  expect(() => late.emit("error", new Error("channel failed while closing"))).not.toThrow();
   const live = new Channel(), liveControl = new AbortController();
   const livePending = exec(clientFor(live), "live", { signal: liveControl.signal });
   live.emit("data", Buffer.from("partial")); liveControl.abort();
@@ -98,7 +107,9 @@ test("cancelling an SFTP waiter closes only its eventual channel and leaves pool
   const control = new AbortController(); let callback: Function;
   const pending = sftp({ sftp(cb: Function) { callback = cb; } } as never, control.signal);
   control.abort(); await expect(pending).rejects.toThrow();
-  let closed = 0; callback!(null, { end() { closed++; } }); expect(closed).toBe(1);
+  let closed = 0;
+  callback!(null, Object.assign(new EventEmitter(), { end() { closed++; } }));
+  expect(closed).toBe(1);
   const transfer = new EventEmitter() as any; transfer.end = () => { closed++; transfer.emit("close"); };
   const next = new AbortController();
   await sftp({ sftp(cb: Function) { cb(null, transfer); } } as never, next.signal);
@@ -131,6 +142,17 @@ test("cancelled late terminal creation closes only the new channel", async () =>
   await expect(pending).rejects.toThrow();
   const channel = new Channel(); callback!(null, channel);
   await Bun.sleep(0); expect(channel.closed).toBe(true); expect(sessions.find("new")).toBeUndefined();
+  expect(() => channel.stderr.emit("error", new Error("terminal channel failed while closing"))).not.toThrow();
+});
+
+test("a synchronous SSH setup failure closes only the local tunnel socket", async () => {
+  const sessions = new ServerSessions({ get() { throw new Error("missing key file"); } } as never, () => {});
+  const tunnel = await sessions.openTunnel(target, 80, "http");
+  const socket = createConnection({ host: "127.0.0.1", port: tunnel.localPort });
+  try {
+    expect(await once(socket, "close")).toEqual([false]);
+    expect(sessions.tunnelList()).toEqual([tunnel]);
+  } finally { socket.destroy(); sessions.closeTunnel(target.id, tunnel.localPort); }
 });
 
 

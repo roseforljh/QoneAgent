@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from "ssh2";
 import type { ServerInfo } from "@qone/protocol";
+import { createLogger } from "@qone/shared";
 import { runtimeError } from "../runtime-localization.js";
+
+const log = createLogger("ssh");
 
 export const fingerprint = (key: Buffer) => `SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/, "")}`;
 
@@ -42,7 +45,8 @@ export function connect(target: { host: string; port: number; username: string }
       },
     };
     client.once("ready", () => resolve(client));
-    client.once("error", (error) => {
+    // The socket may report another error while the first one is closing it.
+    client.on("error", (error) => {
       client.end();
       if (pinned && presented && presented !== pinned) reject(new HostKeyChangedError(presented));
       else reject(error);
@@ -110,6 +114,9 @@ export function exec(client: Client, command: string, options: { cwd?: string; t
     const timer = setTimeout(() => { timedOut = true; stop(); }, options.timeoutMs ?? 120_000);
     options.signal?.addEventListener("abort", abort, { once: true });
     try { client.exec(script, (error, stream) => {
+      // A channel delivered after cancellation still owns its teardown errors.
+      stream?.on("error", finish);
+      stream?.stderr.on("error", finish);
       if (settled || options.signal?.aborted) { if (stream) { stream.signal("KILL"); stream.close(); } return; }
       if (error) return finish(error);
       channel = stream;
@@ -122,8 +129,6 @@ export function exec(client: Client, command: string, options: { cwd?: string; t
       };
       stream.on("data", (chunk: Buffer) => append(0, decoders[0]!.write(chunk)));
       stream.stderr.on("data", (chunk: Buffer) => append(1, decoders[1]!.write(chunk)));
-      stream.stderr.once("error", finish);
-      stream.once("error", finish);
       stream.once("close", (code: number | null, signal?: string) => {
         append(0, decoders[0]!.end()); append(1, decoders[1]!.end());
         finish(undefined, code ?? null, signal);
@@ -138,6 +143,8 @@ export const sftp = (client: Client, signal?: AbortSignal) => new Promise<SFTPWr
   const abort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
   signal?.addEventListener("abort", abort, { once: true });
   try { client.sftp((error, wrapper) => {
+    // ssh2 removes its handshake listener before handoff and rejects pending requests itself.
+    wrapper?.on("error", (error: Error) => log.warn("SFTP channel failed", { err: error.message }));
     signal?.removeEventListener("abort", abort);
     if (signal?.aborted) { wrapper?.end(); abort(); }
     else if (error) reject(error); else {
@@ -150,7 +157,13 @@ export const sftp = (client: Client, signal?: AbortSignal) => new Promise<SFTPWr
 });
 
 export const shell = (client: Client, cols: number, rows: number) => new Promise<ClientChannel>((resolve, reject) =>
-  client.shell({ term: "xterm-256color", cols, rows }, (error, channel) => error ? reject(error) : resolve(channel)));
+  client.shell({ term: "xterm-256color", cols, rows }, (error, channel) => {
+    if (error) { reject(error); return; }
+    const close = (error: Error) => { log.warn("terminal channel failed", { err: error.message }); channel.close(); };
+    channel.on("error", close);
+    channel.stderr.on("error", close);
+    resolve(channel);
+  }));
 
 /**
  * One live connection per server, reused by every tool call and terminal.
