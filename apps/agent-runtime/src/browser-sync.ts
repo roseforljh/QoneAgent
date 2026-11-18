@@ -162,8 +162,9 @@ export function loginRequiredResult(error: unknown, site?: string): { content: [
     stdout: JSON.stringify({
       status: "login_required",
       site: site || undefined,
+      scope: "operation",
       detail: error.message,
-      next: "Use Qone's built-in browser to complete the sign-in, then send a follow-up message to continue.",
+      next: "Only this operation requires sign-in. If the task is to read a supplied link, follow the direct URL reading policy before asking the user to sign in. Ask only if sign-in is necessary for the requested task.",
     }),
     stderr: "",
   });
@@ -235,20 +236,23 @@ export function buildOpenCliCommandArgs(value: {
 
 export function compactOpenCliCatalog(commands: OpenCliCommand[], site?: string, query?: string, limit = 40): unknown {
   const normalizedSite = site?.trim().toLowerCase();
-  const normalizedQuery = query?.trim().toLowerCase();
-  const filtered = commands.filter((command) => {
-    if (normalizedSite && command.site.toLowerCase() !== normalizedSite) return false;
-    if (!normalizedQuery) return true;
-    return `${command.site} ${command.name} ${command.description}`.toLowerCase().includes(normalizedQuery);
-  });
+  const normalizedQuery = query?.trim().toLowerCase() ?? "";
+  const keywords = [...new Set(normalizedQuery.split(/[^\p{L}\p{N}]+/u).filter(Boolean))];
+  const filtered = commands.flatMap((command) => {
+    if (normalizedSite && command.site.toLowerCase() !== normalizedSite) return [];
+    const name = command.name.toLowerCase();
+    const text = `${normalizedSite ? "" : command.site} ${name} ${command.description}`.toLowerCase();
+    const score = keywords.reduce((total, word) => total + (name === word ? 3 : name.includes(word) ? 2 : text.includes(word) ? 1 : 0), 0);
+    return !keywords.length || score > 0 ? [{ command, score: score + (normalizedQuery === name ? 1 : 0) }] : [];
+  }).sort((a, b) => b.score - a.score);
   if (!normalizedSite && !normalizedQuery) {
     const sites = new Map<string, number>();
-    for (const command of commands) sites.set(command.site, (sites.get(command.site) ?? 0) + 1);
+    for (const { command } of filtered) sites.set(command.site, (sites.get(command.site) ?? 0) + 1);
     return { totalCommands: commands.length, sites: [...sites.entries()].map(([name, count]) => ({ name, count })) };
   }
   return {
     totalMatches: filtered.length,
-    commands: filtered.slice(0, Math.max(1, Math.min(limit, 100))).map((command) => ({
+    commands: filtered.slice(0, Math.max(1, Math.min(limit, 100))).map(({ command }) => ({
       site: command.site,
       command: command.name,
       description: command.description,
@@ -282,7 +286,7 @@ export class BrowserSyncService {
       this.openCliDiscoverTool(),
       this.openCliRunTool(),
       this.browserCommand("qone_browser_state", "Read the current page state from Qone's built-in browser.", Type.Object({}), () => ["state"]),
-      this.browserCommand("qone_browser_open", "Open a URL in Qone's built-in browser. Use this for sites without a dedicated OpenCLI adapter and for login pages.", Type.Object({ url: Type.String() }), (value) => ["open", value.url]),
+      this.browserCommand("qone_browser_open", "Open the exact URL in Qone's built-in browser when direct fetch is unavailable or insufficient, or the task requires rendered state or interaction.", Type.Object({ url: Type.String() }), (value) => ["open", value.url]),
       this.browserCommand("qone_browser_click", "Click a visible element in Qone's built-in browser. Use the target from qone_browser_state.", Type.Object({ target: Type.String() }), (value) => ["click", value.target]),
       this.browserCommand("qone_browser_fill", "Replace the value of an input in Qone's built-in browser.", Type.Object({ target: Type.String(), text: Type.String() }), (value) => ["fill", value.target, value.text]),
       this.browserCommand("qone_browser_type", "Type text into an element in Qone's built-in browser.", Type.Object({ target: Type.String(), text: Type.String() }), (value) => ["type", value.target, value.text]),
@@ -305,7 +309,7 @@ export class BrowserSyncService {
     return {
       name: "qone_opencli_discover",
       label: "OpenCLI · discover adapters",
-      description: "Discover available site adapter commands on demand for structured operations, authenticated data, or account actions. Pass a site to receive only that site's commands and parameters. Commands run through Qone's built-in browser profile. Without a site, return a compact site/count index.",
+      description: "Discover available site adapter commands for structured or account operations. Pass a site and operation keywords, then use the returned command and args with qone_opencli_run. Commands run through Qone's built-in browser profile.",
       parameters: Type.Object({
         site: Type.Optional(Type.String()),
         query: Type.Optional(Type.String()),

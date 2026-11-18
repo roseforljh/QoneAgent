@@ -1,5 +1,6 @@
 import path from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { qoneSystemPromptsDir } from "@qone/shared";
 import identity from "./system-prompts/01-identity.md" with { type: "text" };
 import behavior from "./system-prompts/02-behavior.md" with { type: "text" };
@@ -22,7 +23,27 @@ export const SYSTEM_PROMPT_MODULES = [
   { file: "08-communication.md", content: communication },
 ] as const;
 
-/** Bundled Markdown seeds a fresh installation without overwriting its source modules. */
+const normalizeModule = (text: string) => text.replace(/\r\n?/g, "\n").trim();
+
+// Fingerprints of earlier defaults, keyed by module so local edits stay intact.
+const LEGACY_DEFAULT_HASHES: Record<string, readonly string[]> = {
+  "01-identity.md": ["72405491216a1ba5b921cc13461ba30cfca9401858380fa30f646cdf7e266577"],
+  "02-behavior.md": ["f0999de4d00cb7c73ffce45e94441d8c32f0cff02b8f460d23da4dabe7d39a4b"],
+  "03-execution.md": [
+    "3a4d91ed932723914a8a80fd3ee406383ca4e65bbd1975dd7bd0bb8e5eb5b950",
+    "befdf6c9f18740381bb4b6d3bc92c5de24b607e808dada07ddd138642ae984ec",
+  ],
+  "04-web-access.md": [
+    "72716b8c600d9ce16ff9204e0ec5392afa367d03fbcd466b04d4ca723f38c3b6",
+    "62d1e5891524cbab7f60a32a9f97a30290519f440870cb9b0834ac228a247b40",
+  ],
+  "05-coding.md": ["d8ce33353360625a652833aa1ccd2b8a8a9a81182d1c71e2f949f977edd58aff"],
+  "06-verification.md": ["3fb488926e2e46611e9e6e6ad142e3dfaeffeecbfbdd265b304422389d662628"],
+  "07-safety.md": ["2cd4b6819726c74c8bd8a5d8ed46ef6c6588793c4dd5242165843e6080352d0e"],
+  "08-communication.md": ["ae07243a5c7e9665511560b9cf0af906cb8a54c6a04cde35d8e6b5aaaf485aa2"],
+};
+
+/** Bundled Markdown seeds missing modules. Existing files stay user-editable. */
 export function ensureSystemPromptModules(directory = qoneSystemPromptsDir()): void {
   mkdirSync(directory, { recursive: true });
   for (const module of SYSTEM_PROMPT_MODULES) {
@@ -37,9 +58,11 @@ export function ensureSystemPromptModules(directory = qoneSystemPromptsDir()): v
 /** Fixed prefix only. Project, user, tool and runtime context are appended elsewhere. */
 export function readSystemPrompt(directory = qoneSystemPromptsDir()): string {
   ensureSystemPromptModules(directory);
-  return SYSTEM_PROMPT_MODULES.map(({ file }) => {
-    const content = readFileSync(path.join(directory, file), "utf8").replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+  return SYSTEM_PROMPT_MODULES.map(({ file, content: bundled }) => {
+    const content = normalizeModule(readFileSync(path.join(directory, file), "utf8"));
     if (!content) throw new Error(`System prompt module is empty: ${file}`);
-    return content;
+    // Apply updated defaults without overwriting local files.
+    return LEGACY_DEFAULT_HASHES[file]?.includes(createHash("sha256").update(content).digest("hex"))
+      ? normalizeModule(bundled) : content;
   }).join("\n\n");
 }
