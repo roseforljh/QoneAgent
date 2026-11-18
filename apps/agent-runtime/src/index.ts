@@ -36,7 +36,7 @@ import { WebAccessMemory, type WebAccessObservation } from "./web-access-memory.
 
 
 import { normalizeSubagentConfig } from "./subagents.js";
-import { restoreCompactedContext, type SessionCompactionCheckpoint } from "./session-compaction.js";
+import { automaticCompactionBoundary, restoreCompactedContext, type SessionCompactionCheckpoint } from "./session-compaction.js";
 import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
 import { createSubagentPublisher } from "./subagent-publisher.js";
 import { SubagentNotificationCoordinator } from "./subagent-notifications.js";
@@ -384,6 +384,12 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       webAccessMemory.recordToolResult(sessionId, name, args, result);
     }
   },
+  onAutomaticCompaction: (sessionId, runId, context) => {
+    const history = messageRepo.listBySession(sessionId);
+    const boundary = automaticCompactionBoundary(history, runId, initialUserMessageSeen.has(runId), assistantRawMessagesByRun.get(runId)?.length ?? 0);
+    if (!boundary) throw new Error("Could not locate the compacted session's history boundary");
+    settingsRepo.set(`compaction:${sessionId}`, { ...boundary, context } satisfies SessionCompactionCheckpoint);
+  },
   onCustomEntry: (sessionId, entry) => {
     const entries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
     if (entry && typeof entry === "object") settingsRepo.set(`codemode.entries:${sessionId}`, [...entries, entry]);
@@ -396,23 +402,18 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   },
 }, permissionRepo, (sessionId, currentRunId) => {
   const subagent = subagentRunRepo.getByExecutionSession(sessionId);
-  // A communication row carrying a raw Pi message is itself provider input (a
-  // message sent while the agent was idle). Rows without one are UI projections
-  // of a prompt that already lives in the run's raw transcript.
+  // A running prompt already comes from adapter.run, not from its SQLite row.
   if (subagent) return subagentController.restoreMessages(subagent.runId);
   const history = messageRepo.listBySession(sessionId)
-    .filter((message) => message.runId !== currentRunId && (!message.communication || Boolean(message.rawMessage))).map((message) => ({
-    id: message.id,
-    role: message.role,
-    content: message.content,
-    attachments: message.attachments ? JSON.parse(message.attachments) : undefined,
-    parts: message.parts ? JSON.parse(message.parts) : undefined,
-    rawMessage: message.rawMessage ? JSON.parse(message.rawMessage) : undefined,
-    createdAt: message.createdAt,
-  }));
+    .filter((message) => message.runId !== currentRunId)
+    .map(({ id, role, content, runId, communication, attachments, rawMessage, createdAt }) => ({
+      id, role, content, runId, communication, createdAt,
+      attachments: attachments ? JSON.parse(attachments) : undefined,
+      rawMessage: rawMessage ? JSON.parse(rawMessage) : undefined,
+    }));
+  const compacted = restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
   const customEntries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
-  history.push(...customEntries.map((rawMessage) => ({ id: crypto.randomUUID(), role: "custom", content: "", attachments: undefined, parts: undefined, createdAt: Date.now(), rawMessage })));
-  return restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
+  return [...compacted, ...customEntries.map((rawMessage) => ({ role: "custom", content: "", createdAt: Date.now(), rawMessage }))];
 }, compactionPreferences, douyinBridge, appMediaService, embeddedOpenCli);
 adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
 subagentNotificationCoordinator = new SubagentNotificationCoordinator(

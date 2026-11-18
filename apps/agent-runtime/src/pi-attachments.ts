@@ -1,5 +1,5 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
+import type { CompactionEntry, FileEntry } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { readFile } from "node:fs/promises";
 import { parseMcpCommand, type MessageAttachmentInfo } from "@qone/protocol";
@@ -12,6 +12,7 @@ export interface PersistedPiMessage {
   attachments?: MessageAttachmentInfo[];
   createdAt: number;
   rawMessage?: unknown;
+  compaction?: Pick<CompactionEntry, "summary" | "tokensBefore" | "details" | "systemMessage">;
 }
 
 export function videoAttachmentNotice(attachments: readonly MessageAttachmentInfo[] | undefined, refs: Map<string, MessageAttachmentInfo>): string {
@@ -129,6 +130,15 @@ export function createPiSessionEntries(
   let parentId: string | null = null;
   const entries: FileEntry[] = [header];
   for (const message of messages) {
+    if (message.compaction) {
+      const id = crypto.randomUUID();
+      const firstKept = entries[1];
+      entries.push({ ...message.compaction, type: "compaction", id, parentId,
+        firstKeptEntryId: firstKept && firstKept.type !== "session" ? firstKept.id : id,
+        timestamp: new Date(message.createdAt).toISOString() });
+      parentId = id;
+      continue;
+    }
     const rawEntry = message.rawMessage && typeof message.rawMessage === "object"
       ? message.rawMessage as Record<string, unknown> : undefined;
     if (rawEntry?.type === "custom" && typeof rawEntry.customType === "string") {

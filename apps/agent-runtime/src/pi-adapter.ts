@@ -43,6 +43,7 @@ import type { AppMediaService } from "./app-media-service.js";
 import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 import { promptPiRun } from "./pi-run-prompt.js";
 import { executionContextExtension, type ServerExecutionTarget } from "./execution-context.js";
+import { captureCompactedContext } from "./session-compaction.js";
 
 const log = createLogger("pi-adapter");
 export const PI_REQUEST_OVERRIDES = { httpIdleTimeoutMs: 0 } as const;
@@ -82,6 +83,7 @@ interface PiAdapterHooks {
   serverSummary?: (serverIds: readonly string[]) => string;
   serverTargets?: (serverIds: readonly string[]) => ServerExecutionTarget[];
   onCustomEntry?: (sessionId: string, entry: unknown) => void;
+  onAutomaticCompaction?: (sessionId: string, runId: string, context: unknown[]) => void;
   onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
 }
 
@@ -424,7 +426,7 @@ export class PiAdapter {
       settings.applyOverrides({ compaction: { keepRecentTokens: 0 } });
       try {
         await session.compact();
-        return [...session.agent.state.messages];
+        return captureCompactedContext(session);
       } finally {
         settings.applyOverrides({ compaction: { keepRecentTokens } });
       }
@@ -720,6 +722,12 @@ export class PiAdapter {
       throw error;
     }
 
+    const onAutomaticCompaction = this.hooks.onAutomaticCompaction;
+    if (onAutomaticCompaction && eventSessionId === sessionId && !subagentRunId) session.subscribe((event) => {
+      if (event.type !== "compaction_end" || !event.result || event.aborted || event.reason === "manual" || !isCurrent()) return;
+      const runId = this.activeRunIds.get(sessionId);
+      if (runId && this.runs.get(runId) === session) onAutomaticCompaction(sessionId, runId, captureCompactedContext(session));
+    });
     if (eventSessionId === sessionId) subscribeContextUsage(session, (usage) => {
       if (!isCurrent()) return;
       const activeModel = session.model;
@@ -826,7 +834,7 @@ export class PiAdapter {
       session = await this.getSession(sessionId, opts.cwd, opts.model, opts.thinking, opts.eventSessionId ?? sessionId, opts.mcpServerId, opts.subagentDepth, opts.subagentRunId, opts.goalId, opts.goalEpoch, runId, opts.serverIds ?? []);
       mediaController.signal.throwIfAborted();
       this.runs.set(runId, session);
-      const previousLength = session.messages.length;
+      const previousAssistants = new Set(session.messages.filter((item) => item.role === "assistant"));
       const selectedModel = opts.model ? this.modelRuntime?.getModel(...splitModelName(opts.model)) : session.agent.state.model;
       const capabilities = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`) : undefined;
       const policy = this.subagentPolicy?.();
@@ -843,10 +851,12 @@ export class PiAdapter {
         signal: mediaController.signal,
         phase: phase => this.push("media.phase", { phase: "provider-processing", status: phase }, opts.eventSessionId ?? sessionId, runId),
       });
-      const assistantMessages = session.messages.slice(previousLength).filter((item) => item.role === "assistant");
-      const final = assistantMessages.at(-1);
-      if (final?.stopReason === "error") throw new Error(final.errorMessage || "Model request failed");
-      if (final?.stopReason === "aborted" && !this.stoppedRuns.has(runId)) throw new Error(final.errorMessage || "Model request aborted");
+      // Compaction can shrink the transcript below its initial length mid-run.
+      const final = session.messages.filter((item) => item.role === "assistant").at(-1);
+      if (final && !previousAssistants.has(final)) {
+        if (final.stopReason === "error") throw new Error(final.errorMessage || "Model request failed");
+        if (final.stopReason === "aborted" && !this.stoppedRuns.has(runId)) throw new Error(final.errorMessage || "Model request aborted");
+      }
       runEmit("agent.prompt_done", { runId });
     } catch (error) {
       // Pi cannot resume this in-memory transcript after its compaction continuation
