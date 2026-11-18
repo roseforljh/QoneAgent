@@ -1,5 +1,5 @@
 .q-composer-tools-trigger { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background .14s ease; }
-.q-composer-tools-trigger:hover, .q-composer-tools-trigger[data-state="open"] { background: var(--q-hover); }
+.q-composer-tools-trigger:hover, .q-composer-tools-trigger[data-popup-open] { background: var(--q-hover); }
 .q-composer-tools-trigger:disabled, .q-composer-tool-option:disabled { opacity: .5; cursor: default; }
 .q-composer-suggestions .q-composer-tool-option { min-height: 36px; border-radius: 12px; padding: 5px 8px; font-size: 12px; line-height: 17px; }
 .q-composer-suggestions .q-composer-tool-option:hover,

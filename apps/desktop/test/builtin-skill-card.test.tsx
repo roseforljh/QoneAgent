@@ -1,7 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
-import { act } from "react";
+import { act, useRef, useState } from "react";
 import { ECC_BUILTIN_SUBAGENTS, type RuntimeCommand, type RuntimeEvent, type SkillInfo } from "@qone/protocol";
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -35,7 +35,7 @@ const { initBridge, useStore } = await import("../src/store");
 const { SkillCard } = await import("../src/components/settings/SkillCard");
 const { SkillPackageCard } = await import("../src/components/settings/SkillPackageCard");
 const { groupSkills } = await import("../src/lib/skill-groups");
-const { ComposerSlashRow, ComposerToolChip } = await import("../src/components/assistant-ui/composer-tools");
+const { ComposerSlashRow, ComposerToolChip, ComposerToolsPopover, useComposerTools } = await import("../src/components/assistant-ui/composer-tools");
 const { SkillsSection } = await import("../src/components/settings/SkillsSection");
 const { BuiltinSubagentSettings } = await import("../src/components/settings/BuiltinSubagentDialog");
 const { ComposerTriggers } = await import("../src/components/assistant-ui/composer-triggers");
@@ -250,6 +250,81 @@ test("settings show one package whose click opens all six independently managed 
   }
 });
 
+test("single-clicking + opens the tool menu without touching the draft or depending on @", async () => {
+  const host = dom.window.document.createElement("div");
+  dom.window.document.body.append(host);
+  const root = createRoot(host);
+  const selected: string[] = [];
+  const ignore = () => {};
+  let runtime!: ReturnType<typeof useExternalStoreRuntime>;
+  function Composer() {
+    runtime = useExternalStoreRuntime({ messages: [], isRunning: false, onNew: async () => {} });
+    const tools = useComposerTools();
+    const anchor = useRef<HTMLDivElement>(null);
+    const [open, setOpen] = useState(false);
+    return <AssistantRuntimeProvider runtime={runtime}><ComposerPrimitive.Unstable_TriggerPopoverRoot>
+      <ComposerPrimitive.Root ref={anchor}>
+        <ComposerPrimitive.Input />
+        <ComposerTriggers tools={tools} suspended={open} onToolSelect={ignore} onCommandSelect={ignore} onMentionStateChange={ignore} onSlashStateChange={ignore} />
+        <ComposerToolsPopover anchor={anchor} tools={tools} open={open} onOpenChange={setOpen} onToolSelect={tool => selected.push(tool.id)} />
+      </ComposerPrimitive.Root>
+    </ComposerPrimitive.Unstable_TriggerPopoverRoot></AssistantRuntimeProvider>;
+  }
+  const menu = () => dom.window.document.querySelector('[role="menu"]');
+  try {
+    await act(async () => root.render(<Composer />));
+    const plus = host.querySelector<HTMLButtonElement>(".q-composer-tools-trigger")!;
+    const input = host.querySelector("textarea")!;
+    for (const draft of ["", "目前这个", "name@example.com", "目前这个 @"]) {
+      await act(async () => runtime.thread.composer.setText(draft));
+      await act(async () => { input.focus(); input.setSelectionRange(draft.length, draft.length); input.dispatchEvent(new dom.window.KeyboardEvent("keyup", { key: "End", bubbles: true })); });
+      expect(!!host.querySelector('[role="listbox"]')).toBe(draft.endsWith(" @"));
+      await act(async () => {
+        for (const type of ["mousedown", "mouseup"]) plus.dispatchEvent(new dom.window.MouseEvent(type, { button: 0, bubbles: true, cancelable: true }));
+        plus.click();
+      });
+      expect(plus.getAttribute("aria-expanded")).toBe("true");
+      expect(menu()).not.toBeNull();
+      expect(host.querySelector('[role="listbox"]')).toBeNull();
+      expect(runtime.thread.composer.getState().text).toBe(draft);
+      if (draft === "name@example.com") {
+        await act(async () => (menu()!.querySelector('[role="menuitem"]') as HTMLButtonElement).click());
+        expect(selected).toEqual(["attachment"]);
+      } else {
+        await act(async () => menu()!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+      }
+      expect(plus.getAttribute("aria-expanded")).toBe("false");
+      expect(runtime.thread.composer.getState().text).toBe(draft);
+    }
+  } finally { await act(async () => root.unmount()); host.remove(); }
+});
+
+test("choosing a tool inserts a chip without replacing selected draft text", async () => {
+  const { LexicalComposer } = await import("@lexical/react/LexicalComposer");
+  const { useLexicalComposerContext } = await import("@lexical/react/LexicalComposerContext");
+  const { $createParagraphNode, $createTextNode, $getRoot } = await import("lexical");
+  const { DirectiveNode } = await import("@assistant-ui/react-lexical");
+  const { ComposerEditorBridge } = await import("../src/components/assistant-ui/composer-editor-bridge");
+  const host = dom.window.document.createElement("div");
+  const root = createRoot(host);
+  let editor!: ReturnType<typeof useLexicalComposerContext>[0];
+  let insertTool: import("../src/components/assistant-ui/composer-editor-bridge").InsertComposerTool | null = null;
+  function Editor() {
+    [editor] = useLexicalComposerContext();
+    return <ComposerEditorBridge onReady={(insert) => { insertTool = insert; }} />;
+  }
+  try {
+    await act(async () => root.render(<LexicalComposer initialConfig={{ namespace: "tools-test", nodes: [DirectiveNode], onError: (error) => { throw error; } }}><Editor /></LexicalComposer>));
+    editor.update(() => {
+      const text = $createTextNode("目前这个 后续");
+      $getRoot().clear().append($createParagraphNode().append(text));
+      text.select(4, 0);
+    }, { discrete: true });
+    await act(async () => insertTool!({ id: "goal", label: "目标" }));
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("目前这个:qone-tool[目标]{name=qone-goal} 后续");
+  } finally { await act(async () => root.unmount()); }
+});
+
 test("a cached sleeping MCP remains selectable from the slash menu without connecting", async () => {
   const previous = useStore.getState();
   useStore.setState({ connected: true, skills: [], mcpServers: [{ id: "sleeping", name: "Sleeping MCP", available: true, connected: false, toolCount: 3 }], workspaces: [{ id: "mcp-test", name: "MCP", path: "C:/MCP" }], currentWorkspaceId: "mcp-test", draftWorkspaceId: "mcp-test", currentSessionId: undefined });
@@ -262,7 +337,7 @@ test("a cached sleeping MCP remains selectable from the slash menu without conne
   function Composer() {
     runtime = useExternalStoreRuntime({ messages: [], isRunning: false, onNew: async () => {} });
     return <AssistantRuntimeProvider runtime={runtime}><ComposerPrimitive.Unstable_TriggerPopoverRoot>
-      <ComposerPrimitive.Root><ComposerPrimitive.Input /><ComposerTriggers onToolSelect={ignore} onCommandSelect={command => selected.push(command)} onMentionStateChange={ignore} onSlashStateChange={ignore} /></ComposerPrimitive.Root>
+      <ComposerPrimitive.Root><ComposerPrimitive.Input /><ComposerTriggers tools={[]} onToolSelect={ignore} onCommandSelect={command => selected.push(command)} onMentionStateChange={ignore} onSlashStateChange={ignore} /></ComposerPrimitive.Root>
     </ComposerPrimitive.Unstable_TriggerPopoverRoot></AssistantRuntimeProvider>;
   }
   try {
@@ -295,7 +370,7 @@ test("slash keyboard and pointer selection drill into a package before inserting
   function Composer() {
     runtime = useExternalStoreRuntime({ messages: [], isRunning: false, onNew: async () => {} });
     return <AssistantRuntimeProvider runtime={runtime}><ComposerPrimitive.Unstable_TriggerPopoverRoot>
-      <ComposerPrimitive.Root><ComposerPrimitive.Input /><ComposerTriggers onToolSelect={ignore} onCommandSelect={select} onMentionStateChange={ignore} onSlashStateChange={slashState} /></ComposerPrimitive.Root>
+      <ComposerPrimitive.Root><ComposerPrimitive.Input /><ComposerTriggers tools={[]} onToolSelect={ignore} onCommandSelect={select} onMentionStateChange={ignore} onSlashStateChange={slashState} /></ComposerPrimitive.Root>
     </ComposerPrimitive.Unstable_TriggerPopoverRoot></AssistantRuntimeProvider>;
   }
   const open = async () => {

@@ -3,10 +3,10 @@ import { conversationSession } from "../../lib/session-execution-state";
 import { localizeError } from "../../lib/error-localization";
 import { ComposerAttachments, ComposerAddAttachment } from "./elements/attachment.aui";
 import { UserMessage, UserMessageContent } from "./user-message";
-import { ComposerToolsPopover, type ComposerTool } from "./composer-tools";
+import { ComposerToolsPopover, useComposerTools, type ComposerTool } from "./composer-tools";
 import { ComposerServers } from "./composer-servers";
 import { ComposerTriggers } from "./composer-triggers";
-import { ComposerEditorBridge, type ComposerMentionControls, type InsertComposerCommand, type InsertComposerTool } from "./composer-editor-bridge";
+import { ComposerEditorBridge, type InsertComposerCommand, type InsertComposerTool } from "./composer-editor-bridge";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
 import { ComposerActionGlyph } from "./composer-action-glyph";
 import { LongPasteAttachmentPlugin } from "./long-paste-attachment";
@@ -292,9 +292,8 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
   const editingQueueItem = useConversationStore((state) => state.editingQueueItem);
   const insertToolRef = useRef<InsertComposerTool | null>(null);
   const insertCommandRef = useRef<InsertComposerCommand | null>(null);
-  const mentionControlsRef = useRef<ComposerMentionControls | null>(null);
-  const closeMentionRef = useRef<(() => void) | null>(null);
-  const mentionWasOpen = useRef(false);
+  const tools = useComposerTools();
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
   const [serversOpen, setServersOpen] = useState(false);
@@ -325,18 +324,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
     else if (tool.id === "compact") compactSession();
     else insertToolRef.current?.({ id: tool.id, label: tool.label });
   }, [compactSession, onNativeFiles]);
-  const onMentionStateChange = useCallback((open: boolean, close: () => void) => {
-    closeMentionRef.current = close;
-    if (mentionWasOpen.current && !open) mentionControlsRef.current?.cancel();
-    mentionWasOpen.current = open;
-    setMentionOpen(open);
-  }, []);
-  const onMentionToggleReady = useCallback((controls: ComposerMentionControls | null) => { mentionControlsRef.current = controls; }, []);
-  const toggleMention = useCallback(() => {
-    if (mentionOpen) {
-      if (!mentionControlsRef.current?.cancel()) closeMentionRef.current?.();
-    } else mentionControlsRef.current?.open();
-  }, [mentionOpen]);
+  const menuOpen = toolsMenuOpen || mentionOpen || slashOpen;
 
   return (
     <>
@@ -359,15 +347,17 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
           <ComposerAttachments><ComposerQuote /></ComposerAttachments>
           <ComposerAddAttachment hidden />
           <LexicalComposerInput nodes={composerNodes} formatter={composerLinkFormatter} autoFocus submitMode="none" placeholder={placeholder} className={composerInputClass} directiveChip={ComposerDirectiveChip}>
-            <ComposerEditorBridge onReady={onEditorReady} onCommandReady={onCommandReady} onMentionToggleReady={onMentionToggleReady} />
+            <ComposerEditorBridge onReady={onEditorReady} onCommandReady={onCommandReady} />
             <LongPasteAttachmentPlugin />
             <ComposerLinkPastePlugin />
             <ComposerLinkOptionsPlugin />
-            <ComposerQueueEnterPlugin menuOpen={mentionOpen || slashOpen} compacting={compacting} />
-            <ComposerHistoryPlugin menuOpen={mentionOpen || slashOpen} />
+            <ComposerQueueEnterPlugin menuOpen={menuOpen} compacting={compacting} />
+            <ComposerHistoryPlugin menuOpen={menuOpen} />
           </LexicalComposerInput>
-          <ComposerTriggers onToolSelect={onToolSelect} onCommandSelect={onCommandSelect} onMentionStateChange={onMentionStateChange} onSlashStateChange={setSlashOpen} />
-          <ComposerAction mentionOpen={mentionOpen} onToggleMention={toggleMention} serversOpen={serversOpen} onServersOpenChange={setServersOpen} />
+          <ComposerTriggers tools={tools} suspended={toolsMenuOpen} onToolSelect={onToolSelect} onCommandSelect={onCommandSelect} onMentionStateChange={setMentionOpen} onSlashStateChange={setSlashOpen} />
+          <ComposerAction serversOpen={serversOpen} onServersOpenChange={setServersOpen} toolsMenu={
+            <ComposerToolsPopover anchor={shellRef} tools={tools} open={toolsMenuOpen} onOpenChange={setToolsMenuOpen} onToolSelect={onToolSelect} />
+          } />
         </div>
       </ComposerPrimitive.AttachmentDropzone>
       </ComposerPrimitive.Unstable_TriggerPopoverRoot>
@@ -392,7 +382,7 @@ const GoalStatusBar: FC = () => {
   </div>;
 };
 
-const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void; serversOpen: boolean; onServersOpenChange: (open: boolean) => void }> = ({ mentionOpen, onToggleMention, serversOpen, onServersOpenChange }) => {
+const ComposerAction: FC<{ toolsMenu: ReactNode; serversOpen: boolean; onServersOpenChange: (open: boolean) => void }> = ({ toolsMenu, serversOpen, onServersOpenChange }) => {
   const { t } = useLocale();
   const isRunning = useAuiState((state) => state.thread.isRunning);
   const stopping = useConversationStore((state) => state.stoppingRunId !== undefined);
@@ -405,7 +395,7 @@ const ComposerAction: FC<{ mentionOpen: boolean; onToggleMention: () => void; se
   return (
     <div className="aui-composer-action-wrapper relative flex min-h-7 items-center justify-between gap-2 px-2 pb-2 mt-1">
       <div className="q-composer-actions-leading flex min-w-0 items-center gap-1">
-        <ComposerToolsPopover open={mentionOpen} onToggle={onToggleMention} />
+        {toolsMenu}
         <RunOptionsPopover />
         <ComposerServers open={serversOpen} onOpenChange={onServersOpenChange} />
       </div>
