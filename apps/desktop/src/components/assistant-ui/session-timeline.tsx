@@ -28,7 +28,7 @@ import { isIntegrationTool } from "./tool-activity-category";
 import type { McpServerInfo } from "@qone/protocol";
 import type { AssistantPartRange } from "./assistant-part-ranges";
 import { Reasoning } from "./reasoning";
-import { latestReasoningText } from "./reasoning-preview";
+import { useReasoningPreview } from "./reasoning-preview";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { messageById, toolCallById } from "../../lib/store-indexes";
 
@@ -223,8 +223,10 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   );
   const toolWorking = activeIndex >= 0;
   const lastRange = activityRanges?.at(-1);
-  const lastPart = lastRange?.type === "reasoning" ? parts[lastRange.index] : undefined;
+  const reasoningIndex = lastRange?.type === "reasoning" ? lastRange.index : undefined;
+  const lastPart = reasoningIndex === undefined ? undefined : parts[reasoningIndex];
   const thinking = !toolWorking && messageRunning && lastPart?.type === "reasoning" && Boolean(lastPart.text.trim()) && lastPart.status.type === "running";
+  const reasoningPreview = useReasoningPreview(thinking ? lastPart.text : "", thinking, reasoningIndex);
   const awaitingStageWork = Boolean(title) && messageRunning && endIndex === parts.length;
   const stageCompacting = Boolean(title) && activityRanges?.some((range) => range.type === "compaction" && range.marker.status === "running");
   const working = toolWorking || thinking || awaitingStageWork || Boolean(stageCompacting);
@@ -241,16 +243,6 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   const lastIndex = steps.length - 1;
   const lastStep = lastIndex >= 0 ? steps[lastIndex] : undefined;
   const summaryStep = steps.find((step) => step.integration) ?? lastStep;
-  const latestInternalText = useMemo(() => {
-    for (let index = activityRanges ? activityRanges.length - 1 : -1; index >= 0; index--) {
-      const range = activityRanges?.[index];
-      if (range?.type !== "reasoning") continue;
-      const part = parts[range.index];
-      if (part?.type !== "reasoning" || !part.text.trim()) continue;
-      return latestReasoningText(part.text);
-    }
-    return undefined;
-  }, [activityRanges, parts]);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -269,20 +261,12 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
     : activity === "queued" ? [t("chat.toolQueued"), step.target].filter(Boolean).join(" · ")
       : activity === "waiting" ? [t("chat.toolApprovalPending"), step.target].filter(Boolean).join(" · ")
         : toolActionSummary(part, step, activeCall, true, now, locale);
-  const activeLabel = thinking && lastPart?.type === "reasoning" ? latestReasoningText(lastPart.text) : activePart && activeStep ? describeActive(activePart, activeStep) : "";
+  const activeLabel = activePart && activeStep ? describeActive(activePart, activeStep)
+    : thinking ? title ?? t("chat.reasoningActive") : "";
   const fullSummary = toolGroupSummary(steps, locale, { fullTargets: true });
   const fullActiveLabel = activePart && activeStep
     ? describeActive(activePart, { ...activeStep, target: activeStep.fullTarget ?? activeStep.target })
-    : thinking ? activeLabel : "";
-  // While a stage is running, keep the header tied to the latest live action.
-  // The authored stage title becomes the resting summary after the work settles.
-  const activelyExecuting = toolWorking || thinking || Boolean(stageCompacting);
-  const liveLabel = activelyExecuting
-    ? latestInternalText || activeLabel || title || restingLabel
-    : title || restingLabel;
-  const liveFullLabel = activelyExecuting
-    ? latestInternalText || fullActiveLabel || title || fullSummary
-    : title || fullSummary;
+    : activeLabel;
 
   const stepsById = useMemo(() => new Map(steps.map((step, index) => [step.id, index])), [steps]);
   const details = activityRanges?.flatMap((range) => {
@@ -321,8 +305,9 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
       renderStep={(_, index) => <ToolCallEntry part={executedToolParts[index]} step={steps[index]} prepared={preparedIds.has(executedToolParts[index]?.toolCallId ?? "")} messageRunning={messageRunning} />}
       children={details}
       className="q-tool-timeline max-w-2xl"
-      fullActiveLabel={liveFullLabel}
-      activeLabel={liveLabel}
+      fullActiveLabel={fullActiveLabel || title || fullSummary}
+      activeLabel={activeLabel || title || restingLabel}
+      reasoningPreview={thinking && reasoningPreview.text ? reasoningPreview : undefined}
       failureLabel={title && failedCount ? t("chat.toolGroupFailedMany", { count: failedCount }) : undefined}
     />
   );

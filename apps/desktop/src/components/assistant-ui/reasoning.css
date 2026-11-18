@@ -1,6 +1,6 @@
 .q-reasoning { min-width: 0; padding-block: .125rem; color: var(--muted-foreground); }
 .q-reasoning-trigger {
-  width: min(100%, 42rem);
+  max-inline-size: min(100%, 42rem);
   display: inline-flex; align-items: center; gap: .375rem; padding: .125rem 0;
   font-size: 13px; font-weight: 500; background: transparent; text-align: start;
   transition: color 150ms ease; cursor: pointer;
@@ -8,7 +8,6 @@
 }
 /* Text and decorative glyphs belong to the trigger's single click target. */
 .q-reasoning-trigger * { pointer-events: none; }
-.q-reasoning-trigger > [data-slot="reasoning-preview"] { min-width: 0; flex: 1 1 auto; }
 .q-reasoning-trigger:hover { color: var(--foreground); }
 .q-reasoning-trigger:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .q-reasoning-chevron {

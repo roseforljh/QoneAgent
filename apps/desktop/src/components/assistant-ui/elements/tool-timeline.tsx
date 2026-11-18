@@ -12,6 +12,8 @@ import { MeasuredCollapse } from "./measured-collapse";
 import { FadeScroll, regionViewport, ShimmerLabel, SwapLabel } from "./surfaces";
 import { take } from "../utils/range";
 import { OverflowFade } from "./overflow-fade";
+import { ReasoningPreviewLabel } from "../reasoning-preview-label";
+import type { ReasoningPreview } from "../reasoning-preview";
 import type { ToolActivityCategory } from "../tool-activity-category";
 
 export interface TimelineStep {
@@ -39,6 +41,7 @@ export interface ToolTimelineProps {
   activeLabel: string;
   fullSummary?: string;
   fullActiveLabel?: string;
+  reasoningPreview?: ReasoningPreview;
   headerIcon?: ExecutionIcon;
   canExpand?: boolean;
   failureLabel?: string;
@@ -69,6 +72,7 @@ export function ToolTimeline({
   activeLabel,
   fullSummary,
   fullActiveLabel,
+  reasoningPreview,
   headerIcon: HeaderIcon,
   canExpand = true,
   failureLabel,
@@ -92,11 +96,12 @@ export function ToolTimeline({
       <CollapsibleTrigger
         disabled={!canExpand}
         aria-controls={panelId}
-        title={streaming ? fullActiveLabel ?? activeLabel : fullSummary ?? restingLabel}
+        title={reasoningPreview?.text ?? (streaming ? fullActiveLabel ?? activeLabel : fullSummary ?? restingLabel)}
+        aria-label={reasoningPreview && (failureLabel ? `${reasoningPreview.text} · ${failureLabel}` : reasoningPreview.text)}
         className="group/trigger text-foreground/60 hover:text-foreground inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-[13px] font-normal transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring bg-transparent"
       >
         {HeaderIcon && <HeaderIcon className="size-3.5 shrink-0 opacity-60 transition-opacity group-hover/trigger:opacity-90" />}
-        <OverflowFade>
+        {reasoningPreview ? <ReasoningPreviewLabel preview={reasoningPreview} running /> : <OverflowFade>
           <SwapLabel
             active={streaming ? 0 : 1}
             className="text-start tabular-nums"
@@ -109,7 +114,7 @@ export function ToolTimeline({
             </ShimmerLabel>
             <>{restingLabel}</>
           </SwapLabel>
-        </OverflowFade>
+        </OverflowFade>}
         {failureLabel && <span className="sr-only" aria-label={failureLabel}>{failureLabel}</span>}
         {canExpand && <ChevronRightIcon data-slot="tool-disclosure-chevron" className="size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover/trigger:opacity-75 group-focus-visible/trigger:opacity-100 group-data-[state=open]/trigger:opacity-100 group-data-[state=open]/trigger:rotate-90 motion-reduce:transition-none" />}
       </CollapsibleTrigger>
