@@ -5,12 +5,16 @@ import { app, Notification, type BrowserWindow } from "electron";
 import { getRootDataDir } from "./data-paths";
 import { getSecrets, persistRuntimeSecret } from "./secret-store";
 import { killProcessTree } from "./process-tree";
+import { elevatedTerminalEnv, type ShellHostRequest } from "@qone/protocol/terminal-host";
+import type { AdministratorTerminalHost } from "./administrator-terminal-host";
 
 export class SidecarManager {
   private child: ChildProcess | null = null;
+  administratorHost: AdministratorTerminalHost | null = null;
   private exiting: Promise<void> = Promise.resolve();
   private generation = 0;
   private starting: Promise<void> | undefined;
+  private readiness: Promise<void> = Promise.resolve();
   private batchQueue: unknown[] = [];
   private batchTimer: NodeJS.Timeout | null = null;
   private getMainWindow: () => BrowserWindow | null;
@@ -32,7 +36,8 @@ export class SidecarManager {
       : path.resolve(__dirname, "../binaries/qone-runtime.mjs");
   }
 
-  public start(ready: Promise<void> = Promise.resolve()): Promise<void> {
+  public start(ready = this.readiness): Promise<void> {
+    this.readiness = ready;
     this.stop();
     const generation = ++this.generation;
     // Gate sends while PATH is refreshed or the previous process tree exits.
@@ -43,21 +48,37 @@ export class SidecarManager {
 
   private spawnRuntime(currentGen: number): void {
     const script = this.runtimeScript();
+    const host = this.administratorHost;
+    const env = { ...process.env };
+    delete env[elevatedTerminalEnv];
+    if (host) env[elevatedTerminalEnv] = "1";
 
     const child = spawn(process.execPath, [script], {
       cwd: path.dirname(script),
       env: {
-        ...process.env,
+        ...env,
         ELECTRON_RUN_AS_NODE: "1",
         QONE_DATA_DIR: getRootDataDir(),
         // Bundled Node tools run on this Electron binary with ELECTRON_RUN_AS_NODE.
         QONE_NODE_EXECUTABLE: process.execPath,
       },
-      stdio: ["pipe", "pipe", "inherit"],
+      stdio: host ? ["pipe", "pipe", "inherit", "ipc"] : ["pipe", "pipe", "inherit"],
       windowsHide: true,
     });
 
     this.child = child;
+    if (host) {
+      // Runtime IPC is a separate channel, not the renderer-facing JSON protocol.
+      child.on("message", (message: ShellHostRequest) => {
+        if (this.generation !== currentGen || !message || typeof message.id !== "string") return;
+        if (message.type !== "terminal-host.exec" && message.type !== "terminal-host.cancel") return;
+        if (message.type === "terminal-host.exec" && (typeof message.command !== "string" || typeof message.cwd !== "string")) return;
+        host.shell(child, message, response => {
+          if (child.connected) child.send(response, () => {});
+        });
+      });
+      child.once("disconnect", () => host.cancelShells(child));
+    }
     // A failed write rejects its caller and also emits a separate stream error.
     child.stdin?.on("error", (error) => console.error("[sidecar] input pipe failed:", error));
     child.on("error", (error) => console.error("[sidecar] process error:", error));

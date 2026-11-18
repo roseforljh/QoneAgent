@@ -24,6 +24,7 @@ import { SIDE_CHAT_INSTRUCTIONS } from "./side-conversation.js";
 import { createFileChangeTools } from "./file-change-tools.js";
 import { createMediaTools, createInternalTools, mediaToolHostFor } from "./pi-tool-kit.js";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
+import { elevatedPowerShell } from "./elevated-powershell.js";
 import { createResourceLoader, sessionResourceLoader } from "./skills.js";
 import { runImageGeneration, runSpeechGeneration, runVideoGeneration, type GenerationContext } from "./media-generation-runner.js";
 import { createSubagentTools } from "./subagent-tools.js";
@@ -578,6 +579,7 @@ export class PiAdapter {
     }
     if (!isCurrent()) throw new Error("run aborted");
     const powershell = createPowerShellTool(workspacePath, {
+      operations: elevatedPowerShell,
       // PowerShell 7 can emit ANSI color codes for formatted objects. The
       // tool output is sent to the chat as plain text, so those codes would
       // become visible as garbled characters instead of colors.

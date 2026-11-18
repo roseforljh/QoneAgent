@@ -3,15 +3,17 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, type BrowserWindow } from "electron";
 import { killProcessTree } from "./process-tree";
+import type { AdministratorTerminalHost, TerminalProcess } from "./administrator-terminal-host";
 
 interface TerminalSession {
-  process: pty.IPty;
+  process: TerminalProcess;
   terminalId: string;
 }
 
 export class TerminalManager {
   private sessions = new Map<string, TerminalSession>();
   private getMainWindow: () => BrowserWindow | null;
+  administratorHost: AdministratorTerminalHost | null = null;
 
   constructor(getMainWindow: () => BrowserWindow | null, private spawnPty: typeof pty.spawn = pty.spawn) {
     this.getMainWindow = getMainWindow;
@@ -38,16 +40,11 @@ export class TerminalManager {
     }
     // A pseudo console, never plain pipes: a shell on pipes runs
     // non-interactively, so it neither echoes input nor ends lines with CRLF.
-    const child = this.spawnPty(shell, shellArgs, {
-      name: "xterm-256color",
-      cols,
-      rows,
-      // Bundled ConPTY synchronizes reflowed cursor positions and avoids the
-      // inbox backend's console-list helper racing an already-dead shell.
-      useConptyDll: true,
-      cwd: cwd || process.cwd(),
-      env,
-    });
+    const options = { cols, rows, cwd: cwd || process.cwd(), env };
+    const child = this.administratorHost
+      ? this.administratorHost.spawnPty(shell, shellArgs, options)
+      // Bundled ConPTY keeps xterm reflow and the console-list helper in sync.
+      : this.spawnPty(shell, shellArgs, { ...options, name: "xterm-256color", useConptyDll: true });
 
     const session: TerminalSession = { process: child, terminalId };
     this.sessions.set(terminalId, session);

@@ -7,6 +7,8 @@ const desktopRoot = path.resolve(fileURLToPath(import.meta.url), "../..");
 const runtimeEntry = path.resolve(desktopRoot, "../agent-runtime/src/index.ts");
 const codemodePackages = ["@earendil-works/pi-codemode", "quickjs-wasi"];
 export const runtimeBundle = path.join(desktopRoot, "binaries", "qone-runtime.mjs");
+const terminalWorkerEntry = path.join(desktopRoot, "electron", "terminal-worker.ts");
+export const terminalWorkerBundle = path.join(desktopRoot, "binaries", "qone-terminal-worker.mjs");
 
 /** The agent runtime runs on Qone's own Electron binary in Node mode; no separate JS runtime ships. */
 const options: BuildOptions = {
@@ -64,7 +66,11 @@ export async function watchRuntime() {
   return ctx;
 }
 
+export async function buildTerminalWorker(outfile = terminalWorkerBundle) {
+  await build({ ...options, entryPoints: [terminalWorkerEntry], outfile });
+}
+
 if (import.meta.main) {
-  await buildRuntime();
+  await Promise.all([buildRuntime(), ...(process.platform === "win32" ? [buildTerminalWorker()] : [])]);
   console.log(`[build-runtime] ${runtimeBundle}`);
 }

@@ -2,6 +2,7 @@ import { WebContentsView, shell, type BrowserWindow } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { getRuntimeDir } from "./data-paths";
+import type { DockCdp } from "./dock-cdp";
 
 interface BrowserSession {
   id: string;
@@ -16,7 +17,7 @@ export class BrowserDockManager {
   private getMainWindow: () => BrowserWindow | null;
   private cdpPort: (() => Promise<number>) | null;
 
-  constructor(getMainWindow: () => BrowserWindow | null, cdpPort: (() => Promise<number>) | null) {
+  constructor(getMainWindow: () => BrowserWindow | null, cdpPort: (() => Promise<number>) | null, private readonly dockCdp?: DockCdp) {
     this.getMainWindow = getMainWindow;
     this.cdpPort = cdpPort;
   }
@@ -37,8 +38,9 @@ export class BrowserDockManager {
 
     const view = new WebContentsView({
       webPreferences: {
-        // Untrusted pages must not share the privileged main window’s app/asset protocols.
-        partition: this.cdpPort ? undefined : "persist:qone-administrator-browser",
+        // Preserve the normal browser profile when only the terminal is elevated.
+        // A manually elevated desktop keeps untrusted pages in a separate session.
+        partition: this.cdpPort || this.dockCdp ? undefined : "persist:qone-administrator-browser",
         sandbox: true,
         contextIsolation: true,
       },
@@ -147,6 +149,7 @@ export class BrowserDockManager {
         }
       }
       this.sessions.delete(browserId);
+      this.dockCdp?.close(session.view.webContents);
       // removeChildView only detaches the view; its renderer process and
       // webContents survive until destroyed, leaking one per dock open/close.
       // No beforeunload: a page must not be able to veto the teardown.
@@ -155,9 +158,11 @@ export class BrowserDockManager {
   }
 
   public async getCdpEndpoint(browserId: string): Promise<string> {
-    if (!this.cdpPort) throw new Error("Browser remote debugging is disabled in administrator mode");
+    if (!this.cdpPort && !this.dockCdp) throw new Error("Browser remote debugging is disabled in administrator mode");
     const session = this.sessions.get(browserId);
     if (!session) throw new Error("browser session not found");
+    if (this.dockCdp) return this.dockCdp.endpoint(session.view.webContents);
+    if (!this.cdpPort) throw new Error("Browser remote debugging port is unavailable");
 
     const port = await this.cdpPort();
     try {
@@ -184,5 +189,6 @@ export class BrowserDockManager {
       try { fs.rmSync(file, { force: true }); } catch { /* already gone */ }
     }
     this.previewFiles.clear();
+    this.dockCdp?.stop();
   }
 }
