@@ -1,1 +1,2 @@
 *.sh text eol=lf
+patches/PSReadLine@2.4.5.patch text eol=lf
