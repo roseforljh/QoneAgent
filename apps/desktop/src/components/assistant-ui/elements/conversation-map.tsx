@@ -225,7 +225,7 @@ function ConversationMapContent({ entries, activeId, visibleIds, onSelect, side 
       cancelPreviewLeave();
       setPreviewOpen(open);
     }}>{({ payload }) => <PreviewCard.Portal>
-      <PreviewCard.Positioner side={side} sideOffset={0}>
+      <PreviewCard.Positioner className="z-50" side={side} sideOffset={0}>
         <PreviewCard.Popup className="q-conversation-preview" onPointerEnter={cancelPreviewLeave}
           onPointerLeave={(event) => {
             cancelPreviewLeave();

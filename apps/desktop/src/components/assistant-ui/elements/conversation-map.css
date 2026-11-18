@@ -87,7 +87,6 @@
 .q-conversation-list[data-scrubbing] .q-conversation-bookmark-dot { transition-duration: 0s; }
 
 .q-conversation-preview {
-  z-index: 50;
   width: 20rem;
   max-width: calc(100vw - 1rem);
   padding: .5rem;

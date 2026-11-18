@@ -35,6 +35,7 @@ import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
 import { RunOptionsPopover } from "./run-options-popover";
+import { ConversationMapAui } from "./elements/conversation-map.aui";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { RunFileChangesSummary } from "./run-file-changes-summary";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
@@ -221,7 +222,9 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           className="aui-viewport flex min-h-0 grow flex-col overflow-y-auto"
         >
           <ThreadScrollFollower contentRef={messageListRef}>
+          <ConversationMapAui />
           <div ref={messageListRef} className="q-message-list relative flex w-full min-w-0 shrink-0 flex-col gap-5 pb-7">
+            <div data-conversation-rail-content aria-hidden="true" className="pointer-events-none invisible absolute inset-x-0 top-0 mx-auto h-0 w-full q-thread-content" />
             <ThreadPrimitive.Messages>
               {renderMessage}
             </ThreadPrimitive.Messages>
