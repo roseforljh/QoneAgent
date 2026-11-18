@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ModelRuntime, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai/providers/faux";
 import { Type } from "typebox";
 import { PiAdapter } from "../src/pi-adapter";
 import { applyToolExposure, usedToolNames } from "../src/tool-exposure";
@@ -47,9 +47,69 @@ test("integrations defer their schemas and restore only tools used in history", 
   const loadout = applyToolExposure([tool, { ...tool, name: "read" }], { name: "servers", description: "SSH servers" });
   expect(loadout.tools[0]!.exposure).toBe("deferred");
   expect(loadout.tools[1]!.exposure).toBeUndefined();
-  expect(loadout.catalog).toContain("server_exec");
+  expect(loadout.catalog).toContain("- servers: SSH servers");
+  expect(loadout.catalog).not.toContain("server_exec");
+  const mcpTool = { ...tool, name: "mcp_fixture_read_record", qoneToolName: "mcp:fixture:read_record" };
+  const mcp = applyToolExposure([mcpTool]);
+  expect(mcp.catalog).toContain("- mcp_fixture: MCP server fixture");
+  expect(mcp.catalog).not.toContain(mcpTool.name);
+  expect(applyToolExposure([mcpTool, { ...mcpTool, name: "mcp_fixture_search", qoneToolName: "mcp:fixture:search" }]).catalog).toBe(mcp.catalog);
   expect(usedToolNames([null, { content: "text" }, { content: [{ type: "toolCall", name: "server_exec" }, { type: "text", text: "read" }] }])).toEqual(new Set(["server_exec"]));
   expect([...usedToolNames([{ role: "toolResult", toolName: "tool_search", details: { loaded: ["qone_app_list", "server_exec"] } }, { content: [{ type: "toolCall", name: "server_exec" }, { type: "toolCall", name: "qone_rss_read" }] }])]).toEqual(["qone_app_list", "server_exec", "qone_rss_read"]);
+});
+
+test("Codemode discovers a deferred MCP tool and filters a batch in one model round trip", async () => {
+  const faux = fauxProvider({ provider: "qone-batch", models: [{ id: "model" }] });
+  const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });
+  runtime.registerNativeProvider(faux.provider);
+  const adapter = new PiAdapter(() => {});
+  Object.assign(adapter, { modelRuntime: runtime });
+  const ids = [1, 2, 3];
+  const tool = {
+    name: "mcp_fixture_read_record", qoneToolName: "mcp:fixture:read_record", label: "Read record",
+    description: "Read a fixture record by numeric ID", parameters: Type.Object({ id: Type.Number() }),
+    execute: async (_callId: string, { id }: { id: number }) => ({
+      content: [{ type: "text" as const, text: JSON.stringify({ key: `record-${id}`, notes: "background-note ".repeat(200) }) }],
+    }),
+  };
+  await adapter.setCustomTools([tool]);
+  const calls = ids.map(id => fauxToolCall(tool.name, { id }));
+  const discover = () => fauxAssistantMessage(fauxToolCall("tool_search", { query: "read fixture record" }));
+  const batch = fauxAssistantMessage(fauxToolCall("codemode", { code: `
+    const [tool] = await searchTools("read fixture record", { namespace: "mcp_fixture", limit: 1 });
+    const rows = await Promise.all(${JSON.stringify(ids)}.map(id => tools[tool.name]({ id })));
+    return rows.map(row => JSON.parse(row).key);
+  ` }));
+  const reports = [];
+  for (const [mode, steps] of Object.entries({
+    serial: [discover(), ...calls.map(call => fauxAssistantMessage(call))],
+    parallel: [discover(), fauxAssistantMessage(calls)],
+    codemode: [batch],
+  })) {
+    const requests: string[] = [];
+    faux.setResponses([
+      ...steps.map<FauxResponseFactory>((step, index) => context => {
+        const messages = JSON.stringify(context.messages);
+        if (index === 0) expect(messages).not.toContain(tool.name);
+        requests.push(messages);
+        return step;
+      }),
+      context => {
+        const messages = JSON.stringify(context.messages);
+        for (const id of ids) expect(messages).toContain(`record-${id}`);
+        expect(messages.includes("background-note")).toBe(mode !== "codemode");
+        requests.push(messages);
+        return fauxAssistantMessage(fauxText("done"));
+      },
+    ]);
+    try {
+      await adapter.run(mode, "Find the keys of fixture records 1, 2 and 3", { model: "qone-batch/model", cwd: process.cwd(), permissionMode: "full" }, () => {});
+    } finally { await adapter.disposeSession(mode); }
+    reports.push({ mode, requests: requests.length, messageBytes: requests.reduce((sum, request) => sum + Buffer.byteLength(request), 0) });
+  }
+  expect(reports.map(report => report.requests)).toEqual([5, 3, 2]);
+  expect(reports[2]!.messageBytes).toBeLessThan(reports[1]!.messageBytes);
+  console.info("Tool batch fixture (serialized model messages):", JSON.stringify(reports));
 });
 
 test("tool_search loads deferred tools; scripts use live Qone approval modes", async () => {
