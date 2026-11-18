@@ -246,7 +246,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       services.goalRepo.event(goal.id, cmd.sessionId, "resumed", {});
       services.publishGoal(updated);
       const options = services.goalRepo.getOptions(goal.id);
-      void services.handle({ type: "agent.run", requestId: crypto.randomUUID(), sessionId: cmd.sessionId, message: `Continue working toward the goal. Re-check the current state, make the next useful changes, and call goal_complete when the goal is fully verified.\n\nGoal: ${updated.objective}`, goal: true, goalContinuation: true, ...options });
+      await services.handle({ type: "agent.run", requestId: cmd.requestId, sessionId: cmd.sessionId, message: `Continue working toward the goal. Re-check the current state, make the next useful changes, and call goal_complete when the goal is fully verified.\n\nGoal: ${updated.objective}`, goal: true, goalContinuation: true, ...options });
       return true;
     }
 

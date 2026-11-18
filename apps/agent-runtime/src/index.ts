@@ -176,19 +176,41 @@ function publishSubagent(runId: string) {
   subagentPublisher.publish(runId);
 }
 let eventFlushTimer: ReturnType<typeof setTimeout> | undefined;
-const flushEvents = () => {
-  if (eventFlushTimer) clearTimeout(eventFlushTimer);
+let eventFlushRetry: { error: unknown; delayMs: number } | undefined;
+const scheduleEventFlush = (delayMs: number) => eventFlushTimer = setTimeout(() => {
   eventFlushTimer = undefined;
-  if (pendingEvents.length) eventRepo.addMany(pendingEvents.splice(0, pendingEvents.length));
-  // Transient events advance the sequence without a row, so the watermark must
-  // come from the journal itself; otherwise a restart reuses sequence numbers
-  // the renderer already consumed.
-  settingsRepo.set("event.sequence", eventJournal.next);
+  flushEvents();
+}, delayMs);
+const flushEvents = ({ required = false } = {}) => {
+  // A busy event stream or repeated command must not bypass the retry delay.
+  if (eventFlushTimer && eventFlushRetry) {
+    if (required) throw eventFlushRetry.error;
+    return;
+  }
+  clearTimeout(eventFlushTimer);
+  eventFlushTimer = undefined;
+  try {
+    if (pendingEvents.length) {
+      eventRepo.addMany(pendingEvents);
+      pendingEvents.length = 0; // Only remove rows once the transaction commits.
+    }
+    // Transient events advance the sequence without a row. Persist their
+    // watermark too, but never advance it ahead of the committed batch.
+    settingsRepo.set("event.sequence", eventJournal.next);
+    if (eventFlushRetry) log.info("event journal write recovered");
+    eventFlushRetry = undefined;
+  } catch (error) {
+    if (!eventFlushRetry) log.warn("event journal write deferred", { err: String(error), pending: pendingEvents.length });
+    const delayMs = eventFlushRetry ? Math.min(eventFlushRetry.delayMs * 2, 30_000) : 1_000;
+    eventFlushRetry = { error, delayMs };
+    scheduleEventFlush(delayMs).unref();
+    if (required) throw error;
+  }
 };
 const queueEventPersistence = (event: AgentEvent) => {
   pendingEvents.push(event);
   if (pendingEvents.length >= 50) flushEvents();
-  else if (!eventFlushTimer) eventFlushTimer = setTimeout(flushEvents, 32);
+  else if (!eventFlushTimer) scheduleEventFlush(32);
 };
 
 const compactionPositions = new CompactionPositions();
@@ -739,34 +761,40 @@ async function authorizeCommand(subjectId: string, permission: string, toolName:
   if (!await approval) throw new Error(`${toolName} rejected by user`);
 }
 
-function scheduleGoalContinuation(sessionId: string, goalId: string, epoch: number) {
+function scheduleGoalTask(sessionId: string, goalId: string, delay: number, task: () => void | Promise<void>) {
   if (goalContinuationTimers.has(sessionId)) return;
   const timer = setTimeout(() => {
     goalContinuationTimers.delete(sessionId);
+    void Promise.resolve().then(task).catch((error) => {
+      log.error("scheduled goal task failed", { sessionId, goalId, err: String(error) });
+      send({ type: "error", ...runtimeErrorInfo(error) });
+    });
+  }, delay);
+  goalContinuationTimers.set(sessionId, timer);
+}
+
+function scheduleGoalContinuation(sessionId: string, goalId: string, epoch: number) {
+  scheduleGoalTask(sessionId, goalId, 0, () => {
     const goal = goalRepo.get(goalId);
     if (!goal || goal.sessionId !== sessionId || goal.status !== "active" || goal.epoch !== epoch || goal.waitingReason || queueRepo.list(sessionId).length > 0) return;
     const options = goalRepo.getOptions(goalId);
-    void handle({
+    return handle({
       type: "agent.run", requestId: crypto.randomUUID(), sessionId,
       message: `Continue working toward the goal. Inspect the current state, make the next useful changes, and call goal_complete only when the goal is fully verified. If a real blocker prevents progress, call goal_blocked with evidence.\n\nGoal: ${goal.objective}`,
       goal: true, goalContinuation: true, ...options,
     });
-  }, 0);
-  goalContinuationTimers.set(sessionId, timer);
+  });
 }
 
 function scheduleGoalWakeup(sessionId: string, goalId: string, reason: string, waitingUntil: number) {
-  if (goalContinuationTimers.has(sessionId)) return;
-  const timer = setTimeout(() => {
-    if (goalContinuationTimers.get(sessionId) === timer) goalContinuationTimers.delete(sessionId);
+  scheduleGoalTask(sessionId, goalId, Math.max(0, waitingUntil - Date.now()), () => {
     const current = goalRepo.get(goalId);
     if (!current || current.status !== "active" || current.waitingReason !== reason || current.waitingUntil !== waitingUntil) return;
     const resumed = goalRepo.update(goalId, { waitingReason: null, waitingUntil: null });
     goalRepo.event(goalId, sessionId, "resumed", { source: "wait_expired" });
     publishGoal(resumed);
     scheduleGoalContinuation(sessionId, goalId, resumed.epoch);
-  }, Math.max(0, waitingUntil - Date.now()));
-  goalContinuationTimers.set(sessionId, timer);
+  });
 }
 
 
@@ -908,5 +936,9 @@ await mcp.disconnectAll();
 for (const session of adapter.getSessions()) {
   try { await session.dispose(); } catch (error) { log.warn("Pi session dispose failed", { err: String(error) }); }
 }
+clearTimeout(eventFlushTimer);
+eventFlushTimer = undefined;
 flushEvents();
+clearTimeout(eventFlushTimer);
+if (eventFlushRetry) log.warn("event journal still not durable at shutdown", { err: String(eventFlushRetry.error), pending: pendingEvents.length });
 subagentPublisher.dispose();

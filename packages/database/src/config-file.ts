@@ -67,12 +67,22 @@ export class ConfigFile {
   /** Watches the directory so editors that replace the file (rename-on-save) are seen too. */
   watch() {
     if (this.watcher) return;
-    mkdirSync(path.dirname(this.file), { recursive: true });
-    this.watcher = watch(path.dirname(this.file), (_event, name) => {
-      if (name && path.basename(String(name)) !== path.basename(this.file)) return;
-      clearTimeout(this.timer);
-      this.timer = setTimeout(() => this.reload(), 150);
-    });
+    const report = (error: unknown) => {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      for (const listener of this.invalidListeners) listener(failure);
+    };
+    try {
+      const directory = path.dirname(this.file);
+      mkdirSync(directory, { recursive: true });
+      this.watcher = watch(directory, (_event, name) => {
+        if (name && path.basename(String(name)) !== path.basename(this.file)) return;
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          try { this.reload(); }
+          catch (error) { report(error); }
+        }, 150);
+      }).on("error", (error) => { this.close(); report(error); });
+    } catch (error) { report(error); }
   }
 
   /**
