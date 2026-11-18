@@ -13,22 +13,25 @@ export function registerIpcHandlers(
   terminal: TerminalManager,
   browserDock: BrowserDockManager,
   updater: DesktopUpdater,
-  privilege = { elevated: false, restricted: false },
+  privilege: { restricted: boolean; administratorReady?: Promise<void>; administratorSupported?: boolean } = { restricted: false },
 ): void {
   // 统一 invoke 入口或分命 handlers
   ipcMain.handle("desktop_invoke", async (event, cmd: string, args: Record<string, any> = {}) => {
     const mainWindow = getMainWindow();
     if (privilege.restricted || cmd === "administrator_launch_get" || cmd === "administrator_launch_set") {
-      if (event.sender !== mainWindow?.webContents || event.senderFrame?.parent !== null) {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame?.parent !== null
+        || (privilege.administratorSupported && !event.senderFrame.url.startsWith("app://localhost/"))) {
         throw new Error("Desktop command requires the main window");
       }
     }
     switch (cmd) {
       case "administrator_launch_get": {
-        return process.platform === "win32" ? { enabled: administratorLaunchEnabled(), elevated: privilege.elevated } : null;
+        if (!privilege.administratorSupported) return null;
+        await privilege.administratorReady;
+        return { enabled: administratorLaunchEnabled(), elevated: terminal.administratorHost?.active === true };
       }
       case "administrator_launch_set": {
-        if (process.platform !== "win32" || typeof args.enabled !== "boolean") throw new Error("Invalid administrator launch preference");
+        if (!privilege.administratorSupported || typeof args.enabled !== "boolean") throw new Error("Invalid administrator terminal preference");
         setAdministratorLaunchEnabled(args.enabled);
         return;
       }
@@ -86,6 +89,7 @@ export function registerIpcHandlers(
         return secretStore.deleteSecret(args.key);
       }
       case "terminal_spawn": {
+        await privilege.administratorReady;
         return terminal.spawn(args.terminalId, args.shell, args.cwd, args.cols, args.rows, args.shellArgs);
       }
       case "terminal_write": {

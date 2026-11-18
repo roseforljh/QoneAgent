@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Switch } from "@base-ui/react/switch";
-import { confirmAction } from "../../lib/confirm-action";
 import { invoke, isDesktop } from "../../lib/desktop-bridge";
 import { localizeError } from "../../lib/error-localization";
 import { cn } from "../../lib/utils";
@@ -27,12 +26,6 @@ export function AdministratorLaunchOption() {
     setPending(true);
     setError(null);
     try {
-      if (enabled && !await confirmAction({
-        title: t("general.administratorLaunch"),
-        message: t("general.administratorConfirm"),
-        confirmLabel: t("general.administratorEnable"),
-        destructive: false,
-      })) return;
       await invoke("administrator_launch_set", { enabled });
       setState((current) => current && { ...current, enabled });
     } catch (error) {

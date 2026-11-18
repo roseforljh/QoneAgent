@@ -20,13 +20,18 @@ import { DesktopUpdater } from "./updater";
 import { installDevtoolsShortcutGuard } from "./devtools-policy";
 import { localRangeResponse } from "./local-file-range";
 import { refreshWindowsPath } from "./system-path";
-import { elevationParentSwitch, tryAdministratorLaunch, waitForElevationParent } from "./windows-administrator";
+import { administratorLaunchEnabled, tryAdministratorTerminal } from "./windows-administrator";
+import { DockCdp } from "./dock-cdp";
 
 const windows = process.platform === "win32";
 const integrity = windows ? app.getAppMetrics().find(({ pid }) => pid === process.pid)?.integrityLevel : undefined;
 const elevated = integrity === "high";
 // With administrative privileges, a loopback CDP client could control the privileged desktop bridge.
 const restricted = windows && (elevated || !integrity || integrity === "unknown");
+// The development renderer loads over HTTP; it never gets an elevated command channel.
+const administratorSupported = windows && app.isPackaged && integrity === "medium";
+const administratorRequested = administratorSupported && administratorLaunchEnabled();
+const administratorLifetime = new AbortController();
 
 // 注册 app 与 asset 特权协议
 protocol.registerSchemesAsPrivileged([
@@ -56,7 +61,7 @@ protocol.registerSchemesAsPrivileged([
 // 预先探测端口不可行：Node 的 listen 是异步的，探测结果总是落回固定端口，被占用时 DevTools 直接起不来。
 const devtoolsPortFile = path.join(app.getPath("userData"), "DevToolsActivePort");
 const configuredDevtoolsPort = process.env.QONE_WEBVIEW_CDP_PORT?.trim() || "0";
-if (restricted) {
+if (restricted || administratorRequested) {
   app.commandLine.removeSwitch("remote-debugging-port");
   app.commandLine.removeSwitch("remote-debugging-pipe");
   app.commandLine.removeSwitch("remote-allow-origins");
@@ -84,7 +89,8 @@ let tray: Tray | null = null;
 
 const sidecar = new SidecarManager(() => mainWindow);
 const terminal = new TerminalManager(() => mainWindow);
-const browserDock = new BrowserDockManager(() => mainWindow, restricted ? null : devtoolsPort);
+const browserDock = new BrowserDockManager(() => mainWindow, restricted || administratorRequested ? null : devtoolsPort,
+  administratorRequested ? new DockCdp() : undefined);
 const updater = new DesktopUpdater();
 
 // 窗口状态管理
@@ -160,8 +166,8 @@ function createMainWindow(): BrowserWindow {
     icon: fs.existsSync(iconCandidate) ? iconCandidate : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
-      sandbox: restricted,
-      devTools: !restricted,
+      sandbox: restricted || administratorRequested,
+      devTools: !restricted && !administratorRequested,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -194,8 +200,8 @@ function createMainWindow(): BrowserWindow {
     saveWindowState();
   });
 
-  if (restricted) {
-    win.webContents.on("will-navigate", (event) => event.preventDefault());
+  if (restricted || administratorRequested) {
+    win.webContents.on("will-frame-navigate", (event) => event.preventDefault());
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   }
 
@@ -253,6 +259,13 @@ function createTray(): void {
 function startDesktop(): void {
   // Started before app ready so the registry read overlaps Electron startup.
   const systemPathReady = refreshWindowsPath();
+  const administratorReady = administratorRequested
+    ? tryAdministratorTerminal(path.join(process.resourcesPath, "binaries", "qone-terminal-worker.mjs"), administratorLifetime.signal)
+      .then(host => {
+        if (administratorLifetime.signal.aborted) { host?.stop(); return; }
+        terminal.administratorHost = sidecar.administratorHost = host;
+      })
+    : Promise.resolve();
   app.on("second-instance", () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -299,9 +312,11 @@ function startDesktop(): void {
       return net.fetch(pathToFileURL(filePath).toString());
     });
 
-    registerIpcHandlers(() => mainWindow, sidecar, terminal, browserDock, updater, { elevated, restricted });
+    registerIpcHandlers(() => mainWindow, sidecar, terminal, browserDock, updater, {
+      restricted: restricted || administratorRequested, administratorReady, administratorSupported,
+    });
 
-    void sidecar.start(systemPathReady);
+    void sidecar.start(Promise.all([systemPathReady, administratorReady]).then(() => {}));
     mainWindow = createMainWindow();
     createTray();
 
@@ -317,30 +332,19 @@ function startDesktop(): void {
     sidecar.stop();
     updater.installDeferredUpdate();
     terminal.killAll();
+    administratorLifetime.abort();
+    terminal.administratorHost?.stop();
     browserDock.closeAll();
   });
 }
 
 async function bootstrap(): Promise<void> {
-  if (windows && app.isPackaged && app.commandLine.hasSwitch(elevationParentSwitch)) {
-    const parent = Number(app.commandLine.getSwitchValue(elevationParentSwitch));
-    // The original process holds the singleton until Windows accepts or cancels UAC.
-    if (restricted && !await waitForElevationParent(parent)) {
-      app.exit(1);
-      return;
-    }
-  }
   if (!app.requestSingleInstanceLock()) {
     app.quit();
     return;
   }
   // Clear the old endpoint while the lock is held, before Electron writes this launch’s port.
   fs.rmSync(devtoolsPortFile, { force: true });
-  // Never elevate the development build: its renderer loads over HTTP from Vite.
-  if (app.isPackaged && integrity === "medium" && await tryAdministratorLaunch()) {
-    app.exit(0);
-    return;
-  }
   startDesktop();
 }
 
