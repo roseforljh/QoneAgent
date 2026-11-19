@@ -16,10 +16,11 @@ import { groupProjectSidebarSessions, sortSidebarWorkspaces, useSidebarPreferenc
 import { MorphingSpinner, SessionCompletionDot } from "./morphing-spinner";
 import { SidebarSessionTitle } from "./sidebar-session-title";
 import { SidebarSessionActions } from "./sidebar-session-pin-action";
+import { MeasuredCollapse } from "./elements/measured-collapse";
 
 const rowButtonClass = "text-foreground/95 group-hover:text-foreground flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-start outline-none transition-colors";
 
-const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = memo(({ session, dragGroup }) => {
+const SessionRow: FC<{ session: SessionInfo; dragGroup: string; fade?: "on" | "off"; accessory?: ReactNode }> = memo(({ session, dragGroup, fade, accessory }) => {
   const { t } = useLocale();
   const currentSessionId = useStore((s) => s.currentSessionId);
   const selectSession = useStore((s) => s.selectSession);
@@ -57,7 +58,7 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = memo(({ sess
       onDelete={deleteChat}
       disabled={renaming}
     >
-    <motion.div layout="position" data-active={active || undefined}
+    <motion.div layout="position" data-active={active || undefined} data-fade={fade}
       data-sidebar-drag-id={renaming ? undefined : session.id} data-sidebar-drag-kind="session" data-sidebar-drag-group={dragGroup}
       className={cn("q-sidebar-session-row group relative flex h-[30px] items-center rounded-[10px]", renaming && "bg-muted")}>
       {renaming ? (
@@ -72,6 +73,7 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = memo(({ sess
           <SidebarSessionTitle title={session.title || t("sidebar.newChat")}>{session.title || t("sidebar.newChat")}</SidebarSessionTitle>
         </button>
       )}
+      {!renaming && accessory}
       {!renaming && (
         <SidebarSessionActions pinned={priority} onTogglePinned={togglePinned}
           status={isRunning ? <MorphingSpinner className="size-3.5" /> : isCompleted ? <SessionCompletionDot /> : isBusy ? <MorphingSpinner className="size-3.5" label={t("chat.generatingTitle")} /> : undefined}>
@@ -86,28 +88,39 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = memo(({ sess
 
 const PROJECT_SESSION_PREVIEW = 5;
 
-/** Shows the latest chats (and always the open one); the rest fade out until fully loaded. */
+/** Shows the latest chats plus a faded next one; the toggle fades in on the last visible row. */
 export const ProjectSessions: FC<{ workspaceId: string; sessions: SessionInfo[] }> = ({ workspaceId, sessions }) => {
   const { t } = useLocale();
   const [showAll, setShowAll] = useState(false);
   const activeIndex = useStore((s) => sessions.findIndex((session) => session.id === s.currentSessionId));
   if (!sessions.length) return <p className="text-muted-foreground px-2 py-1 text-xs">{t("sidebar.noChatsInProject")}</p>;
-  const limit = Math.max(PROJECT_SESSION_PREVIEW, activeIndex + 1);
-  const rest = sessions.slice(limit);
-  const row = (session: SessionInfo) => <SessionRow key={session.id} session={session} dragGroup={`session:workspace:${workspaceId}`} />;
+  // Collapsed, an older open chat is lifted into the preview; expanded, every chat keeps its own place.
+  const lifted = !showAll && activeIndex >= PROJECT_SESSION_PREVIEW ? sessions[activeIndex] : undefined;
+  const limit = PROJECT_SESSION_PREVIEW - (lifted ? 1 : 0);
+  const [next, ...older] = sessions.slice(limit).filter((session) => session !== lifted);
+  const last = older.at(-1);
+  const toggle = (
+    <button type="button" aria-expanded={showAll} className="q-sidebar-session-toggle" onClick={() => setShowAll((open) => !open)}
+      aria-label={t(showAll ? "sidebar.collapseChats" : "sidebar.showAllChats")} title={t(showAll ? "sidebar.collapseChats" : "sidebar.showAllChats")}>
+      <ChevronDownIcon className="size-3.5" aria-hidden="true" />
+    </button>
+  );
+  const row = (session: SessionInfo, accessory?: ReactNode, fade?: "on" | "off") => (
+    <SessionRow key={session.id} session={session} dragGroup={`session:workspace:${workspaceId}`} accessory={accessory} fade={fade} />
+  );
   return (
     <>
-      {sessions.slice(0, limit).map(row)}
-      {rest.length > 0 && (
-        <motion.div className="q-sidebar-session-more" data-collapsed={showAll ? undefined : ""} initial={false}
-          animate={{ height: showAll ? "auto" : 30 }} transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}>
-          <div inert={!showAll} className="q-sidebar-session-more-rows flex flex-col gap-0.5">{(showAll ? rest : rest.slice(0, 1)).map(row)}</div>
-          {!showAll && (
-            <button type="button" className="q-sidebar-session-more-button text-muted-foreground hover:text-foreground" onClick={() => setShowAll(true)}>
-              {t("sidebar.showAllChats")}
-            </button>
+      {sessions.slice(0, limit).map((session) => row(session))}
+      {lifted && row(lifted)}
+      {next && (
+        <div>
+          {row(next, showAll && last ? undefined : toggle, showAll ? "off" : "on")}
+          {older.length > 0 && (
+            <MeasuredCollapse open={showAll} unmountOnClose>
+              <div className="flex flex-col gap-0.5 pt-0.5">{older.map((session) => row(session, session === last ? toggle : undefined))}</div>
+            </MeasuredCollapse>
           )}
-        </motion.div>
+        </div>
       )}
     </>
   );

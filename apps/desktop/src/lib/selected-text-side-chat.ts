@@ -1,5 +1,6 @@
 import type { QuoteInfo } from "@assistant-ui/react";
 import { composerDrafts } from "./composer-drafts";
+import { appendInlineQuote } from "./inline-quote";
 import { openSideConversation } from "./side-conversation";
 
 const OPEN_SELECTED_TEXT = "qone-selected-text-side-chat";
@@ -11,7 +12,7 @@ export interface SelectedTextSideChatRequest {
 
 export function addQuoteToDraft(sessionId: string, quote: QuoteInfo) {
   const draft = composerDrafts.get(sessionId) ?? { text: "", attachments: [], quote: undefined };
-  composerDrafts.set(sessionId, { ...draft, quote });
+  composerDrafts.set(sessionId, { ...draft, text: appendInlineQuote(draft.text, quote.text) });
 }
 
 export function onSelectedTextSideChat(callback: (request: SelectedTextSideChatRequest) => void) {
@@ -24,7 +25,7 @@ export async function openSelectedTextSideChat(sessionId: string, quote: QuoteIn
   const request: SelectedTextSideChatRequest = { sessionId, quote, handled: false };
   window.dispatchEvent(new CustomEvent(OPEN_SELECTED_TEXT, { detail: request }));
   if (request.handled) return;
-  await openSideConversation(sessionId, { text: "", attachments: [], quote });
+  await openSideConversation(sessionId, { text: appendInlineQuote("", quote.text), attachments: [], quote: undefined });
 }
 
 export function focusConversationComposer(scope: HTMLElement | null) {

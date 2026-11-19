@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef } from "react";
+import { useAui, useAuiState } from "@assistant-ui/react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getNodeByKey, $getSelection, $isRangeSelection, $setSelection,
   COMMAND_PRIORITY_HIGH, DELETE_CHARACTER_COMMAND, HISTORY_PUSH_TAG, KEY_BACKSPACE_COMMAND,
   type RangeSelection,
 } from "lexical";
-import { $deleteComposerToolBackward, $insertComposerCommand, $insertComposerTool, type ComposerCommand, type ComposerToolId } from "../../lib/composer-tool-editor";
+import { $deleteComposerToolBackward, $insertComposerCommand, $insertComposerQuote, $insertComposerTool, type ComposerCommand, type ComposerToolId } from "../../lib/composer-tool-editor";
 
 export type InsertComposerTool = (tool: { id: ComposerToolId; label: string }) => void;
 export type InsertComposerCommand = (command: ComposerCommand) => void;
@@ -18,6 +19,8 @@ export function ComposerEditorBridge({
   onCommandReady?: (insert: InsertComposerCommand | null) => void;
 }) {
   const [editor] = useLexicalComposerContext();
+  const aui = useAui();
+  const quote = useAuiState((state) => state.composer.quote);
   const savedSelection = useRef<RangeSelection | null>(null);
   useEffect(() => editor.registerUpdateListener(({ editorState }) => {
     editorState.read(() => {
@@ -26,7 +29,8 @@ export function ComposerEditorBridge({
     });
   }), [editor]);
 
-  const insertTool = useCallback<InsertComposerTool>((tool) => {
+  /** Menus and selection actions steal focus; insert at the caret the user left, after any selected text. */
+  const insertAtCaret = useCallback((insert: () => void) => {
     if (!editor.isEditable()) return;
     editor.update(() => {
       const saved = savedSelection.current;
@@ -35,14 +39,22 @@ export function ComposerEditorBridge({
       }
       const selection = $getSelection();
       if ($isRangeSelection(selection) && !selection.isCollapsed()) {
-        // Choosing a tool from a menu inserts after the selection, not in place of the draft.
         const [start, end] = selection.isBackward() ? [selection.focus, selection.anchor] : [selection.anchor, selection.focus];
         start.set(end.key, end.offset, end.type);
       }
-      $insertComposerTool(tool);
+      insert();
     }, { tag: HISTORY_PUSH_TAG });
     editor.focus();
   }, [editor]);
+
+  const insertTool = useCallback<InsertComposerTool>((tool) => insertAtCaret(() => $insertComposerTool(tool)), [insertAtCaret]);
+
+  // "Add to chat" sets assistant-ui's composer quote; it becomes a chip where the caret was.
+  useEffect(() => {
+    if (!quote?.text.trim() || !editor.isEditable()) return;
+    aui.composer().setQuote(undefined);
+    insertAtCaret(() => $insertComposerQuote(quote.text));
+  }, [aui, quote, insertAtCaret]);
 
   const insertCommand = useCallback<InsertComposerCommand>((command) => {
     if (!editor.isEditable()) return;
@@ -70,5 +82,28 @@ export function ComposerEditorBridge({
       onCommandReady?.(null);
     };
   }, [editor, insertTool, insertCommand, onReady, onCommandReady]);
+
+  // assistant-ui's composer root focuses the input with a plain DOM focus when
+  // its blank area (padding, the space below a short draft, gaps between
+  // actions) is clicked; a contenteditable then puts the caret at the start.
+  // Handle that click here: focus through Lexical so the last caret, or the
+  // end of the draft, is kept.
+  useEffect(() => editor.registerRootListener((root) => {
+    const composer = root?.closest<HTMLElement>(".aui-composer-root");
+    if (!root || !composer) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (event.button !== 0 || !(target instanceof Element) || root.contains(target) || target.closest(INTERACTIVE)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      // Focus first, then let Lexical put its own selection back into the DOM.
+      root.focus({ preventScroll: true });
+      editor.focus();
+    };
+    composer.addEventListener("mousedown", onMouseDown);
+    return () => composer.removeEventListener("mousedown", onMouseDown);
+  }), [editor]);
   return null;
 }
+
+const INTERACTIVE = "a, button, input, textarea, select, label, summary, [tabindex], [contenteditable]";

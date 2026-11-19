@@ -213,7 +213,7 @@ index 02a371b8cc4ed31be2b569744242240868c12346..865f522acfeab8b4644bdc52a557292e
 +  });
 +  const restoredTurn = useAuiState((s) => {
 +    const saved = restoration?.current?.topAnchorTurn;
-+    if (!enabled || !saved) return null;
++    if (!enabled || !saved || !s.thread.isRunning) return null;
 +    const index = s.thread.messages.findIndex((message) => message.id === saved.anchorId);
 +    const target = s.thread.messages[index + 1];
 +    return index >= 0 && target?.role === "assistant" && s.thread.messages.slice(index + 2).every((message) => message.role === "user") ? target.id : null;
@@ -644,7 +644,7 @@ diff --git a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js b/dist/pr
 index d054826556100492005c41bcd1ad3426b5121b47..add4b4de1deaff0e5024ae286ccf77a6da789152 100644
 --- a/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js
 +++ b/dist/primitives/thread/topAnchor/mountTopAnchorReserve.js
-@@ -1,139 +1,206 @@
+@@ -1,139 +1,202 @@
  "use client";
 -import { createReserveElement, getAnchorId, setReserveHeight, snapScrollTop } from "./topAnchorUtils.js";
 -import { computeTopAnchorReserve, computeTopAnchorTargetScrollTop } from "./computeTopAnchorSlack.js";
@@ -812,17 +812,14 @@ index d054826556100492005c41bcd1ad3426b5121b47..add4b4de1deaff0e5024ae286ccf77a6
 +  let reserve = null;
 +  const saved = restoration?.current;
 +  let pendingRestore = saved ?? null;
-+  let lastScrolledAnchorId = saved ? store.getState().topAnchorTurn?.anchorId : void 0;
++  let lastScrolledAnchorId = saved ? (store.getState().topAnchorTurn?.anchorId ?? saved.topAnchorTurn?.anchorId) : void 0;
 +  const viewportAtMount = store.getState().element.viewport;
-+  const restore = (anchorTop) => {
++  const restore = () => {
 +    const viewport = store.getState().element.viewport;
 +    if (!pendingRestore || !viewport) return;
-+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-+    const { offsetFromAnchorPx, distanceFromBottomPx, scrollTop } = pendingRestore;
-+    const top = anchorTop !== void 0 && offsetFromAnchorPx !== void 0
-+      ? anchorTop + offsetFromAnchorPx
-+      : distanceFromBottomPx === void 0 ? scrollTop : maxScrollTop - distanceFromBottomPx;
-+    viewport.scrollTo({ top: Math.max(0, top), behavior: "instant" });
++    if (!restoration?.onRestore?.(viewport)) {
++      viewport.scrollTo({ top: Math.max(0, pendingRestore.scrollTop), behavior: "instant" });
++    }
 +    pendingRestore = null;
 +  };
 +  let listenedViewport = null;
@@ -875,7 +872,7 @@ index d054826556100492005c41bcd1ad3426b5121b47..add4b4de1deaff0e5024ae286ccf77a6
 +        setReserveHeight(reserve, 0);
 +        reserve.remove();
 +      }
-+      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
++      if (!state.topAnchorTurn) restore();
 +      return;
 +    }
 +    if (!anchor && !target && !clamp && state.topAnchorTurn) {
@@ -893,7 +890,7 @@ index d054826556100492005c41bcd1ad3426b5121b47..add4b4de1deaff0e5024ae286ccf77a6
 +        setReserveHeight(reserve, 0);
 +        reserve.remove();
 +      }
-+      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
++      if (!state.topAnchorTurn) restore();
 +      return;
 +    }
 +    const anchorId = getAnchorId(anchor);
@@ -921,7 +918,7 @@ index d054826556100492005c41bcd1ad3426b5121b47..add4b4de1deaff0e5024ae286ccf77a6
 +    );
 +    if (pendingRestore) {
 +      lastScrolledAnchorId = anchorId;
-+      restore(anchorId === pendingRestore.topAnchorTurn?.anchorId ? targetScrollTop : void 0);
++      restore();
 +      lastScrollTop = viewport.scrollTop;
 +    }
 +    const movedPinnedTarget = keepPinned && targetScrollTop !== lastAppliedTarget;
@@ -965,14 +962,13 @@ index d054826556100492005c41bcd1ad3426b5121b47..add4b4de1deaff0e5024ae286ccf77a6
 +  else scheduler.schedule();
 +  const unsubscribe = store.subscribe(scheduler.schedule);
 +  return () => {
-+    if (restoration && viewportAtMount) {
-+      const { scrollTop } = viewportAtMount;
++    const viewport = viewportAtMount ?? listenedViewport ?? store.getState().element.viewport;
++    if (restoration && viewport && !pendingRestore) {
++      restoration.onCapture?.(viewport);
++      const { scrollTop } = viewport;
 +      const { topAnchorTurn } = store.getState();
 +      restoration.current = {
 +        scrollTop,
-+        distanceFromBottomPx: Math.max(0, viewportAtMount.scrollHeight - viewportAtMount.clientHeight - scrollTop),
-+        offsetFromAnchorPx: lastAppliedTarget !== null && topAnchorTurn?.anchorId === lastScrolledAnchorId
-+          ? scrollTop - lastAppliedTarget : void 0,
 +        topAnchorTurn
 +      };
 +    }
@@ -1108,7 +1104,7 @@ index e4be094faa88d25d158ed575dd0ac5946418c728..928439c01eadfd98f83387af0ac1b975
    });
 +  const restoredTurn = useAuiState((s) => {
 +    const saved = restoration?.current?.topAnchorTurn;
-+    if (!enabled || !saved) return null;
++    if (!enabled || !saved || !s.thread.isRunning) return null;
 +    // A streaming placeholder may have been replaced by its persisted reply.
 +    const index = s.thread.messages.findIndex((message) => message.id === saved.anchorId);
 +    const target = s.thread.messages[index + 1];
@@ -1221,7 +1217,7 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d
  import {
    computeTopAnchorReserve,
    computeTopAnchorTargetScrollTop,
-@@ -57,9 +59,24 @@ const createFrameScheduler = (fn: () => void) => {
+@@ -57,9 +59,21 @@ const createFrameScheduler = (fn: () => void) => {
    };
  };
  
@@ -1232,23 +1228,20 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d
 +  const saved = restoration?.current;
 +  let pendingRestore = saved ?? null;
 +  // The currently running turn is already present on entry, not a new submit.
-+  let lastScrolledAnchorId = saved ? store.getState().topAnchorTurn?.anchorId : undefined;
++  let lastScrolledAnchorId = saved ? (store.getState().topAnchorTurn?.anchorId ?? saved.topAnchorTurn?.anchorId) : undefined;
 +  const viewportAtMount = store.getState().element.viewport;
-+  const restore = (anchorTop?: number) => {
++  const restore = () => {
 +    const viewport = store.getState().element.viewport;
 +    if (!pendingRestore || !viewport) return;
-+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-+    const { offsetFromAnchorPx, distanceFromBottomPx, scrollTop } = pendingRestore;
-+    const top = anchorTop !== undefined && offsetFromAnchorPx !== undefined
-+      ? anchorTop + offsetFromAnchorPx
-+      : distanceFromBottomPx === undefined ? scrollTop : maxScrollTop - distanceFromBottomPx;
-+    viewport.scrollTo({ top: Math.max(0, top), behavior: "instant" });
++    if (!restoration?.onRestore?.(viewport)) {
++      viewport.scrollTo({ top: Math.max(0, pendingRestore.scrollTop), behavior: "instant" });
++    }
 +    pendingRestore = null;
 +  };
  
    let listenedViewport: HTMLElement | null = null;
    let lastScrollTop = 0;
-@@ -112,7 +129,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -112,7 +126,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
      }
    };
  
@@ -1257,20 +1250,20 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d
      const state = store.getState();
      const { viewport, anchor, target } = state.element;
      const clamp = state.targetConfig;
-@@ -126,6 +143,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -126,6 +140,7 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
          setReserveHeight(reserve, 0);
          reserve.remove();
        }
-+      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
++      if (!state.topAnchorTurn) restore();
        return;
      }
  
-@@ -151,9 +169,16 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -151,9 +166,16 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
          setReserveHeight(reserve, 0);
          reserve.remove();
        }
 +      // Completed history has no active anchor; restore once its refs exist.
-+      if (!state.topAnchorTurn && !pendingRestore?.topAnchorTurn) restore();
++      if (!state.topAnchorTurn) restore();
        return;
      }
  
@@ -1282,7 +1275,7 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d
      reserve ??= createReserveElement();
  
      if (
-@@ -172,14 +197,19 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -172,14 +194,19 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
  
      if (reserveChanged) {
        scheduler.schedule();
@@ -1296,7 +1289,7 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d
      );
 +    if (pendingRestore) {
 +      lastScrolledAnchorId = anchorId;
-+      restore(anchorId === pendingRestore.topAnchorTurn?.anchorId ? targetScrollTop : undefined);
++      restore();
 +      lastScrollTop = viewport.scrollTop;
 +    }
  
@@ -1304,7 +1297,7 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d
      if (anchorId === undefined || anchorId !== lastScrolledAnchorId) {
        restoreScrollTop = null;
        restoredThisTurn = false;
-@@ -187,6 +217,13 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -187,6 +214,13 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
          viewport.scrollTo({ top: targetScrollTop, behavior: "smooth" });
        }
        if (anchorId !== undefined) lastScrolledAnchorId = anchorId;
@@ -1318,7 +1311,7 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d
      } else if (restoreScrollTop !== null && lastAppliedTarget !== null) {
        // Restore the anchor-relative position: if content above the anchor
        // changed height and the browser already adjusted scrollTop to match
-@@ -203,15 +240,47 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
+@@ -203,15 +237,46 @@ export const mountTopAnchorReserve = (store: TopAnchorStore) => {
      }
  
      lastAppliedTarget = targetScrollTop;
@@ -1354,14 +1347,13 @@ index 787754632270e8f290bae82b26e51b36c3cedadb..9a20b786f01b6a03dd1e48180b33fb1d
    const unsubscribe = store.subscribe(scheduler.schedule);
  
    return () => {
-+    if (restoration && viewportAtMount) {
-+      const { scrollTop } = viewportAtMount;
++    const viewport = viewportAtMount ?? listenedViewport ?? store.getState().element.viewport;
++    if (restoration && viewport && !pendingRestore) {
++      restoration.onCapture?.(viewport);
++      const { scrollTop } = viewport;
 +      const { topAnchorTurn } = store.getState();
 +      restoration.current = {
 +        scrollTop,
-+        distanceFromBottomPx: Math.max(0, viewportAtMount.scrollHeight - viewportAtMount.clientHeight - scrollTop),
-+        offsetFromAnchorPx: lastAppliedTarget !== null && topAnchorTurn?.anchorId === lastScrolledAnchorId
-+          ? scrollTop - lastAppliedTarget : undefined,
 +        topAnchorTurn,
 +      };
 +    }

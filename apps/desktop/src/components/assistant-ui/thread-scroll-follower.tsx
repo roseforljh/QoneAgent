@@ -1,10 +1,9 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type FC, type ReactNode, type RefObject } from "react";
 import { AuiIf, ThreadPrimitive, useAuiState, useThreadViewport, useThreadViewportStore } from "@assistant-ui/react";
 import { useConversationStore } from "../../lib/conversation-context";
-import { getThreadScrollState } from "../../lib/thread-scroll-state";
+import { getThreadScrollState, restoreViewportAnchor } from "../../lib/thread-scroll-state";
 import { mountThreadScrollController, type ThreadScrollTurn } from "../../lib/thread-scroll-controller";
 import { threadPhase } from "../../lib/thread-scroll-policy";
-import { restoreThreadReadingAnchor } from "../../lib/thread-scroll-position";
 export { userMessageRevealScrollTop } from "../../lib/thread-scroll-policy";
 
 // Kept as a small public predicate for existing scroll tests and integrations.
@@ -33,8 +32,10 @@ export function SessionThreadViewport({ sessionId, ...props }: SessionViewportPr
 /** Share the scroll owner with footer navigation; the primitive owns top anchoring/restoration. */
 export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null>; children: ReactNode }> = ({ contentRef, children }) => {
   const sessionId = useConversationStore((state) => state.currentSessionId);
-  // Entry intent must not be rewritten by the primitive's restoration scroll event.
-  const pendingReadingAnchor = useRef(getThreadScrollState(sessionId)?.readingAnchor);
+  // 在挂载时记录本次进入是否有历史滚动位置与锚点，避免 StrictMode 重放 effect 时被首次 cleanup 写入的快照误判。
+  const entryState = useRef(getThreadScrollState(sessionId));
+  const hasEntryRestoration = useRef(entryState.current?.current != null);
+  const entryAnchor = useRef(entryState.current?.anchor);
   const running = useAuiState((state) => state.thread.isRunning);
   const hasActiveTopAnchorTurn = useAuiState((state) => {
     if (!state.thread.isRunning) return false;
@@ -61,24 +62,25 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
   // assistant-ui updates this store when its viewport ref and footer inset are
   // registered. It is the safe fallback during the first layout measurement.
   const isAtBottom = useThreadViewport((state) => state.isAtBottom);
-  const topAnchorReady = useThreadViewport((state) => state.turnAnchor !== "top" || !state.topAnchorTurn
-    || Boolean(state.element.anchor && state.element.target && state.targetConfig));
   const show = controllerShow ?? !isAtBottom;
 
   useLayoutEffect(() => {
     const content = contentRef.current;
     const footer = viewport?.querySelector<HTMLElement>("[data-thread-scroll-footer]");
     if (!viewport || !content || !footer) return;
-    const restoration = getThreadScrollState(sessionId);
+    const anchor = entryAnchor.current;
     const owner = mountThreadScrollController({
       viewport, content, footer,
       endContent: viewport.querySelector<HTMLElement>("[data-thread-end-content]"),
       turn: currentTurn.current,
-      restored: restoration?.follow,
-      hasRestoration: restoration?.current != null,
+      hasRestoration: hasEntryRestoration.current,
+      restoreEntryAnchor: anchor ? () => restoreViewportAnchor(viewport, anchor) : undefined,
+      isAnchorReady: () => {
+        const state = viewportStore.getState();
+        return state.turnAnchor !== "top" || !state.topAnchorTurn
+          || Boolean(state.element.anchor && state.element.target && state.targetConfig);
+      },
       onVisibility: setControllerShow,
-      onSave: (follow) => { if (restoration) restoration.follow = follow; },
-      onPosition: (anchor) => { if (restoration) restoration.readingAnchor = anchor; },
     });
     controller.current = owner;
     const unsubscribe = viewportStore.getState().onScrollToBottom(owner.scrollToBottom);
@@ -88,21 +90,6 @@ export const ThreadScrollFollower: FC<{ contentRef: RefObject<HTMLElement | null
       if (controller.current === owner) controller.current = null;
     };
   }, [contentRef, sessionId, viewport, viewportStore]);
-
-  useLayoutEffect(() => {
-    const content = contentRef.current;
-    const anchor = pendingReadingAnchor.current;
-    if (!viewport || !content || !topAnchorReady || !anchor) return;
-    let frame: number | null = requestAnimationFrame(() => {
-      frame = null;
-      // 进入会话的阅读位置只尝试恢复一次，找不到目标就作废。
-      // 流式回复的占位 id 固定为 "streaming"，若一直挂起，下一轮发送时新的
-      // "streaming" 消息会被误认成旧锚点，把刚置顶的用户气泡拉走。
-      restoreThreadReadingAnchor(viewport, content, anchor);
-      pendingReadingAnchor.current = undefined;
-    });
-    return () => { if (frame !== null) cancelAnimationFrame(frame); };
-  }, [contentRef, sessionId, topAnchorReady, viewport]);
 
   useLayoutEffect(() => {
     controller.current?.sync({ turnId, running, phase });

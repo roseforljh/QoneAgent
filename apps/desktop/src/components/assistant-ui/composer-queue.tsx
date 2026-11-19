@@ -15,6 +15,7 @@ import { useAttachmentPreviewSrc } from "../../hooks/use-attachment-src";
 import { getDraftComposer } from "../../lib/composer-draft-runtime";
 import { getQoneMessageQueue } from "../../lib/qone-message-queue";
 import { beginQueueComposerEdit } from "../../lib/queue-composer-edit";
+import { plainInlineQuotes } from "../../lib/inline-quote";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { useStore } from "../../store";
@@ -48,7 +49,7 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
     src: image?.content.find((part) => part.type === "image")?.image,
   });
   const attachmentSummary = message?.attachments?.map((attachment) => attachment.name).join(", ") ?? "";
-  const title = queueItem.prompt || attachmentSummary;
+  const title = plainInlineQuotes(queueItem.prompt) || attachmentSummary;
   const removeButton = <TooltipIconButton
     tooltip={t("chat.queueRemove")}
     disabled={steering}
@@ -68,9 +69,7 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
         : <CodexQueueIcon />}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden py-1 leading-5">
         {previewSrc && <img src={previewSrc} alt={image?.name || t("attachment.imageAlt")} draggable={false} className="size-6 shrink-0 rounded border border-border object-cover" />}
-        {detached || !queueItem.prompt
-          ? <span className="min-w-0 flex-1 truncate select-none">{title}</span>
-          : <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate select-none" />}
+        <span className="min-w-0 flex-1 truncate select-none">{title}</span>
       </div>
     </div>
     {transferring ? <span className="sr-only" role="status">{t("chat.queueOpeningSideChat")}</span> : <div className="q-composer-queue-actions flex shrink-0 items-center gap-1 text-muted-foreground">

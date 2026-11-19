@@ -30,7 +30,6 @@ import { AssistantContext } from "./assistant-context";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { AssistantMessageActions, UserMessageActions } from "./message-actions";
 import { SelectedTextActions } from "./selected-text-actions";
-import { ComposerQuote } from "./composer-quote";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
@@ -347,7 +346,7 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
               <button type="button" className="rounded px-1.5 py-0.5 hover:bg-foreground/10" onClick={() => { void aui.composer().reset(); owner.setState({ editingQueueItem: undefined }); if (sessionId) getQoneMessageQueue(sessionId)?.cancelEdit(); }}>{t("common.cancel")}</button>
             </div>
           )}
-          <ComposerAttachments><ComposerQuote /></ComposerAttachments>
+          <ComposerAttachments />
           <ComposerAddAttachment hidden />
           <LexicalComposerInput nodes={composerNodes} formatter={composerLinkFormatter} autoFocus submitMode="none" placeholder={placeholder} className={composerInputClass} directiveChip={ComposerDirectiveChip}>
             <ComposerEditorBridge onReady={onEditorReady} onCommandReady={onCommandReady} />

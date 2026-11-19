@@ -2,9 +2,12 @@ import type { DirectiveChipProps } from "@assistant-ui/react-lexical";
 import type { CSSProperties } from "react";
 import { composerLinkAppearance } from "./composer-link-appearance";
 import { composerLinkDirectiveType } from "./composer-link-formatter";
+import { ComposerQuoteChip } from "./composer-quote";
 import { ComposerToolChip } from "./composer-tools";
+import { INLINE_QUOTE_TYPE } from "../../lib/inline-quote";
 
 export function ComposerDirectiveChip(props: DirectiveChipProps) {
+  if (props.directiveType === INLINE_QUOTE_TYPE) return <ComposerQuoteChip {...props} />;
   if (props.directiveType !== composerLinkDirectiveType) return <ComposerToolChip {...props} />;
   const appearance = composerLinkAppearance(props.directiveId);
   return <span

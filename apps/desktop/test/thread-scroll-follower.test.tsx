@@ -1,8 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { act, StrictMode, useRef } from "react";
-import { getThreadScrollState, pruneThreadScrollStates } from "../src/lib/thread-scroll-state";
-import { captureThreadReadingAnchor, restoreThreadReadingAnchor } from "../src/lib/thread-scroll-position";
+import { captureViewportAnchor, getThreadScrollState, pruneThreadScrollStates, restoreViewportAnchor } from "../src/lib/thread-scroll-state";
 
 // Real React ref/effect ordering with deterministic geometry. No browser is used.
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
@@ -208,7 +207,7 @@ test.each([false, true])("switching away and back restores the actual reading po
   expect(getThreadScrollState("reading-b")?.current?.scrollTop).toBe(420);
 });
 
-test("a session that was following the tail returns to the new tail after growing while away", async () => {
+test("a session returns to its exact scrollTop even after growing while away", async () => {
   contentHeight = 1200; scrollHeight = 1800;
   useStore.setState({ currentSessionId: "tail-a" });
   const container = document.createElement("div"); document.body.append(container);
@@ -229,63 +228,146 @@ test("a session that was following the tail returns to the new tail after growin
     root!.render(<Fixture sessionId="tail-a" running={false} />);
   });
   await flush();
-  expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(firstTop + 300);
+  const returned = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  expect(returned.scrollTop).toBe(firstTop);
+  // 切回后点击回到底部按钮仍可正常滚到新底部。
+  const button = document.querySelector<HTMLButtonElement>("[data-test-bottom]")!;
+  await act(async () => { button.click(); });
+  expect(returned.scrollTop).toBe(firstTop + 300);
 });
 
-test("reading restoration follows the same message when content reflows while away", () => {
-  const viewport = document.createElement("div");
-  const content = document.createElement("div");
-  const message = document.createElement("div");
-  message.className = "q-message-root";
-  message.dataset.messageId = "stable-message";
-  content.append(message);
-  let messageTop = 220;
-  Object.defineProperty(viewport, "scrollTop", { configurable: true, writable: true, value: 320 });
-  viewport.getBoundingClientRect = () => new view.DOMRect(0, 100, 600, 600);
-  message.getBoundingClientRect = () => new view.DOMRect(0, messageTop, 600, 120);
-
-  const anchor = captureThreadReadingAnchor(viewport, content);
-  expect(anchor).toEqual({ messageId: "stable-message", offsetPx: 120 });
-  messageTop += 80;
-  expect(restoreThreadReadingAnchor(viewport, content, anchor!)).toBe(true);
-  expect(viewport.scrollTop).toBe(400);
+test("switching across projects via loading unmount restores the exact scrollTop when returning", async () => {
+  contentHeight = 1200; scrollHeight = 1800;
+  useStore.setState({ currentSessionId: "proj-a-chat" });
+  const container = document.createElement("div"); document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root!.render(<Fixture sessionId="proj-a-chat" running={false} messageRoots />); });
+  await flush();
+  const a = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  await act(async () => {
+    a.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
+    a.scrollTo({ top: 260 });
+  });
+  // 模拟切到另一项目的未缓存会话：先卸载视口进入加载态，再挂载另一项目会话。
+  await act(async () => {
+    useStore.setState({ currentSessionId: "proj-b-chat" });
+    root!.render(<div data-loading />);
+  });
+  await act(async () => {
+    root!.render(<Fixture sessionId="proj-b-chat" running={false} messageRoots />);
+  });
+  await flush();
+  const b = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  await act(async () => {
+    b.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
+    b.scrollTo({ top: 510 });
+  });
+  // 切回原项目会话，即使内容高度已变也依旧停在 260。
+  contentHeight = 1500; scrollHeight = 2100;
+  await act(async () => {
+    useStore.setState({ currentSessionId: "proj-a-chat" });
+    root!.render(<Fixture sessionId="proj-a-chat" running={false} messageRoots />);
+  });
+  await flush();
+  expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(260);
+  // 再切回另一项目会话，依旧停在 510。
+  await act(async () => {
+    useStore.setState({ currentSessionId: "proj-b-chat" });
+    root!.render(<Fixture sessionId="proj-b-chat" running={false} messageRoots />);
+  });
+  await flush();
+  expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(510);
 });
 
-test("native restoration scroll cannot overwrite the entry reading anchor when history grows", async () => {
-  const originalRect = view.HTMLElement.prototype.getBoundingClientRect;
-  view.HTMLElement.prototype.getBoundingClientRect = function () {
-    const id = this.dataset.messageId;
-    if (id) {
-      const reply = id.startsWith("reply-");
-      return new view.DOMRect(0, (reply ? 700 : 0) - (this.closest("[data-test-viewport]")?.scrollTop ?? 0), 600, reply ? 500 : 200);
-    }
-    return originalRect.call(this);
+test("leaving during a running reply and returning after it finishes restores the exact scrollTop without reserve", async () => {
+  contentHeight = 1200; scrollHeight = 1800;
+  useStore.setState({ currentSessionId: "finish-a" });
+  const container = document.createElement("div"); document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root!.render(<Fixture sessionId="finish-a" running messageRoots />); });
+  await flush();
+  const a = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  await act(async () => {
+    a.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
+    a.scrollTo({ top: 340 });
+  });
+  await act(async () => {
+    useStore.setState({ currentSessionId: "finish-b" });
+    root!.render(<Fixture sessionId="finish-b" running={false} messageRoots />);
+  });
+  await flush();
+  // 切回时 AI 已回复结束（running = false）。
+  await act(async () => {
+    useStore.setState({ currentSessionId: "finish-a" });
+    root!.render(<Fixture sessionId="finish-a" running={false} messageRoots />);
+  });
+  await flush();
+  const returned = document.querySelector<HTMLElement>("[data-test-viewport]")!;
+  expect(returned.scrollTop).toBe(340);
+  expect(returned.querySelector("[data-aui-top-anchor-reserve]")).toBeNull();
+});
+
+test("anchor restoration penetrates content-visibility collapse without clamping to bottom or top-anchor", () => {
+  // 模拟 10 轮长对话：离开前每轮 900px，用户停在第 5 轮（index 4）内部 -400px 处（scrollTop = 4000）。
+  const createLayout = (collapsed: boolean) => {
+    const viewport = document.createElement("div");
+    let currentTop = 0;
+    const expandedIndices = new Set<number>();
+    const heights = () => Array.from({ length: 10 }, (_, i) => (!collapsed || i === 9 || expandedIndices.has(i)) ? 900 : 280);
+    const totalHeight = () => heights().reduce((sum, h) => sum + h, 0);
+    const blocks = Array.from({ length: 10 }, (_, i) => {
+      const el = document.createElement("div");
+      el.dataset.messageBlock = "";
+      el.dataset.turnId = `turn-${i}`;
+      el.getBoundingClientRect = () => {
+        const hs = heights();
+        const topDoc = hs.slice(0, i).reduce((sum, h) => sum + h, 0);
+        const h = hs[i]!;
+        return new view.DOMRect(0, topDoc - currentTop, 600, h);
+      };
+      viewport.append(el);
+      return el;
+    });
+    const revealVisible = () => {
+      if (!collapsed) return;
+      const hs = heights();
+      let y = 0;
+      for (let i = 0; i < 10; i++) {
+        const h = hs[i]!;
+        if (y + h > currentTop && y < currentTop + 600) expandedIndices.add(i);
+        y += h;
+      }
+    };
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, get: () => 600 },
+      scrollHeight: { configurable: true, get: totalHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => currentTop,
+        set: (value: number) => {
+          currentTop = Math.max(0, Math.min(value, totalHeight() - 600));
+          revealVisible();
+        },
+      },
+    });
+    viewport.getBoundingClientRect = () => new view.DOMRect(0, 0, 600, 600);
+    viewport.scrollTo = ((opts: ScrollToOptions) => { viewport.scrollTop = opts.top ?? 0; }) as typeof viewport.scrollTo;
+    return { viewport, blocks };
   };
-  try {
-    contentHeight = 1200; scrollHeight = 1800;
-    useStore.setState({ currentSessionId: "anchor-a" });
-    const container = document.createElement("div"); document.body.append(container);
-    root = createRoot(container);
-    await act(async () => { root!.render(<Fixture sessionId="anchor-a" running={false} messageRoots readingRoots />); });
-    await flush();
-    const viewport = document.querySelector<HTMLElement>("[data-test-viewport]")!;
-    await act(async () => {
-      viewport.dispatchEvent(new view.WheelEvent("wheel", { deltaY: -80, bubbles: true }));
-      viewport.scrollTo({ top: 320 });
-    });
-    await act(async () => {
-      useStore.setState({ currentSessionId: "anchor-b" });
-      root!.render(<Fixture sessionId="anchor-b" running={false} messageRoots readingRoots />);
-    });
-    await flush();
-    contentHeight += 300; scrollHeight += 300;
-    await act(async () => {
-      useStore.setState({ currentSessionId: "anchor-a" });
-      root!.render(<Fixture sessionId="anchor-a" running={false} messageRoots readingRoots />);
-    });
-    await flush();
-    expect(document.querySelector<HTMLElement>("[data-test-viewport]")!.scrollTop).toBe(320);
-  } finally {
-    view.HTMLElement.prototype.getBoundingClientRect = originalRect;
-  }
+
+  // 离开前：完整高度下停在 turn-4 内部 -400px（scrollTop = 4000）。
+  const before = createLayout(false);
+  before.viewport.scrollTop = 4000;
+  const anchor = captureViewportAnchor(before.viewport)!;
+  expect(anchor.turnId).toBe("turn-4");
+  expect(anchor.offsetPx).toBe(-400);
+
+  // 切回后：新 DOM 上历史轮次被 content-visibility: auto 折叠成 280px（初始 maxScrollTop 仅 2820 < 4000）。
+  const after = createLayout(true);
+  expect(after.viewport.scrollHeight - after.viewport.clientHeight).toBeLessThan(4000);
+  expect(restoreViewportAnchor(after.viewport, anchor)).toBe(true);
+  // turn-4 展开真实 900px 高度，且顶边精准落回 -400px，既没有被夹到最底部，也没有漂移到其他轮次。
+  const restoredRect = after.blocks[4]!.getBoundingClientRect();
+  expect(restoredRect.height).toBe(900);
+  expect(restoredRect.top).toBe(-400);
 });

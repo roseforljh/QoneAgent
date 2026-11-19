@@ -8,6 +8,7 @@ import { create } from "zustand";
 import { isolateBackgroundSubscriptions } from "./lib/store-subscriptions";
 import { invoke } from "./lib/desktop-bridge";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
+import { plainInlineQuotes } from "./lib/inline-quote";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type MessageQuoteInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo } from "@qone/protocol";
 import { DEFAULT_RUN_PERMISSION_MODE, loadNewSessionRunOptions, loadRunOptions, saveNewSessionRunOptions, saveRunOptions, withoutServers, withRunOptionDefaults, type SessionRunOptions } from "./lib/run-options";
 import { defaultThinkingForModel, normalizeThinkingLevel } from "./lib/model-settings";
@@ -724,7 +725,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     if (history.length === 0) {
       const titleRequestId = rid();
       pendingTitleRequests.set(titleRequestId, sid);
-      get().send({ type: "session.generate-title", requestId: titleRequestId, sessionId: sid, prompt: (mcpCommand ? mcpCommand.text : message) || attachments?.map((attachment) => attachment.name).join(", ") || t("attachment.image"), model });
+      get().send({ type: "session.generate-title", requestId: titleRequestId, sessionId: sid, prompt: plainInlineQuotes(mcpCommand ? mcpCommand.text : message) || attachments?.map((attachment) => attachment.name).join(", ") || t("attachment.image"), model });
     }
     return true;
   },

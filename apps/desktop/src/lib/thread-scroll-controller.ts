@@ -2,7 +2,6 @@ import {
   nextThreadFollowMode, THREAD_BOTTOM_SCROLL_DURATION_MS, THREAD_BOTTOM_TOLERANCE_PX,
   THREAD_RESERVE_RELEASE_DURATION_MS, type ThreadFollowSnapshot, type ThreadPhase,
 } from "./thread-scroll-policy";
-import { captureThreadReadingAnchor, type ThreadReadingAnchor } from "./thread-scroll-position";
 
 export interface ThreadScrollTurn { turnId?: string; running: boolean; phase: ThreadPhase }
 interface ControllerOptions {
@@ -13,9 +12,10 @@ interface ControllerOptions {
   turn: ThreadScrollTurn;
   restored?: ThreadFollowSnapshot;
   hasRestoration: boolean;
+  restoreEntryAnchor?: () => boolean;
+  isAnchorReady?: () => boolean;
   onVisibility: (visible: boolean) => void;
-  onSave: (snapshot: ThreadFollowSnapshot) => void;
-  onPosition?: (anchor: ThreadReadingAnchor | undefined) => void;
+  onSave?: (snapshot: ThreadFollowSnapshot) => void;
 }
 
 /** Measure the transcript tail, never the temporary assistant-ui anchor reserve. */
@@ -65,16 +65,29 @@ export function mountThreadScrollController(options: ControllerOptions) {
   let turn = options.turn;
   const restored = options.restored;
   let mode: ThreadFollowSnapshot["mode"] = "static";
+  let held = false;
   if (restored && restored.turnId === turn.turnId) mode = restored.mode;
-  else if (!restored) mode = nextThreadFollowMode(mode, { type: "phase", previous: "idle", phase: turn.phase });
+  else if (options.hasRestoration) held = true;
+  else mode = nextThreadFollowMode(mode, { type: "phase", previous: "idle", phase: turn.phase });
   let frame: number | null = null;
   let animation: number | null = null;
   let releaseAnimation: number | null = null;
   let releaseSpacer: HTMLElement | null = null;
   let lastReserveHeight = 0;
   let programmatic = false;
-  let held = false;
   let disposed = false;
+  // 切回会话后的短稳态窗口：抵抗 Shiki 代码高亮、图片加载、折叠测量、content-visibility 展开带来的异步漂移。
+  let settlingAnchor = Boolean(options.restoreEntryAnchor);
+  let settleTimer: ReturnType<typeof setTimeout> | null = settlingAnchor
+    ? setTimeout(() => { settlingAnchor = false; settleTimer = null; }, 500)
+    : null;
+  const stopSettling = () => {
+    settlingAnchor = false;
+    if (settleTimer !== null) {
+      clearTimeout(settleTimer);
+      settleTimer = null;
+    }
+  };
   let previousTop = viewport.scrollTop;
   let touchY: number | undefined;
   let pointerActive = false;
@@ -103,11 +116,13 @@ export function mountThreadScrollController(options: ControllerOptions) {
   // here leaves restored/following turns one reserve height above P1.
   const bottomTop = () => viewport.scrollTop + geometry().nativeDistance;
   const hold = () => {
+    stopSettling();
     held = true;
     mode = nextThreadFollowMode(mode, { type: "hold" });
     cancelAnimation();
   };
   const followBottom = () => {
+    stopSettling();
     held = false;
     mode = nextThreadFollowMode(mode, { type: "bottom", phase: turn.phase });
     cancelAnimation();
@@ -115,6 +130,7 @@ export function mountThreadScrollController(options: ControllerOptions) {
     publish();
   };
   const scrollToBottom = () => {
+    stopSettling();
     held = false;
     mode = nextThreadFollowMode(mode, { type: "bottom", phase: turn.phase });
     cancelAnimation();
@@ -143,6 +159,14 @@ export function mountThreadScrollController(options: ControllerOptions) {
     frame = null;
     if (disposed) return;
     observeReserve();
+    if (settlingAnchor && (options.isAnchorReady?.() ?? true)) {
+      programmatic = true;
+      options.restoreEntryAnchor?.();
+      previousTop = viewport.scrollTop;
+      programmatic = false;
+      publish();
+      return;
+    }
     const { distance } = geometry();
     if (!held) {
       mode = nextThreadFollowMode(mode, { type: "content", phase: turn.phase, overflow: distance });
@@ -177,10 +201,10 @@ export function mountThreadScrollController(options: ControllerOptions) {
     }
     previousTop = viewport.scrollTop;
     publish();
-    options.onPosition?.(captureThreadReadingAnchor(viewport, content));
   };
   const gesture = (away: boolean, target: EventTarget | null) => {
     if (nestedScrollConsumes(target, viewport, away)) return;
+    stopSettling();
     if (away) hold();
     else {
       const { distance, reserveHeight } = geometry();
@@ -205,6 +229,7 @@ export function mountThreadScrollController(options: ControllerOptions) {
     else if (event.key === " " || event.key === "Spacebar") gesture(event.shiftKey, target);
   };
   const pointerDown = () => {
+    stopSettling();
     pointerActive = true;
     pointerStartTop = viewport.scrollTop;
     // Cancel smooth navigation on any pointer gesture. A disclosure click is
@@ -310,6 +335,7 @@ export function mountThreadScrollController(options: ControllerOptions) {
       const previousReserve = observedReserve;
       if (!sameTurn || next.running) cancelRelease();
       if (!sameTurn) {
+        stopSettling();
         lastReserveHeight = 0;
         cancelAnimation();
         // Placement is not a user hold. Watch the new reply for overflow once
@@ -335,6 +361,7 @@ export function mountThreadScrollController(options: ControllerOptions) {
       schedule();
     },
     reveal(message: HTMLElement) {
+      stopSettling();
       const rect = message.getBoundingClientRect();
       const padding = viewport.ownerDocument?.defaultView?.getComputedStyle(viewport).scrollPaddingTop;
       const topInset = (Number.parseFloat(padding ?? "") || 0) * (padding?.endsWith("%") ? viewport.clientHeight / 100 : 1);
@@ -348,10 +375,8 @@ export function mountThreadScrollController(options: ControllerOptions) {
       publish();
     },
     dispose() {
-      // 卸载时不能再采样阅读位置：父级 Viewport 的 layout cleanup 先于本组件执行，
-      // 已移除 top-anchor reserve，scrollTop 被浏览器夹到更小的最大值，
-      // 此刻量到的是被夹过的错位位置。阅读位置以最后一次真实 scroll 事件为准。
-      options.onSave({ turnId: turn.turnId, mode });
+      stopSettling();
+      options.onSave?.({ turnId: turn.turnId, mode });
       disposed = true;
       cancelAnimation();
       cancelRelease();

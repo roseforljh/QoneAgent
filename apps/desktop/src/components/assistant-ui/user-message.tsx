@@ -1,5 +1,6 @@
-import { MessagePrimitive, useAuiState, useMessageQuote } from "@assistant-ui/react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MessagePrimitive, TextMessagePartProvider, useAuiState, useMessagePartText, useMessageQuote } from "@assistant-ui/react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import type { UrlTransform } from "react-markdown";
 import { Popover } from "radix-ui";
 import { cn } from "../../lib/utils";
 import { memo } from "react";
@@ -11,7 +12,32 @@ import { UserImageThumbnail } from "./elements/user-image-thumbnail";
 import { UserMessageActions } from "./message-actions";
 import { UserMessageEditComposer } from "./user-message-edit";
 import { MarkdownText } from "./markdown-text";
+import { MarkdownLink } from "./markdown-link";
+import { InlineQuoteChip } from "./composer-quote";
 import { AgentCommunication, useAgentCommunication } from "./agent-communication";
+import { hasInlineQuote, INLINE_QUOTE_HREF, inlineQuotesToMarkdown } from "../../lib/inline-quote";
+import { markdownUrlTransform } from "../../lib/markdown-file-reference";
+
+// Inline selected-text tags reach Markdown as qone-quote:N links and render as chips.
+const InlineQuotes = createContext<readonly string[]>([]);
+function QuoteOrLink(props: ComponentProps<"a"> & { node?: unknown }) {
+  const quotes = useContext(InlineQuotes);
+  const quote = props.href?.startsWith(INLINE_QUOTE_HREF) ? quotes[Number(props.href.slice(INLINE_QUOTE_HREF.length))] : undefined;
+  return quote === undefined ? <MarkdownLink {...props} /> : <InlineQuoteChip text={quote} />;
+}
+const quoteComponents = { a: QuoteOrLink };
+const quoteUrlTransform: UrlTransform = (url, key, node) => url.startsWith(INLINE_QUOTE_HREF) ? url : markdownUrlTransform(url, key, node);
+
+function UserMarkdownText() {
+  const { text } = useMessagePartText();
+  const inline = useMemo(() => hasInlineQuote(text) ? inlineQuotesToMarkdown(text) : undefined, [text]);
+  if (!inline) return <MarkdownText />;
+  return <InlineQuotes.Provider value={inline.quotes}>
+    <TextMessagePartProvider text={inline.markdown}>
+      <MarkdownText components={quoteComponents} urlTransform={quoteUrlTransform} />
+    </TextMessagePartProvider>
+  </InlineQuotes.Provider>;
+}
 
 /** Codex collapses long user text and offers Show more. The line budget lives
  * in CSS so the clamp and this measurement cannot drift apart. */
@@ -47,7 +73,7 @@ function UserMessageText({ paired = false }: { paired?: boolean }) {
   return <>
     <div data-aui-quote-selectable="true" className={cn("q-user-message-bubble w-fit min-w-0 break-words text-start", paired ? "q-user-message-bubble-paired max-w-[70%]" : "max-w-[70%]")}>
       <div ref={contentRef} className={cn(overflows && !expanded && "q-user-message-content-collapsed")}>
-        {textPartIndexes.map((index) => <MessagePrimitive.PartByIndex key={index} index={index} components={{ Text: MarkdownText }} />)}
+        {textPartIndexes.map((index) => <MessagePrimitive.PartByIndex key={index} index={index} components={{ Text: UserMarkdownText }} />)}
       </div>
     </div>
     {overflows && <button type="button" className="q-user-message-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>

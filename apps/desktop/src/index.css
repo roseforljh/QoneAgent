@@ -352,29 +352,53 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
   width: 0;
   opacity: 0;
 }
-.q-sidebar-session-more {
-  position: relative;
-  overflow: hidden;
+/* The next project chat stays a real, clickable row drawn faded; hovering
+   it (or any row hosting the toggle) brings it back and fades the toggle in,
+   the same way the row's own actions appear. */
+@property --q-sidebar-row-reveal {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
 }
-.q-sidebar-session-more[data-collapsed] .q-sidebar-session-more-rows {
-  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.5), transparent);
+.q-sidebar-session-row[data-fade] {
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / calc(.6 + .4 * var(--q-sidebar-row-reveal))), rgb(0 0 0 / calc(.12 + .88 * var(--q-sidebar-row-reveal))));
+  transition: --q-sidebar-row-reveal 240ms cubic-bezier(.32, .72, 0, 1);
 }
-.q-sidebar-session-more-button {
+.q-sidebar-session-row[data-fade="on"]:not(:hover, :has(:focus-visible), :has([data-state="open"])) {
+  --q-sidebar-row-reveal: 0;
+}
+/* Sits in the row's empty indent, out of flow, so the title keeps its width. */
+.q-sidebar-session-toggle {
   position: absolute;
-  inset: 0;
+  top: 50%;
+  left: .25rem;
+  z-index: 1;
   display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
   place-items: center;
-  border-radius: 10px;
-  font-size: 12px;
+  color: var(--muted-foreground);
   opacity: 0;
   outline: none;
-  transition: opacity 180ms ease, color 180ms ease;
+  transform: translateY(-50%);
+  transition: opacity 160ms ease;
 }
-.q-sidebar-session-more-button:hover,
-.q-sidebar-session-more-button:focus-visible {
+.q-sidebar-session-toggle svg {
+  transition: rotate 240ms cubic-bezier(.32, .72, 0, 1);
+}
+.q-sidebar-session-toggle[aria-expanded="true"] svg {
+  rotate: 180deg;
+}
+/* Invisible until the pointer is on the icon itself; then just the icon lights up. */
+.q-sidebar-session-toggle:hover,
+.q-sidebar-session-toggle:focus-visible {
+  color: var(--foreground);
   opacity: 1;
 }
 @media (prefers-reduced-motion: reduce) {
+  .q-sidebar-session-row[data-fade],
+  .q-sidebar-session-toggle,
+  .q-sidebar-session-toggle svg { transition: none; }
   .q-sidebar-session-row .q-sidebar-session-title[data-overflowing],
   .q-sidebar-session-row .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-clip,
   .q-sidebar-session-row .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-track {
