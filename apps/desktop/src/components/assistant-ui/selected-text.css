@@ -24,17 +24,16 @@
 .q-selected-text-actions > button:disabled { opacity: .45; cursor: default; }
 .q-selected-text-actions > button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 /* Match Codex's compact attachment tile: secondary surface plus ghost hover. */
-.q-composer-quote,
+.q-inline-quote,
 .q-composer-quote-preview {
   --q-quote-surface-elevated-secondary: #f9f9f9;
   --q-quote-surface-elevated: #ffffff;
 }
-:root[data-theme="dark"] .q-composer-quote,
+:root[data-theme="dark"] .q-inline-quote,
 :root[data-theme="dark"] .q-composer-quote-preview {
   --q-quote-surface-elevated-secondary: #414141;
   --q-quote-surface-elevated: #303030;
 }
-.q-composer-quote { min-width: 0; max-width: 100%; }
 .q-composer-quote-pill {
   position: relative;
   display: inline-flex;
@@ -49,6 +48,9 @@
   transition: background-color .15s ease;
 }
 .q-composer-quote-pill:hover { background: var(--q-quote-surface-elevated); }
+/* Sits on the text line where the user placed it, in the composer and the sent bubble. */
+.q-inline-quote { max-width: min(16rem, 100%); margin-inline: 2px; padding: 1px 8px; vertical-align: middle; white-space: nowrap; user-select: none; }
+.q-inline-quote .q-composer-quote-trigger { gap: 5px; font-size: 12px; }
 .q-composer-quote-trigger {
   display: inline-flex;
   min-width: 0;
@@ -117,9 +119,7 @@
   line-height: 1.5;
   animation: q-selection-in .12s ease-out;
 }
-.q-composer-quote-items { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
 .q-composer-quote-item { position: relative; display: flex; min-width: 0; align-items: flex-start; gap: 8px; padding: 6px 2px; }
-.q-composer-quote-number { flex: none; color: var(--muted-foreground); }
 .q-composer-quote-details { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 8px; text-align: start; user-select: text; }
 .q-composer-quote-heading { color: var(--muted-foreground); font-size: var(--q-text-xs); font-weight: var(--q-weight-medium); line-height: 16px; }
 .q-composer-quote-text { display: block; overflow-wrap: anywhere; white-space: pre-wrap; }

@@ -56,20 +56,23 @@ async function waitFor(check: () => boolean, label: string) {
   }
 }
 
-test("the standalone Electron sidecar survives goal and journal write failures and runs Codemode", async () => {
+test("the standalone Electron sidecar survives goal and journal write failures and runs Codemode with image reads", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "qone-codemode-bundle-"));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (!new URL(request.url).pathname.endsWith("/chat/completions")) return Response.json({ data: [] });
     const { messages } = await request.json() as { messages: { role: string }[] };
     const finished = messages.some(message => message.role === "tool");
     const delta = finished ? { content: "done" } : { tool_calls: [{ index: 0, id: "sandbox-call", type: "function",
-      function: { name: "codemode", arguments: JSON.stringify({ code: 'text("qone-" + "codemode-ok");' }) } }] };
+      function: { name: "codemode", arguments: JSON.stringify({ code: `const image = await tools.read({ path: ${JSON.stringify(path.join(root, "pixel.png"))} });
+        text(image?.type === "image" ? "qone-" + "codemode-ok" : String(image));` }) } }] };
     const chunk = { id: "local", object: "chat.completion.chunk", created: 1, model: "test", choices: [
       { index: 0, delta, finish_reason: finished ? "stop" : "tool_calls" },
     ] };
     return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { "Content-Type": "text/event-stream" } });
   } });
   try {
+    // The read tool resizes images with Photon WASM; a missing WASM file drops every image.
+    await writeFile(path.join(root, "pixel.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
     const staging = path.join(root, "staging");
     const resources = path.join(root, "resources");
     await buildRuntime(path.join(staging, "binaries", path.basename(runtimeBundle)));
@@ -79,6 +82,17 @@ test("the standalone Electron sidecar survives goal and journal write failures a
       macroExpander: (value: string) => value,
     }));
     const bundle = path.join(resources, "binaries", path.basename(runtimeBundle));
+    // Pi resizes images in a worker beside the bundle; a missing worker silently blocks the runtime instead.
+    const resize = Bun.spawnSync([electronExecutable(), "--input-type=module", "--eval", `
+      import { readFileSync } from "node:fs";
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(${JSON.stringify(path.join(path.dirname(bundle), "image-resize-worker.js"))}, { execArgv: [] });
+      worker.once("error", (error) => { console.error(error); process.exit(1); });
+      worker.once("message", (message) => { console.log(JSON.stringify(message)); void worker.terminate(); });
+      worker.postMessage({ inputBytes: new Uint8Array(readFileSync(${JSON.stringify(path.join(root, "pixel.png"))})), mimeType: "image/png" });
+    `], { cwd: root, env: { ...process.env, NODE_PATH: undefined, NODE_OPTIONS: undefined, ELECTRON_RUN_AS_NODE: "1" }, timeout: 10_000 });
+    if (resize.exitCode !== 0) throw new Error(resize.stderr.toString());
+    expect(JSON.parse(resize.stdout.toString()).result).toMatchObject({ mimeType: "image/png", width: 1, height: 1 });
     const data = path.join(root, "profile");
     await mkdir(data);
     await writeFile(path.join(data, "settings.json"), JSON.stringify({ models: { "local/test": {

@@ -109,7 +109,7 @@ test("returning to a running turn restores before frames and never replays smoot
   expect(snapshot.current.scrollTop).toBe(420);
 });
 
-test.each([0, 80])("returning from another running session keeps the bubble stationary after the tail shrinks (reading offset %ipx)", (readingOffset) => {
+test.each([0, 80])("returning from another running session restores the exact scrollTop (reading offset %ipx)", (readingOffset) => {
   const a = fixture();
   const aSnapshot = getThreadScrollState("running-a")!;
   a.viewport.scrollPaddingTop = "32px";
@@ -117,7 +117,7 @@ test.each([0, 80])("returning from another running session keeps the bubble stat
   const leaveA = mountTopAnchorReserve(a.store, aSnapshot);
   flushFrames();
   a.viewport.scrollTop -= readingOffset;
-  const bubbleOffset = a.anchor.offsetTop - a.viewport.scrollTop;
+  const savedTop = a.viewport.scrollTop;
   leaveA();
 
   const b = fixture();
@@ -132,9 +132,9 @@ test.each([0, 80])("returning from another running session keeps the bubble stat
   returned.anchor.offsetTop += 60; // Earlier turns reflowed.
   returned.viewport.contentHeight = 1600; // The trailing output collapsed on remount.
   const leaveReturned = mountTopAnchorReserve(returned.store, aSnapshot);
-  expect(returned.anchor.offsetTop - returned.viewport.scrollTop).toBe(bubbleOffset);
+  expect(returned.viewport.scrollTop).toBe(savedTop);
   flushFrames();
-  expect(returned.anchor.offsetTop - returned.viewport.scrollTop).toBe(bubbleOffset);
+  expect(returned.viewport.scrollTop).toBe(savedTop);
   expect(returned.viewport.calls.every((call) => call.behavior === "instant")).toBe(true);
   leaveReturned();
 });
@@ -243,7 +243,7 @@ test("completed history restores without needing an active anchor", () => {
   dispose();
 });
 
-test("history restores from native distance when the transcript grew while away", () => {
+test("history restores the exact scrollTop even when the transcript grew while away", () => {
   const f = fixture();
   Object.assign(f.state, {
     topAnchorTurn: null,
@@ -252,10 +252,58 @@ test("history restores from native distance when the transcript grew while away"
   });
   f.viewport.contentHeight = 2000;
   const dispose = mountTopAnchorReserve(f.store, {
-    current: { scrollTop: 120, distanceFromBottomPx: 500, topAnchorTurn: null },
+    current: { scrollTop: 120, topAnchorTurn: null },
   });
-  expect(f.viewport.scrollTop).toBe(1100);
-  expect(f.viewport.calls).toEqual([{ top: 1100, behavior: "instant" }]);
+  expect(f.viewport.scrollTop).toBe(120);
+  expect(f.viewport.calls).toEqual([{ top: 120, behavior: "instant" }]);
+  dispose();
+});
+
+test("returning after a running turn finished restores the exact scrollTop instead of sticking at top", () => {
+  const f = fixture();
+  Object.assign(f.state, {
+    topAnchorTurn: null,
+    targetConfig: null,
+    element: { viewport: f.viewport, anchor: null, target: null },
+  });
+  const dispose = mountTopAnchorReserve(f.store, {
+    current: { scrollTop: 640, topAnchorTurn: { anchorId: "user-a", targetId: "streaming" } },
+  });
+  expect(f.viewport.scrollTop).toBe(640);
+  expect(f.viewport.calls).toEqual([{ top: 640, behavior: "instant" }]);
+  dispose();
+});
+
+test("unmounting before pending restoration finishes preserves the saved scrollTop", () => {
+  const f = fixture();
+  Object.assign(f.state.element, { anchor: null, target: null }); f.state.targetConfig = null as never;
+  const snapshot = { current: { scrollTop: 760, topAnchorTurn: f.state.topAnchorTurn } };
+  const dispose = mountTopAnchorReserve(f.store, snapshot);
+  dispose();
+  expect(snapshot.current.scrollTop).toBe(760);
+});
+
+test("delayed topAnchorTurn hydration for the same saved turn never replays smooth placement", () => {
+  const f = fixture();
+  const savedTurn = { anchorId: "user-a", targetId: "streaming" };
+  Object.assign(f.state, {
+    topAnchorTurn: null,
+    targetConfig: null,
+    element: { viewport: f.viewport, anchor: null, target: null },
+  });
+  const dispose = mountTopAnchorReserve(f.store, {
+    current: { scrollTop: 320, topAnchorTurn: savedTurn },
+  });
+  expect(f.viewport.scrollTop).toBe(320);
+  // 模拟后台 session.messages 稍后同步回同一个正在运行的 turn。
+  Object.assign(f.state, {
+    topAnchorTurn: savedTurn,
+    targetConfig: { tallerThan: 160, visibleHeight: 96 },
+    element: { viewport: f.viewport, anchor: f.anchor, target: f.target },
+  });
+  f.notify(); flushFrames();
+  expect(f.viewport.scrollTop).toBe(320);
+  expect(f.viewport.calls.every((call) => call.behavior === "instant")).toBe(true);
   dispose();
 });
 

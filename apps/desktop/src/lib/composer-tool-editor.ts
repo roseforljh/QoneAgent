@@ -2,6 +2,7 @@ import {
   $createTextNode, $getRoot, $getSelection, $isElementNode, $isRangeSelection, $isTextNode,
 } from "lexical";
 import { $createDirectiveNode, $isDirectiveNode } from "@assistant-ui/react-lexical";
+import { INLINE_QUOTE_TYPE, inlineQuoteLabel, serializeInlineQuote } from "./inline-quote";
 
 export type ComposerToolId = "attachment" | "folder" | "skills" | "mcp" | "web-search" | "goal";
 export type ComposerCommand = { kind: "skill"; name: string } | { kind: "mcp"; serverId: string };
@@ -36,12 +37,25 @@ export function $insertComposerCommand(command: ComposerCommand) {
   $selectAfterDirective(directive);
 }
 
-export function $insertComposerTool(tool: { id: ComposerToolId; label: string }) {
+function $insertChip(directive: ReturnType<typeof $createDirectiveNode>) {
   const selection = $getSelection() ?? $getRoot().selectEnd();
-  const directive = $createDirectiveNode({ id: "qone-" + tool.id, type: "qone-tool", label: tool.label });
   selection.insertNodes([directive]);
   $selectAfterDirective(directive);
 }
+
+export function $insertComposerTool(tool: { id: ComposerToolId; label: string }) {
+  $insertChip($createDirectiveNode({ id: "qone-" + tool.id, type: "qone-tool", label: tool.label }));
+}
+
+export function $createComposerQuote(text: string) {
+  return $createDirectiveNode({ id: text, type: INLINE_QUOTE_TYPE, label: inlineQuoteLabel(text) }, serializeInlineQuote(text));
+}
+
+export function $insertComposerQuote(text: string) {
+  $insertChip($createComposerQuote(text));
+}
+
+const ATOMIC_CHIPS = ["qone-tool", "qone-command", INLINE_QUOTE_TYPE];
 
 // Handle only the chip boundary. Leave ordinary text, ranges, and IME to Lexical.
 export function $deleteComposerToolBackward(): boolean {
@@ -52,7 +66,7 @@ export function $deleteComposerToolBackward(): boolean {
   const previous = $isTextNode(node)
     ? node.getPreviousSibling()
     : $isElementNode(node) ? node.getChildAtIndex(anchor.offset - 1) : null;
-  if (!$isDirectiveNode(previous) || !["qone-tool", "qone-command"].includes(previous.getDirectiveItem().type)) return false;
+  if (!$isDirectiveNode(previous) || !ATOMIC_CHIPS.includes(previous.getDirectiveItem().type)) return false;
   if ($isTextNode(node) && anchor.offset === 1 && node.getTextContent().startsWith(" ")) {
     node.spliceText(0, 1, "");
     node.select(0, 0);

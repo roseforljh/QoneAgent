@@ -413,8 +413,11 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     }
 
     case "model.list":
-      await services.ensureModelsReady();
+      // The list is the stored configuration; it never depends on network model
+      // metadata. Reply at once and refresh the registry in the background:
+      // every command that needs a configured registry awaits it itself.
       services.send({ type: "model.list", configs: services.modelConfigRepo.list() });
+      void services.ensureModelsReady().catch((error) => services.log.warn("model configuration refresh failed", { err: String(error) }));
       return true;
 
     case "model.resolve-metadata": {

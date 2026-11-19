@@ -145,7 +145,7 @@ test("editing, cancelling and saving publish detached and restored lanes without
   } finally { view.dispose(); }
 });
 
-test("steering and rejection update both lanes while snapshots keep their previous contents", async () => {
+test("steering and rejection update both lanes and every snapshot reads the live lanes", async () => {
   const queue = createQueue();
   const store = createMessageQueueAdapterStore(queue);
   const view = liveRuntime(queue);
@@ -161,9 +161,13 @@ test("steering and rejection update both lanes while snapshots keep their previo
     expect(view.visible()).toEqual(["B", "A", "C"]);
     queue.settleSteer(persistentId, false);
     expect(view.visible()).toEqual(["A", "B", "C"]);
-    expect(before.items.map((item) => item.prompt)).toEqual(["A", "B", "C"]);
-    expect(before.steerItems).toEqual([]);
-    expect(steering.steerItems.map((item) => item.prompt)).toEqual(["B"]);
+    // A new object still marks each change; the lanes are never stale, since
+    // assistant-ui reads them right after a send, before React republishes.
+    expect(steering).not.toBe(before);
+    for (const snapshot of [before, steering]) {
+      expect(snapshot.items.map((item) => item.prompt)).toEqual(["A", "B", "C"]);
+      expect(snapshot.steerItems).toEqual([]);
+    }
   } finally { view.dispose(); }
 });
 

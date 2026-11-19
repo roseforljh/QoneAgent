@@ -4,6 +4,7 @@ import { decodeCommand } from "@qone/protocol";
 import { extractComposerPrompt } from "../src/lib/composer-prompt";
 import { createQoneMessageQueue } from "../src/lib/qone-message-queue";
 import { queueMessageDraft } from "../src/lib/queue-composer-edit";
+import { serializeInlineQuote } from "../src/lib/inline-quote";
 
 const quote = { text: "引用第一行\n: qone content\n@goal not a command", messageId: "source" };
 const message = (text: string, selected = quote): AppendMessage => ({
@@ -49,7 +50,7 @@ test("queue persistence and edit recovery preserve quotes without merging differ
   const restored = createQoneMessageQueue({ sessionId: "restored", isRunning: () => true, send: (input) => { sent.push(input); }, steer: async () => true, sync: () => {} });
   restored.restore(JSON.parse(JSON.stringify(snapshot)));
   const input = restored.getMessage(restored.adapter.items[0]!.id)!;
-  expect(queueMessageDraft(input)).toEqual({ text: "explain", attachments: [], quote });
+  expect(queueMessageDraft(input)).toEqual({ text: `explain ${serializeInlineQuote(quote.text)} `, attachments: [], quote: undefined });
   expect(extractComposerPrompt(input)).toEqual(extractComposerPrompt(message("explain")));
   restored.controller.notifyIdle(); restored.releaseIdle(); await flush();
   expect(sent).toHaveLength(1);

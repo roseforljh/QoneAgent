@@ -3,10 +3,13 @@ import type { AppendMessage } from "@assistant-ui/react";
 import type { ComposerDraft } from "./composer-drafts";
 import type { QueueBundle } from "./qone-message-queue";
 import { messageQuote } from "./message-quote";
+import { appendInlineQuote } from "./inline-quote";
 
+/** Items queued before quotes went inline carry quote metadata; edit them as an inline chip. */
 export function queueMessageDraft(message: AppendMessage): ComposerDraft {
   const quote = messageQuote(message);
-  return { text: message.content.filter((part) => part.type === "text").map((part) => part.text).join(""), attachments: message.attachments ?? [], quote };
+  const text = message.content.filter((part) => part.type === "text").map((part) => part.text).join("");
+  return { text: quote ? appendInlineQuote(text, quote.text) : text, attachments: message.attachments ?? [], quote: undefined };
 }
 
 /** Restore actual chips atomically. addAttachment rebuilds them asynchronously

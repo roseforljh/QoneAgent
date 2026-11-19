@@ -433,7 +433,7 @@ function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pe
                 <span className="overflow-hidden whitespace-nowrap">{t("browser.title")}</span>
               </Link>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-2">
+            <div className="scrollbar-none flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-2">
               {sidebarLayout === "project" && (!workspacesLoaded || !sessionsLoaded) && <SidebarLoadingSkeleton layout="project" />}
               {sidebarLayout === "project" && workspacesLoaded && sessionsLoaded && <div>
                 <ProjectSection />

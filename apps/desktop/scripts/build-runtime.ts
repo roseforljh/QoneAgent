@@ -1,11 +1,13 @@
 import { build, context, type BuildOptions } from "esbuild";
-import { cp } from "node:fs/promises";
+import { cp, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktopRoot = path.resolve(fileURLToPath(import.meta.url), "../..");
 const runtimeEntry = path.resolve(desktopRoot, "../agent-runtime/src/index.ts");
-const codemodePackages = ["@earendil-works/pi-codemode", "quickjs-wasi"];
+// Packages that load files beside their own module (Codemode worker, QuickJS and
+// Photon WASM) ship unbundled so those files resolve next to them.
+const unbundledPackages = ["@earendil-works/pi-codemode", "quickjs-wasi", "@silvia-odwyer/photon-node"];
 export const runtimeBundle = path.join(desktopRoot, "binaries", "qone-runtime.mjs");
 const terminalWorkerEntry = path.join(desktopRoot, "electron", "terminal-worker.ts");
 export const terminalWorkerBundle = path.join(desktopRoot, "binaries", "qone-terminal-worker.mjs");
@@ -20,8 +22,7 @@ const options: BuildOptions = {
   loader: { ".md": "text" },
   // Optional native accelerators (ssh2 crypto, cpu-features) are compiled for
   // another ABI; their callers already fall back to JavaScript when absent.
-  // Codemode locates its worker relative to its own module and QuickJS through Node package resolution.
-  external: ["*.node", "cpu-features", ...codemodePackages],
+  external: ["*.node", "cpu-features", ...unbundledPackages],
   // CommonJS dependencies inside an ES module bundle still expect these.
   banner: { js: [
     'import { createRequire as __qoneCreateRequire } from "node:module";',
@@ -38,9 +39,10 @@ const options: BuildOptions = {
   logLevel: "warning",
 };
 
+const piEntry = Bun.resolveSync("@earendil-works/pi-coding-agent", path.dirname(runtimeEntry));
+
 async function runtimeOptions(outfile: string): Promise<BuildOptions> {
-  const piEntry = Bun.resolveSync("@earendil-works/pi-coding-agent", path.dirname(runtimeEntry));
-  for (const name of codemodePackages) {
+  for (const name of unbundledPackages) {
     const entry = Bun.resolveSync(name, path.dirname(piEntry));
     for (let dir = path.dirname(entry); ; dir = path.dirname(dir)) {
       const manifest = Bun.file(path.join(dir, "package.json"));
@@ -54,14 +56,29 @@ async function runtimeOptions(outfile: string): Promise<BuildOptions> {
   return { ...options, outfile };
 }
 
+/** Pi spawns its image resize worker from beside the bundle; without it every
+ * resize falls back to running on the runtime's own event loop. Pi fixes the
+ * `.js` name, so the folder declares ES modules instead of relying on Node's
+ * syntax detection (which warns and depends on unrelated parent package.json files). */
+async function buildImageResizeWorker(runtimeOutfile: string) {
+  const directory = path.dirname(runtimeOutfile);
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
+  await build({
+    ...options,
+    entryPoints: [path.join(path.dirname(piEntry), "utils", "image-resize-worker.js")],
+    outfile: path.join(directory, "image-resize-worker.js"),
+  });
+}
+
 export async function buildRuntime(outfile = runtimeBundle) {
-  await build(await runtimeOptions(outfile));
+  await Promise.all([build(await runtimeOptions(outfile)), buildImageResizeWorker(outfile)]);
 }
 
 /** Development: rebuild on every source change, so a runtime restart picks up edits. Readable stacks. */
 export async function watchRuntime() {
   const ctx = await context({ ...await runtimeOptions(runtimeBundle), minify: false });
-  await ctx.rebuild();
+  await Promise.all([ctx.rebuild(), buildImageResizeWorker(runtimeBundle)]);
   await ctx.watch();
   return ctx;
 }

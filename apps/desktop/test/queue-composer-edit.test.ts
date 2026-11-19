@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type { ExternalStoreAdapter } from "@assistant-ui/react";
 import { createQoneMessageQueue } from "../src/lib/qone-message-queue";
 import { beginQueueComposerEdit, queueMessageDraft } from "../src/lib/queue-composer-edit";
+import { serializeInlineQuote } from "../src/lib/inline-quote";
 import { getDraftComposer } from "../src/lib/composer-draft-runtime";
 import { bindComposerDrafts, ComposerDraftStore } from "../src/lib/composer-drafts";
 import { serializeMessageAttachments } from "../src/lib/message-attachments";
@@ -65,12 +66,12 @@ test("editing cannot overwrite an existing composer draft", () => {
   expect(queue.adapter.items).toHaveLength(1);
 });
 
-test("an edit draft keeps original whitespace and its quoted source", () => {
+test("an edit draft keeps original whitespace and turns its legacy quote into an inline chip", () => {
   const quote = { text: "quoted answer", messageId: "assistant" };
   const draft = queueMessageDraft({
     role: "user", parentId: null, sourceId: null, runConfig: {}, createdAt: new Date(),
     content: [{ type: "text", text: "  edit\n\n" }], attachments: [], metadata: { custom: { quote } },
   });
-  expect(draft.text).toBe("  edit\n\n");
-  expect(draft.quote).toEqual(quote);
+  expect(draft.text).toBe(`  edit\n\n${serializeInlineQuote(quote.text)} `);
+  expect(draft.quote).toBeUndefined();
 });

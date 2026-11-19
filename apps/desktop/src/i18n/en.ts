@@ -841,7 +841,6 @@ export const en: Messages = {
   "chat.selectionAdd": "Add to chat",
   "chat.selectionSideChat": "Ask in side chat",
   "chat.selectedText": "Selected text",
-  "chat.selectedTextAttachment": "1 selection",
   "chat.annotationLabel": "1 annotation",
   "chat.removeSelectedText": "Remove selected text",
   "chat.editSelectedText": "Edit selected text",
