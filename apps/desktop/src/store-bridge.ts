@@ -6,7 +6,7 @@ import { translateCurrent as t } from "./localization";
 import { localizeError } from "./lib/error-localization";
 import { invoke, listen, openUrl } from "./lib/desktop-bridge";
 import { mcpAvailable, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
-import { DEFAULT_RUN_PERMISSION_MODE, pruneRunOptionServers, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults } from "./lib/run-options";
+import { DEFAULT_RUN_PERMISSION_MODE, pruneRunOptionServers, saveNewSessionRunOptions, saveRunOptions, withoutServers, withRunOptionDefaults } from "./lib/run-options";
 import { getQoneMessageQueue, prunePausedQueues } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
 import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
@@ -251,12 +251,15 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             ...(!st.draftRunOptions.permissionMode ? { permissionMode: DEFAULT_RUN_PERMISSION_MODE } : {}),
           };
           // A new conversation snapshots the shared new-session configuration.
-          // Later edits in that conversation stay local to it.
-          const sessionRunOptions = withRunOptionDefaults(st.runOptionsBySession[msg.session.id], newSessionDefaults);
+          // Later edits in that conversation stay local to it. Servers picked in
+          // the draft belong to this conversation only, so the draft drops them.
+          const stored = st.runOptionsBySession[msg.session.id];
+          const serverIds = stored?.serverIds ?? st.draftRunOptions.serverIds;
+          const sessionRunOptions = { ...withRunOptionDefaults(stored, newSessionDefaults), ...(serverIds ? { serverIds: [...serverIds] } : {}) };
           return {
             runOptionsBySession: { ...st.runOptionsBySession, [msg.session.id]: sessionRunOptions },
             selectedModelId: sessionRunOptions.modelId ?? st.selectedModelId,
-            draftRunOptions: st.draftRunOptions,
+            draftRunOptions: withoutServers(st.draftRunOptions),
             sessions: [msg.session, ...st.sessions],
             currentSessionId: msg.session.id,
             currentWorkspaceId: msg.session.workspaceId ?? st.currentWorkspaceId,
@@ -658,13 +661,13 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             if (st.currentSessionId) {
               const runOptionsBySession = { ...st.runOptionsBySession, [st.currentSessionId]: { ...sessionOptions, modelId: selectedModelId } };
               saveRunOptions(runOptionsBySession);
-              return { modelConfigs: msg.configs, selectedModelId, runOptionsBySession };
+              return { modelConfigs: msg.configs, modelConfigsLoaded: true, selectedModelId, runOptionsBySession };
             }
             const draftRunOptions = { ...st.draftRunOptions, modelId: selectedModelId };
             saveNewSessionRunOptions(draftRunOptions);
-            return { modelConfigs: msg.configs, selectedModelId, draftRunOptions };
+            return { modelConfigs: msg.configs, modelConfigsLoaded: true, selectedModelId, draftRunOptions };
           }
-          return { modelConfigs: msg.configs, selectedModelId };
+          return { modelConfigs: msg.configs, modelConfigsLoaded: true, selectedModelId };
         });
         const restoredProviders = new Set<string>();
         for (const config of msg.configs) {

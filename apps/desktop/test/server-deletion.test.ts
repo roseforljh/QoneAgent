@@ -20,10 +20,27 @@ test("authoritative server inventory removes deleted selections from main, side,
     expect(state.runOptionsBySession.side?.serverIds).toEqual([]);
     expect(state.draftRunOptions).toEqual({ serverIds: [], permissionMode: "full" });
     expect(loadRunOptions()).toEqual(state.runOptionsBySession);
-    expect(loadNewSessionRunOptions()).toEqual(state.draftRunOptions);
+    expect(loadNewSessionRunOptions()).toEqual({ permissionMode: "full" });
     expect([...storage.values()].filter(value => value.includes('"deleted"'))).toEqual([]);
     emit({ type: "servers.state", servers: [server], groups: [], tunnels: [] });
     expect(useStore.getState().runOptionsBySession).toBe(state.runOptionsBySession);
+  } finally { useStore.setState(previous, true); }
+});
+
+test("servers picked for one conversation never become the next conversation's default", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({ currentSessionId: undefined, currentWorkspaceId: "workspace", draftRunOptions: { permissionMode: "ask" }, runOptionsBySession: {}, sessions: [],
+      workspaces: [{ id: "workspace", name: "Workspace", path: ".", createdAt: 1 }] });
+    useStore.getState().setServerIds(["keep"]);
+    expect(useStore.getState().draftRunOptions.serverIds).toEqual(["keep"]);
+    expect(loadNewSessionRunOptions().serverIds).toBeUndefined();
+    emit({ type: "session.created", session: { id: "one", title: "One", workspaceId: "workspace", createdAt: 1, updatedAt: 1 } });
+    expect(useStore.getState().runOptionsBySession.one?.serverIds).toEqual(["keep"]);
+    expect(useStore.getState().draftRunOptions.serverIds).toBeUndefined();
+    useStore.getState().setServerIds(["keep"]);
+    useStore.getState().newSessionInWorkspace("workspace");
+    expect(useStore.getState().draftRunOptions.serverIds).toBeUndefined();
   } finally { useStore.setState(previous, true); }
 });
 

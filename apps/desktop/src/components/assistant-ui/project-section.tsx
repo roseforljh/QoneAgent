@@ -84,6 +84,35 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string }> = memo(({ sess
   );
 });
 
+const PROJECT_SESSION_PREVIEW = 5;
+
+/** Shows the latest chats (and always the open one); the rest fade out until fully loaded. */
+export const ProjectSessions: FC<{ workspaceId: string; sessions: SessionInfo[] }> = ({ workspaceId, sessions }) => {
+  const { t } = useLocale();
+  const [showAll, setShowAll] = useState(false);
+  const activeIndex = useStore((s) => sessions.findIndex((session) => session.id === s.currentSessionId));
+  if (!sessions.length) return <p className="text-muted-foreground px-2 py-1 text-xs">{t("sidebar.noChatsInProject")}</p>;
+  const limit = Math.max(PROJECT_SESSION_PREVIEW, activeIndex + 1);
+  const rest = sessions.slice(limit);
+  const row = (session: SessionInfo) => <SessionRow key={session.id} session={session} dragGroup={`session:workspace:${workspaceId}`} />;
+  return (
+    <>
+      {sessions.slice(0, limit).map(row)}
+      {rest.length > 0 && (
+        <motion.div className="q-sidebar-session-more" data-collapsed={showAll ? undefined : ""} initial={false}
+          animate={{ height: showAll ? "auto" : 30 }} transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}>
+          <div inert={!showAll} className="q-sidebar-session-more-rows flex flex-col gap-0.5">{(showAll ? rest : rest.slice(0, 1)).map(row)}</div>
+          {!showAll && (
+            <button type="button" className="q-sidebar-session-more-button text-muted-foreground hover:text-foreground" onClick={() => setShowAll(true)}>
+              {t("sidebar.showAllChats")}
+            </button>
+          )}
+        </motion.div>
+      )}
+    </>
+  );
+};
+
 const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({ workspace, sessions }) => {
   const { t } = useLocale();
   const pinnedWorkspaceIds = useStore((s) => s.pinnedWorkspaceIds);
@@ -159,8 +188,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
         {expanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
             <div className="flex min-w-0 flex-col gap-0.5 pb-1">
-              {sessions.length ? sessions.map((session) => <SessionRow key={session.id} session={session} dragGroup={`session:workspace:${workspace.id}`} />)
-                : <p className="text-muted-foreground px-2 py-1 text-xs">{t("sidebar.noChatsInProject")}</p>}
+              <ProjectSessions workspaceId={workspace.id} sessions={sessions} />
             </div>
           </motion.div>
         )}

@@ -352,6 +352,28 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
   width: 0;
   opacity: 0;
 }
+.q-sidebar-session-more {
+  position: relative;
+  overflow: hidden;
+}
+.q-sidebar-session-more[data-collapsed] .q-sidebar-session-more-rows {
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.5), transparent);
+}
+.q-sidebar-session-more-button {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  font-size: 12px;
+  opacity: 0;
+  outline: none;
+  transition: opacity 180ms ease, color 180ms ease;
+}
+.q-sidebar-session-more-button:hover,
+.q-sidebar-session-more-button:focus-visible {
+  opacity: 1;
+}
 @media (prefers-reduced-motion: reduce) {
   .q-sidebar-session-row .q-sidebar-session-title[data-overflowing],
   .q-sidebar-session-row .q-sidebar-session-title[data-overflowing] .q-sidebar-session-title-clip,

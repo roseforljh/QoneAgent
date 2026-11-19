@@ -9,7 +9,7 @@ import { isolateBackgroundSubscriptions } from "./lib/store-subscriptions";
 import { invoke } from "./lib/desktop-bridge";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type MessageQuoteInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo } from "@qone/protocol";
-import { DEFAULT_RUN_PERMISSION_MODE, loadNewSessionRunOptions, loadRunOptions, saveNewSessionRunOptions, saveRunOptions, withRunOptionDefaults, type SessionRunOptions } from "./lib/run-options";
+import { DEFAULT_RUN_PERMISSION_MODE, loadNewSessionRunOptions, loadRunOptions, saveNewSessionRunOptions, saveRunOptions, withoutServers, withRunOptionDefaults, type SessionRunOptions } from "./lib/run-options";
 import { defaultThinkingForModel, normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
 import { trackWorkspaceRequest, untrackWorkspaceRequest, useWorkspaceViewStore } from "./lib/workspace-view-state";
@@ -94,6 +94,8 @@ export interface AgentState {
   activeSearchQuery: string;
   workspaces: WorkspaceInfo[];
   modelConfigs: ModelConfigInfo[];
+  /** False until the runtime's first model list arrives; model-derived UI must not guess before it. */
+  modelConfigsLoaded: boolean;
   selectedModelId?: string;
   setServerIds: (ids: string[], sessionId?: string) => void;
   runOptionsBySession: Record<string, SessionRunOptions>;
@@ -365,6 +367,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   activeSearchQuery: "",
   workspaces: [],
   modelConfigs: [],
+  modelConfigsLoaded: !hasDesktopBridge(),
   selectedModelId: newSessionRunOptions.modelId,
   runOptionsBySession: loadRunOptions(),
   draftRunOptions: newSessionRunOptions,
@@ -512,8 +515,8 @@ export const useStore = create<AgentState>((set, get, api) => {
     const modelId = configuredModel && (state.modelConfigs.length === 0 || state.modelConfigs.some((model) => model.enabled && model.id === configuredModel))
       ? configuredModel
       : state.modelConfigs.find((model) => model.enabled)?.id;
-    const draftRunOptions = modelId && modelId !== configuredModel ? { ...state.draftRunOptions, modelId } : state.draftRunOptions;
-    if (draftRunOptions !== state.draftRunOptions) saveNewSessionRunOptions(draftRunOptions);
+    const draftRunOptions = withoutServers(modelId && modelId !== configuredModel ? { ...state.draftRunOptions, modelId } : state.draftRunOptions);
+    if (modelId !== configuredModel) saveNewSessionRunOptions(draftRunOptions);
     set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), selectedModelId: modelId, draftRunOptions, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(state) });
     get().refreshWorkspace(workspaceId);
   },

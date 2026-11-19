@@ -32,8 +32,13 @@ function parseRunOptions(value: unknown): SessionRunOptions {
   };
 }
 
+/** Servers belong to one conversation; they are never shared defaults. */
+export function withoutServers({ serverIds: _serverIds, ...options }: SessionRunOptions): SessionRunOptions {
+  return options;
+}
+
 export function withRunOptionDefaults(options: SessionRunOptions | undefined, defaults: SessionRunOptions | undefined): SessionRunOptions {
-  const serverIds = options?.serverIds ?? defaults?.serverIds;
+  const serverIds = options?.serverIds;
   const modelId = options?.modelId ?? defaults?.modelId;
   const permissionMode = options?.permissionMode ?? defaults?.permissionMode;
   const thinkingByModel = options?.thinkingByModel || defaults?.thinkingByModel
@@ -69,7 +74,7 @@ export function loadNewSessionRunOptions(): SessionRunOptions {
   try {
     const raw = window.localStorage.getItem(NEW_SESSION_STORAGE_KEY);
     if (raw !== null) {
-      const parsed = parseRunOptions(JSON.parse(raw));
+      const parsed = withoutServers(parseRunOptions(JSON.parse(raw)));
       return { ...parsed, permissionMode: parsed.permissionMode ?? DEFAULT_RUN_PERMISSION_MODE };
     }
     const legacyModelId = window.localStorage.getItem(LEGACY_NEW_SESSION_MODEL_STORAGE_KEY) || undefined;
@@ -84,5 +89,5 @@ export function loadNewSessionRunOptions(): SessionRunOptions {
 }
 
 export function saveNewSessionRunOptions(options: SessionRunOptions): void {
-  try { window.localStorage.setItem(NEW_SESSION_STORAGE_KEY, JSON.stringify(options)); } catch { /* unavailable storage */ }
+  try { window.localStorage.setItem(NEW_SESSION_STORAGE_KEY, JSON.stringify(withoutServers(options))); } catch { /* unavailable storage */ }
 }

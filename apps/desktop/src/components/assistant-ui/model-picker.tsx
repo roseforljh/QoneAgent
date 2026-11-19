@@ -11,10 +11,12 @@ import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, MODEL_CONFIG_CHANGE
 import { defaultThinkingForModel, normalizeThinkingLevel, thinkingLevelOptionsForApi, type ThinkingLevel } from "../../lib/model-settings";
 import { ModelLogo } from "./model-logo";
 import { ThinkingWave } from "./run-options-popover";
+import { Skeleton } from "../ui/skeleton";
 import "./model-picker.css";
 
 export const ModelPicker: FC = () => {
   const modelConfigs = useConversationStore((s) => s.modelConfigs);
+  const modelConfigsLoaded = useConversationStore((s) => s.modelConfigsLoaded);
   const selectedModelId = useConversationStore((s) => s.selectedModelId);
   const setSelectedModel = useConversationStore((s) => s.setSelectedModel);
   const runOptions = useConversationStore((s) => s.currentSessionId ? s.runOptionsBySession[s.currentSessionId] : s.draftRunOptions);
@@ -63,8 +65,9 @@ export const ModelPicker: FC = () => {
   const openLabel = t(activeModel && thinkingOptions.length >= 2 ? "model.selectEffort" : "chat.selectModel");
 
   useEffect(() => {
-    if (models.length > 0 && !selected) setSelectedModel(models[0].id);
-  }, [models, selected, setSelectedModel]);
+    // Before the runtime's model list arrives, "not found" only means "not loaded yet".
+    if (modelConfigsLoaded && models.length > 0 && !selected) setSelectedModel(models[0].id);
+  }, [modelConfigsLoaded, models, selected, setSelectedModel]);
 
   const measurePanels = useCallback(() => {
     const simple = simpleRef.current;
@@ -118,6 +121,8 @@ export const ModelPicker: FC = () => {
     setSearchOpen(false);
     setPanelHeights(undefined);
   };
+
+  if (!modelConfigsLoaded) return <Skeleton aria-busy="true" className="h-4 w-28 rounded-md" />;
 
   return <Popover.Root open={open} onOpenChange={(nextOpen) => {
     if (nextOpen) {

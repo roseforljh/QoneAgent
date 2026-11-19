@@ -92,3 +92,16 @@ test("adding a model through picker settings restores intrinsic trigger width wi
     view.removeEventListener("qone-open-settings", onSettings);
   }
 });
+
+test("before the runtime model list arrives the picker neither guesses parameters nor rewrites the saved model", async () => {
+  view.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify([{ id: "provider", name: "Provider", models: [{ id: "a", label: "A" }] }]));
+  useStore.setState({ modelConfigs: [], modelConfigsLoaded: false, selectedModelId: "other/saved", currentSessionId: undefined });
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => root!.render(<ModelPicker />));
+  expect(container.querySelector(".q-model-picker-trigger")).toBeNull();
+  expect(useStore.getState().selectedModelId).toBe("other/saved");
+  await act(async () => useStore.setState({ modelConfigsLoaded: true }));
+  expect(container.querySelector(".q-model-picker-trigger")).not.toBeNull();
+});
