@@ -38,3 +38,9 @@ export function dispatchMemoryState(message: Extract<RuntimeEvent, { type: "memo
 export function dispatchMemoryError(requestId: string | undefined, message: string): boolean {
   return finish(requestId, message);
 }
+
+export function resetMemoryRequests(): void {
+  for (const resolve of requests.values()) resolve(false);
+  requests.clear();
+  useMemoryStore.setState({ pending: 0, error: undefined });
+}

@@ -35,6 +35,7 @@
     "@assistant-ui/react-lexical@0.2.23": "patches/@assistant-ui%2Freact-lexical@0.2.23.patch",
     "@assistant-ui/core@0.3.36": "patches/@assistant-ui%2Fcore@0.3.36.patch",
     "node-pty@1.2.0-beta.18": "patches/node-pty@1.2.0-beta.18.patch",
-    "@xterm/xterm@6.0.0": "patches/@xterm%2Fxterm@6.0.0.patch"
+    "@xterm/xterm@6.0.0": "patches/@xterm%2Fxterm@6.0.0.patch",
+    "app-builder-lib@26.18.0": "patches/app-builder-lib@26.18.0.patch"
   }
 }

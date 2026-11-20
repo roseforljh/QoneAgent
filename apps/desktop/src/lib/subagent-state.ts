@@ -1,5 +1,19 @@
 import { applyReasoningDelta, type AssistantMessagePart, type RuntimeEvent, type SubagentMessageInfo, type SubagentRunInfo, type SubagentRunPatch } from "@qone/protocol";
 import { subagentById } from "./store-indexes";
+import type { AgentState } from "../store";
+
+export function isActiveSubagent(status: SubagentRunInfo["status"] | undefined): boolean {
+  return status === "created" || status === "running" || status === "waiting_approval" || status === "paused";
+}
+
+export function subagentActivity(state: AgentState, subagents: readonly SubagentRunInfo[]): Partial<AgentState> {
+  const id = state.currentSessionId;
+  if (!id) return {};
+  const ids = state.subagentRunningSessionIds;
+  const active = subagents.some((item) => isActiveSubagent(item.status));
+  if (active === ids.includes(id)) return {};
+  return { subagentRunningSessionIds: active ? [...ids, id] : ids.filter((sessionId) => sessionId !== id) };
+}
 
 function reconcile<T>(previous: T, incoming: T): T {
   if (Object.is(previous, incoming)) return previous;
@@ -94,7 +108,7 @@ export function applySubagentPatch(current: SubagentRunInfo, patch: SubagentRunP
 
 export function applySubagentStreaming(current: SubagentRunInfo, event: Extract<RuntimeEvent, { type: "subagent.streaming" }>) {
   if (event.id !== current.id || event.sessionId !== current.parentSessionId || isStale(current, event) || (!event.delta && !event.reasoning?.length)
-    || !["created", "running", "waiting_approval", "paused"].includes(current.status)) return current;
+    || !isActiveSubagent(current.status)) return current;
   let parts = current.parts;
   for (const value of event.reasoning ?? []) parts = applyReasoningDelta(parts, value, value.messageSequence);
   return { ...current, parts, streaming: event.delta ? (current.streaming ?? "") + event.delta : current.streaming,

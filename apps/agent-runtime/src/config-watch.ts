@@ -90,6 +90,7 @@ export async function applySettingsChange(previous: Json, next: Json, services: 
     const configs = services.modelConfigRepo.list();
     await services.adapter.configureModels(configs);
     services.send({ type: "model.list", configs });
+    void services.memory.refresh();
   }
   if (!same(previous.permissions, next.permissions)) {
     services.mcpConnectionApprovals.clear();
@@ -109,7 +110,10 @@ export async function applySettingsChange(previous: Json, next: Json, services: 
   }
   if (changed.includes("memory.enabled")) {
     if (services.memory.store.setEnabled(after["memory.enabled"] === true)) await services.adapter.invalidateSessions();
-    services.send({ type: "memory.state", state: services.memory.store.state() });
+  }
+  if (changed.includes("memory.enabled") || changed.includes("memory.model")) {
+    services.send({ type: "memory.state", state: services.memory.state() });
+    void services.memory.refresh();
   }
   if (changed.includes("servers.list")) {
     const old = before["servers.list"] as { id: string }[] | undefined;

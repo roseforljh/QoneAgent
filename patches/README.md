@@ -64,6 +64,15 @@ bun test apps/desktop/test/electron-runtime-integration.test.ts --test-name-patt
 bun test apps/desktop/test/electron-process-tree.test.ts --test-name-pattern 'dock terminal'
 ```
 
+## In-place Windows installs — `app-builder-lib@26.18.0`
+
+The assisted installer normally drops shortcuts on a manual reinstall when the
+installation directory is selectable. Keep the existing shortcuts when the
+selected scope and directory match the registered installation, the executable
+exists, and the old uninstaller supports `--keep-shortcuts`. The same decision
+controls the old uninstaller's flag and whether the new installer creates links.
+First installs, directory selection and standalone uninstall still work as before.
+
 ## Immediate resize and submit — `PSReadLine@2.4.5`
 
 PSReadLine skips resize checks for 50 ms after rendering and can accept Enter

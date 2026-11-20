@@ -29,6 +29,7 @@ import {
   Globe2,
   Library,
   LoaderCircle,
+  ChartNoAxesColumn,
   MonitorCog,
   Plus,
   Save,
@@ -54,6 +55,7 @@ import { ModelsSection } from "./models-section";
 import { SubagentsSection } from "./subagents-section";
 import { CompactionSection } from "./compaction-section";
 import { MemorySection } from "./memory/memory-section";
+import { ExecutionSection } from "./execution/execution-section";
 import { ServersSection } from "./servers/servers-section";
 import desktopIcon from "../../assets/codex-icons/desktop-light-16.svg";
 import { CodexIcon } from "../ui/CodexIcon";
@@ -66,7 +68,7 @@ import { normalizeSubagentLogos, SubagentLogo } from "./subagent-logo";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import "./model-layout.css";
 
-type SettingsSectionId = "general" | "personalization" | "memory" | "servers" | "configuration" | "models" | "mcp" | "skills" | "subagents" | "compaction";
+type SettingsSectionId = "general" | "personalization" | "memory" | "execution" | "servers" | "configuration" | "models" | "mcp" | "skills" | "subagents" | "compaction";
 
 type SettingsSection = {
   id: SettingsSectionId;
@@ -75,6 +77,7 @@ type SettingsSection = {
 };
 
 const MemoryIcon = ({ size }: { size?: number }) => <CodexIcon src={brainIcon} style={{ width: size, height: size }} />;
+const ChartIcon = ({ size }: { size?: number }) => <ChartNoAxesColumn size={size ?? 17} />;
 const ServersIcon = ({ size }: { size?: number }) => <CodexIcon src={desktopIcon} style={{ width: size, height: size }} />;
 
 const ORDER_STORAGE_KEY = "qone-settings-section-order";
@@ -84,6 +87,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "general", labelKey: "nav.general", icon: Settings2 },
   { id: "personalization", labelKey: "nav.personalization", icon: CircleUserRound },
   { id: "memory", labelKey: "nav.memory", icon: MemoryIcon },
+  { id: "execution", labelKey: "nav.execution", icon: ChartIcon },
   { id: "servers", labelKey: "nav.servers", icon: ServersIcon },
   { id: "configuration", labelKey: "nav.configuration", icon: MonitorCog },
   { id: "models", labelKey: "nav.models", icon: Bot },
@@ -123,11 +127,12 @@ function loadSectionOrder(): SettingsSectionId[] {
 
 
 
-function SectionContent({ activeSection, onClose }: { activeSection: SettingsSectionId; onClose: () => void }) {
+function SectionContent({ activeSection, onClose, onOpenExecution }: { activeSection: SettingsSectionId; onClose: () => void; onOpenExecution: () => void }) {
   switch (activeSection) {
     case "general": return <GeneralSection />;
     case "personalization": return <PersonalizationSection />;
-    case "memory": return <MemorySection />;
+    case "memory": return <MemorySection onOpenExecution={onOpenExecution} onResumed={onClose} />;
+    case "execution": return <ExecutionSection />;
     case "servers": return <ServersSection onClose={onClose} />;
     case "configuration": return <ConfigurationSection />;
     case "models": return <ModelsSection />;
@@ -345,7 +350,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             <main className="settings-dialog-content" aria-live="polite">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div key={activeSection} className="settings-dialog-section" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -5 }} transition={{ duration: 0.14 }}>
-                  <SectionContent activeSection={activeSection} onClose={onClose} />
+                  <SectionContent activeSection={activeSection} onClose={onClose} onOpenExecution={() => setActiveSection("execution")} />
                 </motion.div>
               </AnimatePresence>
             </main>

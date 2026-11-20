@@ -7,6 +7,7 @@ import type { ThreadMessage } from "@assistant-ui/react";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { formatDuration } from "../../lib/utils";
+import { useClock } from "../../lib/use-clock";
 import { subagentMessages } from "../../lib/subagent-messages";
 import { createSubagentMediaSelector, subagentImageGenerations } from "../../lib/subagent-image-generations";
 import { SubagentLogo } from "../settings/subagent-logo";
@@ -16,20 +17,9 @@ import { AgentCommunication, useAgentCommunication } from "./agent-communication
 import { ImageGeneration } from "./elements/image-generation";
 import { DeliveredFiles } from "./delivered-files";
 import { createOwnedSubagentSelector } from "./subagent-message-ownership";
+import { isActiveSubagent } from "../../lib/subagent-state";
 import { createSubagentIdsSelector, createSubagentSummarySelector, messageById, subagentById, subagentsForTree } from "../../lib/store-indexes";
 import "./subagent-view.css";
-
-const active = (status: SubagentRunInfo["status"]) => ["created", "running", "waiting_approval", "paused"].includes(status);
-
-function useClock(running: boolean) {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (!running) return undefined;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  return now;
-}
 
 export const SubagentMedia: FC = () => {
   const { t } = useLocale();
@@ -93,7 +83,7 @@ export const SubagentPanel: FC<{ selectedId?: string; onSelect: (id?: string) =>
   const selected = useConversationStore((state) => subagentById(state.subagents, selectedId));
   const subagentConfig = useConversationStore((state) => state.subagentConfig);
   const modelConfigs = useConversationStore((state) => state.modelConfigs);
-  const hasActiveSubagent = useConversationStore((state) => state.subagents.some((item) => active(item.status)));
+  const hasActiveSubagent = useConversationStore((state) => state.subagents.some((item) => isActiveSubagent(item.status)));
   const now = useClock(hasActiveSubagent);
   const messages = useMemo(() => selected ? subagentMessages(selected) : [], [selected]);
   const title = locale === "zh-CN" ? "子代理" : "Subagents";
@@ -126,7 +116,7 @@ const SubagentRow: FC<{ id: string; onSelect: (id?: string) => void; now: number
     <SubagentLogo logo={profiles.find((profile) => profile.id === item.profileId)?.logo} name={item.title} size={24} />
     {item.status === "completed" ? <CheckIcon size={13} className="shrink-0 text-foreground/60" aria-hidden="true" />
       : item.status === "created" || item.status === "waiting_approval" || item.status === "paused" ? <CodexClock3Icon className="size-3.5 shrink-0" />
-        : active(item.status) ? <CodexLoader2Icon className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : <XIcon size={14} />}
+        : isActiveSubagent(item.status) ? <CodexLoader2Icon className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : <XIcon size={14} />}
     <span className="min-w-0 flex-1 truncate text-start">{item.title}</span>
     <span className="q-subagent-elapsed">{formatDuration(((item.completedAt ?? now) - item.startedAt) / 1000, locale)}</span>
     <ChevronRightIcon size={14} aria-hidden="true" />

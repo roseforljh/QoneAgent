@@ -15,12 +15,13 @@ export function captureCompactedContext(session: AgentSession): unknown[] {
 
 /** The DB already has the new user row when Pi compacts before accepting its prompt. */
 export function automaticCompactionBoundary(
-  history: readonly { id: string; role: string; runId?: string | null; communication?: unknown }[],
+  history: readonly { id: string; role: string; runId?: string | null; communication?: unknown; rawMessage?: unknown }[],
   runId: string,
   initialUserSeen: boolean,
   pendingAssistantCount: number,
 ): Omit<SessionCompactionCheckpoint, "context"> | undefined {
-  const pendingUser = initialUserSeen ? -1 : history.findIndex((row) => row.runId === runId && row.role === "user" && !row.communication);
+  // A runtime-started turn's prompt is a communication row that carries its native message.
+  const pendingUser = initialUserSeen ? -1 : history.findIndex((row) => row.runId === runId && row.role === "user" && (!row.communication || Boolean(row.rawMessage)));
   const anchor = history[pendingUser < 0 ? history.length - 1 : pendingUser - 1];
   return anchor && {
     throughMessageId: anchor.id,

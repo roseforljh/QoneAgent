@@ -1,5 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
-import type { AgentEvent } from "@qone/protocol";
+import type { AgentEvent, SubagentRunInfo } from "@qone/protocol";
+import { isSidebarSessionRunning } from "../src/lib/sidebar-sessions";
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 import { switchSessionState } from "../src/lib/session-execution-state";
 import { createQoneMessageQueue } from "../src/lib/qone-message-queue";
@@ -72,6 +73,49 @@ test("child deltas preserve transcript references, route to the parent session, 
     emit({ type: "subagent.updated", subagent: { ...child, status: "completed", content: "你好!background" } });
     expect(useStore.getState().backgroundSessions["session-a"]?.subagents[0]?.streaming).toBeUndefined();
     expect(useStore.getState().backgroundSessions["session-a"]?.subagents[0]?.messages).toEqual(child.messages);
+  } finally { useStore.setState(previous, true); }
+});
+
+test("sidebar keeps spinning after the parent fails until the last subagent settles, even in another chat", () => {
+  const previous = useStore.getState();
+  const sessionId = "sidebar-parent";
+  const parentRunId = "sidebar-parent-run";
+  const child: SubagentRunInfo = {
+    id: "sidebar-child-a", parentSessionId: sessionId, parentRunId, toolCallId: "call-a", depth: 1,
+    title: "Child", task: "Task", status: "running", startedAt: 1, content: "", parts: [],
+    turnCount: 0, retryCount: 0, requiredBeforeFinal: false, dependencyState: "running", completionAcknowledged: false, revision: 1,
+  };
+  const second = { ...child, id: "sidebar-child-b", toolCallId: "call-b" };
+  const state = useStore.getState;
+  const spinning = () => isSidebarSessionRunning(state(), sessionId);
+  try {
+    useStore.setState({ currentSessionId: sessionId, subagents: [], backgroundSessions: {}, runningSessionIds: [], subagentRunningSessionIds: [] });
+    emit({ type: "agent.event", event: { ...event("agent.started", {}), sessionId, runId: parentRunId } });
+    emit({ type: "session.subagents", sessionId, subagents: [child] });
+    emit({ type: "agent.event", event: { ...event("agent.failed", { message: "429" }), sessionId, runId: parentRunId, sequence: 2 } });
+    expect(state().running).toBe(false);
+    expect(state().runningSessionIds).not.toContain(sessionId);
+    expect(spinning()).toBe(true);
+    const indicator = state().subagentRunningSessionIds;
+    useStore.setState({ ...switchSessionState(state(), "another-chat"), currentSessionId: "another-chat" });
+    emit({ type: "subagent.updated", subagent: second });
+    emit({ type: "subagent.streaming", sessionId, id: child.id, delta: "still working" });
+    expect(state().subagentRunningSessionIds).toBe(indicator);
+    expect(isSidebarSessionRunning(state(), "another-chat")).toBe(false);
+    emit({ type: "subagent.patch", sessionId, id: child.id, patch: { id: child.id, status: "completed", revision: 2 } });
+    expect(spinning()).toBe(true);
+    emit({ type: "subagent.updated", subagent: { ...second, status: "failed", revision: 2 } });
+    expect(spinning()).toBe(false);
+    emit({ type: "subagent.updated", subagent: second });
+    expect(spinning()).toBe(false);
+    const changes: boolean[] = [];
+    const unsubscribe = useStore.subscribe(() => changes.push(spinning()));
+    try {
+      emit({ type: "subagent.updated", subagent: { ...child, id: "sidebar-new-child" } });
+      emit({ type: "subagent.streaming", sessionId, id: "sidebar-new-child", delta: "in the background" });
+      emit({ type: "subagent.patch", sessionId, id: "sidebar-new-child", patch: { id: "sidebar-new-child", status: "completed", revision: 2 } });
+      expect(changes).toEqual([true, false]);
+    } finally { unsubscribe(); }
   } finally { useStore.setState(previous, true); }
 });
 

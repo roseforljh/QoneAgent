@@ -145,6 +145,16 @@ async function mkdirs(client: Client, directory: string, signal?: AbortSignal) {
 
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: {} });
 
+/** Like Pi's shell tools: a non-zero exit is an error for the model, but codemode scripts still resolve to this value.
+ * Timeouts, signals and cancellation carry no structured result, so scripts reject on them. */
+const execOutputSchema = Type.Object({
+  exit_code: Type.Integer(),
+  stdout: Type.String(),
+  stderr: Type.String(),
+  truncated: Type.Boolean({ description: "stdout or stderr was cut in the middle" }),
+  timed_out: Type.Boolean(),
+});
+
 export interface ServerToolContext {
   servers: () => ServerInfo[];
   pool: SshPool;
@@ -179,14 +189,16 @@ export function createServerTools(context: ServerToolContext): ToolDefinition[] 
       promptSnippet: `server_exec: run commands on the user's SSH servers (${names.join(", ")})`,
       parameters: Type.Object({
         server: serverParam,
-        command: Type.String({ description: "Command or shell script." }),
-        cwd: Type.Optional(Type.String({ description: "Working directory; defaults to the SSH user's home." })),
-        timeout_ms: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 3_600_000 })),
+        command: Type.String({ description: "Command or script for the selected server's SSH shell, not the local shell." }),
+        cwd: Type.Optional(Type.String({ description: "Working directory on the SSH host, not inside a container. Defaults to the SSH user's home." })),
+        timeout_ms: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 3_600_000, description: "Time limit in milliseconds (default 120000)." })),
       }),
+      outputSchema: execOutputSchema,
       execute: async (_id, args: { server?: string; command: string; cwd?: string; timeout_ms?: number }, signal, onUpdate) => {
         const result = await exec(await client(pick(args.server), signal), args.command, { cwd: args.cwd, timeoutMs: args.timeout_ms, signal,
           onUpdate: value => onUpdate?.(json(value)) });
-        return { ...json(result), isError: result.exit_code !== 0 || result.timed_out || Boolean(result.signal) || Boolean(result.cancelled), details: { cancelled: result.cancelled === true } };
+        const exited = result.exit_code !== null && !result.timed_out && !result.signal && !result.cancelled;
+        return { ...json(result), ...(exited ? { structuredContent: { ...result } } : {}), isError: !exited || result.exit_code !== 0, details: { cancelled: result.cancelled === true } };
       },
     },
     {
@@ -358,7 +370,8 @@ export function createServerTools(context: ServerToolContext): ToolDefinition[] 
       return decorate(result);
     } catch (error) {
       if (!server) throw error;
-      return decorate({ ...json({ error: error instanceof Error ? error.message : String(error) }), ...(latest ? { content: latest.content } : {}), isError: true, details: { cancelled: signal?.aborted === true } });
+      const failure = json({ error: error instanceof Error ? error.message : String(error) });
+      return decorate({ ...failure, content: [...failure.content, ...(latest?.content ?? [])], isError: true, details: { cancelled: signal?.aborted === true } });
     }
   } }));
 }

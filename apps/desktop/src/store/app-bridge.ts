@@ -126,32 +126,38 @@ export async function serveAppOpenCliRequest(
 ): Promise<void> {
   if (appOpenCliRequests.has(request.requestId)) return;
   const sessionKey = request.sessionId || "__default__";
+  if (request.listTabs) {
+    const tabs = [...managedBrowsers.values()]
+      .filter((entry) => entry.sessionKey === sessionKey)
+      .map(({ browserId: id, url }) => ({ id, url }));
+    await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, tabs });
+    return;
+  }
 
   // 优先复用当前会话活跃或空闲的右侧内置浏览器视图，避免重复创建并保持页面状态连续。
+  const ownerRequestId = request.reuseRequestId ?? request.requestId;
   const handleBrowserId = request.reuseRequestId ? appOpenCliRequests.get(request.reuseRequestId) : undefined;
+  const handleEntry = handleBrowserId ? managedBrowsers.get(handleBrowserId) : undefined;
   const primaryId = sessionPrimaryBrowser.get(sessionKey);
   const primaryEntry = primaryId ? managedBrowsers.get(primaryId) : undefined;
-  const candidateId = handleBrowserId ?? (
-    primaryEntry && primaryEntry.hosted && primaryEntry.activeRequests.size === 0 ? primaryEntry.browserId : undefined
+  const reusedHandle = handleEntry?.sessionKey === sessionKey;
+  const candidateEntry = reusedHandle ? handleEntry : (
+    primaryEntry && primaryEntry.hosted && primaryEntry.activeRequests.size === 0 ? primaryEntry : undefined
   );
-  const candidateEntry = candidateId ? managedBrowsers.get(candidateId) : undefined;
 
-  if (candidateId && candidateEntry) {
-    const claimedForNewRequest = !request.reuseRequestId;
-    if (claimedForNewRequest) {
+  if (candidateEntry) {
+    const candidateId = candidateEntry.browserId;
+    if (!reusedHandle) {
       // 在 await 前先占位，防止同微任务并发请求共享同一 DockCdp 通道。
-      appOpenCliRequests.set(request.requestId, candidateId);
-      candidateEntry.activeRequests.add(request.requestId);
+      appOpenCliRequests.set(ownerRequestId, candidateId);
+      candidateEntry.activeRequests.add(ownerRequestId);
     }
     try {
       const endpoint = await invokeFn<string>("opencli_cdp_endpoint", { browserId: candidateId });
       // 标记总是取走清零；只有同一轮 AI 操作（复用句柄）里发生的才算 AI 触发，用户在两轮之间自己点的不算。
       const passkey = await invokeFn<boolean>("browser_take_passkey_request", { browserId: candidateId }).catch(() => false);
-      const activeOwner = request.reuseRequestId
-        ? appOpenCliRequests.get(request.reuseRequestId) === candidateId
-        : appOpenCliRequests.get(request.requestId) === candidateId;
-      if (!activeOwner) return;
-      if (request.site !== "browser" && !sameOriginHost(candidateEntry.url, request.url)) {
+      if (appOpenCliRequests.get(ownerRequestId) !== candidateId) return;
+      if (request.url && request.site !== "browser" && !sameOriginHost(candidateEntry.url, request.url)) {
         await invokeFn("browser_navigate", { browserId: candidateId, url: request.url }).catch(() => undefined);
         candidateEntry.url = request.url;
       }
@@ -162,15 +168,19 @@ export async function serveAppOpenCliRequest(
         sessionId: request.sessionId,
         onClaimed: () => { candidateEntry.hosted = true; },
       });
-      await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint,
-        ...(passkey && request.reuseRequestId ? { loginRequired: "passkey" as const } : {}) });
+      await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint, url: candidateEntry.url,
+        ...(passkey && reusedHandle ? { loginRequired: "passkey" as const } : {}) });
       return;
     } catch {
       dropManagedBrowser(candidateId);
     }
   }
 
-  const ownerRequestId = request.reuseRequestId ?? request.requestId;
+  if (!request.url) {
+    await send({ type: "apps.opencli.response", requestId: request.requestId, ok: false,
+      message: "No active built-in browser page for this conversation. Use qone_browser_open with the requested URL if a new page is needed." });
+    return;
+  }
   const browserId = `opencli-${request.site}-${request.requestId}`;
   appOpenCliRequests.set(ownerRequestId, browserId);
   try {
@@ -206,7 +216,7 @@ export async function serveAppOpenCliRequest(
       sessionId: request.sessionId,
       onClaimed: () => { entry.hosted = true; },
     });
-    await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint });
+    await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint, url: request.url });
   } catch (error) {
     const ownsRequest = appOpenCliRequests.get(ownerRequestId) === browserId;
     if (ownsRequest) appOpenCliRequests.delete(ownerRequestId);

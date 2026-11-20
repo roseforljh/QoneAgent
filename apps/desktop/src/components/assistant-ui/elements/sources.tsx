@@ -93,7 +93,7 @@ export function Sources({
                   onClick={source.url && onOpenSource ? (event) => { event.preventDefault(); onOpenSource(source.url!); } : undefined}
                   className={cn(
                     paper,
-                    "flex min-w-0 flex-col gap-1.5 rounded-2xl p-3 transition-transform hover:-translate-y-px",
+                    "flex min-w-0 flex-col gap-1.5 rounded-2xl p-3 transition-transform hover:-translate-y-px only:w-fit only:max-w-[min(100%,14rem)]",
                   )}
                 >
                   <div className="flex items-center gap-1.5">

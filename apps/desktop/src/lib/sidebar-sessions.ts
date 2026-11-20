@@ -1,5 +1,10 @@
 import type { SessionInfo } from "@qone/protocol";
+import type { AgentState } from "../store";
 import { sessionActivityAt } from "./session-recency";
+
+export function isSidebarSessionRunning(state: Pick<AgentState, "runningSessionIds" | "subagentRunningSessionIds">, sessionId: string) {
+  return state.runningSessionIds.includes(sessionId) || state.subagentRunningSessionIds.includes(sessionId);
+}
 
 export function createSidebarSessionsSelector() {
   let previous: SessionInfo[] = [];

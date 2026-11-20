@@ -17,6 +17,6 @@ export function openRunChanges(target: RunChangesTarget): void {
 /** Reopen the same task's review, preserving a valid file selection. */
 export function runChangesTab(tabs: readonly DockTab[], target: RunChangesTarget, newId: () => string): DockTab {
   const existing = tabs.find((tab) => tab.view === "changes" && tab.changesTarget?.sessionId === target.sessionId && tab.changesTarget.runId === target.runId);
-  const path = [target.path, existing?.changesTarget?.path].find((path) => path && target.changes.nodes.some((node) => node.path === path)) ?? target.changes.nodes[0]?.path;
+  const path = [target.path, existing?.changesTarget?.path].find((path) => path && target.changes.nodes.some((node) => node.path === path));
   return { id: existing?.id ?? newId(), view: "changes", changesTarget: { ...target, path } };
 }

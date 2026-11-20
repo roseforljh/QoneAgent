@@ -1,3 +1,5 @@
+import { rememberAgentBrowserTab } from "./dock-state";
+
 const OPEN_BROWSER_EVENT = "qone:open-browser";
 const CLOSE_BROWSER_EVENT = "qone:close-browser";
 
@@ -53,13 +55,18 @@ export function openAgentBrowserInDock(request: {
   sessionId?: string;
   onClaimed?: () => void;
 }): void {
-  openInDock({
+  if (typeof window === "undefined") return;
+  const target: BrowserDockRequest = {
     url: request.url,
     browserId: request.browserId,
     agentManaged: true,
     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
-    ...(request.onClaimed ? { onClaimed: request.onClaimed } : {}),
-  });
+  };
+  // The session's mounted dock claims the page synchronously; nobody claims it when that
+  // conversation is not open, so the tab goes straight into the session's saved dock.
+  let claimed = false;
+  openInDock({ ...target, onClaimed: () => { claimed = true; request.onClaimed?.(); } });
+  if (!claimed && request.sessionId) rememberAgentBrowserTab(request.sessionId, target);
 }
 
 export function closeAgentBrowserInDock(browserId: string): void {

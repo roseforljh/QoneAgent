@@ -38,6 +38,7 @@ function ProjectSessions({ workspace, onClose }: { workspace: WorkspaceInfo; onC
   const loaded = useStore((state) => state.sessionsLoaded);
   const currentSessionId = useStore((state) => state.currentSessionId);
   const runningIds = useStore((state) => state.runningSessionIds);
+  const subagentRunningIds = useStore((state) => state.subagentRunningSessionIds);
   const selectSession = useStore((state) => state.selectSession);
   const newSession = useStore((state) => state.newSessionInWorkspace);
   const preferences = useSidebarPreferences();
@@ -56,7 +57,7 @@ function ProjectSessions({ workspace, onClose }: { workspace: WorkspaceInfo; onC
     </div>
     <div className="q-project-popover-list">
       {loaded ? <ProjectSessionList sessions={projectSessions} currentSessionId={currentSessionId}
-        runningIds={runningIds} onSelect={(id) => { selectSession(id); onClose(); }} />
+        runningIds={[...runningIds, ...subagentRunningIds]} onSelect={(id) => { selectSession(id); onClose(); }} />
         : <SidebarLoadingSkeleton layout="list" />}
     </div>
   </>;

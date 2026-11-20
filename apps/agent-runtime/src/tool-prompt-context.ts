@@ -3,7 +3,8 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 const CODEMODE_LITERAL_GUIDANCE = "Use `/` in Windows drive paths (e.g. `C:/work/file`), or `String.raw` tagged templates for literal backslashes in paths and shell commands.";
 
 /** Pi omits its default tool guidance when a custom preamble is supplied.
- * Keep tool-owned instructions in a variable section after Qone's fixed prefix. */
+ * Keep tool-owned instructions in a variable section after Qone's fixed prefix;
+ * Codemode's own rules live in the fixed prefix (system-prompts/09-codemode.md). */
 export const toolPromptContextExtension: ExtensionFactory = (pi) => {
   pi.on("before_agent_start", ({ systemPromptOptions: options }) => {
     const snippets = options.selectedTools.flatMap((name) => {
@@ -11,9 +12,6 @@ export const toolPromptContextExtension: ExtensionFactory = (pi) => {
       return snippet ? [`- ${name}: ${snippet}`] : [];
     });
     const guidelines = [...new Set(options.selectedTools.flatMap((name) => options.toolGuidelines[name] ?? []))];
-    if (options.selectedTools.includes("codemode")) {
-      guidelines.push(`For one command or file operation, call the direct tool when available. In Codemode: ${CODEMODE_LITERAL_GUIDANCE} A failed tool call throws and ends the whole script, so wrap independent calls in try/catch or Promise.allSettled.`);
-    }
     options.sections.tool_guidance = [
       ...snippets,
       ...guidelines.map((rule) => `- ${rule}`),

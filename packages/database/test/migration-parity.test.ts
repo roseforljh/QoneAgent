@@ -30,6 +30,19 @@ function describeSchema(db: { prepare(sql: string): { all(): unknown[] } }): Map
   return tables;
 }
 
+test("session and run cascades use indexes instead of scanning unrelated rows", () => {
+  const chain = applyChain();
+  const boot = openDb(":memory:");
+  try {
+    for (const db of [chain, boot.$client]) {
+      for (const table of ["sessions", "runs"]) {
+        const steps = db.prepare(`EXPLAIN QUERY PLAN DELETE FROM ${table} WHERE id = ?`).all("example") as { detail: string }[];
+        expect(steps.filter(({ detail }) => detail.startsWith("SCAN "))).toEqual([]);
+      }
+    }
+  } finally { chain.close(); closeDb(boot); }
+});
+
 describe("drizzle migration chain", () => {
   test("replays cleanly and matches the bootstrap schema", () => {
     const chain = applyChain();

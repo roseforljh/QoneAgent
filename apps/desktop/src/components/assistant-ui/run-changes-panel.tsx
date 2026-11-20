@@ -48,16 +48,15 @@ export function RunChangesPanel({ target }: { target: RunChangesTarget }) {
     const session = state.sessions.find((item) => item.id === target.sessionId);
     return state.workspaces.find((item) => item.id === session?.workspaceId);
   });
-  const requested = (next: RunChangesTarget) => next.path ?? next.changes.nodes[0]?.path;
-  const [expanded, setExpanded] = useState(() => ({ target, paths: new Set([requested(target)]) }));
+  const [expanded, setExpanded] = useState(() => ({ target, paths: new Set(target.path ? [target.path] : []) }));
   // A newly requested file opens beside whatever the user already expanded.
-  if (expanded.target !== target) setExpanded({ target, paths: new Set([...expanded.paths, requested(target)]) });
+  if (expanded.target !== target) setExpanded({ target, paths: target.path ? new Set([...expanded.paths, target.path]) : expanded.paths });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const path = requested(target);
+    if (!target.path) return;
     const row = Array.from(scrollRef.current?.querySelectorAll<HTMLElement>("[data-change-path]") ?? [])
-      .find((element) => element.dataset.changePath === path);
+      .find((element) => element.dataset.changePath === target.path);
     row?.scrollIntoView({ block: "start" });
   }, [target]);
 

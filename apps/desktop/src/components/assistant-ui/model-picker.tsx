@@ -107,13 +107,6 @@ export const ModelPicker: FC = () => {
     setView("advanced");
     requestAnimationFrame(() => (advancedRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ?? advancedRef.current?.querySelector<HTMLButtonElement>('[role="option"]'))?.focus());
   };
-  const chooseModel = (id: string) => {
-    const nextApiType = (modelConfigs.find((model) => model.id === id)?.config.apiType as ProviderApiType | undefined) ?? "openai-compatible";
-    setSelectedModel(id);
-    if (thinkingLevelOptionsForApi(nextApiType).length < 2) return;
-    setView("simple");
-    requestAnimationFrame(() => simpleRef.current?.querySelector<HTMLButtonElement>(".q-model-picker-model-button")?.focus());
-  };
   const preparePicker = () => {
     setProviderSnapshot(readCurrentProvider());
     setView(activeModel && thinkingOptions.length >= 2 ? "simple" : "advanced");
@@ -173,7 +166,9 @@ export const ModelPicker: FC = () => {
                   <ChevronRightIcon size={13} aria-hidden="true" />
                 </span>
               </button>
-              <button type="button" className="q-model-picker-reset" disabled={!activeModel || activeModel.id === models[0]?.id} onClick={() => models[0] && setSelectedModel(models[0].id)} aria-label={t("model.resetToDefault")} title={t("model.resetToDefault")}><RotateCcwIcon size={16} /></button>
+              <Popover.Close asChild>
+                <button type="button" className="q-model-picker-reset" disabled={!activeModel || activeModel.id === models[0]?.id} onClick={() => models[0] && setSelectedModel(models[0].id)} aria-label={t("model.resetToDefault")} title={t("model.resetToDefault")}><RotateCcwIcon size={16} /></button>
+              </Popover.Close>
             </div>
             <ThinkingWave options={thinkingOptions} index={thinkingIndex} disabled={!activeModel} showLabel={false} onSelect={(index) => {
               const level = thinkingOptions[index];
@@ -189,14 +184,18 @@ export const ModelPicker: FC = () => {
               </label> : <><span>{t("chat.selectModel")}</span><button type="button" aria-label={t("chat.searchModels")} onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchRef.current?.focus()); }}><CodexIcon src={searchIcon} className="size-[15px]" /></button></>}
             </div>
             <div className="q-model-picker-list" role="listbox" aria-label={t("chat.modelsInProvider", { provider: providerSnapshot?.name || t("chat.modelProvider") })}>
-              {visibleModels.map((model) => <button type="button" role="option" aria-selected={model.id === activeModel?.id} className={cn("q-model-picker-option", model.id === activeModel?.id && "is-selected")} key={model.id} onClick={() => chooseModel(model.id)}>
-                <span className="q-model-picker-option-name">{model.label}</span>
-                {model.id === activeModel?.id && <CheckIcon size={16} aria-hidden="true" />}
-              </button>)}
+              {visibleModels.map((model) => <Popover.Close key={model.id} asChild>
+                <button type="button" role="option" aria-selected={model.id === activeModel?.id} className={cn("q-model-picker-option", model.id === activeModel?.id && "is-selected")} onClick={() => setSelectedModel(model.id)}>
+                  <span className="q-model-picker-option-name">{model.label}</span>
+                  {model.id === activeModel?.id && <CheckIcon size={16} aria-hidden="true" />}
+                </button>
+              </Popover.Close>)}
               {models.length === 0 && <p className="q-model-picker-empty">{t("chat.noModelsConfigured")}</p>}
               {models.length > 0 && visibleModels.length === 0 && <p className="q-model-picker-empty">{t("chat.noModelsFound")}</p>}
             </div>
-            {models.length === 0 && <button type="button" className="q-model-picker-settings" onClick={() => { setOpen(false); window.dispatchEvent(new Event("qone-open-settings")); }}>{t("chat.openSettings")}</button>}
+            {models.length === 0 && <Popover.Close asChild>
+              <button type="button" className="q-model-picker-settings" onClick={() => window.dispatchEvent(new Event("qone-open-settings"))}>{t("chat.openSettings")}</button>
+            </Popover.Close>}
           </div>
         </div>
       </Popover.Content>

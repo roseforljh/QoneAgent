@@ -75,3 +75,36 @@ test("openBrowserInDock and openCodePreviewInDock support optional sessionId rou
     (globalThis as unknown as { window: unknown }).window = originalWindow;
   }
 });
+
+test("an AI page for a conversation that is not open lands in that conversation's saved dock, not offscreen with no tab", async () => {
+  const { openAgentBrowserInDock } = await import("../src/lib/browser-dock");
+  const { dockScopeKey, useDockState } = await import("../src/lib/dock-state");
+  const listeners: ((event: unknown) => void)[] = [];
+  const originalWindow = (globalThis as unknown as { window?: unknown }).window;
+  (globalThis as unknown as { window: unknown }).window = {
+    dispatchEvent: (event: unknown) => { for (const listener of listeners) listener(event); return true; },
+    addEventListener: (_type: string, listener: (event: unknown) => void) => { listeners.push(listener); },
+    removeEventListener: () => {},
+  };
+  try {
+    // Nobody listening for session-away: its dock is not mounted.
+    openAgentBrowserInDock({ browserId: "opencli-browser-1", url: "https://www.douyin.com/video/1", sessionId: "session-away" });
+    const away = useDockState.getState().scopes[dockScopeKey("session-away")]!;
+    expect(away.openTabs).toHaveLength(1);
+    expect(away.openTabs[0]).toMatchObject({ view: "browser", browserTarget: { browserId: "opencli-browser-1", agentManaged: true, sessionId: "session-away" } });
+    expect(away.activeTabId).toBe(away.openTabs[0]!.id);
+    expect(away.collapsed).toBe(false);
+    // A later page in the same conversation reuses that tab.
+    openAgentBrowserInDock({ browserId: "opencli-browser-2", url: "https://www.douyin.com/", sessionId: "session-away" });
+    const reused = useDockState.getState().scopes[dockScopeKey("session-away")]!;
+    expect(reused.openTabs).toHaveLength(1);
+    expect(reused.openTabs[0]!.browserTarget?.browserId).toBe("opencli-browser-2");
+    // A mounted dock claims the page itself; nothing is written behind its back.
+    const unsubscribe = onOpenBrowserInDock((request) => request.onClaimed?.());
+    openAgentBrowserInDock({ browserId: "opencli-browser-3", url: "https://example.com", sessionId: "session-open" });
+    unsubscribe();
+    expect(useDockState.getState().scopes[dockScopeKey("session-open")]).toBeUndefined();
+  } finally {
+    (globalThis as unknown as { window: unknown }).window = originalWindow;
+  }
+});

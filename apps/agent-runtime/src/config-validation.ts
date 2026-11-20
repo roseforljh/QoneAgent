@@ -37,6 +37,10 @@ export function validateSettings(data: Json) {
     throw new Error("preferences[\"compaction.settings\"] must have autoCompactionEnabled and compactionThreshold (50–95)");
   }
   if (preferences["memory.enabled"] !== undefined && typeof preferences["memory.enabled"] !== "boolean") throw new Error("memory.enabled must be true or false");
+  const memoryModel = preferences["memory.model"];
+  if (memoryModel !== undefined && !decodeCommand(JSON.stringify({ type: "memory.model.set", requestId: "settings", modelId: memoryModel }))) {
+    throw new Error("memory.model must be a configured model ID or null");
+  }
   for (const key of ["servers.list", "servers.groups"]) {
     if (preferences[key] !== undefined && !Array.isArray(preferences[key])) throw new Error(`${key} must be an array`);
   }

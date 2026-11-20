@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openDb, closeDb } from "@qone/database";
+import { decodeCommand } from "@qone/protocol";
 import { BrowserSyncService, assertOpenCliRoute, buildOpenCliCommandArgs, compactOpenCliCatalog, loginRequiredResult, normalizeBrowserWaitValue, OpenCliError, parseOpenCliCatalog, runOpenCli } from "../src/browser-sync";
 import { AppOpenCliBridge, withBrowserSessionId } from "../src/app-opencli-bridge";
 
@@ -42,6 +43,36 @@ describe("OpenCLI gateway", () => {
     } finally {
       closeDb(db);
     }
+  });
+
+  test("lists only through the read-only bridge and never supplies a fallback URL for page reads", async () => {
+    const requests: Array<{ site: string; url?: string; listTabs?: true; sessionId?: string; reuseRequestId?: string }> = [];
+    const bridge = new AppOpenCliBridge((event) => {
+      if (event.type !== "apps.opencli.request") throw new Error("Read-only requests must not release a page");
+      requests.push(event);
+      const response = decodeCommand(JSON.stringify({ type: "apps.opencli.response", requestId: event.requestId,
+        ...(event.listTabs ? { ok: true, tabs: [] } : { ok: false, message: "No active page" }),
+      }));
+      if (response?.type !== "apps.opencli.response") throw new Error("Invalid OpenCLI response");
+      bridge.handleResponse(response);
+    });
+    const service = new BrowserSyncService(() => {}, async () => {}, bridge);
+    const execute = (name: string, args = {}) => service.tools().find((item) => item.name === `qone_browser_${name}`)!
+      .execute("call", args, undefined, undefined, {} as never);
+    await withBrowserSessionId("session-browsing", async () => {
+      expect(await execute("tabs")).toMatchObject({ content: [{ text: "[]" }] });
+      expect(service.status().targetConnected).toBe(false);
+      for (const [name, args] of [["state", {}], ["get", { property: "url" }], ["extract", {}], ["screenshot", {}]] as const) {
+        await expect(execute(name, args)).rejects.toThrow("No active page");
+      }
+      await expect(execute("open", { url: "https://" })).rejects.toThrow("HTTP or HTTPS URL");
+      await expect(execute("open", { url: "https://www.spaceship.com/" })).rejects.toThrow("No active page");
+    });
+    expect(requests.map(({ listTabs, url, sessionId }) => ({ listTabs, url, sessionId }))).toEqual([
+      { listTabs: true, url: undefined, sessionId: "session-browsing" },
+      ...Array.from({ length: 4 }, () => ({ listTabs: undefined, url: undefined, sessionId: "session-browsing" })),
+      { listTabs: undefined, url: "https://www.spaceship.com/", sessionId: "session-browsing" },
+    ]);
   });
 
   test("parses the official command registry and keeps adapter capabilities", () => {
@@ -109,7 +140,7 @@ describe("OpenCLI gateway", () => {
       return new Promise<{ requestId: string; endpoint: string }>(resolve => callbacks.push(resolve));
     }, release: (id: string) => { releases.push(id); } };
     const service = new BrowserSyncService(() => {}, async () => {}, bridge as never);
-    const state = service as unknown as { embeddedBrowser?: { requestId: string; endpoint: string } };
+    const state = service as unknown as { embeddedBrowser?: { requestId: string } };
     const tool = service.tools().find(item => item.name === "qone_browser_state")!;
     const execute = (signal?: AbortSignal) => tool.execute("call", {}, signal, undefined, {} as never);
     const old = execute().catch(error => error);
@@ -123,7 +154,7 @@ describe("OpenCLI gateway", () => {
     controller.abort();
     callbacks[1]!({ requestId: "new", endpoint: "http://new" });
     expect(await next).toBeInstanceOf(Error);
-    state.embeddedBrowser = { requestId: "replacement", endpoint: "http://replacement" };
+    state.embeddedBrowser = { requestId: "replacement" };
     callbacks[0]!({ requestId: "old", endpoint: "http://old" });
     for (const error of await Promise.all([old, queued])) expect(error).toBeInstanceOf(Error);
     expect(state.embeddedBrowser?.requestId).toBe("replacement");
@@ -163,11 +194,10 @@ describe("OpenCLI gateway", () => {
     await withBrowserSessionId("session-live-1", async () => {
       const first = await bridge.prepare("browser", "https://example.com/");
       expect(first).toBeDefined();
-      const second = await bridge.prepare("browser", "https://example.com/", undefined, first!.requestId);
+      const second = await bridge.prepare("browser", undefined, undefined, first.requestId);
       expect(second).toBeDefined();
-      (service as unknown as { embeddedBrowser?: { requestId: string; endpoint: string; sessionId?: string } }).embeddedBrowser = {
-        requestId: first!.requestId,
-        endpoint: first!.endpoint,
+      (service as unknown as { embeddedBrowser?: { requestId: string; sessionId?: string } }).embeddedBrowser = {
+        requestId: first.requestId,
         sessionId: "session-live-1",
       };
       await closeTool.execute("call-close", {}, undefined, undefined, {} as never);
@@ -182,13 +212,13 @@ describe("OpenCLI gateway", () => {
   test("a passkey sign-in the page started stops the next browser step with login_required instead of waiting", async () => {
     const bridge = new AppOpenCliBridge((event) => {
       if (event.type === "apps.opencli.request") queueMicrotask(() => bridge.handleResponse({
-        type: "apps.opencli.response", requestId: event.requestId, ok: true, endpoint: "ws://127.0.0.1:9222/page", loginRequired: "passkey",
+        type: "apps.opencli.response", requestId: event.requestId, ok: true, endpoint: "ws://127.0.0.1:9222/page", url: "https://www.spaceship.com/", loginRequired: "passkey",
       }));
     });
     const service = new BrowserSyncService(() => {}, async () => {}, bridge);
     const state = service.tools().find((item) => item.name === "qone_browser_state")!;
     const output = await state.execute("call-state", {}, undefined, undefined, {} as never) as { content: [{ text: string }] };
-    expect(JSON.parse(output.content[0].text)).toMatchObject({ status: "login_required", detail: expect.stringContaining("passkey") });
+    expect(JSON.parse(output.content[0].text)).toMatchObject({ status: "login_required", site: "www.spaceship.com", detail: expect.stringContaining("passkey") });
     // 句柄仍归本轮，用户登录后继续复用同一个页面。
     expect((service as unknown as { embeddedBrowser?: unknown }).embeddedBrowser).toBeDefined();
   });

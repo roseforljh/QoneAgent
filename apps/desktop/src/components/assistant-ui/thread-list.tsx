@@ -26,6 +26,7 @@ import { SidebarSessionActions } from "./sidebar-session-pin-action";
 import { SidebarContextMenu } from "./sidebar-menu";
 import { useSidebarDrag } from "../../hooks/use-sidebar-drag";
 import { sessionById } from "../../lib/store-indexes";
+import { isSidebarSessionRunning } from "../../lib/sidebar-sessions";
 import "./sidebar-drag.css";
 
 export const ThreadListRoot: FC<ComponentPropsWithoutRef<typeof ThreadListPrimitive.Root>> = ({ className, ...props }) => {
@@ -131,7 +132,7 @@ ThreadListNew.displayName = "ThreadListNew";
 
 export const ThreadListItem: FC = () => {
   const id = useAuiState((s) => s.threadListItem.id);
-  const isRunning = useStore((s) => s.runningSessionIds.includes(id));
+  const isRunning = useStore((s) => isSidebarSessionRunning(s, id));
   const isCompleted = useStore((s) => s.completedSessionIds.includes(id));
   const renameSession = useStore((s) => s.renameSession);
   const deleteSession = useStore((s) => s.deleteSession);

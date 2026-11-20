@@ -10,6 +10,8 @@ import coding from "./system-prompts/05-coding.md" with { type: "text" };
 import verification from "./system-prompts/06-verification.md" with { type: "text" };
 import safety from "./system-prompts/07-safety.md" with { type: "text" };
 import communication from "./system-prompts/08-communication.md" with { type: "text" };
+import codemode from "./system-prompts/09-codemode.md" with { type: "text" };
+import commandExecution from "./system-prompts/10-command-execution.md" with { type: "text" };
 
 // Explicit order is part of the product contract; directory enumeration is not.
 export const SYSTEM_PROMPT_MODULES = [
@@ -21,6 +23,8 @@ export const SYSTEM_PROMPT_MODULES = [
   { file: "06-verification.md", content: verification },
   { file: "07-safety.md", content: safety },
   { file: "08-communication.md", content: communication },
+  { file: "09-codemode.md", content: codemode },
+  { file: "10-command-execution.md", content: commandExecution },
 ] as const;
 
 const normalizeModule = (text: string) => text.replace(/\r\n?/g, "\n").trim();

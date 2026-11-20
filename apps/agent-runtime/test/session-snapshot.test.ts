@@ -63,7 +63,7 @@ test("a real sidecar returns all conversation state in one ordered stdout batch 
       })(),
       new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Sidecar snapshot timed out")), 10_000); }),
     ]);
-    expect(batch.map((event) => event.type)).toEqual(["session.messages", "goal.current", "session.queue", "session.toolCalls", "session.runs", "session.subagents", "session.subagentNotifications", "artifact.list"]);
+    expect(batch.map((event) => event.type)).toEqual(["session.messages", "goal.current", "session.queue", "session.toolCalls", "session.runs", "session.subagents", "session.subagentNotifications", "artifact.list", "background-shell.jobs"]);
     const history = batch.find((event) => event.type === "session.messages")!;
     expect(history.type).toBe("session.messages");
     if (history.type !== "session.messages") throw new Error("Missing history");

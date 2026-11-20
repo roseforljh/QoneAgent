@@ -4,7 +4,7 @@ import type { BrowserDockRequest } from "./browser-dock";
 import type { RunChangesTarget } from "./run-changes-navigation";
 import type { WorkspaceFileLocation, WorkspaceFileTarget } from "./workspace-file-navigation";
 
-export type DockView = "session" | "terminal" | "files" | "file" | "git" | "browser" | "mcp" | "skills" | "subagents" | "servers" | "changes" | "sideChat";
+export type DockView = "session" | "terminal" | "files" | "file" | "git" | "browser" | "mcp" | "skills" | "subagents" | "servers" | "changes" | "sideChat" | "background";
 export type DockFileTarget = WorkspaceFileLocation & Pick<WorkspaceFileTarget, "attachment"> & { path: string; requestId: string };
 export type DockTab = { id: string; view: DockView; workspaceId?: string; /** SSH terminal target. */ serverId?: string; browserTarget?: BrowserDockRequest; fileTarget?: DockFileTarget; changesTarget?: RunChangesTarget; refreshNonce?: number };
 export interface DockScope {
@@ -92,6 +92,29 @@ export async function closeDockTabsExcept(tabs: readonly DockTab[], anchorId: st
 
 export function dockActiveView(scope: DockScope): DockView | undefined {
   return scope.collapsed ? undefined : scope.openTabs.find((tab) => tab.id === scope.activeTabId)?.view;
+}
+
+/** The model's browser reuses the session's AI browser tab instead of piling up new ones. */
+export function agentBrowserTab(tabs: readonly DockTab[], target: BrowserDockRequest, newId: () => string): DockTab {
+  const existing = tabs.find((tab) => tab.view === "browser" && (
+    (target.browserId && tab.browserTarget?.browserId === target.browserId) || tab.browserTarget?.agentManaged));
+  return { ...existing, id: existing?.id ?? newId(), view: "browser", browserTarget: target };
+}
+
+export function withTab(tabs: readonly DockTab[], tab: DockTab): DockTab[] {
+  return tabs.some((item) => item.id === tab.id) ? tabs.map((item) => item.id === tab.id ? tab : item) : [...tabs, tab];
+}
+
+/**
+ * The AI opened a page for a session whose dock is not mounted (the user is in another
+ * conversation). Record the tab in that session's dock so the page is there when the user
+ * returns; otherwise it lives on offscreen with no tab to find or close it.
+ */
+export function rememberAgentBrowserTab(sessionId: string, target: BrowserDockRequest): void {
+  useDockState.getState().update(dockScopeKey(sessionId), { sessionId }, (scope) => {
+    const tab = agentBrowserTab(scope.openTabs, target, () => crypto.randomUUID());
+    return { ...scope, openTabs: withTab(scope.openTabs, tab), activeTabId: tab.id, collapsed: false };
+  });
 }
 
 /** Each selected document has its own reader; reselecting it preserves the tab. */

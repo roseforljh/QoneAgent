@@ -18,7 +18,7 @@ export function SettingsPageHeader({ children }: { children: ReactNode }) {
 
 export type SettingsChoice = { value: string; label: string; description?: string };
 
-export function SettingsSelect({ value, options, onChange, prefix }: { value: string; options: SettingsChoice[]; onChange: (value: string) => void; prefix?: ReactNode }) {
+export function SettingsSelect({ value, options, onChange, prefix, ariaLabel }: { value: string; options: SettingsChoice[]; onChange: (value: string) => void; prefix?: ReactNode; ariaLabel?: string }) {
   const { t } = useLocale();
-  return <QoneSelect value={value} options={options} onChange={onChange} prefix={prefix} className="settings-select-wrap" triggerClassName="settings-value-button" menuClassName="settings-dropdown" align="end" ariaLabel={t("accessibility.option")} />;
+  return <QoneSelect value={value} options={options} onChange={onChange} prefix={prefix} className="settings-select-wrap" triggerClassName="settings-value-button" menuClassName="settings-dropdown" align="end" ariaLabel={ariaLabel ?? t("accessibility.option")} />;
 }

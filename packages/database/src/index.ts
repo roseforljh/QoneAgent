@@ -120,6 +120,67 @@ function migrate(sqlite: SqliteClient) {
     );
     CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id);
 
+    CREATE TABLE IF NOT EXISTS memory_incidents (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      run_id TEXT REFERENCES runs(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK (source IN ('tool', 'run', 'background')),
+      tool TEXT,
+      outcome TEXT NOT NULL CHECK (outcome IN ('pending', 'failed', 'interrupted')),
+      reason TEXT,
+      exit_code INTEGER,
+      at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_incidents_at ON memory_incidents(at);
+    CREATE INDEX IF NOT EXISTS idx_memory_incidents_session ON memory_incidents(session_id);
+    CREATE INDEX IF NOT EXISTS idx_memory_incidents_run ON memory_incidents(run_id);
+
+    -- Execution errors per provider+model. A separate table because memory_incidents
+    -- predates provider attribution and its CHECK constraint cannot be widened in place.
+    CREATE TABLE IF NOT EXISTS execution_incidents (
+      id TEXT PRIMARY KEY,
+      session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+      run_id TEXT,
+      tool TEXT,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('failed', 'interrupted')),
+      reason TEXT NOT NULL,
+      at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_execution_incidents_at ON execution_incidents(at);
+    CREATE INDEX IF NOT EXISTS idx_execution_incidents_model ON execution_incidents(provider, model);
+    CREATE INDEX IF NOT EXISTS idx_execution_incidents_session ON execution_incidents(session_id);
+
+    -- Advice derived from authorized execution errors. One row per provider/model/tool, so
+    -- re-analysis replaces the previous line instead of stacking duplicates.
+    CREATE TABLE IF NOT EXISTS execution_lessons (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      advice TEXT NOT NULL,
+      at INTEGER NOT NULL
+    );
+
+    -- Raw provider usage. request_key is unique per recorded request; session_id is not a
+    -- foreign key, so a memory call outside a chat cannot invent a visible conversation.
+    CREATE TABLE IF NOT EXISTS execution_usage (
+      request_key TEXT PRIMARY KEY,
+      session_id TEXT,
+      at INTEGER NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('chat', 'memory', 'other')),
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      cache TEXT NOT NULL CHECK (cache IN ('reported', 'unknown')),
+      input INTEGER NOT NULL,
+      output INTEGER NOT NULL,
+      cache_read INTEGER NOT NULL,
+      cache_write INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_execution_usage_at ON execution_usage(at);
+
     CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -219,6 +280,7 @@ function migrate(sqlite: SqliteClient) {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_goal_events_goal ON goal_events(goal_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_goal_events_session ON goal_events(session_id);
   `);
   const messageColumns = new Set(sqlite.prepare("PRAGMA table_info(messages)").all().map((column) => (column as { name: string }).name));
   const sessionColumns = new Set(sqlite.prepare("PRAGMA table_info(sessions)").all().map((column) => (column as { name: string }).name));
@@ -234,6 +296,7 @@ function migrate(sqlite: SqliteClient) {
   if (!messageColumns.has("communication")) sqlite.exec("ALTER TABLE messages ADD COLUMN communication TEXT");
   const runColumns = new Set(sqlite.prepare("PRAGMA table_info(runs)").all().map((column) => (column as { name: string }).name));
   if (!runColumns.has("origin")) sqlite.exec("ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'");
+  if (!runColumns.has("model")) sqlite.exec("ALTER TABLE runs ADD COLUMN model TEXT");
   if (!runColumns.has("goal_id")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_id TEXT");
   if (!runColumns.has("goal_epoch")) sqlite.exec("ALTER TABLE runs ADD COLUMN goal_epoch INTEGER");
   if (!runColumns.has("finalization_authorized")) sqlite.exec("ALTER TABLE runs ADD COLUMN finalization_authorized INTEGER NOT NULL DEFAULT 0");
@@ -288,6 +351,7 @@ function migrate(sqlite: SqliteClient) {
       token_usage TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent ON subagent_runs(parent_session_id, parent_run_id);
+    CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent_run ON subagent_runs(parent_run_id);
     CREATE TABLE IF NOT EXISTS subagent_notifications (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

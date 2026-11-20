@@ -1,4 +1,4 @@
-import { runtimeErrorInfo } from "./runtime-localization";
+import { runtimeError, runtimeErrorInfo } from "./runtime-localization";
 import type { RuntimeCommand, RuntimeEvent, WorkspaceInfo } from "@qone/protocol";
 import path from "node:path";
 import { existsSync, statSync } from "node:fs";
@@ -26,6 +26,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         { type: "artifact.list", requestId: cmd.requestId, sessionId: cmd.sessionId },
       ];
       const pending = requests.map((request) => handleSessionCommand(request, snapshotServices));
+      events.push({ type: "background-shell.jobs", sessionId: cmd.sessionId, jobs: services.backgroundShell.list(cmd.sessionId) });
       services.sendBatch(events);
       await Promise.all(pending);
       return true;
@@ -59,7 +60,12 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: `unknown workspace ${cmd.workspaceId}` });
         return true;
       }
+      if (cmd.resumeFrom && !services.memory.continuation(cmd.workspaceId, cmd.resumeFrom)) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(runtimeError("memory.resume_unavailable")) });
+        return true;
+      }
       const s = services.sessionRepo.create(cmd.title, cmd.workspaceId);
+      if (cmd.resumeFrom) services.settingsRepo.set(`memory.resume:${s.id}`, cmd.resumeFrom);
       services.send({ type: "session.created", session: services.toInfo(s) });
       return true;
     }
@@ -139,10 +145,11 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: "conversation is still stopping" });
         return true;
       }
-      for (const child of services.sessionRepo.list().filter((session) => services.sideConversations.metadata(session.id)?.parentSessionId === cmd.sessionId)) {
-        await services.handle({ type: "session.delete", requestId: crypto.randomUUID(), sessionId: child.id });
+      for (const sessionId of services.sideConversations.childrenOf(cmd.sessionId)) {
+        await services.handle({ type: "session.delete", requestId: crypto.randomUUID(), sessionId });
       }
       await services.subagentController.dispose(cmd.sessionId);
+      services.backgroundShell.disposeSession(cmd.sessionId);
       services.subagentNotificationCoordinator?.dispose(cmd.sessionId);
       for (const child of services.subagentRunRepo.listBySession(cmd.sessionId)) {
         if (child.executionSessionId) services.subagentNotificationCoordinator?.dispose(child.executionSessionId);
@@ -156,8 +163,13 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       services.sessionRepo.delete(cmd.sessionId);
       services.settingsRepo.set(`queue:${cmd.sessionId}`, []);
       services.settingsRepo.set(`side-chat:${cmd.sessionId}`, null);
+      services.send({ type: "session.deleted", sessionId: cmd.sessionId });
+      void services.memory.refresh();
       await services.generatedArtifacts.removeFiles(generatedFiles);
-      if (deletedSession) services.projectResources.removeSession(deletedSession.workspaceId, cmd.sessionId);
+      if (deletedSession) {
+        await services.projectResources.removeSession(deletedSession.workspaceId, cmd.sessionId).catch((error) =>
+          services.log.warn("failed to remove deleted session resources", { sessionId: cmd.sessionId, error: String(error) }));
+      }
       services.send({ type: "pong", requestId: cmd.requestId });
       return true;
     }

@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { RuntimeCommand, RuntimeEvent } from "@qone/protocol";
+import type { OpenCliBrowserTab, RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 
-export type Prepared = { requestId: string; endpoint: string; loginRequired?: "passkey" };
+type OpenCliRequest = Extract<RuntimeEvent, { type: "apps.opencli.request" }>;
+type OpenCliResponse = Extract<RuntimeCommand, { type: "apps.opencli.response" }>;
+type Prepared = { requestId: string; endpoint: string; url?: string; loginRequired?: "passkey" };
 
 const browserSessionContext = new AsyncLocalStorage<string | undefined>();
 
@@ -15,11 +17,23 @@ export function currentBrowserSessionId(): string | undefined {
 }
 
 export class AppOpenCliBridge {
-  private readonly pending = new Map<string, { resolve: (value: Prepared) => void; reject: (error: Error) => void; cleanup: () => void }>();
+  private readonly pending = new Map<string, { resolve: (value: OpenCliResponse) => void; reject: (error: Error) => void; cleanup: () => void }>();
 
   constructor(private readonly send: (event: Extract<RuntimeEvent, { type: "apps.opencli.request" | "apps.opencli.release" }>) => void) {}
 
-  prepare(site: string, url: string, signal?: AbortSignal, reuseRequestId?: string): Promise<Prepared | undefined> {
+  async prepare(site: string, url: string | undefined, signal?: AbortSignal, reuseRequestId?: string): Promise<Prepared> {
+    const response = await this.request({ site, url, reuseRequestId }, signal);
+    if (!response.endpoint) throw new Error("Built-in browser bridge did not prepare a page");
+    return { requestId: response.requestId, endpoint: response.endpoint, url: response.url, loginRequired: response.loginRequired };
+  }
+
+  async listTabs(signal?: AbortSignal): Promise<OpenCliBrowserTab[]> {
+    const response = await this.request({ site: "browser", listTabs: true }, signal);
+    if (!response.tabs) throw new Error("Built-in browser bridge did not return a tab list");
+    return response.tabs;
+  }
+
+  private request(request: Omit<OpenCliRequest, "type" | "requestId" | "sessionId">, signal?: AbortSignal): Promise<OpenCliResponse> {
     const requestId = crypto.randomUUID();
     const sessionId = currentBrowserSessionId();
     return new Promise((resolve, reject) => {
@@ -29,7 +43,7 @@ export class AppOpenCliBridge {
         current.cleanup();
         this.pending.delete(requestId);
         reject(new Error("embedded OpenCLI browser preparation cancelled"));
-        if (!reuseRequestId) {
+        if (!request.reuseRequestId && !request.listTabs) {
           try { this.send({ type: "apps.opencli.release", requestId }); } catch { /* Transport exited. */ }
         }
       };
@@ -42,10 +56,8 @@ export class AppOpenCliBridge {
         this.send({
           type: "apps.opencli.request",
           requestId,
-          site,
-          url,
+          ...request,
           ...(sessionId ? { sessionId } : {}),
-          ...(reuseRequestId ? { reuseRequestId } : {}),
         });
       }
       catch { cancel(); }
@@ -56,13 +68,13 @@ export class AppOpenCliBridge {
     try { this.send({ type: "apps.opencli.release", requestId, ...(close ? { close: true } : {}) }); } catch { /* Runtime may be exiting. */ }
   }
 
-  handleResponse(command: Extract<RuntimeCommand, { type: "apps.opencli.response" }>): void {
+  handleResponse(command: OpenCliResponse): void {
     const current = this.pending.get(command.requestId);
     if (!current) return;
     current.cleanup();
     this.pending.delete(command.requestId);
-    if (!command.ok || !command.endpoint) return current.reject(new Error(command.message || "embedded OpenCLI browser unavailable"));
-    current.resolve({ requestId: command.requestId, endpoint: command.endpoint, ...(command.loginRequired ? { loginRequired: command.loginRequired } : {}) });
+    if (!command.ok) return current.reject(new Error(command.message || "embedded OpenCLI browser unavailable"));
+    current.resolve(command);
   }
 }
 

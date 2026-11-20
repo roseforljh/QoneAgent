@@ -3,13 +3,14 @@ import { alignToolCallIds } from "./lib/tool-call-alignment";
 import { initRuntimeBridge } from "./store-bridge";
 import { mcpAvailable, repeatedUserMessageId, serverOperationInfo } from "@qone/protocol";
 import { sessionStore, switchSessionState, type SessionExecutionState } from "./lib/session-execution-state";
+import { subagentActivity } from "./lib/subagent-state";
 import { updateSessionActivity } from "./lib/session-recency";
 import { create } from "zustand";
 import { isolateBackgroundSubscriptions } from "./lib/store-subscriptions";
 import { invoke } from "./lib/desktop-bridge";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { plainInlineQuotes } from "./lib/inline-quote";
-import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type MessageQuoteInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo } from "@qone/protocol";
+import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type MessageQuoteInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo, type BackgroundShellJobInfo } from "@qone/protocol";
 import { DEFAULT_RUN_PERMISSION_MODE, loadNewSessionRunOptions, loadRunOptions, saveNewSessionRunOptions, saveRunOptions, withoutServers, withRunOptionDefaults, type SessionRunOptions } from "./lib/run-options";
 import { defaultThinkingForModel, normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
@@ -108,6 +109,8 @@ export interface AgentState {
   subagentConfig: SubagentConfigInfo;
   subagents: SubagentRunInfo[];
   subagentNotifications: SubagentNotificationInfo[];
+  /** Background shell commands of every conversation, newest last. */
+  backgroundJobs: BackgroundShellJobInfo[];
   mcpConnectingIds: string[];
   browserStatus?: BrowserSyncStatus;
   reachChannels: ReachChannelInfo[];
@@ -141,6 +144,8 @@ export interface AgentState {
   preparedToolCallIds: string[];
   running: boolean;
   runningSessionIds: string[];
+  /** Sidebar activity only; does not keep the parent turn or composer busy. */
+  subagentRunningSessionIds: string[];
   completedSessionIds: string[];
   activeRunId?: string;
   /** Stopping run; null means its id has not arrived yet. A second press forces it. */
@@ -168,7 +173,7 @@ export interface AgentState {
   send: (cmd: RuntimeCommand) => Promise<boolean>;
   newSession: () => void;
   newSessionInWorkspace: (workspaceId: string) => void;
-  createSessionForWorkspace: (workspaceId: string) => void;
+  createSessionForWorkspace: (workspaceId: string, resume?: { id: string; title: string }) => Promise<boolean>;
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   chooseWorkspace: () => void;
@@ -379,6 +384,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   subagentConfig: loadLocalSubagentConfig(),
   subagents: [],
   subagentNotifications: [],
+  backgroundJobs: [],
   mcpConnectingIds: [],
   browserStatus: undefined,
   reachChannels: [],
@@ -396,6 +402,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   preparedToolCallIds: [],
   running: false,
   runningSessionIds: [],
+  subagentRunningSessionIds: [],
   completedSessionIds: [],
   draftWorkspaceId: undefined,
   creatingSession: false,
@@ -522,10 +529,13 @@ export const useStore = create<AgentState>((set, get, api) => {
     get().refreshWorkspace(workspaceId);
   },
 
-  createSessionForWorkspace: (workspaceId) => {
-    if (get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return;
+  createSessionForWorkspace: async (workspaceId, resume) => {
+    if (get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return false;
     set({ creatingSession: true, currentWorkspaceId: workspaceId, draftWorkspaceId: workspaceId, lastError: undefined });
-    get().send({ type: "session.create", requestId: rid(), title: "New session", workspaceId });
+    const sent = await get().send({ type: "session.create", requestId: rid(), workspaceId,
+      title: resume ? t("memory.resumeTitle", { title: resume.title || t("memory.untitled") }) : "New session", resumeFrom: resume?.id });
+    if (!sent) set({ creatingSession: false, pendingMessage: undefined });
+    return sent;
   },
 
   renameSession: (id, title) => {
@@ -535,14 +545,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   },
 
   deleteSession: (id) => {
-    get().send({ type: "session.delete", requestId: rid(), sessionId: id });
-    set((state) => {
-      const runOptionsBySession = { ...state.runOptionsBySession };
-      delete runOptionsBySession[id];
-      saveRunOptions(runOptionsBySession);
-      return { runOptionsBySession };
-    });
-    get().send({ type: "session.list", requestId: rid() });
+    void get().send({ type: "session.delete", requestId: rid(), sessionId: id });
   },
 
   renameWorkspace: (id, name) => {
@@ -681,7 +684,9 @@ export const useStore = create<AgentState>((set, get, api) => {
     const messageId = rid();
     const createdAt = Date.now();
     clearDelta(sid);
+    const subagents = replaceIndex >= 0 ? get().subagents.filter((item) => keptRunIds.has(item.parentRunId)) : undefined;
     set((s) => ({
+      ...(subagents ? { subagents, ...subagentActivity(s, subagents) } : {}),
       sessions: updateSessionActivity(s.sessions, sid, createdAt),
       messages: [...keptMessages, { id: messageId, role: "user", content: message, quote, persisted: false, attachments, goalId: goal ? "__pending_goal__" : undefined, createdAt }],
       compactions: replaceIndex >= 0 ? s.compactions.filter((marker) => keptMessages.some((item) => item.id === marker.throughMessageId)) : s.compactions,
@@ -704,7 +709,6 @@ export const useStore = create<AgentState>((set, get, api) => {
       chatRunError: undefined,
       toolCalls: replaceIndex >= 0 ? s.toolCalls.filter((call) => keptRunIds.has(call.runId)) : s.toolCalls,
       runs: replaceIndex >= 0 ? s.runs.filter((run) => keptRunIds.has(run.id)) : s.runs,
-      subagents: replaceIndex >= 0 ? s.subagents.filter((item) => keptRunIds.has(item.parentRunId)) : s.subagents,
       titleGeneratingSessionIds: s.messages.length === 0 && !s.titleGeneratingSessionIds.includes(sid)
         ? [...s.titleGeneratingSessionIds, sid]
         : s.titleGeneratingSessionIds,

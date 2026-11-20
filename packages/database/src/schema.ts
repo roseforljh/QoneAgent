@@ -48,6 +48,7 @@ export const runs = sqliteTable(
     startedAt: integer("started_at"),
     completedAt: integer("completed_at"),
     error: text("error"),
+    model: text("model"),
     origin: text("origin").notNull().default("manual"),
     goalId: text("goal_id"),
     goalEpoch: integer("goal_epoch"),
@@ -89,7 +90,7 @@ export const subagentRuns = sqliteTable("subagent_runs", {
   contextMode: text("context_mode").notNull().default("snapshot"),
   contextMessageCount: integer("context_message_count").notNull().default(0),
   tokenUsage: text("token_usage"),
-}, (t) => [index("idx_subagent_runs_parent").on(t.parentSessionId, t.parentRunId)]);
+}, (t) => [index("idx_subagent_runs_parent").on(t.parentSessionId, t.parentRunId), index("idx_subagent_runs_parent_run").on(t.parentRunId)]);
 
 export const subagentNotifications = sqliteTable("subagent_notifications", {
   id: text("id").primaryKey(),
@@ -264,5 +265,5 @@ export const goalEvents = sqliteTable(
     payload: text("payload").notNull().default("{}"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [index("idx_goal_events_goal").on(t.goalId, t.createdAt)],
+  (t) => [index("idx_goal_events_goal").on(t.goalId, t.createdAt), index("idx_goal_events_session").on(t.sessionId)],
 );

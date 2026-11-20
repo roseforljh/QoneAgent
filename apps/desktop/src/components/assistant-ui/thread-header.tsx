@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DropdownMenu } from "radix-ui";
 import { BotMessageSquareIcon, FolderTreeIcon, GlobeIcon, ListTodoIcon, PencilIcon, PinIcon, PinOffIcon, PlugIcon, TrashIcon, WandSparklesIcon } from "lucide-react";
 import { isServerOperation } from "../../lib/server-operations";
@@ -19,10 +19,11 @@ import { TooltipIconButton } from "./tooltip-icon-button";
 import "./sidebar-menu.css";
 import "./thread-header.css";
 
-export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
+export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar, taskToggle }: {
   dockView?: string;
   sidebarCollapsed?: boolean;
   onOpenSidebar?: () => void;
+  taskToggle?: ReactNode;
 }) {
   const { t } = useLocale();
   const hasServers = useStore(state => Boolean((state.currentSessionId ? state.runOptionsBySession[state.currentSessionId] : state.draftRunOptions)?.serverIds?.length) || state.toolCalls.some(isServerOperation));
@@ -162,6 +163,7 @@ export function ThreadHeader({ dockView, sidebarCollapsed, onOpenSidebar }: {
         >
           <CodexIcon src={sidebarIcon} className="size-[18px]" style={{ scale: "-1 1" }} />
         </TooltipIconButton>
+        {taskToggle}
       </div>
     </header>
   );

@@ -60,7 +60,7 @@ export function applyToolExposure(tools: ToolDefinition[], servers?: Namespace):
   const catalog = [...groups].map(([name, description]) => `- ${name}: ${description}`).join("\n");
   return {
     tools: result,
-    catalog: catalog && `<on-demand-tools>\nFind tools by task with tool_search, or discover and call them in one codemode script with searchTools(query, { namespace }) and tools[name](args). Available namespaces:\n${catalog}\n</on-demand-tools>`,
+    catalog: catalog && `<on-demand-tools>\nFind tools by task with the tool_search tool, or inside one codemode script with searchTools(query, { namespace }) and tools[name](args); scripts have no tools.tool_search. Available namespaces:\n${catalog}\n</on-demand-tools>`,
   };
 }
 

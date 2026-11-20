@@ -107,12 +107,13 @@ test("external atomic saves reload MCP, models, permissions, parameters, skills 
       config.preferences["compaction.settings"] = { autoCompactionEnabled: false, compactionThreshold: 75 };
       config.preferences["subagents.config"] = { runtime: { maxConcurrent: 3 } };
       config.preferences["memory.enabled"] = true;
+      config.preferences["memory.model"] = "local/example";
     });
     await wait(event => event.type === "model.list" && event.configs.some(item => item.id === "local/example"), from);
     await wait(event => event.type === "permission.list" && event.rules.some(rule => rule.permission === "shell.execute" && rule.decision === "deny"), from);
     await wait(event => event.type === "pong" && event.compaction?.compactionThreshold === 75 && !event.compaction.autoCompactionEnabled, from);
     await wait(event => event.type === "subagent.list" && event.config.runtime.maxConcurrent === 3, from);
-    await wait(event => event.type === "memory.state" && event.state.enabled, from);
+    await wait(event => event.type === "memory.state" && event.state.enabled && event.state.modelId === "local/example", from);
 
     const skill = path.join(data, "skills", "installed", "live-skill", "SKILL.md");
     mkdirSync(path.dirname(skill), { recursive: true });

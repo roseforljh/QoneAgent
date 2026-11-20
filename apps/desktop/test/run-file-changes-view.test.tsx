@@ -69,13 +69,15 @@ test("no files produces no attachment", () => {
 
 test("saved empty file creation has an explicit panel message", () => {
   const empty: RunFileChanges = { nodes: [{ ...changes.nodes[0]!, changeKind: "created", additions: 0, deletions: 0, presentations: [{ kind: "diff", name: "src/A.ts", oldFile: { content: "" }, newFile: { content: "" } }] }], totalAdditions: 0, totalDeletions: 0 };
-  const markup = renderToStaticMarkup(<RunChangesPanel target={{ sessionId: "session", runId: "run", changes: empty }} />);
+  const markup = renderToStaticMarkup(<RunChangesPanel target={{ sessionId: "session", runId: "run", changes: empty, path: "src/A.ts" }} />);
   expect(markup).toContain("Created an empty file");
 });
 
-test("missing saved diff displays a message rather than a blank panel", () => {
-  const markup = renderToStaticMarkup(<RunChangesPanel target={{ sessionId: "session", runId: "run", changes }} />);
-  expect(markup).toContain("No saved diff content");
+test("opening the summary keeps every file collapsed without mounting a diff", () => {
+  const multiple = { ...changes, nodes: [...changes.nodes, { ...changes.nodes[0]!, path: "src/B.ts", name: "B.ts" }] };
+  const markup = renderToStaticMarkup(<RunChangesPanel target={{ sessionId: "session", runId: "run", changes: multiple }} />);
+  expect(markup.match(/aria-expanded="false"/g)).toHaveLength(2);
+  expect(markup).not.toContain("No saved diff content");
 });
 
 test("review expands only the requested file in place, others stay collapsed rows", () => {

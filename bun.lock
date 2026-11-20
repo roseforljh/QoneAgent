@@ -144,12 +144,13 @@
     },
   },
   "patchedDependencies": {
-    "@earendil-works/pi-coding-agent@1.5.2": "patches/@earendil-works%2Fpi-coding-agent@1.5.2.patch",
+    "@assistant-ui/core@0.3.36": "patches/@assistant-ui%2Fcore@0.3.36.patch",
     "node-pty@1.2.0-beta.18": "patches/node-pty@1.2.0-beta.18.patch",
     "@assistant-ui/react@0.15.36": "patches/@assistant-ui%2Freact@0.15.36.patch",
+    "app-builder-lib@26.18.0": "patches/app-builder-lib@26.18.0.patch",
     "@assistant-ui/react-lexical@0.2.23": "patches/@assistant-ui%2Freact-lexical@0.2.23.patch",
     "@xterm/xterm@6.0.0": "patches/@xterm%2Fxterm@6.0.0.patch",
-    "@assistant-ui/core@0.3.36": "patches/@assistant-ui%2Fcore@0.3.36.patch",
+    "@earendil-works/pi-coding-agent@1.5.2": "patches/@earendil-works%2Fpi-coding-agent@1.5.2.patch",
   },
   "overrides": {
     "@earendil-works/pi-agent-core": "1.5.2",

@@ -38,6 +38,8 @@ import { ServerOperationsPanel } from "./server-operations-panel";
 import { CodexServerIcon } from "./execution-icons";
 import { SubagentPanel } from "./subagent-view";
 import { OPEN_SUBAGENT_EVENT } from "./subagent-navigation";
+import { BackgroundJobPanel } from "./background-job-view";
+import { OPEN_BACKGROUND_JOB_EVENT } from "../../lib/background-job-links";
 import { OPEN_WORKSPACE_FILE_EVENT, resolveFileReferencePath, type WorkspaceFileTarget } from "../../lib/workspace-file-navigation";
 import { OPEN_RUN_CHANGES_EVENT, runChangesTab, type RunChangesTarget } from "../../lib/run-changes-navigation";
 import { RunChangesPanel } from "./run-changes-panel";
@@ -57,7 +59,7 @@ import { CodexIcon } from "../ui/CodexIcon";
 import terminalIcon from "../../assets/codex-icons/terminal-light-16.svg";
 import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import closeIcon from "../../assets/codex-icons/xmark-md-light-16.svg";
-import { closeDockTabsExcept, closeDockTabsToRight, filePreviewTab, useDockState, type DockTab, type DockView } from "../../lib/dock-state";
+import { agentBrowserTab, closeDockTabsExcept, closeDockTabsToRight, filePreviewTab, useDockState, withTab, type DockTab, type DockView } from "../../lib/dock-state";
 import {
   initWorkspaceView, removeWorkspaceView, requestWorkspaceFiles, requestWorkspaceFileRead,
   requestWorkspaceGit, requestWorkspaceGitDiff, useWorkspaceViewState, useWorkspaceViewStore,
@@ -96,6 +98,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
   const [openTabs, setOpenTabs] = useState<DockTab[]>(() => storedScope?.openTabs ?? []);
   const [activeTabId, setActiveTabId] = useState<string | undefined>(() => storedScope?.activeTabId);
   const [selectedSubagentId, setSelectedSubagentId] = useState<string>();
+  const [selectedBackgroundJobId, setSelectedBackgroundJobId] = useState<string>();
   const [collapsed, setCollapsed] = useState(() => storedScope?.collapsed ?? true);
   const activeTab = openTabs.find((tab) => tab.id === activeTabId);
   const view = scopeActive && !collapsed ? activeTab?.view : undefined;
@@ -215,17 +218,8 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
       const { onClaimed, ...browserTarget } = target;
       onClaimed?.();
       // 模型操作内置浏览器时复用同一标签页并立即弹出右侧面板，避免重复堆积标签。
-      const existing = openTabsRef.current.find((item) => item.view === "browser" && (
-        (browserTarget.browserId && item.browserTarget?.browserId === browserTarget.browserId) || item.browserTarget?.agentManaged
-      ));
-      if (existing) {
-        setOpenTabs((current) => current.map((item) => item.id === existing.id ? { ...item, browserTarget } : item));
-        setActiveTabId(existing.id);
-        setCollapsed(false);
-        return;
-      }
-      const tab: DockTab = { id: rid(), view: "browser", browserTarget };
-      setOpenTabs((current) => [...current, tab]);
+      const tab = agentBrowserTab(openTabsRef.current, browserTarget, rid);
+      setOpenTabs((current) => withTab(current, tab));
       setActiveTabId(tab.id);
       setCollapsed(false);
       return;
@@ -262,6 +256,22 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     };
     window.addEventListener(OPEN_SUBAGENT_EVENT, showSubagents);
     return () => window.removeEventListener(OPEN_SUBAGENT_EVENT, showSubagents);
+  }, [scopeActive, sessionId]);
+
+  useEffect(() => {
+    if (!scopeActive) return;
+    const showBackgroundJob = (event: Event) => {
+      const target = (event as CustomEvent<{ jobId: string; sessionId: string }>).detail;
+      if (target.sessionId !== sessionId) return;
+      setLauncherOpen(false);
+      setSelectedBackgroundJobId(target.jobId);
+      const tab = openTabsRef.current.find((item) => item.view === "background") ?? { id: rid(), view: "background" as const };
+      setOpenTabs((current) => withTab(current, tab));
+      setActiveTabId(tab.id);
+      setCollapsed(false);
+    };
+    window.addEventListener(OPEN_BACKGROUND_JOB_EVENT, showBackgroundJob);
+    return () => window.removeEventListener(OPEN_BACKGROUND_JOB_EVENT, showBackgroundJob);
   }, [scopeActive, sessionId]);
 
   useEffect(() => {
@@ -479,6 +489,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     mcp: { icon: PlugIcon, label: t("dock.mcp") },
     skills: { icon: WandSparklesIcon, label: t("dock.skills") },
     subagents: { icon: BotMessageSquareIcon, label: t("nav.subagents") },
+    background: { icon: SquareTerminalIcon, label: t("backgroundJob.title") },
     servers: { icon: CodexServerIcon, label: t("servers.title") },
   };
 
@@ -650,6 +661,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
                   {active && tab.view === "mcp" && <DockMcpView refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "skills" && <DockSkillsView workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} />}
                   {active && tab.view === "subagents" && <SubagentPanel selectedId={selectedSubagentId} onSelect={setSelectedSubagentId} onClose={() => closeTab(tab.id)} />}
+                  {active && tab.view === "background" && <BackgroundJobPanel selectedId={selectedBackgroundJobId} onSelect={setSelectedBackgroundJobId} onClose={() => void closeTab(tab.id)} />}
                   {active && tab.view === "servers" && <ServerOperationsPanel onClose={() => void closeTab(tab.id)} />}
                   {active && tab.view === "session" && <SessionDetails />}
                 </div>

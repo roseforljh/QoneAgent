@@ -53,12 +53,12 @@ export type QueueBundle = {
 };
 
 const QUEUE_PAUSE_PREFIX = "qone:queue-paused:";
-export function prunePausedQueues(liveIds: Set<string>) {
+export function prunePausedQueues(isLive: (id: string) => boolean) {
   try {
     const storage = window.localStorage;
     for (let index = storage.length - 1; index >= 0; index--) {
       const key = storage.key(index);
-      if (key?.startsWith(QUEUE_PAUSE_PREFIX) && !liveIds.has(key.slice(QUEUE_PAUSE_PREFIX.length))) storage.removeItem(key);
+      if (key?.startsWith(QUEUE_PAUSE_PREFIX) && !isLive(key.slice(QUEUE_PAUSE_PREFIX.length))) storage.removeItem(key);
     }
   } catch { /* Storage unavailable. */ }
 }

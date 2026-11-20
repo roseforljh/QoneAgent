@@ -5,6 +5,9 @@ import { runtimeCopyServers } from "./runtime-copy-servers";
 import { subagentCopy } from "./subagent-copy";
 export const runtimeCopy = {
   ...runtimeCopyCore, ...runtimeCopyMedia, ...runtimeCopyMemory, ...runtimeCopyServers, ...subagentCopy,
+  "background-shell.title": { en: "Background command", "zh-CN": "后台命令" },
+  "background-shell.exited": { en: "Finished with exit code {code} after {seconds}s", "zh-CN": "已结束，退出码 {code}，用时 {seconds} 秒" },
+  "background-shell.ended": { en: "Ended without an exit code after {seconds}s", "zh-CN": "未正常结束，用时 {seconds} 秒" },
   "skills.builtin.reserved": { en: "{name} is a built-in skill. Use its switch and update button to manage it.", "zh-CN": "{name} 是内置技能，请通过开关和更新按钮管理，不能重复安装或覆盖。" },
   "skills.builtin.unknown": { en: "Unknown built-in skill", "zh-CN": "未知的内置技能" },
   "skills.builtin.unavailable": { en: "Built-in skill preferences are unavailable", "zh-CN": "内置技能配置不可用" },

@@ -11,7 +11,7 @@ import { PiAdapter } from "../src/pi-adapter";
 import { readSystemPrompt } from "../src/system-prompt";
 import { DouyinBridge } from "../src/douyin-bridge";
 
-test("model-facing system text starts with the same eight modules across model/tool/workspace/context changes", async () => {
+test("model-facing system text includes fixed command guidance across model/tool/workspace/context changes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "qone-prompt-runtime-"));
   const originalRoot = process.env.QONE_DATA_DIR;
   process.env.QONE_DATA_DIR = path.join(root, "data");
@@ -46,6 +46,10 @@ test("model-facing system text starts with the same eight modules across model/t
         const text = typeof system.content === "string" ? system.content : system.content.map((part: any) => part.text).join("\n");
         systemTexts.push(text);
         expect(text.startsWith(fixed)).toBe(true);
+        expect(text).toContain("# Command execution");
+        expect(text).toContain("docker exec -w /verified/path");
+        expect(text).toContain("Set-Location -LiteralPath");
+        expect(text).toContain("<execution_environment>");
         expect(text).toContain(`USER_CONTEXT_${index}`);
         expect(text).toContain(`PROJECT_CONTEXT_${index}`);
         expect(text).toContain(workspace.replace(/\\/g, "/"));

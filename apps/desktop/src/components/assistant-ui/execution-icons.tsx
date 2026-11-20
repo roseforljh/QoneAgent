@@ -16,6 +16,7 @@ import rotateCw from "../../assets/codex-icons/arrow-rotate-clockwise-regular-20
 import arrowLeft from "../../assets/codex-icons/arrow-left-md-light-16.svg";
 import check from "../../assets/codex-icons/checkmark-md-light-16.svg";
 import mcp from "../../assets/codex-icons/mcp-light-16.svg";
+import bolt from "../../assets/codex-icons/bolt-light-16.svg";
 
 export type ExecutionIcon = ComponentType<HTMLAttributes<HTMLSpanElement> & { size?: number }>;
 
@@ -41,3 +42,4 @@ export const CodexRotateCwIcon = icon(rotateCw);
 export const CodexArrowLeftIcon = icon(arrowLeft);
 export const CodexCheckIcon = icon(check);
 export const CodexMcpIcon = icon(mcp);
+export const CodexBoltIcon = icon(bolt);

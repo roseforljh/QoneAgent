@@ -1,11 +1,11 @@
 import { acknowledgeMcpCredentials, applyMcpCredential, connectMcp, mcpServerList } from "./mcp-connections";
-import { runtimeText, runtimeErrorInfo } from "./runtime-localization";
+import { runtimeText, runtimeError, runtimeErrorInfo } from "./runtime-localization";
 import { syncClaudeCode } from "./claude-code/sync";
 import { resendMcpIcons } from "./mcp-icons";
 import { acknowledgeClaudeCredentials } from "./claude-code/credentials";
 import { repeatedUserMessageId, mcpCredentialKeys } from "@qone/protocol";
 import type { RuntimeCommand, PermissionDecision, MessageAttachmentInfo } from "@qone/protocol";
-import { thinkingLevelsForApi, parseMcpCommand } from "@qone/protocol";
+import { thinkingLevelsForApi, parseMcpCommand, supportsMemorySummary } from "@qone/protocol";
 import path from "node:path";
 import { createLocalSkill, createResourceLoader, deleteLocalSkill, installLocalSkill } from "./skills.js";
 import { installCloudSkill, listCloudSkills } from "./skill-catalog.js";
@@ -16,6 +16,12 @@ import { normalizeSubagentConfig } from "./subagents.js";
 import { type SessionCompactionCheckpoint } from "./session-compaction.js";
 import { globalInstructionsDirectory, globalInstructionsPath, readGlobalInstructions, writeGlobalInstructions } from "./global-instructions.js";
 import type { runtimeCommandServices } from "./index.js";
+
+/** A conversation turn is starting, running or compacting; a new turn must wait. */
+export function sessionHasActiveRun(services: ReturnType<typeof runtimeCommandServices>, sessionId: string): boolean {
+  return services.startingRunSessions.has(sessionId) || services.adapter.isRunning(sessionId)
+    || services.runRepo.listBySession(sessionId).some((run) => !services.subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status));
+}
 
 export async function handleRuntimeCommand(cmd: RuntimeCommand, services: ReturnType<typeof runtimeCommandServices>): Promise<boolean> {
   switch (cmd.type) {
@@ -78,8 +84,10 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
 
     case "memory.get":
     case "memory.enabled.set":
+    case "memory.model.set":
     case "memory.note.save":
     case "memory.note.delete":
+    case "memory.preference.edit":
     case "memory.summary.delete":
       try {
         const store = services.memory.store;
@@ -87,12 +95,41 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           services.preferencesRepo.set("memory.enabled", cmd.enabled);
           // The memory tool only exists while memory is on, so sessions rebuild their tool set.
           if (store.setEnabled(cmd.enabled)) await services.adapter.invalidateSessions();
-        } else if (cmd.type === "memory.note.save") store.saveNote(cmd.content, { id: cmd.id });
-        else if (cmd.type === "memory.note.delete") store.deleteNote(cmd.id);
+        } else if (cmd.type === "memory.model.set") {
+          if (cmd.modelId === null) services.preferencesRepo.delete("memory.model");
+          else {
+            const model = services.modelConfigRepo.list().find(config => config.id === cmd.modelId);
+            if (!model || !supportsMemorySummary(model)) throw runtimeError("memory.model_unavailable");
+            services.preferencesRepo.set("memory.model", model.id);
+          }
+        } else if (cmd.type === "memory.note.save") {
+          const workspace = cmd.preference?.workspaceId;
+          if (workspace && !services.workspaceRepo.get(workspace)) throw runtimeError("memory.workspace_unavailable");
+          store.saveNote(cmd.content, { id: cmd.id, preference: cmd.preference });
+        } else if (cmd.type === "memory.preference.edit") {
+          const workspace = cmd.value?.preference.workspaceId;
+          if (workspace && !services.workspaceRepo.get(workspace)) throw runtimeError("memory.workspace_unavailable");
+          services.memory.editAutomaticPreference(cmd.id, cmd.value);
+        } else if (cmd.type === "memory.note.delete") store.deleteNote(cmd.id);
         else if (cmd.type === "memory.summary.delete") store.forgetSummary(cmd.id);
-        services.send({ type: "memory.state", requestId: cmd.requestId, state: store.state() });
+        services.send({ type: "memory.state", requestId: cmd.requestId, state: services.memory.state() });
+        if (cmd.type === "memory.enabled.set" || cmd.type === "memory.model.set") services.executionAnalysis.invalidate();
+        if (cmd.type !== "memory.get") void services.memory.refresh();
       } catch (error) {
-        services.send({ type: "error", requestId: cmd.requestId, message: error instanceof Error ? error.message : String(error) });
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      }
+      return true;
+
+    case "stats.get":
+    case "stats.record.set":
+    case "stats.memoryAccess.set":
+      try {
+        const stats = services.executionStats;
+        if (cmd.type === "stats.record.set") stats.setRecord(cmd.record);
+        else if (cmd.type === "stats.memoryAccess.set") stats.setMemoryAccess(cmd.enabled);
+        services.send({ type: "stats.state", requestId: cmd.requestId, state: stats.state(cmd.type === "stats.get" ? cmd.range : "today") });
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
       }
       return true;
 
@@ -362,8 +399,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: "session workspace not found" });
         return true;
       }
-      if (services.startingRunSessions.has(cmd.sessionId) || services.adapter.isRunning(cmd.sessionId) ||
-          services.runRepo.listBySession(cmd.sessionId).some((run) => !services.subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
+      if (sessionHasActiveRun(services, cmd.sessionId)) {
         services.send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
         return true;
       }
@@ -437,6 +473,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       const config = services.modelConfigRepo.upsert(cmd.config);
       await services.adapter.configureModels(services.modelConfigRepo.list());
       services.send({ type: "model.updated", config: config });
+      void services.memory.refresh();
       return true;
     }
 
@@ -475,6 +512,10 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         else await services.adapter.setSecret(cmd.key, cmd.value);
       }
       services.send({ type: "secret.saved", requestId: cmd.requestId });
+      if (changed && cmd.key.startsWith("model.apiKey:")) {
+        void services.memory.refresh();
+        void services.executionAnalysis.check();
+      }
       return true;
     }
 
@@ -488,6 +529,16 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       await services.adapter.deleteSecret(cmd.key);
       services.send({ type: "pong", requestId: cmd.requestId });
       if (cmd.key === "reach.groq.apiKey") services.sendReachChannels();
+      return true;
+    }
+
+    case "background-shell.stop": {
+      try {
+        await services.backgroundShell.stop(cmd.jobId);
+        services.send({ type: "pong", requestId: cmd.requestId });
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      }
       return true;
     }
 
@@ -526,11 +577,11 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: "selected MCP server is not connected or has no tools" });
         return true;
       }
-      if (services.startingRunSessions.has(cmd.sessionId) || services.adapter.isRunning(cmd.sessionId) ||
-          services.runRepo.listBySession(cmd.sessionId).some((run) => !services.subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status))) {
+      if (sessionHasActiveRun(services, cmd.sessionId)) {
         services.send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
         return true;
       }
+      services.backgroundShell.noteRun(cmd.sessionId, { model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking, serverIds: cmd.serverIds });
       if (!cmd.continuation && !cmd.goalContinuation && !cmd.replaceFromMessageId) {
         cmd.replaceFromMessageId = repeatedUserMessageId(services.messageRepo.listBySession(cmd.sessionId).map(message => ({
           ...message,
@@ -579,7 +630,12 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       services.assistantPartsByRun.set(run.id, []);
       services.liveAssistantByRun.set(run.id, { content: "", parts: [], sequence: 0 });
       const turn = services.turnRepo.create(run.id);
-      if (!cmd.goalContinuation) {
+      if (cmd.notice) {
+        // The person sees the card; the native message replays the model input after a restart.
+        services.messageRepo.add(cmd.sessionId, "user", cmd.notice.content, run.id, undefined, undefined, undefined, undefined, undefined, undefined,
+          { role: "user", content: [{ type: "text", text: cmd.message }], timestamp: Date.now() }, cmd.notice.communication);
+        services.sendMessages(cmd.sessionId);
+      } else if (!cmd.goalContinuation) {
         const userMessage = services.messageRepo.add(cmd.sessionId, "user", cmd.message, run.id, undefined, cmd.messageId, cmd.attachments, undefined, goal?.id, cmd.quote);
         services.touchSession(cmd.sessionId, userMessage.createdAt);
       }
@@ -598,7 +654,8 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
           if (services.runRepo.get(run.id)?.status === "cancelled") return;
           services.subagentNotificationCoordinator?.markDelivered(notificationDelivery.ids);
           if (notificationDelivery.ids.length) services.sendSubagentNotifications(cmd.sessionId);
-          return services.adapter.run(cmd.sessionId, modelMessage, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, serverIds: cmd.serverIds, attachments: cmd.attachments, mcpServerId: cmd.mcpServerId, goalId: goal?.id, goalEpoch: goal?.epoch }, (type, payload) =>
+          return services.adapter.run(cmd.sessionId, modelMessage, { model: cmd.model, cwd: workspaceCwd, runId: run.id, eventSessionId: cmd.sessionId, permissionMode: cmd.permissionMode, thinking: cmd.thinking, serverIds: cmd.serverIds, attachments: cmd.attachments, mcpServerId: cmd.mcpServerId, goalId: goal?.id, goalEpoch: goal?.epoch,
+            memoryUserMessage: cmd.notice || cmd.goalContinuation ? undefined : cmd.message }, (type, payload) =>
           services.emit(type, payload, cmd.sessionId, run.id)
         );
         })

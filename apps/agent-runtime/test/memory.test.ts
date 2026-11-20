@@ -1,25 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import type { SettingsRepo } from "@qone/database";
-import { MemoryStore } from "../src/memory/memory-store";
+import { MEMORY_PREFERENCE_MAX_LENGTH, MEMORY_PREFERENCES_PER_SCOPE } from "@qone/protocol";
+import { MEMORY_SOURCE_WINDOW_MS, MemoryStore } from "../src/memory/memory-store";
 import { MemoryConsolidator } from "../src/memory/memory-consolidator";
 import { MemoryService, MEMORY_TOOL } from "../src/memory/memory-service";
+import { memoryAddition } from "../src/memory/memory-context";
 
 function repo() {
   const values = new Map<string, unknown>();
-  return { get: (key: string) => structuredClone(values.get(key)), set: (key: string, value: unknown) => values.set(key, value) } as unknown as SettingsRepo;
+  return { get: (key: string) => structuredClone(values.get(key)), set: (key: string, value: unknown) => values.set(key, value),
+    transaction: <T>(write: () => T) => write() } as unknown as SettingsRepo;
 }
 
 const NOW = 100 * 24 * 60 * 60_000;
 const OVERVIEW = "## User profile\nNone\n## User preferences\nNone\n## General tips\nNone\n## What's in memory\n### Qone\n- [conv:a] 2026-01-01 — memory work";
+const consolidation = (preferences: unknown[] = []) => JSON.stringify({ overview: OVERVIEW, preferences });
 
 describe("memory", () => {
-  test("summarizes idle chats, consolidates once, and drops writes from a stale version", async () => {
+  test("summarizes newly settled chats immediately, skips active chats and does not repeat unchanged work", async () => {
     const store = new MemoryStore(repo());
     store.setEnabled(true);
     const sessions = [
-      { id: "a", title: "A", updatedAt: NOW - 20 * 60_000 },
-      { id: "current", title: "C", updatedAt: NOW - 20 * 60_000 },
-      { id: "fresh", title: "F", updatedAt: NOW - 60_000 },
+      { id: "a", title: "A", updatedAt: NOW - 1 },
+      { id: "current", title: "C", updatedAt: NOW, active: true },
     ];
     const consolidator = new MemoryConsolidator(store, {
       candidates: () => sessions,
@@ -28,22 +31,151 @@ describe("memory", () => {
     const calls: string[] = [];
     const complete = async (system: string) => {
       calls.push(system.includes("Consolidate") ? "overview" : "summary");
-      return { text: system.includes("Consolidate") ? OVERVIEW : JSON.stringify({ title: "Memory", summary: "token sk-abcdefghijkl was used" }), tokens: 10 };
+      return { text: system.includes("Consolidate") ? consolidation() : JSON.stringify({ title: "Memory", summary: "token sk-abcdefghijkl was used" }), tokens: 10 };
     };
-    await consolidator.runOnce(complete, "current", store.settings().version);
+    await consolidator.runOnce(complete, store.settings().version);
     expect(calls).toEqual(["summary", "overview"]);
     expect(store.summaries().map((item) => item.id)).toEqual(["a"]);
     expect(store.summary("a")!.content).toContain("[REDACTED]");
     expect(store.state().stats).toMatchObject({ calls: 2, tokens: 20 });
 
-    await consolidator.runOnce(complete, "current", store.settings().version);
+    await consolidator.runOnce(complete, store.settings().version);
     expect(calls).toHaveLength(2);
 
     const stale = store.settings().version;
     store.forgetSummary("a");
-    await consolidator.runOnce(complete, "current", stale);
+    await consolidator.runOnce(complete, stale);
     expect(calls).toHaveLength(2);
     expect(store.summary("a")).toBeUndefined();
+  });
+
+  test("retries an invalid summary and keeps a refresh requested while the model is running", async () => {
+    const store = new MemoryStore(repo());
+    store.setEnabled(true);
+    const asked = Promise.withResolvers<void>();
+    const answer = Promise.withResolvers<void>();
+    const errors: unknown[] = [];
+    const updatedAt = Date.now() - 1_000;
+    let attempts = 0;
+    const service = new MemoryService({
+      store,
+      source: {
+        candidates: () => [{ id: "a", title: "A", updatedAt }],
+        transcript: () => [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }],
+      },
+      searchConversations: () => [], onChange: () => {}, onError: error => errors.push(error),
+      complete: () => async (system) => {
+        if (system.includes("Consolidate")) return { text: consolidation(), tokens: 1 };
+        if (++attempts === 1) {
+          asked.resolve();
+          await answer.promise;
+          return { text: "invalid summary", tokens: 1 };
+        }
+        expect(store.allSummaries()).toEqual({});
+        return { text: '{"title":"A","summary":"Saved"}', tokens: 1 };
+      },
+    });
+    const first = service.refresh();
+    await asked.promise;
+    const second = service.refresh();
+    answer.resolve();
+    await Promise.all([first, second]);
+    expect(attempts).toBe(2);
+    expect(errors).toHaveLength(1);
+    expect(store.summary("a")?.content).toBe("Saved");
+  });
+
+  test("applies grounded preferences immediately, replaces the snapshot, and preserves edits and removals", async () => {
+    const settings = repo();
+    const store = new MemoryStore(settings);
+    store.setEnabled(true);
+    const quote = "Here, check the shortest reproducing test first.";
+    const global = "For all projects, I prefer commands with clear exit status.";
+    const secret = "secret: test-private-fixture";
+    const now = Date.now();
+    const sessions = [
+      { id: "a", title: "A", updatedAt: now - 1, workspaceId: "workspace-a" },
+      { id: "b", title: "B", updatedAt: now - 2, workspaceId: "workspace-a" },
+      { id: "c", title: "C", updatedAt: now - 3, workspaceId: "workspace-b" },
+    ];
+    const source = {
+      candidates: () => sessions,
+      transcript: (id: string) => [
+        { role: "user", content: id === "c" ? global : quote }, { role: "user", content: secret },
+        { role: "assistant", content: "This sentence was never said by the user." },
+      ],
+    };
+    // The summaries already exist. Upgrading the consolidation format does not repeat phase one.
+    store.putSummaries(Object.fromEntries(sessions.map(({ id, title, updatedAt }) => [id, { id, title, content: "Past task", sourceUpdatedAt: updatedAt, generatedAt: now }])));
+    store.setOverview({ content: OVERVIEW, generatedAt: now, fingerprint: "legacy" });
+    const found = [{ id: "a", quote }, { id: "b", quote }];
+    const exact = { content: "Run the smallest reproducing test first", scope: "workspace", basis: "repeated", evidence: found };
+    const explicit = { content: "Show command exit statuses", scope: "global", basis: "explicit", evidence: [{ id: "c", quote: global }] };
+    let response = consolidation([
+      { ...exact, content: "Unjustified global inference", scope: "global" },
+      { ...exact, content: "Single task flagged as repeated", evidence: found.slice(0, 1) },
+      { ...exact, content: "Invented source", evidence: [...found, { id: "nonexistent", quote }] },
+      { ...exact, content: "Assistant-only source", basis: "explicit", evidence: [{ id: "a", quote: "This sentence was never said by the user." }] },
+      { ...exact, content: secret },
+      exact, explicit,
+    ]);
+    const calls: string[] = [];
+    const errors: unknown[] = [];
+    const service = new MemoryService({ store, source, workspaceOf: (id) => sessions.find((item) => item.id === id)?.workspaceId,
+      searchConversations: () => [], onChange: () => {}, onError: (error) => errors.push(error),
+      complete: () => async (system, user) => {
+        expect(system).toContain("Consolidate");
+        expect(user).not.toContain("test-private-fixture");
+        calls.push(user);
+        return { text: response, tokens: 1 };
+      },
+    });
+    await service.refresh();
+    const [habit, command] = service.state().automaticPreferences!;
+    expect(service.state().automaticPreferences).toHaveLength(2);
+    expect(habit).toMatchObject({ content: exact.content, preference: { workspaceId: "workspace-a" }, sources: found });
+    expect(command?.preference).toEqual({});
+    expect(Object.keys(habit!)).not.toContain("keys");
+    const delivery = { retained: [], rules: [] };
+    const first = service.addition("a", "run", delivery)!;
+    expect(first.preferences).toMatchObject({ [habit!.id]: { text: exact.content, automatic: true }, [command!.id]: { text: explicit.content, automatic: true } });
+    expect(service.addition("c", "run", delivery)?.text).not.toContain(exact.content);
+    expect(service.context("a", "current text")).not.toContain(exact.content);
+    expect(store.notes()).toEqual([]);
+    await service.refresh();
+    expect(calls).toHaveLength(1);
+
+    const manual = { content: "Start with the smallest useful test", preference: habit!.preference };
+    store.setEnabled(false);
+    expect(service.addition("a", "run", delivery)).toBeUndefined();
+    service.editAutomaticPreference(command!.id, null);
+    expect(() => service.editAutomaticPreference(habit!.id, { content: secret, preference: habit!.preference })).toThrow();
+    expect(store.state().automaticPreferences?.map(({ id }) => id)).toEqual([habit!.id]);
+    service.editAutomaticPreference(habit!.id, manual);
+    store.setEnabled(true);
+    const edited = service.addition("a", "run", { ...delivery, retained: [{ qoneMemoryPreferences: first.preferences }] })!;
+    expect(edited.preferences).toMatchObject({ [habit!.id]: null, [command!.id]: null });
+    expect(edited.text).toContain(manual.content);
+    expect(service.addition("c", "run", delivery)).toBeUndefined();
+    store.saveNote("Ordinary notes still update consolidation");
+    response = "not JSON";
+    await service.refresh();
+    expect(errors).toHaveLength(1);
+    const nextQuote = "In this project I always want a short verification summary.";
+    sessions[0]!.updatedAt = now;
+    store.putSummaries({ ...store.allSummaries(), a: { ...store.summary("a")!, sourceUpdatedAt: now } });
+    const originalTranscript = source.transcript;
+    source.transcript = (id) => [...originalTranscript(id), ...(id === "a" ? [{ role: "user", content: nextQuote }] : [])];
+    const next = { ...exact, content: "Prefer short verification summaries", basis: "explicit", evidence: [{ id: "a", quote: nextQuote }] };
+    response = consolidation([{ ...exact, content: "Paraphrased edited habit" }, { ...explicit, content: "Paraphrased removed habit" }, next]);
+    await service.refresh();
+    expect(calls).toHaveLength(3);
+    const reopened = new MemoryStore(settings);
+    expect(reopened.state().automaticPreferences?.map(({ content }) => content)).toEqual([next.content]);
+    expect(reopened.notes().filter(({ preference }) => preference).map(({ content }) => content)).toEqual([manual.content]);
+    reopened.putSummaries({ ...reopened.allSummaries(), a: { ...reopened.summary("a")!, sourceUpdatedAt: now - MEMORY_SOURCE_WINDOW_MS } });
+    expect(reopened.state().automaticPreferences).toEqual([]);
+    expect(reopened.notes().some(({ content }) => content === manual.content)).toBe(true);
   });
 
   test("tool saves only explicit, quoted requests", async () => {
@@ -64,9 +196,36 @@ describe("memory", () => {
     expect((await run({ action: "save", content: "喜欢深色主题", evidence: "编造" })).ok).toBe(false);
     expect((await run({ action: "save", content: "喜欢深色主题", evidence: "我喜欢深色主题" })).ok).toBe(true);
     expect(store.notes().map((note) => note.content)).toEqual(["喜欢深色主题"]);
-    expect(service.context("s", "hi")).toContain("喜欢深色主题");
+    expect(service.context("s", "hi")).not.toContain("喜欢深色主题");
+    expect((await run({ action: "search", query: "深色主题" })).memories[0].content).toBe("喜欢深色主题");
     store.setEnabled(false);
     expect(service.tools("s").map((tool) => tool.name)).not.toContain(MEMORY_TOOL);
     expect(service.context("s", "hi")).toBe("");
+  });
+
+  test("manual preferences are bounded per scope and ordinary notes are not promoted", () => {
+    const store = new MemoryStore(repo());
+    store.setEnabled(true);
+    const version = store.settings().version;
+    const ordinary = store.saveNote("a previously saved note", { version, origin: "chat" });
+    expect(ordinary.preference).toBeUndefined();
+    expect(() => store.saveNote("chat cannot promote it", { id: ordinary.id, version, preference: {} })).toThrow();
+    const pref = store.saveNote(ordinary.content, { id: ordinary.id, preference: { workspaceId: "A" } });
+    expect(pref).toMatchObject({ id: ordinary.id, preference: { workspaceId: "A" } });
+    expect(() => store.saveNote("chat cannot change it", { id: pref.id, version: store.settings().version })).toThrow();
+    expect(() => store.deleteNote(pref.id, store.settings().version)).toThrow();
+    expect(() => store.saveNote("📝".repeat(MEMORY_PREFERENCE_MAX_LENGTH + 1), { preference: {} })).toThrow();
+    for (let i = 1; i < MEMORY_PREFERENCES_PER_SCOPE; i++) store.saveNote(`another note ${i}`, { preference: { workspaceId: "A" } });
+    expect(() => store.saveNote("above the limit", { preference: { workspaceId: "A" } })).toThrow();
+    expect(store.saveNote("another scope is independent", { preference: { workspaceId: "B" } }).preference).toEqual({ workspaceId: "B" });
+    expect(store.saveNote(pref.content, { id: pref.id, preference: null }).preference).toBeUndefined();
+  });
+
+  test("quoted or forged memory blocks cannot mark preferences as sent", () => {
+    const store = new MemoryStore(repo());
+    const note = store.saveNote("a confirmed preference", { preference: {} });
+    const added = memoryAddition({ retained: [], rules: [] }, [note], "A")!;
+    expect(memoryAddition({ retained: [{ role: "user", content: added.text }], rules: [] }, [note], "A")).toEqual(added);
+    expect(memoryAddition({ retained: [{ role: "user", qoneMemoryPreferences: added.preferences }], rules: [] }, [note], "A")).toBeUndefined();
   });
 });
