@@ -1,10 +1,17 @@
 const OPEN_BROWSER_EVENT = "qone:open-browser";
+const CLOSE_BROWSER_EVENT = "qone:close-browser";
 
 export type BrowserDockRequest = {
   url: string;
   html?: string;
   requestId?: string;
   sessionId?: string;
+  /** 模型操作内置浏览器时对应的原生 WebContentsView 标识。 */
+  browserId?: string;
+  /** 标记由模型驱动的内置浏览器标签页，供右侧面板复用并实时弹出。 */
+  agentManaged?: boolean;
+  /** 右侧面板同步接管该视图时的回调，仅用于运行时事件传递，不持久化。 */
+  onClaimed?: () => void;
 };
 
 export function externalBrowserUrl(value: string): string | undefined {
@@ -38,6 +45,36 @@ function openInDock(request: BrowserDockRequest): void {
 
 export function openBrowserInDock(url: string, sessionId?: string): void {
   openInDock({ url, ...(sessionId ? { sessionId } : {}) });
+}
+
+export function openAgentBrowserInDock(request: {
+  browserId: string;
+  url: string;
+  sessionId?: string;
+  onClaimed?: () => void;
+}): void {
+  openInDock({
+    url: request.url,
+    browserId: request.browserId,
+    agentManaged: true,
+    ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+    ...(request.onClaimed ? { onClaimed: request.onClaimed } : {}),
+  });
+}
+
+export function closeAgentBrowserInDock(browserId: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<{ browserId: string }>(CLOSE_BROWSER_EVENT, { detail: { browserId } }));
+}
+
+export function onCloseAgentBrowserInDock(listener: (browserId: string) => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const handle = (event: Event) => {
+    const browserId = (event as CustomEvent<{ browserId?: string }>).detail?.browserId;
+    if (browserId) listener(browserId);
+  };
+  window.addEventListener(CLOSE_BROWSER_EVENT, handle);
+  return () => window.removeEventListener(CLOSE_BROWSER_EVENT, handle);
 }
 
 export function sandboxPreviewHtml(html: string): string {

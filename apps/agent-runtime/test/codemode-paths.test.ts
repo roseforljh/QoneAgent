@@ -26,6 +26,7 @@ test("Codemode recommends direct calls and preserves Windows paths using raw tem
         const guidance = system.map((message) => message.sections?.tool_guidance).join("\n");
         expect(guidance).toContain("call the direct tool when available");
         expect(guidance).toContain("String.raw");
+        expect(guidance).toContain("Promise.allSettled");
         return fauxAssistantMessage(fauxToolCall("codemode", { code: script() }));
       },
       (context) => {

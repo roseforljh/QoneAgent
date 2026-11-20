@@ -146,7 +146,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "browser.open"; requestId: string; url: string }
   | { type: "browser.current-url"; requestId: string }
   | { type: "douyin.bridge.response"; requestId: string; ok: boolean; result?: string; message?: string; failure?: DouyinBridgeFailure }
-  | { type: "apps.opencli.response"; requestId: string; ok: boolean; endpoint?: string; message?: string }
+  | { type: "apps.opencli.response"; requestId: string; ok: boolean; endpoint?: string; message?: string; loginRequired?: "passkey" }
   | { type: "reach.channels"; requestId: string }
   | { type: "reach.podcast.configure"; requestId: string; accessToken: string; refreshToken: string }
   | { type: "subagent.list"; requestId: string }
@@ -289,8 +289,8 @@ export type RuntimeEvent =
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
   | { type: "browser.current-url"; requestId: string; url: string }
   | { type: "douyin.bridge.request"; requestId: string; url: string; operation?: "video" | "author" | "owner"; limit?: number }
-  | { type: "apps.opencli.request"; requestId: string; site: string; url: string }
-  | { type: "apps.opencli.release"; requestId: string }
+  | { type: "apps.opencli.request"; requestId: string; site: string; url: string; sessionId?: string; reuseRequestId?: string }
+  | { type: "apps.opencli.release"; requestId: string; close?: boolean }
   | { type: "douyin.bridge.cancel"; requestId: string }
   | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
   | { type: "subagent.list"; requestId?: string; config: SubagentConfigInfo }
@@ -948,7 +948,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "browser.open": z.object({ type: z.literal("browser.open"), ...request, url: secureUrl }),
   "browser.current-url": z.object({ type: z.literal("browser.current-url"), ...request }),
   "douyin.bridge.response": z.object({ type: z.literal("douyin.bridge.response"), ...request, ok: z.boolean(), result: z.string().max(1_048_576).optional(), message: z.string().max(2_000).optional(), failure: z.enum(["metadata_timeout", "page_unavailable", "work_unavailable"]).optional() }),
-  "apps.opencli.response": z.object({ type: z.literal("apps.opencli.response"), ...request, ok: z.boolean(), endpoint: z.string().max(256).optional(), message: z.string().max(2_000).optional() }),
+  "apps.opencli.response": z.object({ type: z.literal("apps.opencli.response"), ...request, ok: z.boolean(), endpoint: z.string().max(256).optional(), message: z.string().max(2_000).optional(), loginRequired: z.literal("passkey").optional() }),
   "reach.channels": z.object({ type: z.literal("reach.channels"), ...request }),
   "reach.podcast.configure": z.object({ type: z.literal("reach.podcast.configure"), ...request, accessToken: z.string().min(8).max(8192), refreshToken: z.string().min(8).max(8192) }),
   "subagent.list": z.object({ type: z.literal("subagent.list"), ...request }),

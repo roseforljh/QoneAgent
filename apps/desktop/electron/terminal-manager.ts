@@ -1,8 +1,9 @@
 import * as pty from "node-pty";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { app, type BrowserWindow } from "electron";
 import { killProcessTree } from "./process-tree";
+import { resolveWindowsShell } from "./system-path";
 import type { AdministratorTerminalHost, TerminalProcess } from "./administrator-terminal-host";
 
 interface TerminalSession {
@@ -30,21 +31,25 @@ export class TerminalManager {
     this.kill(terminalId);
 
     const env = { ...process.env, TERM: "xterm-256color" } as Record<string, string>;
-    if (["pwsh", "pwsh.exe"].includes(path.basename(shell).toLowerCase())) {
+    const resolvedShell = process.platform === "win32" ? resolveWindowsShell(shell, env) : shell;
+    if (["pwsh", "pwsh.exe"].includes(path.basename(resolvedShell).toLowerCase())) {
       // Prefer our source-patched module without changing the user's installation,
       // startup command, history, prediction or key bindings.
       const binaries = app.isPackaged ? path.join(process.resourcesPath, "binaries") : path.resolve(__dirname, "../binaries");
       const modules = path.join(binaries, "powershell");
-      const recipe = readFileSync(path.join(modules, "active.txt"), "utf8").trim();
-      env.PSModulePath = [path.join(modules, recipe), env.PSModulePath].filter(Boolean).join(path.delimiter);
+      const activeFile = path.join(modules, "active.txt");
+      if (existsSync(activeFile)) {
+        const recipe = readFileSync(activeFile, "utf8").trim();
+        env.PSModulePath = [path.join(modules, recipe), env.PSModulePath].filter(Boolean).join(path.delimiter);
+      }
     }
     // A pseudo console, never plain pipes: a shell on pipes runs
     // non-interactively, so it neither echoes input nor ends lines with CRLF.
     const options = { cols, rows, cwd: cwd || process.cwd(), env };
     const child = this.administratorHost
-      ? this.administratorHost.spawnPty(shell, shellArgs, options)
+      ? this.administratorHost.spawnPty(resolvedShell, shellArgs, options)
       // Bundled ConPTY keeps xterm reflow and the console-list helper in sync.
-      : this.spawnPty(shell, shellArgs, { ...options, name: "xterm-256color", useConptyDll: true });
+      : this.spawnPty(resolvedShell, shellArgs, { ...options, name: "xterm-256color", useConptyDll: true });
 
     const session: TerminalSession = { process: child, terminalId };
     this.sessions.set(terminalId, session);

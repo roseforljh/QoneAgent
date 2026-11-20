@@ -12,7 +12,7 @@ export const toolPromptContextExtension: ExtensionFactory = (pi) => {
     });
     const guidelines = [...new Set(options.selectedTools.flatMap((name) => options.toolGuidelines[name] ?? []))];
     if (options.selectedTools.includes("codemode")) {
-      guidelines.push(`For one command or file operation, call the direct tool when available. In Codemode: ${CODEMODE_LITERAL_GUIDANCE}`);
+      guidelines.push(`For one command or file operation, call the direct tool when available. In Codemode: ${CODEMODE_LITERAL_GUIDANCE} A failed tool call throws and ends the whole script, so wrap independent calls in try/catch or Promise.allSettled.`);
     }
     options.sections.tool_guidance = [
       ...snippets,

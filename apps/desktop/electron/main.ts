@@ -6,6 +6,7 @@ import {
   protocol,
   net,
   screen,
+  shell,
   type Rectangle,
 } from "electron";
 import path from "node:path";
@@ -22,6 +23,8 @@ import { localRangeResponse } from "./local-file-range";
 import { refreshWindowsPath } from "./system-path";
 import { administratorLaunchEnabled, tryAdministratorTerminal } from "./windows-administrator";
 import { DockCdp } from "./dock-cdp";
+import { installApplicationMenu, installContextMenu, nativeCopy } from "./native-menus";
+import { isAuthorizedAsset } from "./file-dialogs";
 
 const windows = process.platform === "win32";
 const integrity = windows ? app.getAppMetrics().find(({ pid }) => pid === process.pid)?.integrityLevel : undefined;
@@ -32,6 +35,8 @@ const restricted = windows && (elevated || !integrity || integrity === "unknown"
 const administratorSupported = windows && app.isPackaged && integrity === "medium";
 const administratorRequested = administratorSupported && administratorLaunchEnabled();
 const administratorLifetime = new AbortController();
+// Windows only shows toasts for the AUMID on the installer's Start Menu shortcut (electron-builder appId).
+if (windows) app.setAppUserModelId("com.qone.agent");
 
 // 注册 app 与 asset 特权协议
 protocol.registerSchemesAsPrivileged([
@@ -56,6 +61,10 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// 网页调用通行密钥（WebAuthn）时 Chromium 走 Windows 原生接口，弹出「Windows 安全中心 · 选择通行密钥」系统窗口，
+// AI 操作内置浏览器时会被它挡住。关掉原生接口后请求静默挂起、不再弹窗，需要登录由用户在右侧栏用账号密码等方式完成。
+app.commandLine.appendSwitch("disable-features", "WebAuthenticationUseNativeWinApi");
 
 // CDP 端口：0 让 Chromium 自己绑定空闲端口，并把实际端口写入 DevToolsActivePort。
 // 预先探测端口不可行：Node 的 listen 是异步的，探测结果总是落回固定端口，被占用时 DevTools 直接起不来。
@@ -144,6 +153,10 @@ function saveWindowState(): void {
   }
 }
 
+function openExternalLink(url: string): void {
+  if (/^(https?|mailto):/i.test(url)) void shell.openExternal(url);
+}
+
 function createMainWindow(): BrowserWindow {
   const savedState = loadWindowState();
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -151,6 +164,10 @@ function createMainWindow(): BrowserWindow {
 
   const width = Math.min(savedState.width || 1280, Math.round(screenWidth * 0.9));
   const height = Math.min(savedState.height || 860, Math.round(screenHeight * 0.9));
+  // Reopen where the user left it, unless that spot is no longer on any display.
+  const { x, y } = savedState;
+  const placed = typeof x === "number" && typeof y === "number" && screen.getAllDisplays().some(({ workArea: area }) =>
+    x < area.x + area.width && x + width > area.x && y < area.y + area.height && y + height > area.y);
 
   const iconCandidate = path.join(__dirname, "../resources/icon.png");
 
@@ -159,7 +176,7 @@ function createMainWindow(): BrowserWindow {
     height,
     minWidth: 800,
     minHeight: 600,
-    center: true,
+    ...(placed ? { x, y } : { center: true }),
     frame: false,
     autoHideMenuBar: true,
     title: "QoneAgent",
@@ -176,7 +193,8 @@ function createMainWindow(): BrowserWindow {
     alwaysOnTop: true,
   });
 
-  win.center();
+  if (!placed) win.center();
+  if (savedState.maximized) win.maximize();
   win.show();
   win.focus();
 
@@ -200,12 +218,25 @@ function createMainWindow(): BrowserWindow {
     saveWindowState();
   });
 
+  const devUrl = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:1480";
   if (restricted || administratorRequested) {
     win.webContents.on("will-frame-navigate", (event) => event.preventDefault());
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  } else {
+    // The preload hands the full desktop bridge to whatever page this window shows:
+    // only Qone's own UI may load here, links go to the system browser.
+    const appUrl = isDev ? `${new URL(devUrl).origin}/` : "app://localhost/";
+    win.webContents.on("will-navigate", (event, url) => {
+      if (url.startsWith(appUrl)) return;
+      event.preventDefault();
+      openExternalLink(url);
+    });
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      openExternalLink(url);
+      return { action: "deny" };
+    });
   }
-
-  const devUrl = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:1480";
+  installContextMenu(win.webContents);
   if (isDev) {
     win.loadURL(devUrl).catch(() => {
       setTimeout(() => win.loadURL(devUrl).catch(() => {}), 1500);
@@ -229,9 +260,20 @@ function createTray(): void {
   const iconPath = path.join(__dirname, "../resources/icon.png");
   if (!fs.existsSync(iconPath)) return;
   tray = new Tray(iconPath);
-  const contextMenu = Menu.buildFromTemplate([
+  updateTrayMenu();
+  tray.setToolTip("QoneAgent");
+  tray.on("double-click", () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
+function updateTrayMenu(): void {
+  tray?.setContextMenu(Menu.buildFromTemplate([
     {
-      label: "Show Qone",
+      label: nativeCopy.show,
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -240,20 +282,12 @@ function createTray(): void {
       },
     },
     {
-      label: "Quit",
+      label: nativeCopy.quit,
       click: () => {
         app.quit();
       },
     },
-  ]);
-  tray.setToolTip("QoneAgent");
-  tray.setContextMenu(contextMenu);
-  tray.on("double-click", () => {
-    if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
+  ]));
 }
 
 function startDesktop(): void {
@@ -276,6 +310,7 @@ function startDesktop(): void {
 
   app.whenReady().then(() => {
     ensureGlobalInstructions();
+    installApplicationMenu();
 
     // 处理 app:// 生产页面协议
     protocol.handle("app", (request) => {
@@ -307,14 +342,16 @@ function startDesktop(): void {
       if (process.platform === "win32" && filePath.startsWith("/")) {
         filePath = filePath.slice(1);
       }
+      // Only files the renderer authorized for preview, as Tauri's asset scope did; dock web pages share this session.
+      if (!isAuthorizedAsset(filePath)) return new Response("Forbidden", { status: 403 });
       const range = request.headers.get("Range");
       if (range) return localRangeResponse(filePath, range, request.method);
       return net.fetch(pathToFileURL(filePath).toString());
     });
 
     registerIpcHandlers(() => mainWindow, sidecar, terminal, browserDock, updater, {
-      restricted: restricted || administratorRequested, administratorReady, administratorSupported,
-    });
+      restricted: restricted || administratorRequested, systemPathReady, administratorReady, administratorSupported,
+    }, updateTrayMenu);
 
     void sidecar.start(Promise.all([systemPathReady, administratorReady]).then(() => {}));
     mainWindow = createMainWindow();

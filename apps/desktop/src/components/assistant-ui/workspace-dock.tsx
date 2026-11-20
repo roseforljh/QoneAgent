@@ -32,7 +32,8 @@ import { DockBrowserView, DockMcpView, DockSkillsView } from "./dock-extra-views
 import { FadeScroll, mono } from "./elements/surfaces";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
-import { onOpenBrowserInDock, type BrowserDockRequest } from "../../lib/browser-dock";
+import { onCloseAgentBrowserInDock, onOpenBrowserInDock, type BrowserDockRequest } from "../../lib/browser-dock";
+import { notifyManagedBrowserClosed } from "../../store/app-bridge";
 import { ServerOperationsPanel } from "./server-operations-panel";
 import { CodexServerIcon } from "./execution-icons";
 import { SubagentPanel } from "./subagent-view";
@@ -210,6 +211,25 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
   useEffect(() => onOpenBrowserInDock((target) => {
     if (target.sessionId ? target.sessionId !== sessionId : !scopeActive) return;
     setLauncherOpen(false);
+    if (target.agentManaged) {
+      const { onClaimed, ...browserTarget } = target;
+      onClaimed?.();
+      // 模型操作内置浏览器时复用同一标签页并立即弹出右侧面板，避免重复堆积标签。
+      const existing = openTabsRef.current.find((item) => item.view === "browser" && (
+        (browserTarget.browserId && item.browserTarget?.browserId === browserTarget.browserId) || item.browserTarget?.agentManaged
+      ));
+      if (existing) {
+        setOpenTabs((current) => current.map((item) => item.id === existing.id ? { ...item, browserTarget } : item));
+        setActiveTabId(existing.id);
+        setCollapsed(false);
+        return;
+      }
+      const tab: DockTab = { id: rid(), view: "browser", browserTarget };
+      setOpenTabs((current) => [...current, tab]);
+      setActiveTabId(tab.id);
+      setCollapsed(false);
+      return;
+    }
     if (target.requestId && activeTabRef.current?.view === "browser" && activeTabRef.current.browserTarget?.requestId === target.requestId) {
       setCollapsed(true);
       return;
@@ -363,10 +383,14 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     const closingIndex = tabs.findIndex((tab) => tab.id === closingId);
     if (closingIndex < 0) return true;
     const remaining = tabs.filter((tab) => tab.id !== closingId);
+    const closingTab = tabs[closingIndex];
+    if (closingTab?.view === "browser" && closingTab.browserTarget?.browserId) {
+      notifyManagedBrowserClosed(closingTab.browserTarget.browserId);
+    }
     setLauncherOpen(false);
     openTabsRef.current = remaining;
     setOpenTabs((current) => current.filter((tab) => tab.id !== closingId));
-    if (tabs[closingIndex]?.view === "terminal") closeDockTerminalResource(closingId);
+    if (closingTab?.view === "terminal") closeDockTerminalResource(closingId);
     terminalApiRefs.current.delete(closingId);
     setTerminalStatus((current) => {
       const next = { ...current };
@@ -376,6 +400,13 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     setActiveTabId((selected) => selected === closingId ? remaining[Math.max(0, closingIndex - 1)]?.id : selected);
     return true;
   };
+
+  const closeTabRef = useRef(closeTab);
+  closeTabRef.current = closeTab;
+  useEffect(() => onCloseAgentBrowserInDock((browserId) => {
+    const target = openTabsRef.current.find((tab) => tab.view === "browser" && tab.browserTarget?.browserId === browserId);
+    if (target) void closeTabRef.current(target.id);
+  }), []);
 
   const closingBatch = useRef(false);
   const closeTabs = async (anchorId: string, mode: "other" | "right") => {
@@ -607,7 +638,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
                 <div key={tab.id} className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", active ? "flex flex-col" : "hidden")}>
                   {needsWorkspace && !tabWorkspaceId ? <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.noWorkspace")}</p> : null}
                   {tab.view === "terminal" && (tab.serverId || tabWorkspaceId) && <TerminalView tabId={tab.id} workspaceId={tabWorkspaceId} serverId={tab.serverId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
-                  {tab.view === "browser" && <DockBrowserView browserId={tab.id} active={active && !launcherOpen && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} onClose={() => void closeTab(tab.id)} />}
+                  {tab.view === "browser" && <DockBrowserView browserId={tab.browserTarget?.browserId ?? tab.id} agentManaged={Boolean(tab.browserTarget?.agentManaged)} active={active && !launcherOpen && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} onClose={() => void closeTab(tab.id)} />}
                   {tab.view === "files" && tabWorkspaceId && <FilesView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} fileTarget={tab.fileTarget} active={active} />}
                   {tab.view === "file" && tab.fileTarget && (tab.fileTarget.attachment
                     ? <InlineFileReader target={tab.fileTarget} active={active} refreshNonce={tab.refreshNonce ?? 0} />

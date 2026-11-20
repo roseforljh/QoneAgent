@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openDb, closeDb } from "@qone/database";
 import { BrowserSyncService, assertOpenCliRoute, buildOpenCliCommandArgs, compactOpenCliCatalog, loginRequiredResult, normalizeBrowserWaitValue, OpenCliError, parseOpenCliCatalog, runOpenCli } from "../src/browser-sync";
+import { AppOpenCliBridge, withBrowserSessionId } from "../src/app-opencli-bridge";
 
 describe("OpenCLI gateway", () => {
   test("site adapters reject Douyin while built-in browser navigation can open it", async () => {
@@ -34,6 +35,8 @@ describe("OpenCLI gateway", () => {
       expect(service.tools().find((tool) => tool.name === "qone_browser_open")?.description).toContain("when direct fetch is unavailable or insufficient");
       expect(screenshot?.description).toContain("full page");
       expect(service.tools().find((tool) => tool.name === "qone_browser_extract")?.description).toContain("readable Markdown");
+      // get text 在 OpenCLI 中必须带元素 target，不能作为整页属性暴露
+      expect(JSON.stringify(service.tools().find((tool) => tool.name === "qone_browser_get")?.parameters)).not.toContain("\"text\"");
       expect(toolRefreshes).toBe(1);
       expect(service.status().targetConnected).toBe(false);
     } finally {
@@ -139,5 +142,54 @@ describe("OpenCLI gateway", () => {
       expect(run.description).toContain("raw adapter arguments");
       expect(service.status().targetConnected).toBe(false);
     } finally { closeDb(db); }
+  });
+
+  test("forwards sessionId and reuseRequestId to desktop bridge and closes explicitly on qone_browser_close", async () => {
+    const events: Array<{ type: string; requestId: string; sessionId?: string; reuseRequestId?: string; close?: boolean }> = [];
+    const bridge = new AppOpenCliBridge((event) => {
+      events.push(event);
+      if (event.type === "apps.opencli.request") {
+        queueMicrotask(() => bridge.handleResponse({
+          type: "apps.opencli.response",
+          requestId: event.requestId,
+          ok: true,
+          endpoint: "ws://127.0.0.1:9222/page",
+        }));
+      }
+    });
+    const service = new BrowserSyncService(() => {}, async () => {}, bridge);
+    const closeTool = service.tools().find((item) => item.name === "qone_browser_close")!;
+
+    await withBrowserSessionId("session-live-1", async () => {
+      const first = await bridge.prepare("browser", "https://example.com/");
+      expect(first).toBeDefined();
+      const second = await bridge.prepare("browser", "https://example.com/", undefined, first!.requestId);
+      expect(second).toBeDefined();
+      (service as unknown as { embeddedBrowser?: { requestId: string; endpoint: string; sessionId?: string } }).embeddedBrowser = {
+        requestId: first!.requestId,
+        endpoint: first!.endpoint,
+        sessionId: "session-live-1",
+      };
+      await closeTool.execute("call-close", {}, undefined, undefined, {} as never);
+    });
+
+    expect(events[0]).toMatchObject({ type: "apps.opencli.request", sessionId: "session-live-1" });
+    expect(events[0]?.reuseRequestId).toBeUndefined();
+    expect(events[1]).toMatchObject({ type: "apps.opencli.request", sessionId: "session-live-1", reuseRequestId: events[0]!.requestId });
+    expect(events[2]).toEqual({ type: "apps.opencli.release", requestId: events[0]!.requestId, close: true });
+  });
+
+  test("a passkey sign-in the page started stops the next browser step with login_required instead of waiting", async () => {
+    const bridge = new AppOpenCliBridge((event) => {
+      if (event.type === "apps.opencli.request") queueMicrotask(() => bridge.handleResponse({
+        type: "apps.opencli.response", requestId: event.requestId, ok: true, endpoint: "ws://127.0.0.1:9222/page", loginRequired: "passkey",
+      }));
+    });
+    const service = new BrowserSyncService(() => {}, async () => {}, bridge);
+    const state = service.tools().find((item) => item.name === "qone_browser_state")!;
+    const output = await state.execute("call-state", {}, undefined, undefined, {} as never) as { content: [{ text: string }] };
+    expect(JSON.parse(output.content[0].text)).toMatchObject({ status: "login_required", detail: expect.stringContaining("passkey") });
+    // 句柄仍归本轮，用户登录后继续复用同一个页面。
+    expect((service as unknown as { embeddedBrowser?: unknown }).embeddedBrowser).toBeDefined();
   });
 });

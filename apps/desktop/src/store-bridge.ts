@@ -26,7 +26,7 @@ import { handleSideConversationEvent, retrySideConversationTransfers } from "./l
 import { applySubagentPatch, applySubagentStreaming, mergeSubagentSnapshots, updateSubagent } from "./lib/subagent-state";
 import type { AgentState } from "./store";
 import { runtimeEvents } from "./lib/runtime-event-payload";
-import { douyinRequests, appOpenCliRequests, serveDouyinBridgeRequest, serveAppOpenCliRequest } from "./store/app-bridge";
+import { douyinRequests, releaseAllAppOpenCliRequests, releaseAppOpenCliRequest, serveDouyinBridgeRequest, serveAppOpenCliRequest } from "./store/app-bridge";
 import { restoreProviderProfilesFromModelConfigs } from "./lib/model-picker-data";
 
 function subagentChange(state: AgentState, subagents: AgentState["subagents"]): Partial<AgentState> {
@@ -58,8 +58,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     for (const raw of runtimeEvents(payload)) {
       if (raw.type === "runtime.exited") {
       for (const controller of douyinRequests.values()) controller.abort();
-      for (const browserId of appOpenCliRequests.values()) void invoke("browser_close", { browserId }).catch(() => undefined);
-      appOpenCliRequests.clear();
+      releaseAllAppOpenCliRequests();
       lastRunSequences.clear();
       for (const sessionId of deltas.keys()) clearDelta(sessionId);
       setMetadataLookupSupported(false);
@@ -122,9 +121,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       continue;
     }
     if (raw.type === "apps.opencli.release") {
-      const browserId = appOpenCliRequests.get(raw.requestId);
-      appOpenCliRequests.delete(raw.requestId);
-      if (browserId) void invoke("browser_close", { browserId }).catch(() => undefined);
+      releaseAppOpenCliRequest(raw.requestId, Boolean(raw.close));
       continue;
     }
     if (raw.type === "apps.opencli.request") {

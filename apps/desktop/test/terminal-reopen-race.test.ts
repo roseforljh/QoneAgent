@@ -86,14 +86,16 @@ test("kill() drops the session so a late close cannot emit a second exit", () =>
 
 test("PTY receives shell dimensions, raw input and resize, and preserves VT output", async () => {
   const { preparePSReadLine } = await import("../scripts/prepare-psreadline");
+  const { resolveWindowsShell } = await import("../electron/system-path");
   await preparePSReadLine();
   const win = windowStub();
   const shell = fakeShell();
   const spawn = mock(() => shell.child);
   const manager = new TerminalManager(() => win as never, spawn as never);
   try {
+    const expectedShell = process.platform === "win32" ? resolveWindowsShell("pwsh.exe") : "pwsh.exe";
     manager.spawn("pty", "pwsh.exe", "C:/project", 100, 30, ["-NoProfile"]);
-    expect(spawn).toHaveBeenCalledWith("pwsh.exe", ["-NoProfile"], expect.objectContaining({
+    expect(spawn).toHaveBeenCalledWith(expectedShell, ["-NoProfile"], expect.objectContaining({
       name: "xterm-256color", cwd: "C:/project", cols: 100, rows: 30,
       env: expect.objectContaining({ TERM: "xterm-256color" }),
     }));

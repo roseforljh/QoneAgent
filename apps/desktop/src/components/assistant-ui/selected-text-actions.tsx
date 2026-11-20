@@ -45,6 +45,10 @@ export function SelectedTextActions({ scopeRef }: { scopeRef: RefObject<HTMLDivE
           clear();
           void openSelectedTextSideChat(session.id, quote).catch((error) => useStore.setState({ lastError: localizeError(error) }));
         }}>{t("chat.selectionSideChat")}</button>
+        <button type="button" onClick={() => {
+          clear();
+          void navigator.clipboard.writeText(quote.text).catch((error) => useStore.setState({ lastError: localizeError(error) }));
+        }}>{t("chat.copyMessage")}</button>
       </Popover.Content>
     </Popover.Portal>
   </Popover.Root>;

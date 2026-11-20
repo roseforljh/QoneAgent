@@ -7,6 +7,7 @@ import { googleMediaContent } from "./google-media";
 import { imageContent, materializeModelInputs, promptWithAttachments } from "./pi-attachments";
 import { parseAutomaticMediaDelegation } from "./pi-message-utils";
 import { withMediaPhaseReporter } from "./media-phase";
+import { withBrowserSessionId } from "./app-opencli-bridge";
 import type { PiAdapter } from "./pi-adapter";
 
 const log = createLogger("pi-adapter");
@@ -65,13 +66,14 @@ export async function promptPiRun(input: {
   const webContext = input.webContext();
   const memoryContext = input.memoryContext();
   signal.throwIfAborted();
-  await withMediaPhaseReporter(phase => { if (isGoogle) input.phase(phase); }, () => session.prompt([
-    webContext, capabilities ? mediaCapabilitiesContext(capabilities) : "", routingNotice,
-    delegation ? "" : input.videoNotice,
-    promptWithAttachments(message, modelAttachments, Boolean(capabilities?.input.includes("video") || capabilities?.input.includes("audio")), capabilities?.input),
-    input.toolCatalog, memoryContext,
-  ].filter(Boolean).join("\n"), {
-    images: isGoogle ? googleMediaContent(modelInputs, capabilities?.input)
-      : [...imageContent(modelInputs, capabilities?.input), ...(isCompletions ? googleMediaContent(modelInputs?.filter(item => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
-  }));
+  await withBrowserSessionId(opts.eventSessionId ?? sessionId, () =>
+    withMediaPhaseReporter(phase => { if (isGoogle) input.phase(phase); }, () => session.prompt([
+      webContext, capabilities ? mediaCapabilitiesContext(capabilities) : "", routingNotice,
+      delegation ? "" : input.videoNotice,
+      promptWithAttachments(message, modelAttachments, Boolean(capabilities?.input.includes("video") || capabilities?.input.includes("audio")), capabilities?.input),
+      input.toolCatalog, memoryContext,
+    ].filter(Boolean).join("\n"), {
+      images: isGoogle ? googleMediaContent(modelInputs, capabilities?.input)
+        : [...imageContent(modelInputs, capabilities?.input), ...(isCompletions ? googleMediaContent(modelInputs?.filter(item => item.mimeType.startsWith("audio/")), capabilities?.input) : [])],
+    })));
 }

@@ -30,9 +30,8 @@ export function getLanguageSetting(): LanguageSetting {
 export function applyLocale() {
   document.documentElement.lang = resolveLocale(getLanguageSetting());
   if ((window as Window & { electronBridge?: unknown }).electronBridge) {
-    void invoke("set_native_copy", { copy: {
-      show: translateCurrent("native.show"), quit: translateCurrent("native.quit"), completed: translateCurrent("native.completed"),
-    } }).catch((error) => console.warn("Failed to synchronize native language", error));
+    const keys = ["show", "quit", "completed", "undo", "redo", "cut", "copy", "paste", "selectAll", "copyLink", "copyImage", "saveImage"] as const;
+    void invoke("set_native_copy", { copy: Object.fromEntries(keys.map((key) => [key, translateCurrent(`native.${key}`)])) }).catch((error) => console.warn("Failed to synchronize native language", error));
   }
 }
 

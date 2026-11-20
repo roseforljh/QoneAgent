@@ -6,6 +6,7 @@ import type { IPty } from "node-pty";
 import type { TerminalHostRequest, TerminalHostResponse } from "@qone/protocol/terminal-host";
 import { createLocalPowerShellOperations } from "../../agent-runtime/src/local-powershell-operations";
 import { killProcessTree } from "./process-tree";
+import { resolveWindowsShell } from "./system-path";
 import { sendTerminalMessage, terminalMessages, terminalPipe, terminalProof } from "./terminal-pipe";
 
 // This entry runs in Electron's Node mode. It never initializes the UI, Agent or browser.
@@ -54,7 +55,10 @@ function handle(message: TerminalHostRequest) {
     case "pty.spawn": {
       if (terminals.has(id)) return;
       try {
-        const child = pty.spawn(message.shell, message.args, { ...message.options, name: "xterm-256color", useConptyDll: true });
+        const resolvedShell = process.platform === "win32"
+          ? resolveWindowsShell(message.shell, message.options.env ?? process.env)
+          : message.shell;
+        const child = pty.spawn(resolvedShell, message.args, { ...message.options, name: "xterm-256color", useConptyDll: true });
         terminals.set(id, child);
         child.onData(data => { if (terminals.has(id)) send({ type: "pty.data", id, data }); });
         child.onExit(({ exitCode, signal }) => terminalExit(id, exitCode, signal));
