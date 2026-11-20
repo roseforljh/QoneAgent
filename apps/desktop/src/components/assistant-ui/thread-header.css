@@ -29,7 +29,55 @@
   background-image: linear-gradient(to bottom, var(--background), transparent);
 }
 
-.q-chat-error-banner { top: calc(var(--q-thread-header-height) + 8px); }
+.q-chat-shell { container: chat-shell / inline-size; }
+
+.q-background-tasks {
+  --task-gap: 0.75rem;
+  display: grid;
+  grid-template-rows: 0fr;
+  flex: none;
+  align-self: flex-end;
+  width: min(8rem, calc(100% - 2 * var(--task-gap)));
+  margin-inline-end: var(--task-gap);
+  opacity: 0;
+  translate: 0 -0.25rem;
+  visibility: hidden;
+  transition: grid-template-rows 180ms ease-out, opacity 180ms ease-out,
+    translate 180ms ease-out, visibility 0s 180ms;
+}
+
+.q-background-tasks[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  translate: none;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+@starting-style {
+  .q-background-tasks[data-open] {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    translate: 0 -0.25rem;
+  }
+}
+
+/* At 64rem the centered 48rem thread leaves an 8rem gutter on each side.
+   Only use that existing space; below it the card opens above the thread. */
+@container chat-shell (width >= 64rem) {
+  .q-background-tasks {
+    position: absolute;
+    z-index: 21;
+    inset-block-start: 0;
+    inset-inline-end: 0;
+    width: min(8rem, calc((100% - var(--q-thread-content-width)) / 2 - 2 * var(--task-gap)));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .q-background-tasks { transition: none; }
+}
+
 .q-thread-header-title {
   overflow: hidden;
   min-width: 0;

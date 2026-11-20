@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { ArtifactRepo, ConfigFile, McpServerRepo, closeDb, openDb } from "@qone/database";
+import { ArtifactRepo, ConfigFile, McpServerRepo, MessageRepo, closeDb, openDb } from "@qone/database";
 import { qoneProjectDir, qoneSessionDir } from "@qone/shared";
 import type { RuntimeCommand, RuntimeEvent } from "@qone/protocol";
 
-test("the real sidecar creates, restores and deletes project/session resources without moving source files", async () => {
+test("the real sidecar deletes an unloaded old conversation and its resources after restart without touching source files", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "qone-layout-test-"));
   const data = path.join(root, "data");
   const source = path.join(root, "source");
@@ -21,6 +21,7 @@ test("the real sidecar creates, restores and deletes project/session resources w
   let reader = child.stdout.getReader();
   let buffer = "";
   const decoder = new TextDecoder();
+  const deletedSessions: string[] = [];
   const request = async (command: RuntimeCommand, expected: RuntimeEvent["type"]): Promise<RuntimeEvent> => {
     child.stdin.write(`${JSON.stringify(command)}\n`);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -34,7 +35,8 @@ test("the real sidecar creates, restores and deletes project/session resources w
               const output = JSON.parse(line) as RuntimeEvent | RuntimeEvent[];
               for (const event of Array.isArray(output) ? output : [output]) {
                 if (event.type === "error") throw new Error(event.message);
-                if (event.type === expected) return event;
+                if (event.type === "session.deleted") deletedSessions.push(event.sessionId);
+                if (event.type === expected && (event.type !== "pong" || event.requestId === command.requestId)) return event;
               }
               continue;
             }
@@ -78,12 +80,16 @@ test("the real sidecar creates, restores and deletes project/session resources w
     expect(existsSync(path.join(data, "config", "settings.db"))).toBe(false);
     expect(existsSync(path.join(data, "mcp"))).toBe(false);
     expect(existsSync(path.join(data, "agent.db"))).toBe(false);
+    const side = await request({ type: "session.side-chat.create", requestId: "side", sessionId: session.id }, "session.side-chat.created");
+    if (side.type !== "session.side-chat.created") throw new Error("Missing side conversation");
     await stop();
     const db = openDb(dbPath);
     try {
       const media = path.join(directory, "artifacts", "saved.mp3");
       writeFileSync(media, new Uint8Array([1]));
       new ArtifactRepo(db).add({ sessionId: session.id, type: "audio", name: "saved.mp3", path: media });
+      new MessageRepo(db).add(session.id, "user", "Unloaded history");
+      db.$client.prepare("UPDATE sessions SET updated_at = 1, last_user_message_at = 1 WHERE id = ?").run(session.id);
       new McpServerRepo(new ConfigFile(path.join(data, "settings.json"))).upsert({ id: "fixture", name: "Fixture", command: "unused-test-tool", disabled: true });
     } finally { closeDb(db); }
     child = start(); reader = child.stdout.getReader(); buffer = "";
@@ -93,11 +99,16 @@ test("the real sidecar creates, restores and deletes project/session resources w
     await request({ type: "skills.builtin.set-enabled", requestId: "enable", skillId: "ponytail", enabled: true }, "skills.builtin.changed");
     const restored = await request({ type: "session.list", requestId: "restore" }, "session.list");
     if (restored.type !== "session.list") throw new Error("Missing restored sessions");
-    expect(restored.sessions).toContainEqual(expect.objectContaining({ id: session.id, title: "Renamed" }));
+    expect(restored.sessions).toContainEqual(expect.objectContaining({ id: session.id, title: "Renamed", updatedAt: 1 }));
     const servers = await request({ type: "mcp.list", requestId: "servers" }, "mcp.list");
     if (servers.type !== "mcp.list") throw new Error("Missing MCP servers");
     expect(servers.servers).toContainEqual(expect.objectContaining({ id: "fixture", connected: false }));
+    // Delete directly after listing, without requesting the old transcript or opening a Pi session.
     await request({ type: "session.delete", requestId: "delete", sessionId: session.id }, "pong");
+    expect(deletedSessions).toEqual([side.session.id, session.id]);
+    const remaining = await request({ type: "session.list", requestId: "remaining" }, "session.list");
+    expect(remaining).toMatchObject({ sessions: [], sideChats: [] });
+    expect(existsSync(qoneSessionDir(project.id, side.session.id, projects))).toBe(false);
     expect(existsSync(directory)).toBe(false);
     expect(readFileSync(path.join(source, "source.txt"), "utf8")).toBe("preserve source");
   } finally {

@@ -2,6 +2,7 @@ import type { SubagentNotificationInfo } from "@qone/protocol";
 import type { RunRepo, SubagentNotificationRepo, SubagentRunRepo } from "@qone/database";
 import type { PiAdapter } from "./pi-adapter.js";
 import { extractTextContent } from "./pi-message-utils.js";
+import { BACKGROUND_SHELL_MARKER } from "./background-shell.js";
 
 /** Reserved prefixes distinguish internal updates from user steering messages. */
 export const SUBAGENT_NOTIFICATION_MARKER = "[QONE_SUBAGENT_NOTIFICATION]";
@@ -51,7 +52,7 @@ export function buildSubagentNotificationPrompt(notifications: readonly Subagent
 export function isSubagentUpdatePrompt(value: unknown): boolean {
   const text = extractTextContent(value);
   return text.startsWith(SUBAGENT_NOTIFICATION_MARKER) || text.startsWith(SUBAGENT_LEDGER_MARKER)
-    || text.startsWith(SUBAGENT_AGENT_MESSAGE_MARKER);
+    || text.startsWith(SUBAGENT_AGENT_MESSAGE_MARKER) || text.startsWith(BACKGROUND_SHELL_MARKER);
 }
 
 /** The marker-wrapped text of an internal prompt, used as its delivery key. */

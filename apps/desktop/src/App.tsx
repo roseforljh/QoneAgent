@@ -32,6 +32,7 @@ import { QoneAttachmentAdapter } from "./lib/file-attachment-adapter";
 import { ThreadListItems, ThreadListNew, ThreadListRoot } from "./components/assistant-ui/thread-list";
 import { ScopedWorkspaceDocks } from "./components/assistant-ui/scoped-workspace-docks";
 import { ThreadHeader } from "./components/assistant-ui/thread-header";
+import { BackgroundTasks } from "./components/assistant-ui/background-tasks";
 import { ProjectSection } from "./components/assistant-ui/project-section";
 import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
@@ -100,7 +101,7 @@ function useQoneRuntime(pendingRun: { current: PendingRun | null }) {
   const steerAgent = useStore((s) => s.steerAgent);
   const newSession = useStore((s) => s.newSession);
   const selectSession = useStore((s) => s.selectSession);
-  const send = useStore((s) => s.send);
+  const deleteSession = useStore((s) => s.deleteSession);
   const sidebarPreferences = useSidebarPreferences();
   const queueReady = Boolean(currentSessionId && connected &&
     (getQoneMessageQueue(currentSessionId) || queueLoadedSessionId === currentSessionId));
@@ -184,10 +185,9 @@ function useQoneRuntime(pendingRun: { current: PendingRun | null }) {
     onDelete: async (threadId) => {
       const title = sessions.find((session) => session.id === threadId)?.title ?? t("sidebar.newChat");
       if (!await confirmDestructiveAction(t("session.deleteConfirm", { title }))) return;
-      send({ type: "session.delete", requestId: crypto.randomUUID(), sessionId: threadId });
-      send({ type: "session.list", requestId: crypto.randomUUID() });
+      deleteSession(threadId);
     },
-  }), [threads, currentSessionId, newSession, selectSession, send, sessions, t]);
+  }), [threads, currentSessionId, newSession, selectSession, deleteSession, sessions, t]);
 
   const runtime = useExternalStoreRuntime({
     messages: convertedMessages,
@@ -461,14 +461,15 @@ const ChatRuntimeHost = memo(function ChatRuntimeHost({ dockView, lastError, dis
   const { t } = useLocale();
   return <>
     <div className="q-chat-shell relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <ThreadHeader dockView={dockView} />
-      {lastError && <div className="error-banner q-chat-error-banner absolute inset-x-4 z-50" role="alert">
-        <span>{lastError}</span>
-        <button className="icon-button" onClick={dismissError} aria-label={t("common.dismissError")}><X size={15} /></button>
-      </div>}
-      <div className="q-chat-content relative min-h-0 flex-1 overflow-hidden">
-        <Suspense fallback={<ThreadLoadingFallback />}><Thread><PendingApprovals /></Thread></Suspense>
-      </div>
+      <BackgroundTasks renderHeader={(taskToggle) => <ThreadHeader dockView={dockView} taskToggle={taskToggle} />}>
+        <div className="q-chat-content relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          {lastError && <div className="error-banner absolute inset-x-4 top-2 z-50" role="alert">
+            <span>{lastError}</span>
+            <button className="icon-button" onClick={dismissError} aria-label={t("common.dismissError")}><X size={15} /></button>
+          </div>}
+          <Suspense fallback={<ThreadLoadingFallback />}><Thread><PendingApprovals /></Thread></Suspense>
+        </div>
+      </BackgroundTasks>
     </div>
   </>;
 });

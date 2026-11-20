@@ -17,6 +17,21 @@ export class SideConversationService {
     return new SettingsRepo(this.db).get<SessionInfo["sideChat"]>(`side-chat:${sessionId}`) ?? undefined;
   }
 
+  childrenOf(parentSessionId: string): string[] {
+    const rows = this.db.$client.prepare(`
+      SELECT s.id FROM settings st
+      JOIN sessions s ON s.id = substr(st.key, length('side-chat:') + 1)
+      WHERE st.key GLOB 'side-chat:*'
+        AND CASE WHEN json_valid(st.value) THEN json_extract(st.value, '$.parentSessionId') END = ?
+    `).all(parentSessionId) as { id: string }[];
+    return rows.map(({ id }) => id);
+  }
+
+  /** The chat this side conversation was opened from; its requests are that chat's usage. */
+  parent(sessionId: string): string | undefined {
+    return this.metadata(sessionId)?.parentSessionId;
+  }
+
   create({ sessionId: parentSessionId, queueItemId, requestId, title: requestedTitle }: Extract<RuntimeCommand, { type: "session.side-chat.create" }>): SessionInfo {
     return this.db.$client.transaction(() => {
       const sessions = new SessionRepo(this.db);

@@ -10,7 +10,8 @@ import { DEFAULT_RUN_PERMISSION_MODE, pruneRunOptionServers, saveNewSessionRunOp
 import { getQoneMessageQueue, prunePausedQueues } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
 import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
-import { dispatchMemoryError, dispatchMemoryState } from "./lib/memory-state";
+import { dispatchMemoryError, dispatchMemoryState, resetMemoryRequests } from "./lib/memory-state";
+import { dispatchExecutionStatsError, dispatchExecutionStatsState, resetExecutionStatsRequests } from "./lib/execution-stats-state";
 import { dispatchServerError, dispatchServerEvent } from "./lib/server-state";
 import { dispatchServerTerminal, dispatchServerTerminalError } from "./lib/server-terminal";
 import {
@@ -23,14 +24,14 @@ import {
 } from "./lib/workspace-view-state";
 import type { ToolCall } from "./store";
 import { handleSideConversationEvent, retrySideConversationTransfers } from "./lib/side-conversation";
-import { applySubagentPatch, applySubagentStreaming, mergeSubagentSnapshots, updateSubagent } from "./lib/subagent-state";
+import { applySubagentPatch, applySubagentStreaming, mergeSubagentSnapshots, subagentActivity, updateSubagent } from "./lib/subagent-state";
 import type { AgentState } from "./store";
 import { runtimeEvents } from "./lib/runtime-event-payload";
-import { douyinRequests, appOpenCliRequests, serveDouyinBridgeRequest, serveAppOpenCliRequest } from "./store/app-bridge";
+import { douyinRequests, releaseAllAppOpenCliRequests, releaseAppOpenCliRequest, serveDouyinBridgeRequest, serveAppOpenCliRequest } from "./store/app-bridge";
 import { restoreProviderProfilesFromModelConfigs } from "./lib/model-picker-data";
 
-function subagentChange(state: AgentState, subagents: AgentState["subagents"]): Partial<AgentState> {
-  return subagents === state.subagents ? state : { subagents };
+function subagentChange(state: AgentState, subagents: AgentState["subagents"], trackActivity: boolean): Partial<AgentState> {
+  return subagents === state.subagents ? state : { subagents, ...(trackActivity ? subagentActivity(state, subagents) : {}) };
 }
 
 const rid = () => crypto.randomUUID();
@@ -58,8 +59,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     for (const raw of runtimeEvents(payload)) {
       if (raw.type === "runtime.exited") {
       for (const controller of douyinRequests.values()) controller.abort();
-      for (const browserId of appOpenCliRequests.values()) void invoke("browser_close", { browserId }).catch(() => undefined);
-      appOpenCliRequests.clear();
+      releaseAllAppOpenCliRequests();
       lastRunSequences.clear();
       for (const sessionId of deltas.keys()) clearDelta(sessionId);
       setMetadataLookupSupported(false);
@@ -78,6 +78,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       disconnectClaudeSync();
       disconnectFilePreviews();
       for (const request of metadataRequests.values()) request.reject(new Error(t("error.runtimeExited")));
+      resetMemoryRequests();
+      resetExecutionStatsRequests();
       useStore.setState((st) => {
         const userMessage = lastUserTurn(st.messages);
         return {
@@ -88,6 +90,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           runtimeCapabilities: [],
           ...queueEditsOnDisconnect(st),
           runningSessionIds: [],
+          subagentRunningSessionIds: [],
           completedSessionIds: [],
           compactionStatuses: {},
           autoCompactionStatuses: {},
@@ -122,9 +125,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       continue;
     }
     if (raw.type === "apps.opencli.release") {
-      const browserId = appOpenCliRequests.get(raw.requestId);
-      appOpenCliRequests.delete(raw.requestId);
-      if (browserId) void invoke("browser_close", { browserId }).catch(() => undefined);
+      releaseAppOpenCliRequest(raw.requestId, Boolean(raw.close));
       continue;
     }
     if (raw.type === "apps.opencli.request") {
@@ -162,7 +163,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       }
     }
     const targetSessionId = msg.type === "agent.event" ? msg.event.sessionId
-      : "sessionId" in msg ? msg.sessionId
+      : "sessionId" in msg && msg.type !== "session.deleted" ? msg.sessionId
       : "subagent" in msg ? msg.subagent.parentSessionId
       : msg.type === "goal.updated" ? msg.goal.sessionId
       : msg.type === "error" && msg.requestId ? pendingAgentRuns.get(msg.requestId)?.sessionId ?? stopRequests.get(msg.requestId)?.sessionId
@@ -208,6 +209,9 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         break;
       case "memory.state":
         dispatchMemoryState(msg);
+        break;
+      case "stats.state":
+        dispatchExecutionStatsState(msg);
         break;
       case "servers.state": {
         const liveIds = new Set(msg.servers.map(server => server.id));
@@ -297,11 +301,22 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           });
         }
         break;
+      case "session.deleted":
       case "session.list": {
         const state = eventStore.getState();
         const cur = state.currentSessionId;
-        const selected = msg.sessions.find((session) => session.id === cur) ?? msg.sessions[0];
-        const selectionChanged = selected?.id !== cur;
+        const deletedId = msg.type === "session.deleted" ? msg.sessionId : undefined;
+        const sessions = msg.type === "session.list" ? msg.sessions
+          : state.sideChats[msg.sessionId] ? state.sessions : state.sessions.filter((session) => session.id !== msg.sessionId);
+        const sideChats = msg.type === "session.list" ? msg.sideChats
+          : state.sideChats[msg.sessionId] ? Object.values(state.sideChats).filter((session) => session.id !== msg.sessionId) : undefined;
+        const reload = msg.type === "session.list" || deletedId === cur;
+        const selected = reload ? sessions.find((session) => session.id === cur) ?? sessions[0] : undefined;
+        const selectionChanged = reload && selected?.id !== cur;
+        if (deletedId) {
+          clearDelta(deletedId);
+          clearSessionMessageRequests(deletedId);
+        }
         if (selectionChanged) flushNow();
         const storedOptions = selected ? state.runOptionsBySession[selected.id] : undefined;
         const needsDefaults = Boolean(selected && (!storedOptions?.modelId || !storedOptions?.permissionMode));
@@ -311,29 +326,39 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         const runOptionsBySession = selected && selectedOptions && needsDefaults
           ? { ...state.runOptionsBySession, [selected.id]: selectedOptions }
           : state.runOptionsBySession;
-        // The authoritative list is the only proof a conversation is gone.
-        // Prune after computing the switch, so a session deleted while selected
-        // is not snapshotted back into the cache by switchSessionState.
-        const liveIds = new Set([...msg.sessions.map((session) => session.id),
-          ...(msg.sideChats ?? Object.values(state.sideChats)).map((session) => session.id)]);
-        prunePausedQueues(liveIds);
+        // Prune after computing the switch, so a deleted selection isn't cached again.
+        const liveIds = deletedId ? undefined : new Set([
+          ...sessions.map((session) => session.id),
+          ...(sideChats ?? Object.values(state.sideChats)).map((session) => session.id),
+        ]);
+        const isLive = (id: string) => liveIds ? liveIds.has(id) : id !== deletedId;
+        prunePausedQueues(isLive);
         const switchState = selectionChanged ? switchSessionState(state, selected?.id) : undefined;
         const cachedIds = Object.keys(switchState?.backgroundSessions ?? state.backgroundSessions);
-        const staleIds = cachedIds.filter((id) => !liveIds.has(id));
+        const staleIds = cachedIds.filter((id) => !isLive(id));
         const backgroundSessions = staleIds.length === 0 ? undefined
           : Object.fromEntries(Object.entries((switchState?.backgroundSessions ?? state.backgroundSessions))
-              .filter(([id]) => liveIds.has(id)));
-        const staleOptions = Object.keys(runOptionsBySession).filter((id) => !liveIds.has(id));
+              .filter(([id]) => isLive(id)));
+        const staleOptions = Object.keys(runOptionsBySession).filter((id) => !isLive(id));
         const prunedRunOptions = staleOptions.length === 0 ? runOptionsBySession
-          : Object.fromEntries(Object.entries(runOptionsBySession).filter(([id]) => liveIds.has(id)));
+          : Object.fromEntries(Object.entries(runOptionsBySession).filter(([id]) => isLive(id)));
         eventStore.setState({
-          sessions: msg.sessions,
-          ...(msg.sideChats ? { sideChats: Object.fromEntries(msg.sideChats.map((session) => [session.id, session])) } : {}),
-          sessionsLoaded: true,
-          currentSessionId: selected?.id,
-          currentWorkspaceId: selected?.workspaceId ?? state.currentWorkspaceId,
-          ...(selected?.workspaceId && selected.workspaceId !== state.currentWorkspaceId ? { workspaceLoadingId: selected.workspaceId } : {}),
-          selectedModelId: selectedOptions?.modelId ?? (state.modelConfigs.some((config) => config.id === state.selectedModelId) ? state.selectedModelId : undefined),
+          sessions,
+          ...(state.subagentRunningSessionIds.some((id) => !isLive(id))
+            ? { subagentRunningSessionIds: state.subagentRunningSessionIds.filter(isLive) } : {}),
+          ...(sideChats ? { sideChats: Object.fromEntries(sideChats.map((session) => [session.id, session])) } : {}),
+          ...(deletedId ? {
+            ...(state.runningSessionIds.includes(deletedId) ? { runningSessionIds: state.runningSessionIds.filter(isLive) } : {}),
+            ...(state.completedSessionIds.includes(deletedId) ? { completedSessionIds: state.completedSessionIds.filter(isLive) } : {}),
+            ...(state.searchResults.some((result) => result.session.id === deletedId)
+              ? { searchResults: state.searchResults.filter((result) => isLive(result.session.id)) } : {}),
+          } : { sessionsLoaded: true }),
+          ...(reload ? {
+            currentSessionId: selected?.id,
+            currentWorkspaceId: selected?.workspaceId ?? state.currentWorkspaceId,
+            ...(selected?.workspaceId && selected.workspaceId !== state.currentWorkspaceId ? { workspaceLoadingId: selected.workspaceId } : {}),
+            selectedModelId: selectedOptions?.modelId ?? (state.modelConfigs.some((config) => config.id === state.selectedModelId) ? state.selectedModelId : undefined),
+          } : {}),
           runOptionsBySession: prunedRunOptions,
           ...(selectionChanged ? {
             messages: [],
@@ -549,31 +574,28 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         break;
       case "session.subagents":
-        if (msg.sessionId === eventStore.getState().currentSessionId) {
-          eventStore.setState((st) => subagentChange(st, mergeSubagentSnapshots(st.subagents, msg.subagents)));
-        }
+        eventStore.setState((st) => subagentChange(st, mergeSubagentSnapshots(st.subagents, msg.subagents), true));
         break;
       case "session.subagentNotifications":
         if (msg.sessionId === eventStore.getState().currentSessionId) eventStore.setState({ subagentNotifications: msg.notifications });
         break;
-      case "subagent.updated":
-        if (msg.subagent.parentSessionId === eventStore.getState().currentSessionId) {
-          eventStore.setState((st) => subagentChange(st, mergeSubagentSnapshots(st.subagents, [msg.subagent])));
-        }
+      case "background-shell.job":
+        eventStore.setState((st) => ({ backgroundJobs: st.backgroundJobs.some((job) => job.id === msg.job.id)
+          ? st.backgroundJobs.map((job) => job.id === msg.job.id ? msg.job : job) : [...st.backgroundJobs, msg.job] }));
+        break;
+      case "background-shell.jobs":
+        eventStore.setState((st) => ({ backgroundJobs: [...st.backgroundJobs.filter((job) => job.sessionId !== msg.sessionId), ...msg.jobs] }));
         break;
       case "subagent.patch":
-        if (msg.sessionId === eventStore.getState().currentSessionId) {
-          eventStore.setState((st) => subagentChange(st, updateSubagent(st.subagents, msg.id, (current) => applySubagentPatch(current, msg.patch))));
-        }
+        eventStore.setState((st) => subagentChange(st, updateSubagent(st.subagents, msg.id, (current) => applySubagentPatch(current, msg.patch)), msg.patch.status !== undefined));
         break;
       case "subagent.streaming":
-        eventStore.setState((st) => subagentChange(st, updateSubagent(st.subagents, msg.id, (current) => applySubagentStreaming(current, msg))));
+        eventStore.setState((st) => subagentChange(st, updateSubagent(st.subagents, msg.id, (current) => applySubagentStreaming(current, msg)), false));
         break;
+      case "subagent.updated":
       case "subagent.query":
       case "subagent.controlled":
-        if (msg.subagent.parentSessionId === eventStore.getState().currentSessionId) {
-          eventStore.setState((st) => subagentChange(st, mergeSubagentSnapshots(st.subagents, [msg.subagent])));
-        }
+        eventStore.setState((st) => subagentChange(st, mergeSubagentSnapshots(st.subagents, [msg.subagent]), true));
         break;
       case "artifact.list":
         if (msg.sessionId === eventStore.getState().currentSessionId) eventStore.setState({ artifacts: msg.artifacts });
@@ -811,6 +833,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         }
         if (dispatchFilePreviewError(msg.requestId, msg.message)) break;
         if (dispatchMemoryError(msg.requestId, msg.message)) break;
+        if (dispatchExecutionStatsError(msg.requestId, msg.message)) break;
         if (dispatchServerError(msg.requestId, msg.message) || dispatchServerTerminalError(msg.requestId, msg.message)) break;
         if (msg.requestId && stopRequests.has(msg.requestId)) {
           const request = stopRequests.get(msg.requestId)!;

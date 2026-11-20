@@ -9,7 +9,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { ffmpegExecutable, ytDlpExecutable } from "./reach-channels.js";
 import { findSite, siteMatchesHost } from "@qone/protocol";
 import { browserScreenshotResult } from "./web-image.js";
-import type { AppOpenCliBridge } from "./app-opencli-bridge.js";
+import { currentBrowserSessionId, withBrowserSessionId, type AppOpenCliBridge } from "./app-opencli-bridge.js";
 
 // Source directory in development; the bundle's own directory (binaries) when packaged.
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -141,7 +141,6 @@ async function runEmbeddedOpenCli(
   allowBrowserPages = false,
 ): Promise<CommandResult> {
   const prepared = await bridge.prepare(site, target, signal);
-  if (!prepared) throw new Error("Built-in browser bridge did not prepare a page");
   try {
     const targetPattern = openCliTargetPattern(site, target);
     const env = { OPENCLI_CDP_ENDPOINT: prepared.endpoint, OPENCLI_CDP_TARGET: targetPattern };
@@ -164,7 +163,7 @@ export function loginRequiredResult(error: unknown, site?: string): { content: [
       site: site || undefined,
       scope: "operation",
       detail: error.message,
-      next: "Only this operation requires sign-in. If the task is to read a supplied link, follow the direct URL reading policy before asking the user to sign in. Ask only if sign-in is necessary for the requested task.",
+      next: "Only this operation requires sign-in. If the task is to read a supplied link, follow the direct URL reading policy before asking the user to sign in. If sign-in is necessary for the requested task, tell the user to sign in on the page shown in Qone's built-in browser and end the turn; retry after the user confirms. Sign-in state is kept for later sessions.",
     }),
     stderr: "",
   });
@@ -269,8 +268,7 @@ export class BrowserSyncService {
   private statusValue: BrowserSyncStatus;
   private pending: Promise<unknown> = Promise.resolve();
   private operations = new AbortController();
-  private browserUrl = "https://example.com/";
-  private embeddedBrowser?: { requestId: string; endpoint: string };
+  private embeddedBrowser?: { requestId: string; url?: string; sessionId?: string };
   private openCliCatalog?: { loadedAt: number; commands: OpenCliCommand[] };
   private openCliCatalogPromise?: Promise<OpenCliCommand[]>;
 
@@ -292,10 +290,11 @@ export class BrowserSyncService {
       this.browserCommand("qone_browser_type", "Type text into an element in Qone's built-in browser.", Type.Object({ target: Type.String(), text: Type.String() }), (value) => ["type", value.target, value.text]),
       this.browserCommand("qone_browser_keys", "Press a keyboard key in Qone's built-in browser.", Type.Object({ key: Type.String() }), (value) => ["keys", value.key]),
       this.browserCommand("qone_browser_wait", "Wait for a browser condition such as text, selector, time, or network response. For kind=time, value is seconds and is capped at 60.", Type.Object({ kind: Type.Union([Type.Literal("selector"), Type.Literal("text"), Type.Literal("time"), Type.Literal("xhr"), Type.Literal("download")]), value: Type.String() }), (value) => ["wait", value.kind, normalizeBrowserWaitValue(value.kind, value.value)]),
-      this.browserCommand("qone_browser_get", "Read a page property such as URL or title from Qone's built-in browser.", Type.Object({ property: Type.Union([Type.Literal("url"), Type.Literal("title"), Type.Literal("text")]) }), (value) => ["get", value.property]),
+      // OpenCLI 的 `get text` 必须带元素 target，不能读整页；整页正文统一走 qone_browser_extract。
+      this.browserCommand("qone_browser_get", "Read the current page URL or title from Qone's built-in browser. Use qone_browser_extract for page text.", Type.Object({ property: Type.Union([Type.Literal("url"), Type.Literal("title")]) }), (value) => ["get", value.property]),
       this.browserExtractTool(),
       this.browserScreenshotTool(),
-      this.browserCommand("qone_browser_tabs", "List tabs available in Qone's built-in browser.", Type.Object({}), () => ["tab", "list"]),
+      this.browserTabsTool(),
       this.browserCloseTool(),
       this.twitterCommand("qone_twitter_search", "Read adapter search results as structured data.", Type.Object({ query: Type.String(), limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "search", value.query, "--limit", String(value.limit ?? 20)]),
       this.twitterCommand("qone_twitter_tweets", "Read an account's latest posts as structured data.", Type.Object({ username: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer()) }), (value) => ["twitter", "tweets", ...(value.username ? [value.username] : []), "--limit", String(value.limit ?? 20)]),
@@ -419,6 +418,20 @@ export class BrowserSyncService {
     } as ToolDefinition;
   }
 
+  private browserTabsTool(): ToolDefinition {
+    return {
+      name: "qone_browser_tabs",
+      label: "OpenCLI · tabs",
+      description: "List existing tabs available to this conversation in Qone's built-in browser without opening a page or showing the browser panel.",
+      parameters: Type.Object({}),
+      execute: async (_id, _value, signal) => {
+        if (!this.appOpenCliBridge) throw new Error("Built-in browser bridge is unavailable");
+        const tabs = await this.appOpenCliBridge.listTabs(signal);
+        return result({ stdout: JSON.stringify(tabs, null, 2), stderr: "" }) as never;
+      },
+    } as ToolDefinition;
+  }
+
   private browserCloseTool(): ToolDefinition {
     return {
       name: "qone_browser_close",
@@ -426,7 +439,7 @@ export class BrowserSyncService {
       description: "Close the current Qone built-in browser page and release its task session.",
       parameters: Type.Object({}),
       execute: async () => {
-        await this.release();
+        await this.release(true);
         return result({ stdout: runtimeText("browser-sync.built_in_browser_page_closed"), stderr: "" }) as never;
       },
     } as ToolDefinition;
@@ -434,7 +447,11 @@ export class BrowserSyncService {
 
   private exclusive<T>(work: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
     const owner = signal ? AbortSignal.any([signal, this.operations.signal]) : this.operations.signal;
-    const next = this.pending.then(() => { owner.throwIfAborted(); return work(owner); });
+    const sessionId = currentBrowserSessionId();
+    const next = this.pending.then(() => {
+      owner.throwIfAborted();
+      return withBrowserSessionId(sessionId, () => work(owner));
+    });
     this.pending = next.catch(() => undefined);
     return next;
   }
@@ -459,13 +476,13 @@ export class BrowserSyncService {
     return url;
   }
 
-  async release(): Promise<void> {
+  async release(close = false): Promise<void> {
     this.operations.abort();
     this.operations = new AbortController();
     this.pending = Promise.resolve();
     const browser = this.embeddedBrowser;
     this.embeddedBrowser = undefined;
-    if (browser) this.appOpenCliBridge?.release(browser.requestId);
+    if (browser) this.appOpenCliBridge?.release(browser.requestId, close);
     this.update({ phase: "ready", targetConnected: false, lastError: undefined, errorCode: undefined });
   }
 
@@ -478,22 +495,22 @@ export class BrowserSyncService {
 
   private runBrowserCommand(args: string[], signal?: AbortSignal): Promise<CommandResult> {
     return this.exclusive(async owner => {
+      const url = args[0] === "open" ? args[1] : undefined;
+      if (args[0] === "open" && (!url || !/^https?:\/\//i.test(url) || !URL.canParse(url))) {
+        throw new Error("Browser navigation requires an HTTP or HTTPS URL");
+      }
       if (!this.statusValue.targetConnected) await this.connectInner();
-      owner.throwIfAborted();
-      const url = args[0] === "open" && /^https?:\/\//i.test(args[1] ?? "") ? args[1] : this.browserUrl;
-      if (args[0] === "open" && url) this.browserUrl = url;
-      return this.runEmbeddedBrowser(["browser", SESSION, ...args], url, owner);
+      return this.runEmbeddedBrowser(["browser", SESSION, ...args], owner, url);
     }, signal);
   }
 
   private runBrowserExtraction(includeScreenshot = false, signal?: AbortSignal): Promise<{ extracted: CommandResult; screenshot?: CommandResult }> {
     return this.exclusive(async owner => {
       if (!this.statusValue.targetConnected) await this.connectInner();
-      owner.throwIfAborted();
-      const extracted = await this.runEmbeddedBrowser(["browser", SESSION, "extract"], this.browserUrl, owner);
+      const extracted = await this.runEmbeddedBrowser(["browser", SESSION, "extract"], owner);
       if (!includeScreenshot) return { extracted };
       try {
-        return { extracted, screenshot: await this.runEmbeddedBrowser(["browser", SESSION, "screenshot", "--full-page"], this.browserUrl, owner) };
+        return { extracted, screenshot: await this.runEmbeddedBrowser(["browser", SESSION, "screenshot", "--full-page"], owner) };
       } catch {
         owner.throwIfAborted();
         return { extracted };
@@ -506,7 +523,9 @@ export class BrowserSyncService {
   }
 
   private browserSite(): string | undefined {
-    try { return new URL(this.browserUrl).hostname; }
+    const browser = this.embeddedBrowser;
+    if (browser?.sessionId !== currentBrowserSessionId() || !browser?.url) return undefined;
+    try { return new URL(browser.url).hostname; }
     catch { return undefined; }
   }
 
@@ -521,22 +540,34 @@ export class BrowserSyncService {
     return runEmbeddedOpenCli(this.appOpenCliBridge, site, args, target, COMMAND_TIMEOUT, signal, allowBrowserPages);
   }
 
-  private async runEmbeddedBrowser(args: string[], target: string, signal?: AbortSignal): Promise<CommandResult> {
+  private async runEmbeddedBrowser(args: string[], signal: AbortSignal, url?: string): Promise<CommandResult> {
     if (!this.appOpenCliBridge) throw new Error("Built-in browser bridge is unavailable");
-    signal?.throwIfAborted();
-    if (!this.embeddedBrowser) {
-      const prepared = await this.appOpenCliBridge.prepare("browser", target, signal);
-      if (!prepared) throw new Error("Built-in browser bridge did not prepare a page");
-      if (signal?.aborted) {
-        this.appOpenCliBridge.release(prepared.requestId);
-        signal.throwIfAborted();
-      }
-      this.embeddedBrowser = prepared;
+    signal.throwIfAborted();
+    const sessionId = currentBrowserSessionId();
+    const reuseRequestId = this.embeddedBrowser && this.embeddedBrowser.sessionId === sessionId
+      ? this.embeddedBrowser.requestId
+      : undefined;
+    if (this.embeddedBrowser && !reuseRequestId) {
+      // 切换到不同会话时释放旧句柄，避免跨会话复用同一个页面视图。
+      this.appOpenCliBridge.release(this.embeddedBrowser.requestId);
+      this.embeddedBrowser = undefined;
     }
-    const targetPattern = new URL(target).hostname;
+    // 只有显式打开才带目标 URL，其余操作只能复用当前会话已有的视图。
+    const prepared = await this.appOpenCliBridge.prepare("browser", url, signal, reuseRequestId);
+    if (signal.aborted) {
+      if (!reuseRequestId) this.appOpenCliBridge.release(prepared.requestId);
+      signal.throwIfAborted();
+    }
+    this.embeddedBrowser = {
+      requestId: reuseRequestId ?? prepared.requestId,
+      url: prepared.url ?? url,
+      sessionId,
+    };
+    // 上一步操作让页面发起了通行密钥登录（已被内置浏览器拒绝），继续操作只会白等，直接报需要登录。
+    if (prepared.loginRequired === "passkey") throw new OpenCliError("The page asked for a passkey sign-in. Qone's built-in browser cannot use passkeys, so the request was rejected; the user has to sign in on this page with another method.", 77);
     return runOpenCli(args, COMMAND_TIMEOUT, signal, {
-      OPENCLI_CDP_ENDPOINT: this.embeddedBrowser.endpoint,
-      OPENCLI_CDP_TARGET: targetPattern,
+      OPENCLI_CDP_ENDPOINT: prepared.endpoint,
+      OPENCLI_CDP_TARGET: this.browserSite(),
     }, true);
   }
 

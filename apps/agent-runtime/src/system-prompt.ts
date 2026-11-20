@@ -10,6 +10,8 @@ import coding from "./system-prompts/05-coding.md" with { type: "text" };
 import verification from "./system-prompts/06-verification.md" with { type: "text" };
 import safety from "./system-prompts/07-safety.md" with { type: "text" };
 import communication from "./system-prompts/08-communication.md" with { type: "text" };
+import codemode from "./system-prompts/09-codemode.md" with { type: "text" };
+import commandExecution from "./system-prompts/10-command-execution.md" with { type: "text" };
 
 // Explicit order is part of the product contract; directory enumeration is not.
 export const SYSTEM_PROMPT_MODULES = [
@@ -21,6 +23,8 @@ export const SYSTEM_PROMPT_MODULES = [
   { file: "06-verification.md", content: verification },
   { file: "07-safety.md", content: safety },
   { file: "08-communication.md", content: communication },
+  { file: "09-codemode.md", content: codemode },
+  { file: "10-command-execution.md", content: commandExecution },
 ] as const;
 
 const normalizeModule = (text: string) => text.replace(/\r\n?/g, "\n").trim();
@@ -37,6 +41,7 @@ const LEGACY_DEFAULT_HASHES: Record<string, readonly string[]> = {
     "72716b8c600d9ce16ff9204e0ec5392afa367d03fbcd466b04d4ca723f38c3b6",
     "62d1e5891524cbab7f60a32a9f97a30290519f440870cb9b0834ac228a247b40",
     "b12b8b60111d402621cdcdf3cb3c9d8be3926a72677dba32545b8aabba6b2d71",
+    "f671bc61b975bf5022f2a51f31f4edf39cf3f791564a7c789f2ab86cdc38bd7d",
   ],
   "05-coding.md": ["d8ce33353360625a652833aa1ccd2b8a8a9a81182d1c71e2f949f977edd58aff"],
   "06-verification.md": ["3fb488926e2e46611e9e6e6ad142e3dfaeffeecbfbdd265b304422389d662628"],

@@ -115,7 +115,7 @@ async function writeSkillContent(content: string, expectedName?: string): Promis
  * product-facing catalog for the GUI and persistence; it does not create a
  * second skill format.
  */
-export async function createResourceLoader(cwd: string, additionalInstructions?: string, enableCodemode = false, includeEccReferences = false): Promise<{
+export async function createResourceLoader(cwd: string, additionalInstructions?: string, enableCodemode = false, includeEccReferences = false, extraExtensions: ExtensionFactory[] = []): Promise<{
   loader: ResourceLoader;
   skills: SkillInfo[];
 }> {
@@ -152,7 +152,7 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
       skills: base.skills.filter((skill) => !isBuiltinSkillName(skill.name) || builtinSkills.some((builtin) => builtin.enabled && builtin.path === skill.filePath)),
     }),
     noExtensions: true,
-    extensionFactories: extensionFactories(enableCodemode),
+    extensionFactories: [...extensionFactories(enableCodemode), ...extraExtensions],
     // Qone.md is user-level global guidance. It stays separate from Qone's
     // built-in rules so updating the file never replaces product behavior.
     appendSystemPromptOverride: () => {
@@ -194,10 +194,10 @@ function extensionFactories(enableCodemode: boolean) {
  * and codemode act on another session's tools. Each session gets its own
  * extensions; skills, prompts and instructions stay shared.
  */
-export async function sessionResourceLoader(shared: ResourceLoader, cwd: string, enableCodemode = true, extensions: ExtensionFactory[] = []): Promise<ResourceLoader> {
+export async function sessionResourceLoader(shared: ResourceLoader, cwd: string, enableCodemode = true, extensions: ExtensionFactory[] = [], extraExtensions: ExtensionFactory[] = []): Promise<ResourceLoader> {
   const own = new DefaultResourceLoader({
     cwd, agentDir: qoneAgentDir(), noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true,
-    noExtensions: true, systemPrompt: "", appendSystemPrompt: [], extensionFactories: [...extensionFactories(enableCodemode), ...extensions],
+    noExtensions: true, systemPrompt: "", appendSystemPrompt: [], extensionFactories: [...extensionFactories(enableCodemode), ...extensions, ...extraExtensions],
   });
   await own.reload();
   return {

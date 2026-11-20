@@ -92,6 +92,29 @@ test("agent communication rows survive the snapshot and are not treated as user 
   } finally { useStore.setState(previous, true); }
 });
 
+test("deleting a background session waits for confirmation without reloading the current conversation", async () => {
+  const previous = useStore.getState();
+  const start = commands.length;
+  const current = { id: "keep", title: "Keep", createdAt: 1, updatedAt: 1 };
+  const removed = { id: "removed", title: "Remove", createdAt: 1, updatedAt: 1 };
+  const messages = history(400) as never;
+  const options = { removed: { modelId: "m" } };
+  try {
+    useStore.setState({ connected: true, currentSessionId: current.id, sessions: [current, removed], messages, runOptionsBySession: options });
+    useStore.getState().deleteSession(removed.id);
+    expect(commands.slice(start)).toEqual([expect.objectContaining({ type: "session.delete", sessionId: removed.id })]);
+    expect(useStore.getState().sessions).toEqual([current, removed]);
+    expect(useStore.getState().runOptionsBySession).toBe(options);
+    emit({ type: "session.deleted", sessionId: removed.id });
+    await Promise.resolve();
+    expect(useStore.getState().sessions).toEqual([current]);
+    expect(useStore.getState().runOptionsBySession[removed.id]).toBeUndefined();
+    expect(useStore.getState().messages).toBe(messages);
+    expect(useStore.getState().currentSessionId).toBe(current.id);
+    expect(commands.slice(start)).toHaveLength(1);
+  } finally { useStore.setState(previous, true); }
+});
+
 test("deleting sessions through the authoritative list leaves no cached background state", () => {
   const previous = useStore.getState();
   try {
@@ -110,6 +133,20 @@ test("deleting sessions through the authoritative list leaves no cached backgrou
     expect(Object.keys(useStore.getState().backgroundSessions)).toEqual([]);
     expect(Object.keys(useStore.getState().runOptionsBySession)).not.toContain("gone-0");
     expect(useStore.getState().currentSessionId).toBe("keep");
+  } finally { useStore.setState(previous, true); }
+});
+
+test("a deletion acknowledgement for the selected conversation switches to a surviving session", () => {
+  const previous = useStore.getState();
+  const current = { id: "current", title: "Current", createdAt: 1, updatedAt: 1 };
+  const next = { id: "next", title: "Next", createdAt: 2, updatedAt: 2 };
+  try {
+    useStore.setState({ currentSessionId: current.id, sessions: [current, next], messages: history(2) as never, backgroundSessions: {} });
+    emit({ type: "session.deleted", sessionId: current.id });
+    const state = useStore.getState();
+    expect(state.sessions).toEqual([next]);
+    expect(state.currentSessionId).toBe(next.id);
+    expect(state.backgroundSessions[current.id]).toBeUndefined();
   } finally { useStore.setState(previous, true); }
 });
 

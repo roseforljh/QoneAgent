@@ -87,7 +87,8 @@ export function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise
 }
 
 export function exec(client: Client, command: string, options: { cwd?: string; timeoutMs?: number; signal?: AbortSignal; onUpdate?: (result: ExecResult) => void } = {}): Promise<ExecResult> {
-  const script = options.cwd ? `cd ${shellPath(options.cwd)} && ${command}` : command;
+  // Guard the entire script, not only the first command in a list.
+  const script = options.cwd ? `cd ${shellPath(options.cwd)} || exit $?\n${command}` : command;
   return new Promise((resolve, reject) => {
     options.signal?.throwIfAborted();
     let channel: ClientChannel | undefined, settled = false, timedOut = false, cancelled = false;
@@ -104,11 +105,17 @@ export function exec(client: Client, command: string, options: { cwd?: string; t
       settled = true;
       clearTimeout(timer); clearTimeout(updateTimer);
       options.signal?.removeEventListener("abort", abort);
+      for (const [index, decoder] of decoders.entries()) output[index] += decoder.end();
       if (error && !cancelled && !timedOut) reject(error); else resolve(snapshot(code, signal));
     };
+    const closeChannel = (stream: ClientChannel) => {
+      try { stream.signal("KILL"); stream.close(); }
+      catch (error) { log.warn("Could not close SSH command channel", { err: String(error) }); }
+    };
     const stop = () => {
-      if (channel) { channel.signal("KILL"); channel.close(); }
-      else finish();
+      if (channel) closeChannel(channel);
+      // A broken connection need not acknowledge CHANNEL_CLOSE.
+      finish();
     };
     const abort = () => { cancelled = true; stop(); };
     const timer = setTimeout(() => { timedOut = true; stop(); }, options.timeoutMs ?? 120_000);
@@ -117,7 +124,7 @@ export function exec(client: Client, command: string, options: { cwd?: string; t
       // A channel delivered after cancellation still owns its teardown errors.
       stream?.on("error", finish);
       stream?.stderr.on("error", finish);
-      if (settled || options.signal?.aborted) { if (stream) { stream.signal("KILL"); stream.close(); } return; }
+      if (settled || options.signal?.aborted) { if (stream) closeChannel(stream); return; }
       if (error) return finish(error);
       channel = stream;
       const append = (index: number, text: string) => {
@@ -129,10 +136,7 @@ export function exec(client: Client, command: string, options: { cwd?: string; t
       };
       stream.on("data", (chunk: Buffer) => append(0, decoders[0]!.write(chunk)));
       stream.stderr.on("data", (chunk: Buffer) => append(1, decoders[1]!.write(chunk)));
-      stream.once("close", (code: number | null, signal?: string) => {
-        append(0, decoders[0]!.end()); append(1, decoders[1]!.end());
-        finish(undefined, code ?? null, signal);
-      });
+      stream.once("close", (code: number | null, signal?: string) => finish(undefined, code ?? null, signal));
       if (options.signal?.aborted) abort();
     }); } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
   });

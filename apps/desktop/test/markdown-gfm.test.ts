@@ -15,3 +15,10 @@ test("numeric ranges do not become deletions while explicit GFM still works", as
   expect(render("| a | b |\n| - | - |\n| 1~2 | 3~4 |")).toContain("<table>");
   expect((await createCodePreviewHtml("markdown", text))).not.toContain("<del>");
 });
+
+test("literal autolinks stop at fullwidth punctuation", () => {
+  const html = render("已打开百度首页（https://www.baidu.com），页面标题为「百度一下，你就知道」。");
+  expect(html).toContain('<a href="https://www.baidu.com">https://www.baidu.com</a>），页面标题为「百度一下，你就知道」。');
+  expect(render("<https://a.com/x>")).toContain('<a href="https://a.com/x">');
+  expect(render("见 https://zh.wikipedia.org/wiki/百度 。")).toContain('href="https://zh.wikipedia.org/wiki/%E7%99%BE%E5%BA%A6"');
+});

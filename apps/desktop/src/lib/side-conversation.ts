@@ -124,7 +124,12 @@ function discardSideConversation(session: SessionInfo) {
     const runOptionsBySession = { ...current.runOptionsBySession };
     delete sideChats[session.id]; delete backgroundSessions[session.id]; delete runOptionsBySession[session.id];
     saveRunOptions(runOptionsBySession);
-    return { sideChats, backgroundSessions, runOptionsBySession, runningSessionIds: current.runningSessionIds.filter((id) => id !== session.id) };
+    return {
+      sideChats, backgroundSessions, runOptionsBySession,
+      runningSessionIds: current.runningSessionIds.filter((id) => id !== session.id),
+      ...(current.subagentRunningSessionIds.includes(session.id)
+        ? { subagentRunningSessionIds: current.subagentRunningSessionIds.filter((id) => id !== session.id) } : {}),
+    };
   });
 }
 

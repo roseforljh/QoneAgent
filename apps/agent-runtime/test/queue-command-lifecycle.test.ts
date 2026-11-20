@@ -14,7 +14,7 @@ function fixture() {
   const state = {
     sessionRepo, workspaceRepo, runRepo, queueRepo, goalRepo: new GoalRepo(db), messageRepo: new MessageRepo(db),
     turnRepo: new TurnRepo(db), subagentRunRepo: new SubagentRunRepo(db),
-    startingRunSessions: new Set<string>(), cancelledRuns: new Set<string>(), goalContinuationTimers: new Map(), titleControllers: new Map(),
+    startingRunSessions: new Set<string>(), cancelledRuns: new Set<string>(), goalContinuationTimers: new Map(), titleControllers: new Map(), backgroundShell: { noteRun() {} },
     assistantPartsByRun: new Map(), liveAssistantByRun: new Map(), initialUserMessageSeen: new Set(),
     assistantBuffers: new Map(), assistantStreamBuffers: new Map(), assistantMessageSequenceByRun: new Map(), assistantRawMessagesByRun: new Map(), toolCallIds: new Map(),
     ensureModelsReady: async () => {}, adapter: { isRunning: () => false, disposeSession: async () => {}, run: async () => {} },

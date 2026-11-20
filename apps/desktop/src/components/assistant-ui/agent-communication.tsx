@@ -2,6 +2,7 @@ import { MessagePrimitive, useAuiState } from "@assistant-ui/react";
 import type { AgentCommunicationInfo } from "@qone/protocol";
 import { useLocale } from "../../localization";
 import { MarkdownText } from "./markdown-text";
+import { BackgroundJobRow } from "./background-job-view";
 import "./agent-communication.css";
 
 export function useAgentCommunication() {
@@ -11,6 +12,9 @@ export function useAgentCommunication() {
 /** Agent messages stay in the standard message tree, but never impersonate a user. */
 export function AgentCommunication({ communication }: { communication: AgentCommunicationInfo }) {
   const { t } = useLocale();
+  if (communication.backgroundJobId) return <MessagePrimitive.Root className="q-message-root mx-auto w-full q-thread-content">
+    <BackgroundJobRow jobId={communication.backgroundJobId} showIcon />
+  </MessagePrimitive.Root>;
   return <MessagePrimitive.Root className="q-message-root q-agent-communication" data-agent-from={communication.fromId} data-agent-to={communication.toId}>
     <div className="q-agent-communication-heading">
       <span className="q-agent-communication-label">{t("subagent.communication")}</span>

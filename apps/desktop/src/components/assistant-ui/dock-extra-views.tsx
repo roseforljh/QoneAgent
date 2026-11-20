@@ -21,6 +21,8 @@ import { openPath, openUrl } from "../../lib/desktop-bridge";
 import { useStore, hasDesktopBridge } from "../../store";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { clipBrowserBounds, createDockBrowserSession } from "../../lib/dock-browser-session";
+import { BACKGROUND_BROWSER_BOUNDS } from "../../lib/background-browser";
+import { attachManagedBrowserHost, isManagedBrowserBusy, isManagedBrowserOpen, updateManagedBrowserUrl } from "../../store/app-bridge";
 import { FadeScroll, mono } from "./elements/surfaces";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { cn } from "../../lib/utils";
@@ -46,7 +48,7 @@ function toUrl(input: string): string | undefined {
 
 // The page area is a real WebView2 child of the main window (electron
 // browser.rs); this view only owns the toolbar and reports its rect.
-export function DockBrowserView({ browserId, active, initialUrl, previewHtml, previewId, onClose }: { browserId: string; active: boolean; initialUrl: string; previewHtml?: string; previewId?: string; onClose?: () => void }) {
+export function DockBrowserView({ browserId, agentManaged = false, active, initialUrl, previewHtml, previewId, onClose }: { browserId: string; agentManaged?: boolean; active: boolean; initialUrl: string; previewHtml?: string; previewId?: string; onClose?: () => void }) {
   const { t } = useLocale();
   const hostRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
@@ -66,7 +68,32 @@ export function DockBrowserView({ browserId, active, initialUrl, previewHtml, pr
     const host = hostRef.current;
     if (!host) return undefined;
     let alive = true;
-    const session = createDockBrowserSession(invoke, browserId, initialUrl, (error) => setFailed(localizeError(error)), previewHtml);
+    browserUrlRef.current = initialUrl;
+    previewHtmlRef.current = previewHtml;
+    previewIdRef.current = previewId;
+    setAddress(initialUrl);
+    setCurrentPageUrl(previewHtml === undefined ? externalBrowserUrl(initialUrl) : undefined);
+    setCurrentDataUrl(isHtmlDataUrl(initialUrl) ? initialUrl : undefined);
+    setCurrentPreviewHtml(previewHtml);
+    setExternalOpenError(undefined);
+    setFailed(undefined);
+    const alreadyOpen = agentManaged && isManagedBrowserOpen(browserId);
+    const detachHost = agentManaged ? attachManagedBrowserHost(browserId) : undefined;
+    const session = createDockBrowserSession(
+      invoke,
+      browserId,
+      initialUrl,
+      (error) => setFailed(localizeError(error)),
+      previewHtml,
+      undefined,
+      agentManaged
+        ? {
+            alreadyOpen,
+            parkBounds: BACKGROUND_BROWSER_BOUNDS,
+            shouldCloseOnDispose: () => !isManagedBrowserBusy(browserId),
+          }
+        : undefined,
+    );
     sessionRef.current = session;
     const sync = () => {
       if (!alive) return;
@@ -77,6 +104,7 @@ export function DockBrowserView({ browserId, active, initialUrl, previewHtml, pr
     const unNav = listen<{ browserId: string; url: string }>("browser:navigated", (event) => {
       if (!alive || event.payload.browserId !== browserId || (previewHtmlRef.current !== undefined && event.payload.url === "about:blank")) return;
       previewHtmlRef.current = undefined;
+      if (agentManaged) updateManagedBrowserUrl(browserId, event.payload.url);
       setAddress(event.payload.url);
       setCurrentPageUrl(externalBrowserUrl(event.payload.url));
       setCurrentDataUrl(isHtmlDataUrl(event.payload.url) ? event.payload.url : undefined);
@@ -85,6 +113,9 @@ export function DockBrowserView({ browserId, active, initialUrl, previewHtml, pr
     });
     const ro = new ResizeObserver(sync);
     ro.observe(host);
+    // 右侧面板打开/收起动画改变外层裁剪容器宽度，监听裁剪容器确保原生视图逐帧跟随显示。
+    const clip = host.closest<HTMLElement>(".q-workspace-dock-clip");
+    if (clip) ro.observe(clip);
     window.addEventListener("resize", sync);
     window.addEventListener("transitionend", sync);
     return () => {
@@ -93,16 +124,21 @@ export function DockBrowserView({ browserId, active, initialUrl, previewHtml, pr
       window.removeEventListener("resize", sync);
       window.removeEventListener("transitionend", sync);
       unNav.then((off) => off()).catch(() => {});
+      detachHost?.();
       session.dispose();
       sessionRef.current = undefined;
     };
-  }, [browserId]);
+  }, [browserId, agentManaged]);
 
   useEffect(() => {
     if (browserUrlRef.current === initialUrl && previewHtmlRef.current === previewHtml && previewIdRef.current === previewId) return;
     browserUrlRef.current = initialUrl;
     previewHtmlRef.current = previewHtml;
     previewIdRef.current = previewId;
+    if (agentManaged) {
+      // 模型驱动的页面导航由 CDP 与桥接层直接完成，避免重复 loadURL 与 CDP 竞态。
+      return;
+    }
     setAddress(initialUrl);
     setCurrentPageUrl(previewHtml === undefined ? externalBrowserUrl(initialUrl) : undefined);
     setCurrentDataUrl(isHtmlDataUrl(initialUrl) ? initialUrl : undefined);
@@ -114,7 +150,7 @@ export function DockBrowserView({ browserId, active, initialUrl, previewHtml, pr
     } else {
       void sessionRef.current?.command("browser_navigate", { url: initialUrl });
     }
-  }, [initialUrl, previewHtml, previewId]);
+  }, [initialUrl, previewHtml, previewId, agentManaged]);
 
   useEffect(() => {
     const host = hostRef.current;

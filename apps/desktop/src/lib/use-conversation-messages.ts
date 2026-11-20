@@ -8,6 +8,7 @@ import { insertChatRunErrorMessage } from "./chat-run-error-message";
 import { isImageModel } from "./image-model-config";
 import { localImagePreview, releaseLocalImagePreview, retainLocalImagePreview } from "./local-image-preview";
 import { appendSteeringMessages } from "./use-steering-messages";
+import { withoutDuplicateBackgroundNotices } from "./background-job-links";
 import type { subagentImagesByRun } from "./subagent-images";
 
 type ConversationMessages = {
@@ -25,13 +26,14 @@ export function useConversationMessages({ messages, streaming, streamingParts, r
     ? messages.find((message) => message.id === chatRunError.userMessageId)
     : undefined;
   const answerError = !hasStreamingAssistant && chatRunError?.sessionId === currentSessionId && !imageGenerationError ? chatRunError : undefined;
+  const visibleMessages = useMemo(() => withoutDuplicateBackgroundNotices(messages, toolCalls), [messages, toolCalls]);
   const runtimeMessages = useMemo(() => {
     // An empty current segment is authoritative: undefined would replay legacy tools from this run.
-    if (hasStreamingAssistant) return appendSteeringMessages([...messages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }], submittedSteers);
-    if (imageGenerationError) return [...messages, { id: `image-error:${imageGenerationError.id}`, role: "assistant", content: "", createdAt: Date.now() }];
-    if (answerError) return insertChatRunErrorMessage(messages, answerError, `${t("chat.runFailed")}\n${answerError.detail || t("chat.runFailedDetail")}`);
-    return messages;
-  }, [messages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError, answerError, submittedSteers, t]);
+    if (hasStreamingAssistant) return appendSteeringMessages([...visibleMessages, { id: "streaming", role: "assistant", content: streaming, parts: streamingParts, runId: activeRunId, createdAt: messages.at(-1)?.createdAt ?? Date.now() }], submittedSteers);
+    if (imageGenerationError) return [...visibleMessages, { id: `image-error:${imageGenerationError.id}`, role: "assistant", content: "", createdAt: Date.now() }];
+    if (answerError) return insertChatRunErrorMessage(visibleMessages, answerError, `${t("chat.runFailed")}\n${answerError.detail || t("chat.runFailedDetail")}`);
+    return visibleMessages;
+  }, [messages, visibleMessages, streaming, streamingParts, activeRunId, hasStreamingAssistant, imageGenerationError, answerError, submittedSteers, t]);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const imageAttachmentMessages = useMemo(() => appendSteeringMessages(messages, submittedSteers), [messages, submittedSteers]);
   // Paths this mounted conversation currently holds. A run that ends while its

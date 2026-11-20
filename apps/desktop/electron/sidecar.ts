@@ -7,6 +7,7 @@ import { getSecrets, persistRuntimeSecret } from "./secret-store";
 import { killProcessTree } from "./process-tree";
 import { elevatedTerminalEnv, type ShellHostRequest } from "@qone/protocol/terminal-host";
 import type { AdministratorTerminalHost } from "./administrator-terminal-host";
+import { nativeCopy } from "./native-menus";
 
 export class SidecarManager {
   private child: ChildProcess | null = null;
@@ -18,14 +19,9 @@ export class SidecarManager {
   private batchQueue: unknown[] = [];
   private batchTimer: NodeJS.Timeout | null = null;
   private getMainWindow: () => BrowserWindow | null;
-  private completedCopy = "Agent run completed";
 
   constructor(getMainWindow: () => BrowserWindow | null) {
     this.getMainWindow = getMainWindow;
-  }
-
-  public setCompletedCopy(copy: string) {
-    this.completedCopy = copy;
   }
 
   /** The runtime bundle runs on this Electron binary in Node mode; dev mode keeps it rebuilt by esbuild watch. */
@@ -153,7 +149,7 @@ export class SidecarManager {
         try {
           new Notification({
             title: "QoneAgent",
-            body: this.completedCopy,
+            body: nativeCopy.completed,
           }).show();
         } catch (e) {
           console.error("[sidecar] notification failed:", e);

@@ -52,6 +52,13 @@ export {
   supportsExtendedImageQuality,
 } from "./image-model";
 export type { ImageApiFormat, ImageModelDetection, ImageModelDetectionInput, ImageModelDetectionSource } from "./image-model";
+export { supportsMemorySummary } from "./memory-model";
+export { EXECUTION_STATS_RANGES, accumulate, emptyStats, executionModelKey, finishStats, newStats, normalizeUsage, rangeStart } from "./execution-stats";
+import type { ExecutionStatsInfo, ExecutionStatsRange } from "./execution-stats";
+export type {
+  CacheObservation, ExecutionIncidentStats, ExecutionSource, ExecutionStatsInfo,
+  ExecutionStatsPeriod, ExecutionStatsRange, ExecutionUsageInput, ModelUsageStats,
+} from "./execution-stats";
 export type { AssistantMessagePart, AssistantTextPhase } from "./assistant-parts";
 
 export const GENERATIVE_UI_COMPONENTS = [
@@ -91,9 +98,11 @@ export interface CommandBase {
   requestId: string;
 }
 
+export type OpenCliBrowserTab = { id: string; url: string };
+
 export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "ping"; requestId: string }
-  | { type: "session.create"; requestId: string; title?: string; workspaceId: string }
+  | { type: "session.create"; requestId: string; title?: string; workspaceId: string; resumeFrom?: string }
   | { type: "session.side-chat.create"; requestId: string; sessionId: string; queueItemId?: string; title?: string }
   | { type: "session.generate-title"; requestId: string; sessionId: string; prompt: string; model?: string }
   | { type: "session.list"; requestId: string }
@@ -129,9 +138,14 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "claude-code.credentials.saved"; requestId: string; saved: boolean }
   | { type: "memory.get"; requestId: string }
   | { type: "memory.enabled.set"; requestId: string; enabled: boolean }
-  | { type: "memory.note.save"; requestId: string; id?: string; content: string }
+  | { type: "memory.model.set"; requestId: string; modelId: string | null }
+  | { type: "memory.note.save"; requestId: string; id?: string; content: string; preference?: MemoryPreferenceScope | null }
   | { type: "memory.note.delete"; requestId: string; id: string }
+  | { type: "memory.preference.edit"; requestId: string; id: string; value: { content: string; preference: MemoryPreferenceScope } | null }
   | { type: "memory.summary.delete"; requestId: string; id: string }
+  | { type: "stats.get"; requestId: string; range: ExecutionStatsRange }
+  | { type: "stats.record.set"; requestId: string; record: boolean }
+  | { type: "stats.memoryAccess.set"; requestId: string; enabled: boolean }
   | { type: "skills.list"; requestId: string; cwd?: string }
   | { type: "skills.cloud.list"; requestId: string; collection: "popular" | "trending" | "official"; page: number; query?: string }
   | { type: "skills.cloud.install"; requestId: string; source: string; skillId: string }
@@ -146,13 +160,14 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "browser.open"; requestId: string; url: string }
   | { type: "browser.current-url"; requestId: string }
   | { type: "douyin.bridge.response"; requestId: string; ok: boolean; result?: string; message?: string; failure?: DouyinBridgeFailure }
-  | { type: "apps.opencli.response"; requestId: string; ok: boolean; endpoint?: string; message?: string }
+  | { type: "apps.opencli.response"; requestId: string; ok: boolean; endpoint?: string; url?: string; tabs?: OpenCliBrowserTab[]; message?: string; loginRequired?: "passkey" }
   | { type: "reach.channels"; requestId: string }
   | { type: "reach.podcast.configure"; requestId: string; accessToken: string; refreshToken: string }
   | { type: "subagent.list"; requestId: string }
   | { type: "subagent.sync"; requestId: string; config: SubagentConfigInfo }
   | { type: "subagent.query"; requestId: string; runId: string }
   | { type: "subagent.control"; requestId: string; runId: string; action: SubagentControlAction; message?: string }
+  | { type: "background-shell.stop"; requestId: string; jobId: string }
   | McpCredentialsRestored
   | { type: "mcp.list"; requestId: string }
   | { type: "mcp.connect"; requestId: string; config: McpServerInfo }
@@ -187,6 +202,8 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
       serverIds?: string[];
       queueItemId?: string;
       mcpServerId?: string;
+      /** Runtime-started turn: shown as `content` from `communication`; `message` stays model input. */
+      notice?: { content: string; communication: AgentCommunicationInfo };
     }
   | { type: "agent.permission-mode.set"; requestId: string; sessionId: string; permissionMode: RunPermissionMode }
   | { type: "agent.steer"; requestId: string; sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }
@@ -256,12 +273,15 @@ export type RuntimeEvent =
   | { type: "session.updated"; session: SessionInfo }
   | { type: "session.search"; requestId: string; query: string; results: SessionSearchResult[] }
   | { type: "session.renamed"; session: SessionInfo }
+  | { type: "session.deleted"; sessionId: string }
   | { type: "session.messages"; requestId?: string; sessionId: string; messages: MessageInfo[]; compactions?: CompactionMarkerInfo[]; streaming?: LiveAssistantMessage }
   | { type: "session.queue"; sessionId: string; items: QueueItemInfo[] }
   | { type: "session.runs"; sessionId: string; runs: RunInfo[] }
   | { type: "session.toolCalls"; sessionId: string; toolCalls: ToolCallInfo[] }
   | { type: "session.subagents"; sessionId: string; subagents: SubagentRunInfo[] }
   | { type: "session.subagentNotifications"; sessionId: string; notifications: SubagentNotificationInfo[] }
+  | { type: "background-shell.job"; job: BackgroundShellJobInfo }
+  | { type: "background-shell.jobs"; sessionId: string; jobs: BackgroundShellJobInfo[] }
   | { type: "goal.current"; sessionId: string; goal?: GoalInfo }
   | { type: "goal.updated"; goal: GoalInfo }
   | { type: "goal.cleared"; sessionId: string; goalId: string }
@@ -289,8 +309,8 @@ export type RuntimeEvent =
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }
   | { type: "browser.current-url"; requestId: string; url: string }
   | { type: "douyin.bridge.request"; requestId: string; url: string; operation?: "video" | "author" | "owner"; limit?: number }
-  | { type: "apps.opencli.request"; requestId: string; site: string; url: string }
-  | { type: "apps.opencli.release"; requestId: string }
+  | { type: "apps.opencli.request"; requestId: string; site: string; url?: string; sessionId?: string; reuseRequestId?: string; listTabs?: true }
+  | { type: "apps.opencli.release"; requestId: string; close?: boolean }
   | { type: "douyin.bridge.cancel"; requestId: string }
   | { type: "reach.channels"; requestId?: string; channels: ReachChannelInfo[] }
   | { type: "subagent.list"; requestId?: string; config: SubagentConfigInfo }
@@ -318,6 +338,7 @@ export type RuntimeEvent =
   | { type: "file.preview"; requestId: string; workspaceId?: string; path: string; file: FilePreviewInfo }
   | { type: "global-prompt"; requestId: string; content: string; path: string; directory?: string }
   | { type: "memory.state"; requestId?: string; state: MemoryStateInfo }
+  | { type: "stats.state"; requestId?: string; state: ExecutionStatsInfo }
   | { type: "terminal.data"; terminalId: string; data: string }
   | { type: "terminal.exit"; terminalId: string }
   | { type: "error"; requestId?: string; message: string; localization?: LocalizedErrorInfo };
@@ -346,6 +367,20 @@ export interface AgentCommunicationInfo {
   fromTitle: string;
   toId: string;
   toTitle: string;
+  /** Set when the card stands for a background shell command. */
+  backgroundJobId?: string;
+}
+
+export interface BackgroundShellJobInfo {
+  id: string;
+  sessionId: string;
+  command: string;
+  status: "running" | "exited" | "ended" | "stopped";
+  exitCode?: number;
+  startedAt: number;
+  endedAt?: number;
+  /** Tail of the combined output. */
+  output: string;
 }
 
 export interface MessageInfo {
@@ -365,14 +400,26 @@ export interface MessageInfo {
 
 export type GoalStatus = "active" | "paused" | "blocked" | "complete";
 
-export interface MemoryNoteInfo { id: string; content: string; origin: "manual" | "chat"; createdAt: number; updatedAt: number }
+/** Preferences apply globally or only to one workspace. */
+export interface MemoryPreferenceScope { workspaceId?: string }
+export const MEMORY_PREFERENCE_MAX_LENGTH = 240;
+export const MEMORY_PREFERENCES_PER_SCOPE = 3;
+export interface MemoryAutomaticPreference {
+  id: string;
+  content: string;
+  preference: MemoryPreferenceScope;
+  sources: { id: string; quote: string }[];
+}
+export interface MemoryNoteInfo { id: string; content: string; origin: "manual" | "chat"; createdAt: number; updatedAt: number; preference?: MemoryPreferenceScope }
 /** One idle conversation's task summary; the id is the session id. */
-export interface MemorySummaryInfo { id: string; title: string; content: string; sourceUpdatedAt: number; generatedAt: number }
+export interface MemorySummaryInfo { id: string; title: string; content: string; sourceUpdatedAt: number; generatedAt: number; workspaceId?: string }
 export interface MemoryStateInfo {
   enabled: boolean;
+  modelId?: string;
   overview?: { content: string; generatedAt: number };
   summaries: MemorySummaryInfo[];
   notes: MemoryNoteInfo[];
+  automaticPreferences?: MemoryAutomaticPreference[];
   stats: { calls: number; tokens: number; lastUpdatedAt: number };
 }
 
@@ -902,7 +949,7 @@ const subagentConfig = z.object({
 const commandSchemas: Record<string, z.ZodTypeAny> = {
   ...serverCommandSchemas,
   ping: z.object({ type: z.literal("ping"), ...request }),
-  "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id }),
+  "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id, resumeFrom: id.optional() }),
   "session.side-chat.create": z.object({ type: z.literal("session.side-chat.create"), ...request, sessionId: id, queueItemId: id.optional(), title: id.optional() }),
   "session.generate-title": z.object({ type: z.literal("session.generate-title"), ...request, sessionId: id, prompt: z.string().min(1), model: z.string().optional() }),
   "session.list": z.object({ type: z.literal("session.list"), ...request }),
@@ -916,6 +963,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.toolCalls": z.object({ type: z.literal("session.toolCalls"), ...request, sessionId: id }),
   "session.subagents": z.object({ type: z.literal("session.subagents"), ...request, sessionId: id }),
   "session.subagentNotifications": z.object({ type: z.literal("session.subagentNotifications"), ...request, sessionId: id }),
+  "background-shell.stop": z.object({ type: z.literal("background-shell.stop"), ...request, jobId: id }),
   "goal.get": z.object({ type: z.literal("goal.get"), ...request, sessionId: id }),
   "goal.start": z.object({ type: z.literal("goal.start"), ...request, sessionId: id, objective: z.string().trim().min(1), queueItemId: id.optional(), serverIds: z.array(id).optional(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), messageId: id.optional(), replaceFromMessageId: id.optional(), model: z.string().optional(), permissionMode: z.enum(["ask", "auto", "full"]).optional(), thinking: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional() }).refine((goal) => nonMediaAttachmentBytes(goal.attachments) <= 140_000_000, "Goal attachments exceed the maximum size"),
   "goal.pause": z.object({ type: z.literal("goal.pause"), ...request, sessionId: id, reason: z.string().optional() }),
@@ -948,7 +996,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "browser.open": z.object({ type: z.literal("browser.open"), ...request, url: secureUrl }),
   "browser.current-url": z.object({ type: z.literal("browser.current-url"), ...request }),
   "douyin.bridge.response": z.object({ type: z.literal("douyin.bridge.response"), ...request, ok: z.boolean(), result: z.string().max(1_048_576).optional(), message: z.string().max(2_000).optional(), failure: z.enum(["metadata_timeout", "page_unavailable", "work_unavailable"]).optional() }),
-  "apps.opencli.response": z.object({ type: z.literal("apps.opencli.response"), ...request, ok: z.boolean(), endpoint: z.string().max(256).optional(), message: z.string().max(2_000).optional() }),
+  "apps.opencli.response": z.object({ type: z.literal("apps.opencli.response"), ...request, ok: z.boolean(), endpoint: z.string().max(256).optional(), url: z.string().optional(), tabs: z.array(z.object({ id: z.string(), url: z.string() })).optional(), message: z.string().max(2_000).optional(), loginRequired: z.literal("passkey").optional() }),
   "reach.channels": z.object({ type: z.literal("reach.channels"), ...request }),
   "reach.podcast.configure": z.object({ type: z.literal("reach.podcast.configure"), ...request, accessToken: z.string().min(8).max(8192), refreshToken: z.string().min(8).max(8192) }),
   "subagent.list": z.object({ type: z.literal("subagent.list"), ...request }),
@@ -972,9 +1020,15 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "global-prompt.set": z.object({ type: z.literal("global-prompt.set"), ...request, content: z.string().max(200_000) }),
   "memory.get": z.object({ type: z.literal("memory.get"), ...request }),
   "memory.enabled.set": z.object({ type: z.literal("memory.enabled.set"), ...request, enabled: z.boolean() }),
-  "memory.note.save": z.object({ type: z.literal("memory.note.save"), ...request, id: id.optional(), content: z.string().max(100_000) }),
+  "memory.model.set": z.object({ type: z.literal("memory.model.set"), ...request, modelId: id.nullable() }),
+  "memory.note.save": z.object({ type: z.literal("memory.note.save"), ...request, id: id.optional(), content: z.string().max(100_000), preference: z.object({ workspaceId: id.optional() }).strict().nullable().optional() }),
   "memory.note.delete": z.object({ type: z.literal("memory.note.delete"), ...request, id }),
+  "memory.preference.edit": z.object({ type: z.literal("memory.preference.edit"), ...request, id,
+    value: z.object({ content: z.string().max(MEMORY_PREFERENCE_MAX_LENGTH * 2), preference: z.object({ workspaceId: id.optional() }).strict() }).strict().nullable() }),
   "memory.summary.delete": z.object({ type: z.literal("memory.summary.delete"), ...request, id }),
+  "stats.get": z.object({ type: z.literal("stats.get"), ...request, range: z.enum(["today", "7d", "30d"]) }),
+  "stats.record.set": z.object({ type: z.literal("stats.record.set"), ...request, record: z.boolean() }).strict(),
+  "stats.memoryAccess.set": z.object({ type: z.literal("stats.memoryAccess.set"), ...request, enabled: z.boolean() }),
   "agent.steer": z.object({ type: z.literal("agent.steer"), ...request, sessionId: id, runId: id, queueItemId: id, message: z.string(), attachments: z.array(messageAttachment).optional(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional() }).refine((run) => Boolean(run.message.trim() || run.attachments?.length), "Message or valid attachments required"),
   "queue.upsert": z.object({ type: z.literal("queue.upsert"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), serverIds: z.array(id).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),
   "queue.edit": z.object({ type: z.literal("queue.edit"), ...request, sessionId: id, item: z.object({ id, sessionId: id, text: z.string(), quote: z.object({ text: z.string().trim().min(1).max(100_000), messageId: id }).optional(), serverIds: z.array(id).optional(), attachments: z.array(messageAttachment).optional(), lane: z.enum(["queue", "steer"]), status: z.enum(["queued", "steering", "scheduled"]), position: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative() }) }),

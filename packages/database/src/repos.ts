@@ -24,18 +24,19 @@ export class SessionRepo {
     return this.db.select().from(sessions).where(eq(sessions.id, id)).get();
   }
 
-  list() {
-    return this.db.select().from(sessions).orderBy(desc(sessions.updatedAt)).all();
+  list(workspaceId?: string) {
+    return this.db.select().from(sessions).where(workspaceId ? eq(sessions.workspaceId, workspaceId) : undefined).orderBy(desc(sessions.updatedAt)).all();
   }
 
   /** Stream only search text; retain Unicode folding without loading transcripts. */
-  search(query: string, limit = 50) {
+  search(query: string, limit = 50, scope?: { workspaceId: string; excludeId: string }) {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle || limit <= 0) return [];
     const rows = this.db.select().from(sessions)
       .where(and(
         isNotNull(sessions.workspaceId),
         sql`EXISTS (SELECT 1 FROM ${workspaces} WHERE ${workspaces.id} = ${sessions.workspaceId})`,
+        scope ? and(eq(sessions.workspaceId, scope.workspaceId), sql`${sessions.id} != ${scope.excludeId}`) : undefined,
       ))
       .orderBy(desc(sessions.updatedAt), sql`${sessions}.rowid DESC`)
       .all();
@@ -58,9 +59,10 @@ export class SessionRepo {
       FROM sessions s
       CROSS JOIN workspaces w ON w.id = s.workspace_id
       CROSS JOIN messages m ON m.session_id = s.id
+      ${scope ? "WHERE s.workspace_id = ? AND s.id != ? AND m.communication IS NULL AND m.role IN ('user', 'assistant')" : ""}
       ORDER BY s.updated_at DESC, s.rowid DESC, m.created_at ASC, m.rowid ASC
     `);
-    for (const row of cursor.iterate() as Iterable<{ sessionId: string; content: string }>) {
+    for (const row of cursor.iterate(...(scope ? [scope.workspaceId, scope.excludeId] : [])) as Iterable<{ sessionId: string; content: string }>) {
       const rank = ranks.get(row.sessionId)!;
       if (rank > lastRank) break;
       if (matched.has(row.sessionId) || !row.content.toLocaleLowerCase().includes(needle)) continue;
@@ -142,6 +144,18 @@ export class MessageRepo {
       .where(eq(messages.sessionId, sessionId))
       .orderBy(messages.createdAt, sql`rowid`)
       .all();
+  }
+
+  /** Memory needs only visible conversation text; tool transcripts and UI notices are not input. */
+  visibleTextBySession(sessionId: string) {
+    return this.db.select({ role: messages.role, content: messages.content }).from(messages)
+      .where(and(eq(messages.sessionId, sessionId), inArray(messages.role, ["user", "assistant"]), sql`${messages.communication} IS NULL`))
+      .orderBy(messages.createdAt, sql`rowid`).all();
+  }
+
+  hasPriorNativePrompt(sessionId: string, runId: string): boolean {
+    return Boolean(this.db.select({ id: messages.id }).from(messages).where(and(eq(messages.sessionId, sessionId),
+      eq(messages.role, "user"), sql`${messages.runId} IS NOT ${runId}`, isNotNull(messages.rawMessage), sql`${messages.communication} IS NULL`)).get());
   }
 
   setRawMessage(id: string, rawMessage: unknown) {
@@ -394,7 +408,7 @@ export class SubagentNotificationRepo {
 }
 
 export class RunRepo {
-  constructor(private db: Db) {}
+  constructor(private db: Db, private onFailure?: (id: string, timestamp: number, error?: string) => void) {}
 
   create(sessionId: string, input: { origin?: string; goalId?: string; goalEpoch?: number } = {}) {
     const row = {
@@ -413,11 +427,18 @@ export class RunRepo {
   }
 
   finish(id: string, status: "completed" | "failed" | "cancelled" | "interrupted", error?: string) {
-    this.db
-      .update(runs)
-      .set({ status, completedAt: Date.now(), error: error ?? null })
-      .where(eq(runs.id, id))
-      .run();
+    const timestamp = Date.now();
+    const update = () => this.db.update(runs)
+      .set({ status, completedAt: timestamp, error: error ?? null }).where(eq(runs.id, id)).run();
+    if (status !== "failed" || !this.onFailure) { update(); return; }
+    this.db.$client.transaction(() => {
+      update();
+      this.onFailure!(id, timestamp, error);
+    }).immediate();
+  }
+
+  setModel(id: string, model: string) {
+    this.db.update(runs).set({ model }).where(eq(runs.id, id)).run();
   }
 
   authorizeFinalization(id: string) {
@@ -447,6 +468,12 @@ export class RunRepo {
       .set({ status: "interrupted", completedAt: Date.now() })
       .where(sql`${runs.status} IN ('created', 'running', 'waiting_approval', 'paused')`)
       .run();
+  }
+
+  activeSessionIds() {
+    const active = this.db.selectDistinct({ id: runs.sessionId }).from(runs)
+      .where(inArray(runs.status, ["created", "running", "waiting_approval", "paused"])).all();
+    return new Set(active.map((row) => row.id));
   }
 
   listBySession(sessionId: string) {
@@ -661,6 +688,10 @@ export class WorkspaceRepo {
 
 export class SettingsRepo {
   constructor(private db: Db) {}
+
+  transaction<T>(write: () => T): T {
+    return this.db.$client.transaction(write).immediate();
+  }
 
   get<T = unknown>(key: string): T | undefined {
     const row = this.db.select().from(settings).where(eq(settings.key, key)).get();
@@ -890,4 +921,113 @@ export class SkillRepo {
 
   delete(id: string) { this.db.delete(skills).where(eq(skills.id, id)).run(); }
   list() { return this.db.select().from(skills).where(eq(skills.enabled, true)).orderBy(skills.name).all(); }
+}
+
+/** Raw provider usage; one row per request, never aggregated in place, so time ranges stay exact. */
+export class ExecutionUsageRepo {
+  constructor(private db: Db) {}
+
+  /** requestKey is unique per recorded request; identical usage in the same millisecond stays distinct. */
+  add(row: { requestKey: string; sessionId?: string; at: number; source: string; provider: string; model: string; cache: string; input: number; output: number; cacheRead: number; cacheWrite: number }) {
+    this.db.$client.prepare(`INSERT OR IGNORE INTO execution_usage
+      (request_key, session_id, at, source, provider, model, cache, input, output, cache_read, cache_write)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(row.requestKey, row.sessionId ?? null, row.at, row.source, row.provider, row.model, row.cache, row.input, row.output, row.cacheRead, row.cacheWrite);
+  }
+
+  /** Deleted chats drop their usage, like every other record derived from them. */
+  forgetSession(sessionId: string) { this.db.$client.prepare("DELETE FROM execution_usage WHERE session_id = ?").run(sessionId); }
+
+  list(since: number, until: number) {
+    return this.db.$client.prepare(`SELECT at, source, provider, model, cache, input, output,
+      cache_read AS cacheRead, cache_write AS cacheWrite FROM execution_usage
+      WHERE at >= ? AND at < ? ORDER BY at`).all(since, until) as unknown as {
+        at: number; source: string; provider: string; model: string;
+        cache: string; input: number; output: number; cacheRead: number; cacheWrite: number;
+      }[];
+  }
+}
+
+/** Normalized execution failures per provider/model; no command text or output is stored. */
+export class ExecutionIncidentRepo {
+  constructor(private db: Db) {}
+
+  add(row: { id: string; sessionId: string; runId: string; tool: string | null; provider: string; model: string; outcome: "failed" | "interrupted"; reason: string; at: number }) {
+    this.db.$client.prepare(`INSERT OR IGNORE INTO execution_incidents
+      (id, session_id, run_id, tool, provider, model, outcome, reason, at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(row.id, row.sessionId, row.runId, row.tool, row.provider, row.model, row.outcome, row.reason, row.at);
+  }
+
+  backgroundOwner(id: string) {
+    return this.db.$client.prepare("SELECT provider, model FROM execution_incidents WHERE id = ?").get(id) as { provider: string; model: string } | undefined;
+  }
+
+  finishBackground(id: string, at: number, reason?: string) {
+    if (reason) this.db.$client.prepare("UPDATE execution_incidents SET outcome = 'failed', reason = ?, at = ? WHERE id = ?").run(reason, at, id);
+    else this.db.$client.prepare("DELETE FROM execution_incidents WHERE id = ?").run(id);
+  }
+
+  /** Only still-running calls are marked, and only while global recording is enabled. */
+  recover(at: number) {
+    const rows = this.db.$client.prepare(`SELECT t.id, t.run_id, t.tool_name, r.session_id,
+        r.model
+      FROM tool_calls t JOIN runs r ON r.id=t.run_id WHERE t.status = 'running'
+        AND t.run_id IN (SELECT id FROM runs WHERE status IN ('created', 'running', 'waiting_approval', 'paused'))`).all() as unknown as
+      { id: string; run_id: string; tool_name: string; session_id: string; model: string | null }[];
+    const insert = this.db.$client.prepare(`INSERT OR IGNORE INTO execution_incidents
+      (id, session_id, run_id, tool, provider, model, outcome, reason, at) VALUES (?, ?, ?, ?, ?, ?, 'interrupted', 'outcome-unknown', ?)`);
+    for (const row of rows) {
+      const slash = (row.model ?? "").indexOf("/");
+      if (slash <= 0 || !row.model) continue;
+      const provider = row.model.slice(0, slash), model = row.model.slice(slash + 1);
+      insert.run(`interrupted-tool:${row.id}`, row.session_id, row.run_id, null, provider, model, at);
+    }
+    const runs = this.db.$client.prepare(`SELECT id, session_id, model FROM runs WHERE status IN ('created', 'running', 'waiting_approval', 'paused')`).all() as unknown as
+      { id: string; session_id: string; model: string | null }[];
+    for (const run of runs) {
+      const slash = run.model?.indexOf("/") ?? -1;
+      if (slash <= 0 || !run.model) continue;
+      insert.run(`interrupted-run:${run.id}`, run.session_id, run.id, null, run.model.slice(0, slash), run.model.slice(slash + 1), at);
+    }
+  }
+
+  counts(since: number) {
+    return this.db.$client.prepare(`SELECT provider, model, count(*) AS count, max(at) AS lastAt FROM execution_incidents
+      WHERE at >= ? AND outcome = 'failed' GROUP BY provider, model ORDER BY count DESC, lastAt DESC`)
+      .all(since) as unknown as { provider: string; model: string; count: number; lastAt: number }[];
+  }
+
+  analysisModels(from: number, until: number) {
+    return this.db.$client.prepare(`SELECT DISTINCT provider, model FROM execution_incidents
+      WHERE at > ? AND at < ? AND outcome = 'failed' AND tool IS NOT NULL`)
+      .all(from, until) as unknown as { provider: string; model: string }[];
+  }
+
+  analysisGroups(provider: string, model: string, from: number, until: number) {
+    return this.db.$client.prepare(`SELECT tool, reason, count(*) AS count
+      FROM execution_incidents WHERE provider = ? AND model = ? AND at > ? AND at < ?
+      AND outcome = 'failed' AND tool IS NOT NULL
+      GROUP BY tool, reason ORDER BY count DESC, tool, reason`)
+      .all(provider, model, from, until) as unknown as { tool: string; reason: string; count: number }[];
+  }
+}
+
+/** Advice per provider/model/tool; replacing a row is how a repeated mistake stops growing. */
+export class ExecutionLessonRepo {
+  constructor(private db: Db) {}
+
+  put(row: { provider: string; model: string; tool: string; reason: string; advice: string; at: number }) {
+    this.db.$client.prepare(`INSERT INTO execution_lessons (id, provider, model, tool, reason, advice, at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, advice = excluded.advice, at = excluded.at`)
+      .run(`${row.provider}/${row.model}:${row.tool}:${row.reason}`, row.provider, row.model, row.tool, row.reason, row.advice, row.at);
+  }
+
+  /** Advice from an earlier grant is not reused after access is revoked and granted again. */
+  forModel(provider: string, model: string, since: number, limit = 6) {
+    return this.db.$client.prepare(`SELECT tool, reason, advice FROM execution_lessons
+      WHERE provider = ? AND model = ? AND at > ? ORDER BY at DESC LIMIT ?`)
+      .all(provider, model, since, limit) as unknown as { tool: string; reason: string; advice: string }[];
+  }
 }

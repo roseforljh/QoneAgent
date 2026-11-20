@@ -59,18 +59,25 @@ export async function pickAttachmentFolder(
   return getAttachmentInfo(result.filePaths[0]);
 }
 
+// asset:// serves only files the renderer authorized (Tauri's asset scope). Windows paths are case-insensitive.
+const authorizedAssets = new Set<string>();
+const assetKey = (filePath: string) => {
+  const resolved = path.resolve(filePath);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+};
+export function isAuthorizedAsset(filePath: string): boolean {
+  return authorizedAssets.has(assetKey(filePath));
+}
+
 export function authorizeAttachmentPreview(filePath: string): void {
   const ext = path.extname(filePath).toLowerCase().replace(/^\./, "");
-  if (!["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) {
+  if (!path.isAbsolute(filePath) || !["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) {
     throw new Error("native.previewPath");
   }
-  if (!fs.existsSync(filePath)) {
-    return;
-  }
-  const stat = fs.statSync(filePath);
-  if (stat.isDirectory()) {
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
     throw new Error("native.previewFolder");
   }
+  authorizedAssets.add(assetKey(filePath));
 }
 
 export function authorizeFilePreview(filePath: string, allowedRoot?: string): string {
@@ -78,6 +85,7 @@ export function authorizeFilePreview(filePath: string, allowedRoot?: string): st
     throw new Error("native.filePreviewPath");
   }
   if (!fs.existsSync(filePath)) {
+    authorizedAssets.add(assetKey(filePath));
     return filePath;
   }
   const canonical = fs.realpathSync(filePath);
@@ -86,11 +94,13 @@ export function authorizeFilePreview(filePath: string, allowedRoot?: string): st
     throw new Error("native.filePreviewType");
   }
   if (allowedRoot && fs.existsSync(allowedRoot)) {
-    const rootCanonical = fs.realpathSync(allowedRoot);
-    if (!canonical.startsWith(rootCanonical)) {
+    // Compare path components: a plain prefix check let C:\work\app2 pass for root C:\work\app.
+    const relative = path.relative(fs.realpathSync(allowedRoot), canonical);
+    if (!relative || relative.split(path.sep)[0] === ".." || path.isAbsolute(relative)) {
       throw new Error("native.filePreviewScope");
     }
   }
+  authorizedAssets.add(assetKey(canonical));
   return canonical;
 }
 

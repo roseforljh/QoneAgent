@@ -1,5 +1,6 @@
 import type { SubagentRunInfo } from "@qone/protocol";
 import { subagentById, subagentByParentTool, subagentsForParent } from "../../lib/store-indexes";
+import { isActiveSubagent } from "../../lib/subagent-state";
 
 type ToolRef = { type?: string; toolName: string; toolCallId: string; args?: unknown };
 type MessageWithParts = { runId?: string; parts?: readonly { type: string; toolCallId?: string; toolName?: string }[] };
@@ -31,7 +32,7 @@ export function subagentForTool(
   if (part.toolName === "run_subagent_workflow") {
     return subagentsForParent(subagents, parentRunId)
       .filter((item) => item.parentSessionId === sessionId && item.toolCallId.startsWith("workflow:"))
-      .sort((a, b) => Number(isActive(b.status)) - Number(isActive(a.status)) || b.startedAt - a.startedAt)[0];
+      .sort((a, b) => Number(isActiveSubagent(b.status)) - Number(isActiveSubagent(a.status)) || b.startedAt - a.startedAt)[0];
   }
   const runId = runIdFromArgs(part.args) ?? runIdFromArgs(callArgs);
   const child = subagentById(subagents, runId);
@@ -65,10 +66,6 @@ export function shouldRenderSubagentTool(
 ): boolean {
   if (!child || part.toolName === "dispatch_subagent" || part.toolName === "run_subagent_workflow") return true;
   return !hasSubagentCreationCall(messages, currentParts, child);
-}
-
-function isActive(status: SubagentRunInfo["status"]): boolean {
-  return status === "created" || status === "running" || status === "waiting_approval" || status === "paused";
 }
 
 export const OPEN_SUBAGENT_EVENT = "qone-open-subagents";

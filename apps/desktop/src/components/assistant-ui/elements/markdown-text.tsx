@@ -7,7 +7,7 @@ import {
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
   useIsMarkdownCodeBlock,
 } from "@assistant-ui/react-markdown";
-import { remarkQoneGfm } from "../../../lib/markdown-gfm";
+import { BARE_URL_PATTERN, remarkQoneGfm } from "../../../lib/markdown-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { normalizeMathDelimiters, escapeCurrencyDollars } from "@assistant-ui/react-markdown";
@@ -42,8 +42,7 @@ function remarkQoneAutolink() {
       for (const child of node.children) {
         if (child.type === "text" && child.value) {
           let cursor = 0;
-          const matcher = /https?:\/\/[^\s<>]+/gi;
-          for (const match of child.value.matchAll(matcher)) {
+          for (const match of child.value.matchAll(BARE_URL_PATTERN)) {
             const start = match.index ?? 0;
             const raw = match[0];
             const url = raw.replace(/[.,!?;:，。！？；：）》】]+$/u, "");

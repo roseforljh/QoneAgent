@@ -9,7 +9,7 @@ import folderIcon from "../../assets/codex-icons/folder-light-16.svg";
 import folderOpenIcon from "../../assets/codex-icons/folder-open-light-16.svg";
 import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import { memo, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from "react";
-import { createSidebarSessionsSelector } from "../../lib/sidebar-sessions";
+import { createSidebarSessionsSelector, isSidebarSessionRunning } from "../../lib/sidebar-sessions";
 import { SidebarContextMenu, SidebarEntityMenu, SidebarMenu } from "./sidebar-menu";
 import { useLocale } from "../../localization";
 import { groupProjectSidebarSessions, sortSidebarWorkspaces, useSidebarPreferences } from "../../lib/sidebar-preferences";
@@ -28,7 +28,7 @@ const SessionRow: FC<{ session: SessionInfo; dragGroup: string; fade?: "on" | "o
   const deleteSession = useStore((s) => s.deleteSession);
   const priority = useSidebarPreferences((s) => s.priorityIds.includes(session.id));
   const titleGenerating = useStore((s) => s.titleGeneratingSessionIds.includes(session.id));
-  const isRunning = useStore((s) => s.runningSessionIds.includes(session.id));
+  const isRunning = useStore((s) => isSidebarSessionRunning(s, session.id));
   const isCompleted = useStore((s) => s.completedSessionIds.includes(session.id));
   const togglePriority = useSidebarPreferences((s) => s.togglePriority);
   const [renaming, setRenaming] = useState(false);

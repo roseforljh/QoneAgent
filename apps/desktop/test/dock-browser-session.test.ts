@@ -365,3 +365,88 @@ test("switching between two browser owners serializes correctly on global native
     await tick();
   }
 });
+
+test("alreadyOpen managed session attaches without reopening, parks offscreen on hide, and preserves active agent view on dispose", async () => {
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const parkBounds = { x: -32000, y: -32000, w: 1280, h: 720 };
+  let busy = true;
+  const session = createDockBrowserSession(
+    async (command, args) => { calls.push({ command, args }); },
+    "opencli-browser-1",
+    "https://example.com",
+    () => {},
+    undefined,
+    undefined,
+    { alreadyOpen: true, parkBounds, shouldCloseOnDispose: () => !busy },
+  );
+
+  session.update(bounds, true);
+  await tick();
+  expect(calls).toEqual([
+    { command: "browser_bounds", args: { browserId: "opencli-browser-1", ...bounds } },
+    { command: "browser_visible", args: { browserId: "opencli-browser-1", visible: true } },
+  ]);
+
+  calls.length = 0;
+  session.update(bounds, false);
+  await tick();
+  expect(calls).toEqual([
+    { command: "browser_bounds", args: { browserId: "opencli-browser-1", ...parkBounds } },
+  ]);
+
+  calls.length = 0;
+  session.dispose();
+  await tick();
+  expect(calls).toEqual([
+    { command: "browser_bounds", args: { browserId: "opencli-browser-1", ...parkBounds } },
+  ]);
+
+  busy = false;
+  calls.length = 0;
+  const idleSession = createDockBrowserSession(
+    async (command, args) => { calls.push({ command, args }); },
+    "opencli-browser-2",
+    "https://example.com",
+    () => {},
+    undefined,
+    undefined,
+    { alreadyOpen: true, parkBounds, shouldCloseOnDispose: () => !busy },
+  );
+  idleSession.dispose();
+  await tick();
+  expect(calls).toEqual([
+    { command: "browser_close", args: { browserId: "opencli-browser-2" } },
+  ]);
+});
+
+test("an open modal hides the native layer and closing it restores the requested state", async () => {
+  // 原生视图压在 DOM 之上，模态框出现时必须让位
+  let modal = false;
+  let notify: (() => void) | undefined;
+  const globals = globalThis as Record<string, unknown>;
+  const previous = { document: globals.document, MutationObserver: globals.MutationObserver };
+  globals.document = { body: {}, querySelector: () => (modal ? {} : null) };
+  globals.MutationObserver = class { constructor(callback: () => void) { notify = callback; } observe() {} disconnect() {} };
+  const visibility: unknown[] = [];
+  const session = createDockBrowserSession(async (command, args) => {
+    if (command === "browser_visible") visibility.push(args?.visible);
+  }, "browser-modal", "https://example.com", () => {});
+  try {
+    session.update(bounds, true);
+    await tick();
+    modal = true;
+    notify?.();
+    await tick();
+    session.update({ ...bounds, x: 600 }, true);
+    await tick();
+    modal = false;
+    notify?.();
+    await tick();
+    expect(visibility).toEqual([true, false, true]);
+  } finally {
+    session.dispose();
+    await tick();
+    globals.document = previous.document;
+    globals.MutationObserver = previous.MutationObserver;
+  }
+});

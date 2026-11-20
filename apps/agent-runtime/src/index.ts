@@ -1,6 +1,6 @@
 import { connectMcp, registerMcp, mcpServerList, restoreMcpCredentials } from "./mcp-connections";
 import { handleSessionCommand } from "./session-commands.js";
-import { handleRuntimeCommand } from "./runtime-commands.js";
+import { handleRuntimeCommand, sessionHasActiveRun } from "./runtime-commands.js";
 import { claudeMcpToken } from "./claude-code/mcp-auth";
 import { sendMcpIcons } from "./mcp-icons";
 import { prepareMcpConfiguration, watchConfiguration } from "./config-watch";
@@ -14,7 +14,7 @@ import { SideConversationService } from "./side-conversation.js";
 import { createLogger, EventBus, qoneDatabasePath, qoneSettingsPath, qoneStatePath, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, AgentCommunicationInfo, SessionSearchResult, McpServerInfo } from "@qone/protocol";
 import { decodeCommand, REMOVED_BUILTIN_SUBAGENT_IDS, serverOperationInfo, serverOperationCancelled } from "@qone/protocol";
-import { openDb, ConfigFile, mcpServersFrom, SessionRepo, MessageRepo, RunRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, PreferencesRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
+import { openDb, ConfigFile, mcpServersFrom, SessionRepo, MessageRepo, RunRepo, ExecutionUsageRepo, ExecutionIncidentRepo, ExecutionLessonRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, PreferencesRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
@@ -40,6 +40,9 @@ import { automaticCompactionBoundary, restoreCompactedContext, type SessionCompa
 import { registerSubagentDispatcher, subagentInfo } from "./subagent-runner.js";
 import { createSubagentPublisher } from "./subagent-publisher.js";
 import { SubagentNotificationCoordinator } from "./subagent-notifications.js";
+import { BackgroundShellJobs, type BackgroundNotice } from "./background-shell.js";
+import { ExecutionStats } from "./execution-stats.js";
+import { ExecutionRecorder } from "./execution-recorder.js";
 
 import { ensureGlobalInstructions } from "./global-instructions.js";
 import { ensureSystemPromptModules } from "./system-prompt.js";
@@ -48,8 +51,8 @@ import { createRuntimeOutput } from "./runtime-output.js";
 import { DouyinBridge } from "./douyin-bridge.js";
 import { AppMediaService } from "./app-media-service.js";
 import { AppOpenCliBridge } from "./app-opencli-bridge.js";
-import { MemoryStore } from "./memory/memory-store.js";
-import { MemoryService } from "./memory/memory-service.js";
+import { createRuntimeMemory } from "./memory/runtime-memory.js";
+import { MemoryIncidents } from "./memory/memory-incidents.js";
 import { ServerService } from "./servers/server-service.js";
 
 const log = createLogger("runtime");
@@ -92,7 +95,6 @@ else {
 }
 const sessionRepo = new SessionRepo(db);
 const messageRepo = new MessageRepo(db);
-const runRepo = new RunRepo(db);
 const goalRepo = new GoalRepo(db);
 const subagentRunRepo = new SubagentRunRepo(db);
 const subagentRunIds = new Set<string>();
@@ -114,20 +116,34 @@ const sideConversations = new SideConversationService(db);
 const isMemorySource = (sessionId: string) => !sideConversations.metadata(sessionId) && !subagentRunRepo.getByExecutionSession(sessionId);
 // Late-bound adapter: server changes rebuild idle agent sessions so tool lists stay current.
 const servers: ServerService = new ServerService(preferencesRepo, (event) => send(event), () => adapter.invalidateSessions());
-const memory: MemoryService = new MemoryService({
-  store: new MemoryStore(settingsRepo),
-  source: {
-    candidates: () => sessionRepo.list().filter((session) => isMemorySource(session.id))
-      .map((session) => ({ id: session.id, title: session.title, updatedAt: session.updatedAt })),
-    transcript: (sessionId) => messageRepo.listBySession(sessionId).map(({ role, content }) => ({ role, content })),
-  },
-  searchConversations: (query, excludeId) => sessionRepo.search(query, 20)
-    .filter(({ session }) => session.id !== excludeId && isMemorySource(session.id))
-    .map(({ session, content }) => ({ id: session.id, title: session.title, content: content ?? session.title })),
-  // Late-bound: the adapter is created below and only called once a run starts.
-  complete: (modelName) => (system, user, maxTokens): Promise<{ text: string; tokens: number }> => adapter.completeText(modelName, system, user, maxTokens),
+// Execution statistics record locally; only the global memory grant permits analysis.
+const executionUsageRepo = new ExecutionUsageRepo(db);
+const executionIncidentRepo = new ExecutionIncidentRepo(db);
+const executionLessonRepo = new ExecutionLessonRepo(db);
+const runRepo: RunRepo = new RunRepo(db, (id, timestamp, error) => executionStats.runFailed(id, timestamp, error));
+const executionRecorder = new ExecutionRecorder(executionIncidentRepo, runRepo, () => executionStats.recordEnabled());
+const executionStats: ExecutionStats = new ExecutionStats({
+  usage: executionUsageRepo, incidents: executionIncidentRepo, lessons: executionLessonRepo, prefs: preferencesRepo,
+  models: () => modelConfigRepo.list().map(({ provider, model }) => ({ provider, model })),
+  // The recorder resolves each run through the repository, so session and model are never guessed.
+  recorder: executionRecorder,
+  onChange: () => executionAnalysis.invalidate(),
+  onError: (error) => log.warn("execution statistics failed", { err: String(error) }),
+});
+const runtimeMemory: ReturnType<typeof createRuntimeMemory> = createRuntimeMemory({
+  db, settingsRepo, sessionRepo, messageRepo, runRepo, workspaceRepo, isMemorySource,
+  modelId: () => preferencesRepo.get<string | null>("memory.model") ?? undefined,
+  complete: (modelId, signal, preferredModel) => (system, user, maxTokens) => adapter.completeText(modelId, preferredModel, system, user, maxTokens, signal),
   onChange: (state) => send({ type: "memory.state", state }),
-  onError: (error) => log.warn("memory consolidation skipped", { err: String(error) }),
+  onError: (error) => log.warn("memory maintenance failed", { err: String(error) }),
+});
+const { memory } = runtimeMemory;
+const executionAnalysis = new MemoryIncidents({
+  stats: executionStats,
+  permission: () => memory.enabled && executionStats.memoryAccess()
+    ? JSON.stringify([memory.store.settings().version, preferencesRepo.get("memory.model")]) : undefined,
+  complete: (signal) => (system, user, maxTokens) => adapter.completeText(preferencesRepo.get<string>("memory.model"), undefined, system, user, maxTokens, signal),
+  onError: (error) => log.warn("execution analysis failed", { err: String(error) }),
 });
 if (!settingsFile.error) {
   const enabled = preferencesRepo.get<boolean>("memory.enabled");
@@ -249,6 +265,12 @@ eventBus.subscribe((busEvent) => {
     scope: approvalParent ? "conversation" : childExecution ? "subagent" : "conversation",
   } satisfies AgentEvent), !NOT_REPLAYED.has(busEvent.type));
   const agentEvent = busEvent.type === "agent.completed" ? { ...replayEvent, payload: busEvent.payload } : replayEvent;
+  runtimeMemory.observe(agentEvent);
+  // Execution failures are recorded only for models the user switched on, in their own table.
+  if (agentEvent.type === "tool.failed" && agentEvent.runId) {
+    const payload = agentEvent.payload as { toolCallId?: string; toolName?: string; result?: unknown } | undefined;
+    if (payload?.toolCallId) executionStats.toolFailed(agentEvent.runId, payload.toolCallId, payload.toolName ?? "", payload.result, agentEvent.timestamp);
+  }
   handleRuntimeEvent({
     messageRepo, runRepo, subagentRunRepo, toolCallRepo, settingsRepo,
     assistantBuffers, assistantStreamBuffers, assistantPartsByRun, assistantRawMessagesByRun, assistantMessageSequenceByRun,
@@ -340,9 +362,12 @@ const interruptedSubagents = subagentRunRepo.list().filter((row) => activeSubage
 const approvalRuns = new Map<string, string>();
 const approvalToolCalls = new Map<string, string>();
 const commandApprovals = new ApprovalQueue();
-runRepo.markInterrupted(); // any run still "running" was killed with last process
-turnRepo.markInterrupted();
-toolCallRepo.markInterrupted();
+runtimeMemory.recover(() => {
+  executionStats.recover();
+  runRepo.markInterrupted(); // any run still "running" was killed with last process
+  turnRepo.markInterrupted();
+  toolCallRepo.markInterrupted();
+});
 
 const adapter = new PiAdapter((event) => eventBus.emit({
   type: event.type,
@@ -366,7 +391,13 @@ const adapter = new PiAdapter((event) => eventBus.emit({
     return webAccessMemory.context(sessionId, task, history);
   },
   memoryContext: (sessionId, message, modelName) => memory.context(sessionId, message, modelName),
+  memoryAddition: (sessionId, runId, delivery) => memory.addition(sessionId, runId, delivery),
   memoryTools: (sessionId) => memory.tools(sessionId),
+  // Every provider request lands here once, whether it came from a chat or a summary call.
+  usageObserved: (sessionId, usage, source) => executionStats.observe(sessionId, usage, source),
+  executionAdvice: (provider, model, tool, args) => executionAnalysis.advice(provider, model, tool, args),
+  executionModel: (runId, model) => runRepo.setModel(runId, model),
+  sideConversationOwner: (sideSessionId) => sideConversations.parent(sideSessionId),
   serverTools: (workspacePath, serverIds) => servers.tools(workspacePath, serverIds),
   deliveryTools: (sessionId, workspacePath, activeRunId) => [fileDelivery.tool(sessionId, workspacePath, activeRunId)],
   serverSummary: (serverIds) => servers.summary(serverIds),
@@ -474,6 +505,30 @@ subagentController = registerSubagentDispatcher({
   publish: publishSubagent, emit: (type, payload, sessionId, runId) => eventBus.emit({ type, payload, sessionId, runId, scope: "subagent" }),
 });
 adapter.setSubagentController(subagentController);
+const backgroundCommunication = (sessionId: string, notice: Pick<BackgroundNotice, "jobId" | "title">): AgentCommunicationInfo => ({
+  fromId: notice.jobId, fromTitle: notice.title, toId: sessionId, toTitle: sessionRepo.get(sessionId)?.title ?? "main", backgroundJobId: notice.jobId,
+});
+const backgroundShell = new BackgroundShellJobs({
+  lifecycle: (job, tool) => {
+    try { executionRecorder.background(job, tool, adapter.activeRunId(job.sessionId)); }
+    catch (error) { log.warn("background execution statistics failed", { err: String(error) }); }
+  },
+  queueLive: (sessionId, prompt) => {
+    const runId = adapter.activeRunId(sessionId);
+    return Boolean(runId && adapter.queueSubagentUpdateNow(sessionId, prompt, runId));
+  },
+  publish: (job) => send({ type: "background-shell.job", job }),
+  wake: (sessionId, notice, options) => {
+    if (!sessionRepo.get(sessionId)) return true;
+    if (sessionHasActiveRun(runtimeCommandServices(), sessionId)) return false;
+    void handle({
+      type: "agent.run", requestId: crypto.randomUUID(), sessionId, message: notice.prompt, continuation: true, ...options,
+      notice: { content: notice.content, communication: backgroundCommunication(sessionId, notice) },
+    }).catch((error) => log.error("background command turn failed", { sessionId, err: String(error) }));
+    return true;
+  },
+});
+adapter.setBackgroundShell(backgroundShell);
 const publishGoal = (goal: GoalInfo) => send({ type: "goal.updated", goal });
 const currentGoalForTool = (sessionId: string, goalId: string, epoch: number, runId: string) => {
     const goal = goalRepo.get(goalId);
@@ -806,7 +861,9 @@ function sendSubagentConfig(requestId?: string) {
 export function runtimeCommandServices() {
   return {
     adapter,
+    backgroundShell,
     memory,
+    executionStats, executionAnalysis,
     servers,
     ensureModelsReady,
     browserReady,
@@ -903,6 +960,7 @@ void initializeOptionalIntegrations().catch((error) => {
   log.error("optional integration initialization failed", { err: String(error) });
 });
 const stopConfigurationWatch = watchConfiguration(settingsFile, runtimeCommandServices);
+void modelsReady.then(() => { executionAnalysis.start(); return memory.refresh(); }).catch(() => { /* initial configuration already logged */ });
 
 // Read NDJSON commands from stdin.
 const decoder = new TextDecoder();
@@ -932,6 +990,9 @@ for await (const value of process.stdin as AsyncIterable<Uint8Array>) {
 }
 
 stopConfigurationWatch();
+memory.close();
+executionAnalysis.close();
+executionStats.close();
 await mcp.disconnectAll();
 for (const session of adapter.getSessions()) {
   try { await session.dispose(); } catch (error) { log.warn("Pi session dispose failed", { err: String(error) }); }

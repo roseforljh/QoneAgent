@@ -6,6 +6,7 @@ import { DesktopUpdater } from "./updater";
 import * as secretStore from "./secret-store";
 import * as fileDialogs from "./file-dialogs";
 import { administratorLaunchEnabled, setAdministratorLaunchEnabled } from "./windows-administrator";
+import { updateNativeCopy } from "./native-menus";
 
 export function registerIpcHandlers(
   getMainWindow: () => BrowserWindow | null,
@@ -13,7 +14,8 @@ export function registerIpcHandlers(
   terminal: TerminalManager,
   browserDock: BrowserDockManager,
   updater: DesktopUpdater,
-  privilege: { restricted: boolean; administratorReady?: Promise<void>; administratorSupported?: boolean } = { restricted: false },
+  privilege: { restricted: boolean; systemPathReady?: Promise<void>; administratorReady?: Promise<void>; administratorSupported?: boolean } = { restricted: false },
+  nativeCopyChanged: () => void = () => {},
 ): void {
   // 统一 invoke 入口或分命 handlers
   ipcMain.handle("desktop_invoke", async (event, cmd: string, args: Record<string, any> = {}) => {
@@ -74,9 +76,8 @@ export function registerIpcHandlers(
         return fileDialogs.saveImageAs(mainWindow, args.filename, args.data, args.title);
       }
       case "set_native_copy": {
-        if (args.copy?.completed) {
-          sidecar.setCompletedCopy(args.copy.completed);
-        }
+        updateNativeCopy(args.copy);
+        nativeCopyChanged();
         return;
       }
       case "secret_set": {
@@ -89,7 +90,7 @@ export function registerIpcHandlers(
         return secretStore.deleteSecret(args.key);
       }
       case "terminal_spawn": {
-        await privilege.administratorReady;
+        await Promise.all([privilege.systemPathReady, privilege.administratorReady]);
         return terminal.spawn(args.terminalId, args.shell, args.cwd, args.cols, args.rows, args.shellArgs);
       }
       case "terminal_write": {
@@ -141,6 +142,9 @@ export function registerIpcHandlers(
       }
       case "opencli_cdp_endpoint": {
         return browserDock.getCdpEndpoint(args.browserId);
+      }
+      case "browser_take_passkey_request": {
+        return browserDock.takePasskeyRequest(args.browserId);
       }
       // 窗口控制
       case "window_minimize": {

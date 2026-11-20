@@ -4,7 +4,7 @@ import { messageById, toolCallById } from "../../lib/store-indexes";
 import { useLocale } from "../../localization";
 import { ToolCall } from "./elements/tool-call";
 import type { ExecutionIcon } from "./execution-icons";
-import type { SubagentRunInfo } from "@qone/protocol";
+import { isActiveSubagent } from "../../lib/subagent-state";
 import { openSubagent, subagentForTool } from "./subagent-navigation";
 import { toolOperationLabels, toolPreparationLabel } from "./tool-action-summary";
 import { toolActivity } from "./tool-call-display";
@@ -15,10 +15,6 @@ export interface SubagentToolCallProps {
   prepared?: boolean;
   showIcon?: boolean;
   messageRunning: boolean;
-}
-
-function isActive(status: SubagentRunInfo["status"] | undefined): boolean {
-  return status === "created" || status === "running" || status === "waiting_approval" || status === "paused";
 }
 
 /** Reuse the existing child-title link; child output belongs to its side conversation. */
@@ -46,7 +42,7 @@ export function SubagentToolCall({ part, step, prepared = false, showIcon = fals
   const label = childLabel ?? (status === "failed" ? t("chat.toolActionFailed", { operation: step.verb })
     : status === "queued" || status === "waiting" ? activeLabel : labels.completed);
   const visibleActiveLabel = childLabel ?? activeLabel;
-  const childActive = isActive(child?.status);
+  const childActive = isActiveSubagent(child?.status);
   const childWaiting = child?.status === "created" || child?.status === "waiting_approval" || child?.dependencyState === "retry_required";
   return <ToolCall icon={showIcon ? step.icon : undefined} label={label} activeLabel={visibleActiveLabel} query=""
     targetAction={childId && childTitle && sessionId ? {

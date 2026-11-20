@@ -23,9 +23,10 @@ test("Codemode recommends direct calls and preserves Windows paths using raw tem
       (context) => {
         const system = context.messages.filter((message) => message.role === "system");
         expect(system.flatMap((message) => message.toolsAdded ?? []).map(({ name }) => name)).toContain("powershell");
-        const guidance = system.map((message) => message.sections?.tool_guidance).join("\n");
-        expect(guidance).toContain("call the direct tool when available");
+        const guidance = JSON.stringify(system);
+        expect(guidance).toContain("call that tool directly");
         expect(guidance).toContain("String.raw");
+        expect(guidance).toContain("Promise.allSettled");
         return fauxAssistantMessage(fauxToolCall("codemode", { code: script() }));
       },
       (context) => {

@@ -1,5 +1,5 @@
 import { useConversationStore } from "../../lib/conversation-context";
-import { CodexFileSearchIcon as FileSearchIcon, CodexPenLineIcon as PenLineIcon, CodexSearchIcon as SearchIcon, CodexTerminalIcon as TerminalIcon, CodexWrenchIcon as WrenchIcon, type ExecutionIcon } from "./execution-icons";
+import { CodexBoltIcon as BoltIcon, CodexFileSearchIcon as FileSearchIcon, CodexPenLineIcon as PenLineIcon, CodexSearchIcon as SearchIcon, CodexTerminalIcon as TerminalIcon, CodexWrenchIcon as WrenchIcon, type ExecutionIcon } from "./execution-icons";
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState, type FC } from "react";
 import { MessagePrimitive, useAuiState, type PartState } from "@assistant-ui/react";
 import {
@@ -31,6 +31,8 @@ import { Reasoning } from "./reasoning";
 import { useReasoningPreview } from "./reasoning-preview";
 import { ContextCompactionMarker } from "./context-compaction-marker";
 import { messageById, toolCallById } from "../../lib/store-indexes";
+import { backgroundJobLink, backgroundJobLinks } from "../../lib/background-job-links";
+import { BackgroundJobRow } from "./background-job-view";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
@@ -78,6 +80,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   powershell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
   shell: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
   exec: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
+  shell_job: { verb: { zh: "查看后台命令", en: "Check background command" }, icon: TerminalIcon },
   web_search: { verb: { zh: "搜索网页", en: "Search the web" }, icon: SearchIcon },
 };
 
@@ -94,17 +97,28 @@ function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undef
   const filePaths = category === "file-change" && result !== undefined
     ? toolFileChanges(result).map((change) => change.path)
     : [];
-  return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: integration ? integrationIcon(integration) : category === "file-change" ? PenLineIcon : meta?.icon ?? WrenchIcon, done, category, integration, filePaths, failed: toolCallStatus(part, call) === "failed" };
+  return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: integration ? integrationIcon(integration) : part.toolName === "codemode" ? BoltIcon : category === "file-change" ? PenLineIcon : meta?.icon ?? WrenchIcon, done, category, integration, filePaths, failed: toolCallStatus(part, call) === "failed" };
 }
 
 type ToolCallEntryProps = { part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean };
-const ToolCallEntry: FC<ToolCallEntryProps> = (props) => props.part.toolName === "finalize_response" ? null
-  : isSubagentTool(props.part.toolName) ? <SubagentToolCall {...props} /> : <GenericToolCallEntry {...props} />;
+const ToolCallEntry: FC<ToolCallEntryProps> = (props) => {
+  const { part, showIcon } = props;
+  const call = useConversationStore((state) => toolCallById(state.toolCalls, part.toolCallId));
+  const nestedJobs = useConversationStore((state) => backgroundJobLinks(state.toolCalls).byParentCallId.get(part.toolCallId));
+  const job = backgroundJobLink(call?.args, call?.result) ?? backgroundJobLink(part.args, part.result);
+  if (part.toolName === "finalize_response") return null;
+  if (isSubagentTool(part.toolName)) return <SubagentToolCall {...props} />;
+  if (job) return <BackgroundJobRow jobId={job.id} command={job.command} showIcon={showIcon} />;
+  if (!nestedJobs?.length) return <GenericToolCallEntry {...props} call={call} />;
+  return <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+    <GenericToolCallEntry {...props} call={call} />
+    {nestedJobs.map((item) => <BackgroundJobRow key={item.id} jobId={item.id} command={item.command} showIcon />)}
+  </div>;
+};
 
-const GenericToolCallEntry: FC<ToolCallEntryProps> = ({ part, step, prepared = false, showIcon = false, messageRunning }) => {
+const GenericToolCallEntry: FC<ToolCallEntryProps & { call?: StoreToolCall }> = ({ part, step, prepared = false, showIcon = false, messageRunning, call }) => {
   const { locale, t } = useLocale();
   const [open, setOpen] = useState(false);
-  const call = useConversationStore((state) => toolCallById(state.toolCalls, part.toolCallId));
   const status = toolActivity(part, call, prepared, messageRunning);
   const failed = String(status) === "failed";
   const result = call?.result !== undefined ? call.result : part.result !== undefined ? part.result : call?.summary;

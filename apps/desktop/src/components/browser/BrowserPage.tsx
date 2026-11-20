@@ -173,7 +173,7 @@ export function BrowserPage() {
       <div className="browser-page-frames">
         {tabs.map((tab) => <div key={tab.id} className={`browser-page-frame${tab.id === activeTabId ? " is-active" : " is-inactive"}`}>
           <div ref={(node) => { if (node) hostRefs.current.set(tab.id, node); else hostRefs.current.delete(tab.id); }} className="browser-page-host" aria-label={locale === "en" ? "Built-in browser page" : "内置浏览器页面"} />
-          {!hasDesktopBridge() && tab.id === activeTabId && <div className="browser-page-placeholder">请在 Tauri 桌面应用中打开此页面。</div>}
+          {!hasDesktopBridge() && tab.id === activeTabId && <div className="browser-page-placeholder">{locale === "en" ? "Open this page in the Qone desktop app." : "请在 Qone 桌面应用中打开此页面。"}</div>}
           {tab.loading && hasDesktopBridge() && tab.id === activeTabId && <div className="browser-page-placeholder"><LoaderCircle size={20} className="settings-spin" />{locale === "en" ? "Opening browser…" : "正在打开浏览器…"}</div>}
           {tab.error && tab.id === activeTabId && <div className="browser-page-placeholder"><p>{tab.error}</p><Button variant="outline" onClick={() => window.location.reload()}>重新打开页面</Button></div>}
         </div>)}

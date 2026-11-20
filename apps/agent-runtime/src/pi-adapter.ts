@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { rm } from "node:fs/promises";
-import { detectImageModel, normalizeThinkingLevelForApi, type AgentEvent, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
+import { detectImageModel, normalizeThinkingLevelForApi, supportsMemorySummary, type AgentEvent, type ImageApiFormat, type MessageAttachmentInfo, type ModelConfigInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { subscribeSessionEvents } from "./pi-session-events.js";
 import { installSubagentFinalizationGuard } from "./subagent-finalization-guard.js";
@@ -45,6 +45,11 @@ import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 import { promptPiRun } from "./pi-run-prompt.js";
 import { executionContextExtension, type ServerExecutionTarget } from "./execution-context.js";
 import { captureCompactedContext } from "./session-compaction.js";
+import { cacheReportedIn, observeRequestUsage, observeStreamResult, usageFromResponse, type ProviderUsageReport } from "./usage-capture.js";
+import { executionAdviceExtension } from "./execution-advice.js";
+import { memoryDeliveryExtension, type MemoryAddition, type MemoryDelivery } from "./memory/memory-context.js";
+import type { CacheObservation } from "@qone/protocol";
+import type { BackgroundShellJobs } from "./background-shell.js";
 
 const log = createLogger("pi-adapter");
 export const PI_REQUEST_OVERRIDES = { httpIdleTimeoutMs: 0 } as const;
@@ -76,8 +81,14 @@ interface PiAdapterHooks {
   webAccessContext?: (sessionId: string, task?: string) => string;
   /** Long-term memory for top-level conversations only; side chats and subagents never read or write it. */
   memoryContext?: (sessionId: string, message: string, modelName?: string) => string;
+  memoryAddition?: (sessionId: string, runId: string, delivery: MemoryDelivery) => MemoryAddition | undefined;
   memoryTools?: (sessionId: string) => ToolDefinition[];
-  /** Hands produced local files to the user; a subagent reports paths to its parent instead. */
+  /** Raw provider usage for the execution statistics page; exactly once per completed model request. */
+  usageObserved?: (sessionId: string | undefined, usage: ProviderUsageReport, source: "chat" | "memory" | "other") => void;
+  executionAdvice?: (provider: string, model: string, tool: string, input: unknown) => string | undefined;
+  executionModel?: (runId: string, model: string) => void;
+  /** The chat a side conversation was opened from, so its usage is not lost or misattributed. */
+  sideConversationOwner?: (sideSessionId: string) => string | undefined;
   deliveryTools?: (sessionId: string, workspacePath: string, activeRunId: () => string | undefined) => ToolDefinition[];
   /** The user's SSH servers; they go through the normal approval wrapper. */
   serverTools?: (workspacePath: string, serverIds: readonly string[]) => ToolDefinition[];
@@ -112,6 +123,7 @@ export class PiAdapter {
   private hooks: PiAdapterHooks;
   private delegateSubagent?: DelegateSubagent;
   private subagentController?: SubagentController;
+  private backgroundShell?: BackgroundShellJobs;
   private subagentPolicy?: () => { allowNested: boolean; maxDepth: number; maxConcurrent: number };
   private resourceLoaders = new Map<string, ResourceLoader>();
   private resourceLoaderLoads = new Map<string, Promise<ResourceLoader>>();
@@ -156,6 +168,7 @@ export class PiAdapter {
   private readonly sessionSettingsManagers = new Map<string, SettingsManager>();
   private readonly compactingSessions = new Set<string>();
   private compactionPreferences: PiCompactionPreferences;
+  private memoryDeliveries = new Map<string, () => MemoryAddition | undefined>();
   private modelMetadataResolver = new ModelMetadataResolver({ providerModelsFetcher: fetchProviderModels });
 
   constructor(
@@ -249,6 +262,10 @@ export class PiAdapter {
 
   setSubagentController(controller: SubagentController) {
     this.subagentController = controller;
+  }
+
+  setBackgroundShell(jobs: BackgroundShellJobs) {
+    this.backgroundShell = jobs;
   }
 
   setSubagentPolicy(policy: () => { allowNested: boolean; maxDepth: number; maxConcurrent: number }) {
@@ -472,10 +489,19 @@ export class PiAdapter {
       ? this.modelRuntime.getModel(...splitModelName(modelName))
       : this.modelRuntime.getModels()[0];
     if (!model) throw new Error("no configured model available for title generation");
+    // A title is a real model request, so it lands on the statistics page as `other`; otherwise
+    // recorded tokens would not match what the provider actually billed.
+    let cache: CacheObservation = "unknown";
     const response = await this.modelRuntime.completeSimple(model, {
       systemPrompt: "Generate a concise conversation title from the user's first message. Return only valid JSON with one string field named title. The title must be a short topic, never an answer to the user. Keep it under 8 words in English or 20 Chinese characters.",
       messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-    }, { maxTokens: 32, temperature: 0.2, signal });
+    }, { maxTokens: 32, temperature: 0.2, signal, onProviderStreamEvent: (data) => {
+      if (cache === "unknown" && cacheReportedIn(String(model.api), data)) cache = "reported";
+    } });
+    try {
+      const usage = usageFromResponse(model, response.usage, cache);
+      if (usage) this.hooks.usageObserved?.(undefined, usage, "other");
+    } catch { /* Telemetry must never break title generation. */ }
     const title = extractTextContent(response)
       .replace(/[\r\n]+/g, " ")
       .replace(/^['"“”‘’`]+|['"“”‘’`]+$/g, "")
@@ -485,18 +511,43 @@ export class PiAdapter {
     return title.slice(0, 80);
   }
 
-  /** One tool-free completion with the given (or first configured) model, for background tasks. */
-  async completeText(modelName: string | undefined, systemPrompt: string, prompt: string, maxTokens: number): Promise<{ text: string; tokens: number }> {
-    this.modelRuntime = await this.ensureModelRuntime();
-    const model = (modelName ? this.modelRuntime.getModel(...splitModelName(modelName)) : undefined) ?? this.modelRuntime.getModels()[0];
-    if (!model) throw new Error("no configured model available");
-    const response = await this.modelRuntime.completeSimple(model, {
+  /** Tool-free memory completion; at startup, credentials may not be restored yet. */
+  async completeText(modelId: string | undefined, preferredModel: string | undefined, systemPrompt: string, prompt: string, maxTokens: number, signal: AbortSignal): Promise<{ text: string; tokens: number }> {
+    await this.modelConfigurationQueue;
+    signal.throwIfAborted();
+    const runtime = await this.ensureModelRuntime();
+    const models = this.configuredModelConfigs.filter(config => supportsMemorySummary(config) && !this.isDirectGenerationModel(config.id) && runtime.hasConfiguredAuth(config.provider));
+    // An explicit selection authorizes only that provider/model for conversation history.
+    const configured = modelId ? models.find(config => config.id === modelId)
+      : models.find(config => config.id === preferredModel || `${config.provider}/${config.model}` === preferredModel) ?? models[0];
+    const model = configured && runtime.getModel(configured.provider, configured.model);
+    if (!model) throw new Error(modelId ? `configured memory model unavailable: ${modelId}` : "no authenticated text model available for memory");
+    // The same per-request rule as a chat turn: the request's own chunks mark the
+    // cache flag and the final response carries the numbers, reported once.
+    let cache: CacheObservation = "unknown";
+    const response = await runtime.completeSimple(model, {
       systemPrompt,
       messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-    }, { maxTokens, signal: AbortSignal.timeout(90_000) });
+    }, { maxTokens, signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]), onProviderStreamEvent: (data) => {
+      if (cache === "unknown" && cacheReportedIn(String(model.api), data)) cache = "reported";
+    } });
+    try {
+      const usage = usageFromResponse(model, response.usage, cache);
+      if (usage) this.hooks.usageObserved?.(undefined, usage, "memory");
+    } catch { /* Telemetry must never break memory. */ }
     if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(response.errorMessage || "model request failed");
-    const usage = response.usage;
-    return { text: extractTextContent(response), tokens: usage.totalTokens || usage.input + usage.output };
+    return { text: extractTextContent(response), tokens: response.usage.totalTokens || response.usage.input + response.usage.output };
+  }
+
+  /**
+   * Hands the request the observed options and reports its finished usage once. The value the
+   * provider returns is passed through untouched, so the agent loop keeps iterating a stream.
+   */
+  private observeStream<T>(call: (options: unknown) => T, observed: ReturnType<typeof observeRequestUsage>): T {
+    const value = call(observed);
+    if (value instanceof Promise) return value.then((resolved) => { observeStreamResult(resolved as never, observed); return resolved; }) as T;
+    observeStreamResult(value as never, observed);
+    return value;
   }
 
   private push(type: string, payload: unknown, sessionId: string, runId?: string) {
@@ -592,9 +643,12 @@ export class PiAdapter {
       ...((powershell as ToolDefinition).promptGuidelines ?? []),
       "Keep long-running tests and builds streaming: run commands directly rather than adding buffering pipelines such as Select-Object -Last or tail just to shorten output. The tool already truncates output and saves the full log. Preserve pipelines explicitly requested by the user.",
     ] });
+    // A background result is delivered as a new turn of this conversation, so only
+    // top-level chats can start one; a subagent or side chat has no turn to wake.
+    const backgroundShell = subagentDepth === 0 && !sideConversation && !mcpServerId ? this.backgroundShell : undefined;
     const builtinTools = [
       createReadTool(workspacePath),
-      powershell,
+      backgroundShell ? backgroundShell.wrap(powershell as ToolDefinition, eventSessionId) : powershell,
       ...createFileChangeTools(workspacePath),
       createGrepTool(workspacePath),
       createFindTool(workspacePath),
@@ -627,7 +681,7 @@ export class PiAdapter {
     }, sessionId), workspacePath, modelName);
     const memoryTools = sideConversation || subagentDepth > 0 || mcpServerId ? [] : this.hooks.memoryTools?.(sessionId) ?? [];
     const deliveryTools = subagentDepth > 0 || mcpServerId ? [] : this.hooks.deliveryTools?.(eventSessionId, workspacePath, () => this.activeRunIds.get(sessionId)) ?? [];
-    const internalTools = [...createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId), ...memoryTools, ...deliveryTools];
+    const internalTools = [...createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId), ...memoryTools, ...deliveryTools, ...(backgroundShell ? [backgroundShell.tool(eventSessionId)] : [])];
     const internalToolNames = new Set(internalTools.map((tool) => tool.name));
     internalToolNames.add("finalize_response");
     const serverTools = mcpServerId ? [] : this.hooks.serverTools?.(workspacePath, scope) ?? [];
@@ -698,7 +752,17 @@ export class PiAdapter {
       sessionManager,
       noTools: "builtin", tools: ["+codemode", "+tool_search"],
       customTools: loadout.tools,
-      resourceLoader: await sessionResourceLoader(resourceLoader, workspacePath, true, [executionContextExtension({ localTools: builtinTools.map(tool => tool.name), serverTools: serverTools.map(tool => tool.name), servers: () => mcpServerId ? [] : this.hooks.serverTargets?.(scope) ?? [] })]),
+      resourceLoader: await sessionResourceLoader(resourceLoader, workspacePath, true, [
+        executionContextExtension({ localTools: builtinTools.map(tool => tool.name), serverTools: serverTools.map(tool => tool.name), servers: () => mcpServerId ? [] : this.hooks.serverTargets?.(scope) ?? [] }),
+        ...(this.hooks.executionAdvice ? [executionAdviceExtension(this.hooks.executionAdvice)] : []),
+        ...(this.hooks.memoryAddition ? [memoryDeliveryExtension(() => {
+          const runId = this.activeRunIds.get(sessionId);
+          if (!runId || !isCurrent()) return;
+          const delivery = this.memoryDeliveries.get(runId);
+          this.memoryDeliveries.delete(runId);
+          return delivery?.();
+        })] : []),
+      ]),
       modelRuntime,
       settingsManager: sessionSettings,
       model,
@@ -706,6 +770,22 @@ export class PiAdapter {
     });
     await session.bindExtensions({}).catch(async (error) => { await session.dispose(); throw error; });
     if (!isCurrent()) { session.dispose(); throw new Error("run aborted"); }
+    // A side chat has no statistics row of its own; its requests belong to the conversation it
+    // was opened from. A run starts after this session's messages are restored, so this one
+    // lookup is the request's owner for every request this session makes afterwards.
+    const usageSessionId = sideConversation ? this.hooks.sideConversationOwner?.(sessionId) ?? eventSessionId : eventSessionId;
+    // Wrap the per-request scope: this request's raw chunks mark its cache flag and its
+    // finished result reports once. The stream object itself is returned untouched, so
+    // the agent loop's `for await (... of response)` keeps working exactly as before.
+    const originalStream = session.agent.streamFunction;
+    const reportUsage = (usage: ProviderUsageReport) => this.hooks.usageObserved?.(usageSessionId, usage, mcpServerId || subagentRunId || sideConversation ? "other" : "chat");
+    session.agent.streamFunction = (streamModel, context, options) => {
+      const observed = observeRequestUsage(String(streamModel.api), streamModel, options, reportUsage);
+      const stream = this.observeStream(
+        (next) => originalStream(streamModel, context, next as Parameters<typeof originalStream>[2]),
+        observed);
+      return stream;
+    };
     // Qone rebuilds sessions from its own message store, which does not keep Pi's
     // loadout entries. Re-declare on-demand tools the restored history already used.
     const deferred = new Set(loadout.tools.filter((tool) => (tool as { exposure?: string }).exposure === "deferred").map((tool) => tool.name));
@@ -779,7 +859,7 @@ export class PiAdapter {
   async run(
     sessionId: string,
     message: string,
-    opts: { serverIds?: string[]; model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; goalId?: string; goalEpoch?: number },
+    opts: { serverIds?: string[]; model?: string; cwd?: string; runId?: string; permissionMode?: RunPermissionMode; thinking?: RunThinkingLevel; attachments?: MessageAttachmentInfo[]; eventSessionId?: string; mcpServerId?: string; subagentDepth?: number; subagentRunId?: string; goalId?: string; goalEpoch?: number; memoryUserMessage?: string },
     runEmit: RunEmitFn
   ): Promise<void> {
     if (this.activeRunIds.has(sessionId) || this.compactingSessions.has(sessionId)) throw new Error(`session ${sessionId} already has an active run or compaction`);
@@ -837,25 +917,36 @@ export class PiAdapter {
       mediaController.signal.throwIfAborted();
       this.runs.set(runId, session);
       const previousAssistants = new Set(session.messages.filter((item) => item.role === "assistant"));
-      const selectedModel = opts.model ? this.modelRuntime?.getModel(...splitModelName(opts.model)) : session.agent.state.model;
+      const selectedModel = session.agent.state.model;
+      if (selectedModel) this.hooks.executionModel?.(runId, `${selectedModel.provider}/${selectedModel.id}`);
       const capabilities = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`) : undefined;
       const policy = this.subagentPolicy?.();
       const canDelegate = Boolean(this.delegateSubagent && (!opts.subagentRunId || (policy?.allowNested ?? true)) && (opts.subagentDepth ?? 0) < (policy?.maxDepth ?? 3));
       const catalog = this.toolCatalogs.get(session) ?? "";
       const toolCatalog = catalog && this.sentToolCatalogs.get(session) !== catalog ? catalog : "";
       if (toolCatalog) this.sentToolCatalogs.set(session, catalog);
+      const memoryAllowed = !opts.subagentRunId && !opts.mcpServerId && !this.isSideConversation(sessionId);
+      if (memoryAllowed && opts.memoryUserMessage !== undefined && this.hooks.memoryAddition) {
+        const current = session;
+        this.memoryDeliveries.set(runId, () => !mediaController.signal.aborted ? this.hooks.memoryAddition!(sessionId, runId, {
+          retained: current.messages.filter(({ role }) => role === "user"),
+          rules: [...current.resourceLoader.getAgentsFiles().agentsFiles.map(({ content }) => content), ...current.resourceLoader.getAppendSystemPrompt()],
+        }) : undefined);
+      }
       await promptPiRun({
         sessionId, runId, message, session, opts, capabilities, canDelegate,
         delegate: this.delegateSubagent, catalog: this.subagentController?.catalog?.(),
         videoNotice: this.rememberVideoAttachments(runId, opts.attachments), toolCatalog,
         webContext: () => this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "",
-        memoryContext: () => opts.subagentRunId || opts.mcpServerId || this.isSideConversation(sessionId) ? "" : this.hooks.memoryContext?.(sessionId, message, opts.model) ?? "",
+        memoryContext: () => memoryAllowed ? this.hooks.memoryContext?.(sessionId, opts.memoryUserMessage ?? "", opts.model) ?? "" : "",
         signal: mediaController.signal,
         phase: phase => this.push("media.phase", { phase: "provider-processing", status: phase }, opts.eventSessionId ?? sessionId, runId),
       });
       // Compaction can shrink the transcript below its initial length mid-run.
       const final = session.messages.filter((item) => item.role === "assistant").at(-1);
       if (final && !previousAssistants.has(final)) {
+        // Usage is taken once per completed turn by the stream wrapper, whatever the
+        // stop reason: a failed request still consumed tokens.
         if (final.stopReason === "error") throw new Error(final.errorMessage || "Model request failed");
         if (final.stopReason === "aborted" && !this.stoppedRuns.has(runId)) throw new Error(final.errorMessage || "Model request aborted");
       }
@@ -872,6 +963,7 @@ export class PiAdapter {
         this.videoTempDirs.delete(runId);
         this.downloadedVideoPaths.delete(runId);
         this.mediaAttachmentRefs.delete(runId);
+        this.memoryDeliveries.delete(runId);
         if (directories) await Promise.all([...directories].map(directory => rm(directory, { recursive: true, force: true }).catch(error => log.warn("failed to clean downloaded video", { directory, error: String(error) }))));
         if (this.mediaRunControllers.get(runId) === mediaController && this.activeRunIds.get(sessionId) === runId) {
           this.runs.delete(runId);

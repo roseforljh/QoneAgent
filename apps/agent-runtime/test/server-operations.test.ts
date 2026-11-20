@@ -38,6 +38,28 @@ test("SSH streams bounded stdout/stderr snapshots before completion and keeps UT
   expect((await pending).exit_code).toBe(0);
 });
 
+test("SSH guards all commands behind a successful cwd change", async () => {
+  let sent = "";
+  const channel = new Channel();
+  const client = { exec(script: string, callback: Function) { sent = script; callback(null, channel); } } as unknown as Client;
+  const pending = exec(client, "printf first; printf second\nprintf third", { cwd: "~/a b" });
+  channel.emit("close", 0);
+  await pending;
+  expect(sent).toBe(`cd "$HOME"/'a b' || exit $?\nprintf first; printf second\nprintf third`);
+});
+
+test("SSH timeout settles even when the channel never acknowledges close", async () => {
+  const channel = new Channel();
+  channel.close = () => { channel.closed = true; };
+  const pending = exec(clientFor(channel), "long", { timeoutMs: 5 });
+  channel.emit("data", Buffer.from("partial"));
+  const result = await Promise.race([pending, Bun.sleep(100).then(() => null)]);
+  expect(result).toMatchObject({ exit_code: null, timed_out: true, stdout: "partial" });
+  expect(channel.signals).toEqual(["KILL"]);
+  expect(channel.closed).toBe(true);
+  expect(() => channel.emit("error", new Error("late SSH error"))).not.toThrow();
+});
+
 test("synchronous SSH connection failures release cancellation listeners and execution deadlines", async () => {
   for (const execute of [
     (signal: AbortSignal) => exec({ exec() { throw new Error("Not connected"); } } as never, "inspect", { signal, timeoutMs: 5 }),
@@ -101,6 +123,19 @@ test("server tools publish resolved target before connecting, preserve errors an
   const result = await pending;
   expect(serverOperationCancelled(result)).toBe(true);
   expect(JSON.stringify(result.content)).toContain("keep output");
+});
+
+test("server_exec preserves the channel error alongside streamed output", async () => {
+  const channel = new Channel();
+  const pending = tools(clientFor(channel))[0]!.execute("error", { command: "inspect" }, undefined, () => {});
+  await Bun.sleep(0);
+  channel.emit("data", Buffer.from("partial stdout"));
+  await Bun.sleep(115);
+  channel.emit("error", new Error("SSH channel lost"));
+  const result = await pending;
+  expect(result.isError).toBe(true);
+  expect(result.content[0]).toEqual({ type: "text", text: JSON.stringify({ error: "SSH channel lost" }) });
+  expect(JSON.stringify(result.content)).toContain("partial stdout");
 });
 
 test("cancelling an SFTP waiter closes only its eventual channel and leaves pooled work alive", async () => {
@@ -185,6 +220,31 @@ test("Pi Code Mode forwards resolved nested server metadata, output updates and 
     const end = events.find(event => event.type === "tool.completed" && event.payload?.toolName === "server_exec");
     expect(serverOperationInfo(end.payload.result)?.serverId).toBe("a");
   } finally { await adapter.disposeSession("server-flow"); }
+});
+
+test("Code Mode resolves a non-zero server exit to its result instead of failing the whole script", async () => {
+  const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
+  const { fauxProvider, fauxAssistantMessage, fauxToolCall, fauxText } = await import("@earendil-works/pi-ai/providers/faux");
+  const { PiAdapter } = await import("../src/pi-adapter");
+  const provider = fauxProvider({ provider: "server-exit-flow", models: [{ id: "test" }] });
+  let scriptResult: any;
+  provider.setResponses([
+    fauxAssistantMessage(fauxToolCall("codemode", { code: 'const [bad, good] = await Promise.all([tools.server_exec({command: "grep missing"}), tools.server_exec({command: "uptime"})]); return [bad.exit_code, bad.stderr, good.exit_code, good.stdout];' })),
+    (context) => { scriptResult = context.messages.at(-1); return fauxAssistantMessage(fauxText("done")); },
+  ]);
+  const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false }); runtime.registerNativeProvider(provider.provider);
+  const client = { exec(command: string, callback: Function) {
+    const channel = new Channel(); callback(null, channel);
+    const failed = command.includes("grep");
+    setTimeout(() => { (failed ? channel.stderr : channel).emit("data", Buffer.from(failed ? "no match" : "up 3 days")); channel.emit("close", failed ? 1 : 0); }, 0);
+  } } as never;
+  const adapter = new PiAdapter(() => {}, { serverTools: () => tools(client) });
+  Object.assign(adapter, { modelRuntime: runtime });
+  try {
+    await adapter.run("server-exit-flow", "inspect", { model: "server-exit-flow/test", cwd: process.cwd(), permissionMode: "full", serverIds: ["a"] }, () => {});
+    expect(scriptResult).toMatchObject({ role: "toolResult", toolName: "codemode", isError: false, details: { calls: [{ name: "server_exec", status: "error" }, { name: "server_exec", status: "ok" }] } });
+    expect(JSON.stringify(scriptResult.content)).toContain(JSON.stringify([1, "no match", 0, "up 3 days"]).replaceAll('"', '\\"'));
+  } finally { await adapter.disposeSession("server-exit-flow"); }
 });
 
 test.each(["stop", "forceStop"] as const)("Pi %s preserves a nested server command's last output and cancelled identity", async stopMethod => {

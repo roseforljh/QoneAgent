@@ -94,8 +94,8 @@ export function ComposerEditorBridge({
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target;
       if (event.button !== 0 || !(target instanceof Element) || root.contains(target) || target.closest(INTERACTIVE)) return;
+      // Cancel the default focus, but let popovers observe the outside press.
       event.preventDefault();
-      event.stopPropagation();
       // Focus first, then let Lexical put its own selection back into the DOM.
       root.focus({ preventScroll: true });
       editor.focus();

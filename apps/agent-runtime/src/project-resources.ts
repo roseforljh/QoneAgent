@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { qoneProjectDir, qoneProjectsDir, qoneSessionDir } from "@qone/shared";
 import type { SessionInfo, WorkspaceInfo } from "@qone/protocol";
@@ -22,9 +23,9 @@ export class ProjectResources {
     return qoneSessionDir(projectId ?? "unassigned", sessionId, this.root);
   }
 
-  removeSession(projectId: string | undefined | null, sessionId: string): void {
+  removeSession(projectId: string | undefined | null, sessionId: string): Promise<void> {
     // The path comes from encoded IDs under our own root, never from the source workspace.
-    rmSync(this.sessionDirectory(projectId, sessionId), { recursive: true, force: true });
+    return rm(this.sessionDirectory(projectId, sessionId), { recursive: true, force: true });
   }
 
   removeProjectMetadata(projectId: string): void {

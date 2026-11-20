@@ -58,10 +58,11 @@ body {
   letter-spacing: 0;
 }
 
+:root { --q-thread-content-width: 48rem; }
+
 .aui-thread-root {
   min-width: 0;
   overflow-x: clip;
-  --q-thread-content-width: 48rem;
   /* Codex user-message-attachments uses size-20 (5rem). */
   --q-message-attachment-image-size: 5rem;
 }

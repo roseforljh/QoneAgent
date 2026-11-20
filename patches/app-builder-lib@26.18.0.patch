@@ -1,0 +1,69 @@
+diff --git a/templates/nsis/include/installUtil.nsh b/templates/nsis/include/installUtil.nsh
+--- a/templates/nsis/include/installUtil.nsh
++++ b/templates/nsis/include/installUtil.nsh
+@@ -81,16 +81,7 @@ Function GetFileParent
+     Exch $R0
+ FunctionEnd
+ 
+-Var /GLOBAL isTryToKeepShortcuts
+-
+-!macro setIsTryToKeepShortcuts
+-  StrCpy $isTryToKeepShortcuts "true"
+-  !ifdef allowToChangeInstallationDirectory
+-    ${ifNot} ${isUpdated}
+-      StrCpy $isTryToKeepShortcuts "false"
+-    ${endIf}
+-  !endif
+-!macroend
++Var keepShortcuts
+ 
+ # https://nsis-dev.github.io/NSIS-Forums/html/t-172971.html
+ !macro readReg VAR ROOT_KEY SUB_KEY NAME
+@@ -188,15 +179,10 @@ Function uninstallOldVersion
+     StrCpy $0 "/allusers"
+   ${endif}
+ 
+-  !insertMacro setIsTryToKeepShortcuts
+-
+-  ${if} $isTryToKeepShortcuts == "true"
+-    !insertmacro readReg $R5 "$rootKey" "${INSTALL_REGISTRY_KEY}" KeepShortcuts
+-    # if true, it means that old uninstaller supports --keep-shortcuts flag
+-    ${if} $R5 == "true"
+-    ${andIf} ${FileExists} "$appExe"
+-      StrCpy $0 "$0 --keep-shortcuts"
+-    ${endIf}
++  # Only the installation being replaced in the selected scope keeps its links.
++  ${if} $rootKey == "SHELL_CONTEXT"
++  ${andIf} $keepShortcuts == "true"
++    StrCpy $0 "$0 --keep-shortcuts"
+   ${endIf}
+ 
+   ${if} ${isDeleteAppData}
+diff --git a/templates/nsis/installSection.nsh b/templates/nsis/installSection.nsh
+--- a/templates/nsis/installSection.nsh
++++ b/templates/nsis/installSection.nsh
+@@ -37,16 +37,15 @@ StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+   ${endif}
+ !endif
+ 
+-Var /GLOBAL keepShortcuts
++# A manually opened installer is also an in-place upgrade when scope and path match.
++# KeepShortcuts signals that the installed uninstaller understands --keep-shortcuts.
+ StrCpy $keepShortcuts "false"
+-!insertMacro setIsTryToKeepShortcuts
+-${if} $isTryToKeepShortcuts == "true"
+-  ReadRegStr $R1 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" KeepShortcuts
+-
+-  ${if} $R1 == "true"
+-  ${andIf} ${FileExists} "$appExe"
+-    StrCpy $keepShortcuts "true"
+-  ${endIf}
++ReadRegStr $R1 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" KeepShortcuts
++ReadRegStr $R2 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" InstallLocation
++${if} $R1 == "true"
++${andIf} $R2 == "$INSTDIR"
++${andIf} ${FileExists} "$appExe"
++  StrCpy $keepShortcuts "true"
+ ${endif}
+ 
+ !insertmacro uninstallOldVersion SHELL_CONTEXT

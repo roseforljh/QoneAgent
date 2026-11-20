@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
 import type { SettingsRepo } from "@qone/database";
-import type { MemoryNoteInfo, MemoryStateInfo, MemorySummaryInfo } from "@qone/protocol";
+import { MEMORY_PREFERENCE_MAX_LENGTH, MEMORY_PREFERENCES_PER_SCOPE, type MemoryNoteInfo, type MemoryPreferenceScope, type MemoryStateInfo, type MemorySummaryInfo } from "@qone/protocol";
 import { runtimeError } from "../runtime-localization.js";
+import type { StoredAutomaticPreference } from "./memory-automatic-preferences.js";
+
+export const MEMORY_SOURCE_WINDOW_MS = 30 * 24 * 60 * 60_000;
 
 /** Unicode code points, so emoji are not counted twice. */
 export const chars = (text: string) => Array.from(text).length;
@@ -11,6 +15,8 @@ const SENSITIVE = /(\b(?:sk|ghp|github_pat)[-_][A-Za-z0-9_-]{8,}|\bAKIA[A-Z0-9]{
 const FORGED_BOUNDARY = /<\/?\s*qone-memory\b/gi;
 
 const normalize = (content: string) => content.replace(/\r\n?/g, "\n").trim();
+export const preferenceContentKey = (text: string, workspaceId?: string) => createHash("sha256")
+  .update(JSON.stringify([workspaceId, text.replace(/\s+/gu, " ").trim().toLowerCase()])).digest("hex");
 
 /** Model output is not rejected wholesale; credentials and forged boundaries are replaced. */
 export function redactMemory(content: string): string {
@@ -27,7 +33,7 @@ export function validateMemory(content: string): string {
 }
 
 interface Settings { enabled: boolean; version: number }
-interface Overview { content: string; generatedAt: number; fingerprint: string }
+interface Overview { content: string; generatedAt: number; fingerprint: string; automaticPreferences?: StoredAutomaticPreference[] }
 interface Stats { calls: number; tokens: number }
 
 const KEY = {
@@ -35,6 +41,7 @@ const KEY = {
   notes: "memory.notes",
   summaries: "memory.summaries",
   overview: "memory.overview",
+  reviewed: "memory.reviewedPreferences",
   stats: "memory.stats",
 } as const;
 
@@ -71,19 +78,29 @@ export class MemoryStore {
   }
 
   /** Model writes pass the version they were authorized with; manual edits do not need it. */
-  saveNote(content: string, options: { id?: string; origin?: MemoryNoteInfo["origin"]; version?: number } = {}): MemoryNoteInfo {
+  saveNote(content: string, options: { id?: string; origin?: MemoryNoteInfo["origin"]; version?: number; preference?: MemoryNoteInfo["preference"] | null } = {}): MemoryNoteInfo {
     if (options.version !== undefined && !this.authorized(options.version)) throw runtimeError("memory.stale");
     const value = validateMemory(content);
     const notes = this.notes();
     const old = options.id ? notes.find((note) => note.id === options.id) : undefined;
     if (options.id && !old) throw runtimeError("memory.deleted");
-    const duplicate = notes.find((note) => note.id !== options.id && note.content === value);
+    if (options.version !== undefined && (old?.preference || options.preference)) throw runtimeError("memory.preference_settings");
+    const preference = options.preference === undefined ? old?.preference : options.preference ?? undefined;
+    const sameScope = (note: MemoryNoteInfo) => Boolean(note.preference) === Boolean(preference) && note.preference?.workspaceId === preference?.workspaceId;
+    const duplicate = notes.find((note) => note.id !== options.id && sameScope(note) && note.content === value);
     if (duplicate) {
       if (old) throw runtimeError("memory.duplicate");
       return duplicate;
     }
+    if (old?.content === value && sameScope(old)) return old;
+    if (preference) {
+      if (chars(value) > MEMORY_PREFERENCE_MAX_LENGTH) throw runtimeError("memory.preference_length", { limit: MEMORY_PREFERENCE_MAX_LENGTH });
+      if (notes.filter((note) => note.id !== options.id && sameScope(note)).length >= MEMORY_PREFERENCES_PER_SCOPE) {
+        throw runtimeError("memory.preference_limit", { limit: MEMORY_PREFERENCES_PER_SCOPE });
+      }
+    }
     const now = Math.max(Date.now(), (old?.updatedAt ?? 0) + 1);
-    const saved: MemoryNoteInfo = { id: old?.id ?? crypto.randomUUID(), content: value, origin: old?.origin ?? options.origin ?? "manual", createdAt: old?.createdAt ?? now, updatedAt: now };
+    const saved: MemoryNoteInfo = { id: old?.id ?? crypto.randomUUID(), content: value, origin: old?.origin ?? options.origin ?? "manual", createdAt: old?.createdAt ?? now, updatedAt: now, ...(preference && { preference }) };
     this.repo.set(KEY.notes, old ? notes.map((note) => note.id === saved.id ? saved : note) : [saved, ...notes]);
     if (options.version === undefined) this.advance();
     return saved;
@@ -92,7 +109,9 @@ export class MemoryStore {
   deleteNote(id: string, version?: number) {
     if (version !== undefined && !this.authorized(version)) throw runtimeError("memory.stale");
     const notes = this.notes();
-    if (!notes.some((note) => note.id === id)) throw runtimeError("memory.deleted");
+    const note = notes.find((item) => item.id === id);
+    if (!note) throw runtimeError("memory.deleted");
+    if (version !== undefined && note.preference) throw runtimeError("memory.preference_settings");
     this.repo.set(KEY.notes, notes.filter((note) => note.id !== id));
     this.advance();
   }
@@ -136,12 +155,52 @@ export class MemoryStore {
     this.repo.set(KEY.overview, value ?? null);
   }
 
+  automaticPreferences(isLive: (item: StoredAutomaticPreference) => boolean = () => true): StoredAutomaticPreference[] {
+    // Legacy suggestions were drafted for review, not automatic delivery. The updated
+    // consolidation prompt changes the fingerprint and regenerates the preferences.
+    const automatic = this.overview()?.automaticPreferences;
+    if (!automatic?.length) return [];
+    const suppressed = new Set(this.repo.get<string[]>(KEY.reviewed));
+    const pinned = new Set<string>();
+    const counts = new Map<string | undefined, number>();
+    for (const { content, preference } of this.notes()) {
+      if (!preference) continue;
+      pinned.add(preferenceContentKey(content, preference.workspaceId));
+      counts.set(preference.workspaceId, (counts.get(preference.workspaceId) ?? 0) + 1);
+    }
+    const summaries = this.allSummaries();
+    const recent = Date.now() - MEMORY_SOURCE_WINDOW_MS;
+    return automatic.filter((item) => {
+      const { workspaceId } = item.preference;
+      const count = counts.get(workspaceId) ?? 0;
+      if (count >= MEMORY_PREFERENCES_PER_SCOPE || pinned.has(item.id) || item.keys.some((key) => suppressed.has(key))
+        || !item.sources.every(({ id }) => summaries[id]?.content && summaries[id].sourceUpdatedAt > recent) || !isLive(item)) return false;
+      counts.set(workspaceId, count + 1);
+      return true;
+    });
+  }
+
+  editAutomaticPreference(id: string, value: { content: string; preference: MemoryPreferenceScope } | null,
+    isLive: (item: StoredAutomaticPreference) => boolean) {
+    this.repo.transaction(() => {
+      const overview = this.overview();
+      const item = this.automaticPreferences(isLive).find((entry) => entry.id === id);
+      if (!overview || !item) throw runtimeError("memory.automatic_preference_unavailable");
+      if (value) this.saveNote(value.content, { preference: value.preference });
+      const suppressed = new Set(this.repo.get<string[]>(KEY.reviewed));
+      item.keys.forEach((key) => suppressed.add(key));
+      this.repo.set(KEY.reviewed, [...suppressed]);
+      this.setOverview({ ...overview, automaticPreferences: overview.automaticPreferences?.filter((entry) => entry.id !== id) });
+      this.advance();
+    });
+  }
+
   recordCall(tokens: number) {
     const stats = this.repo.get<Stats>(KEY.stats) ?? { calls: 0, tokens: 0 };
     this.repo.set(KEY.stats, { calls: stats.calls + 1, tokens: stats.tokens + Math.max(0, tokens) });
   }
 
-  state(): MemoryStateInfo {
+  state(isLive?: (item: StoredAutomaticPreference) => boolean): MemoryStateInfo {
     const stats = this.repo.get<Stats>(KEY.stats) ?? { calls: 0, tokens: 0 };
     const overview = this.overview();
     const summaries = this.summaries();
@@ -150,6 +209,7 @@ export class MemoryStore {
       overview: overview && { content: overview.content, generatedAt: overview.generatedAt },
       summaries,
       notes: this.notes(),
+      automaticPreferences: this.automaticPreferences(isLive).map(({ keys: _keys, ...item }) => item),
       stats: { ...stats, lastUpdatedAt: Math.max(0, overview?.generatedAt ?? 0, ...summaries.map((item) => item.generatedAt)) },
     };
   }

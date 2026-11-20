@@ -23,10 +23,12 @@ test("same run reuses its tab; other runs and sessions have independent reviews"
   expect(runChangesTab([tab], { ...target, sessionId: "other" }, () => "third").id).toBe("third");
 });
 
-test("summary click preserves selection and invalid paths fall back to saved files", () => {
+test("a fresh summary selects no file, but an existing explicit selection is preserved", () => {
+  const summary = { ...target, path: undefined };
+  expect(runChangesTab([], summary, () => "new").changesTarget?.path).toBeUndefined();
+  expect(runChangesTab([], { ...target, path: "outside" }, () => "new").changesTarget?.path).toBeUndefined();
   const tab = runChangesTab([], target, () => "first");
-  expect(runChangesTab([tab], { ...target, path: undefined }, () => "unused").changesTarget?.path).toBe("B.ts");
-  expect(runChangesTab([], { ...target, path: "outside" }, () => "new").changesTarget?.path).toBe("A.ts");
+  expect(runChangesTab([tab], summary, () => "unused").changesTarget?.path).toBe("B.ts");
 });
 
 test("activity group statistics compose repeated edits and vanish after reversal", () => {
