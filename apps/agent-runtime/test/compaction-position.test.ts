@@ -12,10 +12,10 @@ const parts: AssistantMessagePart[] = [
 
 test("completion updates the original position and each new compaction gets its own identity", () => {
   const positions = new CompactionPositions();
-  const start = positions.update("run", "start", 10, true, parts.slice(0, 3));
+  const start = positions.update("run", "start", 10, true, "initial-user", parts.slice(0, 3));
   expect(start.partIndex).toBe(2);
-  expect(positions.update("run", "end", 15, false, parts)).toEqual(start);
-  expect(positions.update("run", "next", 30, true, parts)).toEqual({ id: "next", runId: "run", startedAt: 30, partIndex: 3 });
+  expect(positions.update("run", "end", 15, false, "steer", [])).toEqual(start);
+  expect(positions.update("run", "next", 30, true, "steer", parts)).toEqual({ id: "next", runId: "run", throughMessageId: "steer", startedAt: 30, partIndex: 3 });
 });
 
 test("history restores saved positions and recovers legacy positions from event sequences", () => {
@@ -30,6 +30,27 @@ test("history restores saved positions and recovers legacy positions from event 
     expect(restored.map(({ id, runId, partIndex, status }) => ({ id, runId, partIndex, status }))).toEqual([
       { id: "legacy", runId: "run", partIndex: 2, status: "completed" },
       { id: "saved", runId: "run", partIndex: 3, status: "interrupted" },
+    ]);
+  } finally { db.$client.close(); }
+});
+
+test("saved automatic markers use the steer delivered at the start, even at the same timestamp", () => {
+  const db = openDb(":memory:");
+  try {
+    const session = new SessionRepo(db).create("compaction");
+    const events = new EventRepo(db);
+    const ids = { sessionId: session.id, runId: "run", timestamp: 100 };
+    const marker = (id: string) => ({ id, throughMessageId: "initial", partIndex: 1, source: "automatic" });
+    events.addMany([
+      { ...ids, eventId: "e1", sequence: 1, type: "context.compaction.started", payload: marker("before") },
+      { ...ids, eventId: "e2", sequence: 2, type: "agent.steer.delivered", payload: { queueItemId: "steer-1" } },
+      { ...ids, eventId: "e3", sequence: 3, type: "context.compacted", payload: marker("before") },
+      { ...ids, eventId: "e4", sequence: 4, type: "context.compaction.started", payload: marker("after") },
+      { ...ids, eventId: "e5", sequence: 5, type: "agent.steer.delivered", payload: { queueItemId: "steer-2" } },
+      { ...ids, eventId: "e6", sequence: 6, type: "context.compacted", payload: marker("after") },
+    ]);
+    expect(events.listCompactions(session.id).map(({ id, throughMessageId, partIndex }) => [id, throughMessageId, partIndex])).toEqual([
+      ["before", "initial", 1], ["after", "steer-1", 1],
     ]);
   } finally { db.$client.close(); }
 });

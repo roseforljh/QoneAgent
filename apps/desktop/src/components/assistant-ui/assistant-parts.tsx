@@ -60,7 +60,7 @@ const PendingImageGeneration: FC = () => {
   return <ImageGeneration prompt={generation.prompt} error={generation.error} generating={!generation.error} onRegenerate={() => regenerateCurrentTurn(messageId, owner)} />;
 };
 
-export const AssistantParts: FC = () => {
+export const AssistantParts: FC<{ compactions?: readonly PositionedCompaction[] }> = ({ compactions }) => {
   const { t } = useLocale();
   const parts = useAuiState((state) => state.message.parts);
   const hasImage = parts.some((part) => part.type === "image");
@@ -69,14 +69,10 @@ export const AssistantParts: FC = () => {
   const messageRunning = useAuiState((state) => state.message.status?.type === "running");
   const runId = useConversationStore((state) => messageId === "streaming" ? state.activeRunId : messageById(state.messages, messageId)?.runId);
   const runStatus = useConversationStore((state) => runById(state.runs, runId)?.status);
-  const compactions = useConversationStore((state) => state.compactions);
-  const pending = useConversationStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
-  const positionedRanges = useMemo(() => {
-    const markers: PositionedCompaction[] = compactions.flatMap((marker) => marker.runId === runId && marker.partIndex !== undefined
-      ? [{ ...marker, partIndex: marker.partIndex, startedAt: marker.createdAt }] : []);
-    if (pending?.runId === runId && pending?.partIndex !== undefined) markers.push({ ...pending, partIndex: pending.partIndex, status: "running", source: "automatic" });
-    return positionedAssistantRanges(ranges, markers.map((marker) => ({ ...marker, partIndex: compactionDisplayIndex(parts, marker.partIndex) })));
-  }, [ranges, parts, compactions, pending, runId]);
+  const compacting = useConversationStore((state) => Boolean(runId && state.currentSessionId && state.autoCompactionStatuses[state.currentSessionId]?.runId === runId));
+  const positionedRanges = useMemo(() => compactions?.length
+    ? positionedAssistantRanges(ranges, compactions.map((marker) => ({ ...marker, partIndex: compactionDisplayIndex(parts, marker.partIndex) })))
+    : ranges, [ranges, parts, compactions]);
   const sections = useMemo(() => assistantRangeSections(positionedRanges), [positionedRanges]);
   const displayBlocks = useMemo(() => executionDisplayBlocks(sections.process), [sections.process]);
   const lastActivityBlockIndex = displayBlocks.reduce((last, block, index) => block.kind === "activity" ? index : last, -1);
@@ -105,7 +101,7 @@ export const AssistantParts: FC = () => {
   }
   const waitingPhase = imageGeneration ? undefined : assistantWaitingPhase({
     messageRunning,
-    compacting: Boolean(pending && pending.runId === runId),
+    compacting,
     hasCurrentText: finalAnswerStarted || latestVisiblePart?.type === "text" || latestVisiblePart?.type === "image"
       || latestVisiblePart?.type === "tool-call" && latestVisiblePart.toolName === "present" && !latestVisiblePart.isError,
     hasReasoning: latestVisiblePart?.type === "reasoning" && latestVisiblePart.status.type === "running",

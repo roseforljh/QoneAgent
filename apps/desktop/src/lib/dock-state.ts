@@ -4,6 +4,7 @@ import type { BrowserDockRequest } from "./browser-dock";
 import type { RunChangesTarget } from "./run-changes-navigation";
 import type { WorkspaceFileLocation, WorkspaceFileTarget } from "./workspace-file-navigation";
 
+export const CLOSE_DOCK_PANEL_EVENT = "qone-close-dock-panel";
 export type DockView = "session" | "terminal" | "files" | "file" | "git" | "browser" | "mcp" | "skills" | "subagents" | "servers" | "changes" | "sideChat" | "background";
 export type DockFileTarget = WorkspaceFileLocation & Pick<WorkspaceFileTarget, "attachment"> & { path: string; requestId: string };
 export type DockTab = { id: string; view: DockView; workspaceId?: string; /** SSH terminal target. */ serverId?: string; browserTarget?: BrowserDockRequest; fileTarget?: DockFileTarget; changesTarget?: RunChangesTarget; refreshNonce?: number };

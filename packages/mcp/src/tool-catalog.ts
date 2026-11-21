@@ -6,6 +6,7 @@ const tool = z.object({
   name: z.string().min(1), description: z.string().optional(),
   inputSchema: z.record(z.string(), z.unknown()),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
+  annotations: z.object({ readOnlyHint: z.boolean().optional() }).passthrough().optional(),
 }).passthrough();
 export type McpToolMetadata = z.infer<typeof tool>;
 const catalog = z.object({ fingerprint: z.string(), tools: z.array(tool) });

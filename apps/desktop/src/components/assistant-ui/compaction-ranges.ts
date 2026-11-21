@@ -1,4 +1,17 @@
 import { assistantRangeSections, type AssistantPartRange } from "./assistant-part-ranges";
+import type { ChatMessage } from "../../store";
+
+/** A part index belongs to one reply segment, not to every assistant row in the run. */
+export function compactionAssistantId(messages: readonly ChatMessage[], anchorIndex: number, runId: string, streamingRunId?: string): string | undefined {
+  if (anchorIndex < 0) return;
+  for (let index = anchorIndex + 1; index < messages.length; index++) {
+    const message = messages[index]!;
+    if (message.runId !== runId) continue;
+    if (message.role === "assistant") return message.id;
+    if (message.role === "user" && !message.communication) return;
+  }
+  return streamingRunId === runId ? "streaming" : undefined;
+}
 
 export interface PositionedCompaction {
   id: string;

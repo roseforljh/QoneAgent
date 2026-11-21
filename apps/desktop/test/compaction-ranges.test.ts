@@ -1,8 +1,22 @@
 import { expect, test } from "bun:test";
 import { assistantRangeSections, executionDisplayBlocks } from "../src/components/assistant-ui/assistant-part-ranges";
-import { compactionDisplayIndex, compactionRangeSegments, executionSegmentLayout, positionedAssistantRanges, type PositionedCompaction } from "../src/components/assistant-ui/compaction-ranges";
+import { compactionAssistantId, compactionDisplayIndex, compactionRangeSegments, executionSegmentLayout, positionedAssistantRanges, type PositionedCompaction } from "../src/components/assistant-ui/compaction-ranges";
+import type { ChatMessage } from "../src/store";
 
 const marker = (id: string, partIndex: number): PositionedCompaction => ({ id, partIndex, startedAt: 10, source: "automatic", status: "completed" });
+
+test("a marker stays with one assistant segment as steers are delivered during the same run", () => {
+  const [initial, first, steer, second, nextSteer] = ([
+    ["initial", "user"], ["first", "assistant"], ["steer", "user"], ["second", "assistant"], ["next-steer", "user"],
+  ] as const).map(([id, role]): ChatMessage => ({ id, role, runId: "run", content: "" }));
+  expect(compactionAssistantId([initial!], 0, "run", "run")).toBe("streaming");
+  expect(compactionAssistantId([initial!, first!, steer!], 0, "run", "run")).toBe("first");
+  expect(compactionAssistantId([initial!, first!, steer!], 2, "run", "run")).toBe("streaming");
+  expect(compactionAssistantId([initial!, first!, steer!, second!, nextSteer!], 2, "run", "run")).toBe("second");
+  // If the steer ended an empty segment, leave the marker after its anchor.
+  expect(compactionAssistantId([initial!, steer!], 0, "run", "run")).toBeUndefined();
+  expect(compactionAssistantId([initial!], 0, "run", "other-run")).toBeUndefined();
+});
 
 test("reasoning on both sides of compaction stays in its own execution region", () => {
   const segments = compactionRangeSegments([

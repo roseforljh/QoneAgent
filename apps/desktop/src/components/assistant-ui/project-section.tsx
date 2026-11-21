@@ -16,6 +16,7 @@ import { groupProjectSidebarSessions, sortSidebarWorkspaces, useSidebarPreferenc
 import { MorphingSpinner, SessionCompletionDot } from "./morphing-spinner";
 import { SidebarSessionTitle } from "./sidebar-session-title";
 import { SidebarSessionActions } from "./sidebar-session-pin-action";
+import { ServerPickerDialog } from "./server-picker-dialog";
 import { MeasuredCollapse } from "./elements/measured-collapse";
 
 const rowButtonClass = "text-foreground/95 group-hover:text-foreground flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-start outline-none transition-colors";
@@ -143,6 +144,8 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
   const expanded = expandedStateInitialized ? expandedWorkspaceIds.includes(workspace.id) : currentWorkspaceId === workspace.id;
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(workspace.name);
+  const [serverBinding, setServerBinding] = useState<string[]>();
+  const bindServers = () => setServerBinding(useStore.getState().workspaceServerIds[workspace.id] ?? []);
   const inputRef = useRef<HTMLInputElement>(null);
   const pinned = pinnedWorkspaceIds.includes(workspace.id);
   useEffect(() => { if (renaming) inputRef.current?.select(); }, [renaming]);
@@ -162,6 +165,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
         onTogglePinned={() => togglePinWorkspace(workspace.id)}
         onRename={() => setRenaming(true)}
         onDelete={deleteProject}
+        onBindServers={bindServers}
         onNewChat={() => { setWorkspaceExpanded(workspace.id, true, defaultExpandedWorkspaceIds); newSessionInWorkspace(workspace.id); }}
         newChatLabel={t("sidebar.newChatInProject", { name: workspace.name })}
         disabled={renaming}
@@ -186,7 +190,7 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
           {!renaming && (
             <div className="q-sidebar-project-actions flex shrink-0 items-center gap-1">
               <SidebarEntityMenu pinned={pinned} onTogglePinned={() => togglePinWorkspace(workspace.id)}
-                onRename={() => setRenaming(true)} onDelete={deleteProject}
+                onRename={() => setRenaming(true)} onDelete={deleteProject} onBindServers={bindServers}
                 ariaLabel={t("sidebar.projectOptions", { name: workspace.name })} />
               <button type="button" className="text-muted-foreground hover:text-foreground grid size-6 shrink-0 place-items-center rounded-md"
                 aria-label={t("sidebar.newChatInProject", { name: workspace.name })} title={t("sidebar.newChat")}
@@ -197,6 +201,9 @@ const ProjectRow: FC<{ workspace: WorkspaceInfo; sessions: SessionInfo[] }> = ({
           )}
         </div>
       </SidebarContextMenu>
+      {serverBinding && <ServerPickerDialog open onOpenChange={(open) => { if (!open) setServerBinding(undefined); }}
+        title={t("sidebar.bindServers")} description={t("sidebar.bindServersDescription", { name: workspace.name })}
+        ids={serverBinding} onChange={setServerBinding} onSave={() => useStore.getState().setWorkspaceServerIds(workspace.id, serverBinding)} />}
       <AnimatePresence initial={false}>
         {expanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">

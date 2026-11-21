@@ -59,7 +59,7 @@ import { CodexIcon } from "../ui/CodexIcon";
 import terminalIcon from "../../assets/codex-icons/terminal-light-16.svg";
 import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import closeIcon from "../../assets/codex-icons/xmark-md-light-16.svg";
-import { agentBrowserTab, closeDockTabsExcept, closeDockTabsToRight, filePreviewTab, useDockState, withTab, type DockTab, type DockView } from "../../lib/dock-state";
+import { agentBrowserTab, CLOSE_DOCK_PANEL_EVENT, closeDockTabsExcept, closeDockTabsToRight, filePreviewTab, useDockState, withTab, type DockTab, type DockView } from "../../lib/dock-state";
 import {
   initWorkspaceView, removeWorkspaceView, requestWorkspaceFiles, requestWorkspaceFileRead,
   requestWorkspaceGit, requestWorkspaceGitDiff, useWorkspaceViewState, useWorkspaceViewStore,
@@ -109,7 +109,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
   activeTabRef.current = scopeActive && !collapsed ? activeTab : undefined;
   const openTabsRef = useRef(openTabs);
   openTabsRef.current = openTabs;
-  useEffect(() => onViewChange?.(view), [view, onViewChange]);
+  useLayoutEffect(() => onViewChange?.(view), [view, onViewChange]);
   useEffect(() => onTabsChange?.(openTabs.length > 0), [openTabs.length, onTabsChange]);
   useEffect(() => {
     if (!serversLoaded) return;
@@ -428,11 +428,11 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     } finally { closingBatch.current = false; }
   };
 
-  const closePanel = () => {
+  const closePanel = useCallback(() => {
     setLauncherOpen(false);
     setCollapsed(true);
     setMaximized(false);
-  };
+  }, []);
 
   useEffect(() => {
     if (!scopeActive) return;
@@ -469,13 +469,15 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     };
     window.addEventListener("qone-toggle-dock-view", toggleDockView);
     window.addEventListener("qone-toggle-dock-panel", toggleDockPanel);
+    window.addEventListener(CLOSE_DOCK_PANEL_EVENT, closePanel);
     window.addEventListener(OPEN_SERVER_TERMINAL_EVENT, openServer);
     return () => {
       window.removeEventListener(OPEN_SERVER_TERMINAL_EVENT, openServer);
       window.removeEventListener("qone-toggle-dock-view", toggleDockView);
       window.removeEventListener("qone-toggle-dock-panel", toggleDockPanel);
+      window.removeEventListener(CLOSE_DOCK_PANEL_EVENT, closePanel);
     };
-  }, [activeTabId, openTabs, collapsed, scopeActive, workspaceId]);
+  }, [activeTabId, openTabs, collapsed, scopeActive, workspaceId, closePanel]);
 
   const tabMeta: Record<DockView, { icon: LucideIcon | typeof CodexServerIcon; label: string }> = {
     sideChat: { icon: BotMessageSquareIcon, label: t("chat.sideChat") },

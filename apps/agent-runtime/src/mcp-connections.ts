@@ -79,11 +79,11 @@ export function mcpServerList(services: Pick<Services, "mcp" | "mcpServerRepo" |
 }
 
 /** Automatic connections never launch a login; user connections try restored credentials first. */
-export async function connectMcp(config: McpServerInfo, services: Services, requestId?: string) {
+export async function connectMcp(config: McpServerInfo, services: Services, requestId?: string, reconnect = false) {
   const current = () => services.mcpServerRepo.list().find(server => server.id === config.id);
   try {
     try {
-      const tools = await services.mcp.connect(config);
+      const tools = await services.mcp.connect(config, { reconnect });
       services.pendingMcpAuthRequests.delete(config.id);
       await services.refreshCustomTools();
       services.send({ type: "mcp.connected", serverId: config.id, toolCount: tools.length });

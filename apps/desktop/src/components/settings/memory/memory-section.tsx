@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Tabs } from "radix-ui";
 import { motion } from "motion/react";
 import { LoaderCircle } from "lucide-react";
-import { MEMORY_PREFERENCES_PER_SCOPE } from "@qone/protocol";
+import { MEMORY_AUTOMATIC_PREFERENCES_PER_SCOPE } from "@qone/protocol";
 import { useStore } from "../../../store";
 import { cn } from "../../../lib/utils";
 import { sendMemoryCommand, useMemoryStore } from "../../../lib/memory-state";
@@ -80,7 +80,7 @@ export function MemorySection({ onOpenExecution, onResumed }: { onOpenExecution:
               ))}
             </Tabs.List>
             <Tabs.Content value="preferences" className="memory-tab-panel">
-              <p className="memory-hint">{t("memory.preferencesDescription", { limit: String(MEMORY_PREFERENCES_PER_SCOPE) })}</p>
+              <p className="memory-hint">{t("memory.preferencesDescription", { limit: String(MEMORY_AUTOMATIC_PREFERENCES_PER_SCOPE) })}</p>
               <MemoryAutomaticPreferences preferences={automatic} summaries={state.summaries} workspaces={workspaces} busy={busy}
                 onEdit={(id, value) => run({ type: "memory.preference.edit", id, value })} onOpenSummary={setOpenSummary} />
               <MemoryNotes preferences notes={preferences} relative={relative} busy={busy} workspaces={workspaces}

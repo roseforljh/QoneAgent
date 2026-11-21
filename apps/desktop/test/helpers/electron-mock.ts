@@ -17,6 +17,7 @@ export function installElectronMock() {
   installed = true;
   mock.module("electron", () => ({
     app: { isPackaged: false },
+    session: { defaultSession: { resolveProxy: async () => "DIRECT" } },
     ipcMain: {
       handle: (channel: string, handler: (...args: unknown[]) => unknown) => { ipcHandlers.set(channel, handler); },
       removeHandler: (channel: string) => { ipcHandlers.delete(channel); },

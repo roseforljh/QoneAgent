@@ -5,7 +5,7 @@ import { useLocale } from "../../localization";
 import { useConversationStore } from "../../lib/conversation-context";
 import { conversationSession } from "../../lib/session-execution-state";
 import { watchMessageSelection, type MessageSelection } from "../../lib/text-selection";
-import { focusConversationComposer, openSelectedTextSideChat } from "../../lib/selected-text-side-chat";
+import { openSelectedTextSideChat } from "../../lib/selected-text-side-chat";
 import { localizeError } from "../../lib/error-localization";
 import { useStore } from "../../store";
 import "./selected-text.css";
@@ -38,8 +38,8 @@ export function SelectedTextActions({ scopeRef }: { scopeRef: RefObject<HTMLDivE
         onOpenAutoFocus={(event) => event.preventDefault()} onCloseAutoFocus={(event) => event.preventDefault()}
         onPointerDown={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()}>
         <button type="button" onClick={() => {
+          clear();
           aui.thread().composer().setQuote(quote);
-          clear(); focusConversationComposer(scopeRef.current);
         }}>{t("chat.selectionAdd")}</button>
         <button type="button" disabled={Boolean(session.sideChat)} onClick={() => {
           clear();

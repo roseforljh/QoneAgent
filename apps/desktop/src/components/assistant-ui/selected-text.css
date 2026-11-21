@@ -34,42 +34,41 @@
   --q-quote-surface-elevated-secondary: #414141;
   --q-quote-surface-elevated: #303030;
 }
+/* The shell fits the line; the trigger's definite cap sizes shrink-wrapped bubbles. */
 .q-composer-quote-pill {
   position: relative;
   display: inline-flex;
-  max-width: min(320px, 100%);
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--q-quote-surface-elevated-secondary);
-  padding: 6px 8px;
-  color: var(--foreground);
-  transition: background-color .15s ease;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding-inline: 2px;
+  vertical-align: middle;
+  user-select: none;
 }
-.q-composer-quote-pill:hover { background: var(--q-quote-surface-elevated); }
-/* Sits on the text line where the user placed it, in the composer and the sent bubble. */
-.q-inline-quote { max-width: min(16rem, 100%); margin-inline: 2px; padding: 1px 8px; vertical-align: middle; white-space: nowrap; user-select: none; }
-.q-inline-quote .q-composer-quote-trigger { gap: 5px; font-size: 12px; }
 .q-composer-quote-trigger {
   display: inline-flex;
   min-width: 0;
-  flex: 0 1 auto;
+  max-width: 16rem;
   align-items: center;
-  gap: 6px;
-  padding: 0;
-  border-radius: inherit;
-  font-size: var(--q-text-sm);
+  gap: 5px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--q-quote-surface-elevated-secondary);
+  color: var(--foreground);
+  font-size: 12px;
   line-height: 18px;
   font-weight: var(--q-weight-medium);
+  white-space: nowrap;
   cursor: pointer;
+  transition: background-color .15s ease;
 }
+.q-composer-quote-pill:hover .q-composer-quote-trigger { background: var(--q-quote-surface-elevated); }
 .q-composer-quote-trigger > [data-slot="codex-icon"] { color: var(--muted-foreground); }
 .q-composer-quote-label { min-width: 0; overflow: hidden; padding-inline-end: 4px; text-overflow: ellipsis; white-space: nowrap; }
 .q-composer-quote-remove {
   position: absolute;
   top: 50%;
-  right: 4px;
+  right: 6px;
   display: grid;
   width: 20px;
   height: 20px;
@@ -140,5 +139,5 @@
 @keyframes q-selection-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .q-selected-text-actions, .q-composer-quote-preview { animation: none; }
-  .q-selected-text-actions > button, .q-composer-quote-pill, .q-composer-quote-trigger, .q-composer-quote-remove, .q-message-annotation { transition: none; }
+  .q-selected-text-actions > button, .q-composer-quote-trigger, .q-composer-quote-remove, .q-message-annotation { transition: none; }
 }

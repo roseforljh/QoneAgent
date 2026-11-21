@@ -1,13 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
-import { app, Notification, type BrowserWindow } from "electron";
+import { app, session, Notification, type BrowserWindow } from "electron";
 import { getRootDataDir } from "./data-paths";
 import { getSecrets, persistRuntimeSecret } from "./secret-store";
 import { killProcessTree } from "./process-tree";
 import { elevatedTerminalEnv, type ShellHostRequest } from "@qone/protocol/terminal-host";
 import type { AdministratorTerminalHost } from "./administrator-terminal-host";
 import { nativeCopy } from "./native-menus";
+import { readToolSystemProxy } from "./tool-proxy";
+import { toolProxyEnvironmentKey } from "@qone/protocol/proxy-environment";
 
 export class SidecarManager {
   private child: ChildProcess | null = null;
@@ -37,12 +39,12 @@ export class SidecarManager {
     this.stop();
     const generation = ++this.generation;
     // Gate sends while PATH is refreshed or the previous process tree exits.
-    return this.starting = Promise.all([this.exiting, ready]).then(() => {
-      if (generation === this.generation) this.spawnRuntime(generation);
+    return this.starting = Promise.all([this.exiting, ready, readToolSystemProxy()]).then(([, , proxy]) => {
+      if (generation === this.generation) this.spawnRuntime(generation, proxy);
     });
   }
 
-  private spawnRuntime(currentGen: number): void {
+  private spawnRuntime(currentGen: number, proxy?: Record<string, string>): void {
     const script = this.runtimeScript();
     const host = this.administratorHost;
     const env = { ...process.env };
@@ -54,27 +56,35 @@ export class SidecarManager {
       env: {
         ...env,
         ELECTRON_RUN_AS_NODE: "1",
+        QONE_SYSTEM_PROXY: "1",
+        [toolProxyEnvironmentKey]: JSON.stringify(proxy ?? {}),
         QONE_DATA_DIR: getRootDataDir(),
         // Bundled Node tools run on this Electron binary with ELECTRON_RUN_AS_NODE.
         QONE_NODE_EXECUTABLE: process.execPath,
       },
-      stdio: host ? ["pipe", "pipe", "inherit", "ipc"] : ["pipe", "pipe", "inherit"],
+      stdio: ["pipe", "pipe", "inherit", "ipc"],
       windowsHide: true,
     });
 
     this.child = child;
-    if (host) {
-      // Runtime IPC is a separate channel, not the renderer-facing JSON protocol.
-      child.on("message", (message: ShellHostRequest) => {
-        if (this.generation !== currentGen || !message || typeof message.id !== "string") return;
-        if (message.type !== "terminal-host.exec" && message.type !== "terminal-host.cancel") return;
+    // Runtime IPC is a separate channel, not the renderer-facing JSON protocol.
+    child.on("message", (message: ShellHostRequest | { type: "network.proxy.resolve"; id: string; origin: string }) => {
+      if (this.generation !== currentGen || !message || typeof message.id !== "string") return;
+      if (message.type === "network.proxy.resolve") {
+        // Resolve only the origin; never send credentials or private query parameters.
+        const url = typeof message.origin === "string" ? URL.parse(message.origin) : null;
+        if (!url || !["https:", "http:"].includes(url.protocol) || url.origin !== message.origin) return;
+        void session.defaultSession.resolveProxy(url.origin).catch(() => null).then(route => {
+          if (this.generation === currentGen && child.connected) child.send({ type: "network.proxy.resolved", id: message.id, route }, () => {});
+        });
+      } else if (host && (message.type === "terminal-host.exec" || message.type === "terminal-host.cancel")) {
         if (message.type === "terminal-host.exec" && (typeof message.command !== "string" || typeof message.cwd !== "string")) return;
         host.shell(child, message, response => {
           if (child.connected) child.send(response, () => {});
         });
-      });
-      child.once("disconnect", () => host.cancelShells(child));
-    }
+      }
+    });
+    if (host) child.once("disconnect", () => host.cancelShells(child));
     // A failed write rejects its caller and also emits a separate stream error.
     child.stdin?.on("error", (error) => console.error("[sidecar] input pipe failed:", error));
     child.on("error", (error) => console.error("[sidecar] process error:", error));

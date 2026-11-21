@@ -11,7 +11,8 @@ import { invoke } from "./lib/desktop-bridge";
 import { getQoneMessageQueue } from "./lib/qone-message-queue";
 import { plainInlineQuotes } from "./lib/inline-quote";
 import { applyAssistantToolEvent, applyReasoningDelta, parseMcpCommand, DEFAULT_SUBAGENT_RUNTIME, REMOVED_BUILTIN_SUBAGENT_IDS, SKILL_CATALOG_TIMEOUT, type AssistantMessagePart, type CompactionMarkerInfo, type RuntimeCommand, type RuntimeEvent, type BrowserSyncStatus, type ReachChannelInfo, type SessionInfo, type SessionSearchResult, type MessageAttachmentInfo, type MessageQuoteInfo, type QueueItemInfo, type WorkspaceInfo, type WorkspaceFileInfo, type WorkspaceGitEntry, type ModelConfigInfo, type SkillInfo, type PluginInfo, type McpServerInfo, type RunInfo, type ArtifactInfo, type PermissionRuleInfo, type ProviderApiType, type RunPermissionMode, type RunThinkingLevel, type SubagentConfigInfo, type SubagentRunInfo, type SubagentNotificationInfo, type GoalInfo, type BackgroundShellJobInfo } from "@qone/protocol";
-import { DEFAULT_RUN_PERMISSION_MODE, loadNewSessionRunOptions, loadRunOptions, saveNewSessionRunOptions, saveRunOptions, withoutServers, withRunOptionDefaults, type SessionRunOptions } from "./lib/run-options";
+import { DEFAULT_RUN_PERMISSION_MODE, loadNewSessionRunOptions, loadRunOptions, loadWorkspaceServerIds, saveNewSessionRunOptions, saveRunOptions, withWorkspaceServers, withRunOptionDefaults, type SessionRunOptions } from "./lib/run-options";
+import { updateConversationServers, updateWorkspaceServers } from "./store/server-options";
 import { defaultThinkingForModel, normalizeThinkingLevel } from "./lib/model-settings";
 import { getLanguageSetting, resolveLocale, translate, translateCurrent as t } from "./localization";
 import { trackWorkspaceRequest, untrackWorkspaceRequest, useWorkspaceViewStore } from "./lib/workspace-view-state";
@@ -95,6 +96,8 @@ export interface AgentState {
   searchLoading: boolean;
   activeSearchQuery: string;
   workspaces: WorkspaceInfo[];
+  workspaceServerIds: Record<string, string[]>;
+  setWorkspaceServerIds: (workspaceId: string, ids: string[]) => void;
   modelConfigs: ModelConfigInfo[];
   /** False until the runtime's first model list arrives; model-derived UI must not guess before it. */
   modelConfigsLoaded: boolean;
@@ -375,6 +378,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   modelConfigs: [],
   modelConfigsLoaded: !hasDesktopBridge(),
   selectedModelId: newSessionRunOptions.modelId,
+  workspaceServerIds: loadWorkspaceServerIds(),
   runOptionsBySession: loadRunOptions(),
   draftRunOptions: newSessionRunOptions,
   draftDockId: crypto.randomUUID(),
@@ -523,15 +527,20 @@ export const useStore = create<AgentState>((set, get, api) => {
     const modelId = configuredModel && (state.modelConfigs.length === 0 || state.modelConfigs.some((model) => model.enabled && model.id === configuredModel))
       ? configuredModel
       : state.modelConfigs.find((model) => model.enabled)?.id;
-    const draftRunOptions = withoutServers(modelId && modelId !== configuredModel ? { ...state.draftRunOptions, modelId } : state.draftRunOptions);
+    const defaults = modelId && modelId !== configuredModel ? { ...state.draftRunOptions, modelId } : state.draftRunOptions;
+    const draftRunOptions = withWorkspaceServers(defaults, state.workspaceServerIds[workspaceId]);
     if (modelId !== configuredModel) saveNewSessionRunOptions(draftRunOptions);
     set({ currentWorkspaceId: workspaceId, workspaceLoadingId: workspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, currentSessionId: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: workspaceId, draftDockId: crypto.randomUUID(), selectedModelId: modelId, draftRunOptions, creatingSession: false, pendingMessage: undefined, pendingQuote: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], subagentNotifications: [], artifacts: [], running: false, activeRunId: undefined, modelRequest: undefined, approvals: [], lastError: undefined, chatRunError: undefined, ...switchSessionState(state) });
     get().refreshWorkspace(workspaceId);
   },
 
   createSessionForWorkspace: async (workspaceId, resume) => {
-    if (get().creatingSession || !get().workspaces.some((workspace) => workspace.id === workspaceId)) return false;
-    set({ creatingSession: true, currentWorkspaceId: workspaceId, draftWorkspaceId: workspaceId, lastError: undefined });
+    const state = get();
+    if (state.creatingSession || !state.workspaces.some((workspace) => workspace.id === workspaceId)) return false;
+    const draftRunOptions = resume || state.draftWorkspaceId !== workspaceId
+      ? withWorkspaceServers(state.draftRunOptions, state.workspaceServerIds[workspaceId])
+      : state.draftRunOptions;
+    set({ creatingSession: true, currentWorkspaceId: workspaceId, draftWorkspaceId: workspaceId, draftRunOptions, lastError: undefined });
     const sent = await get().send({ type: "session.create", requestId: rid(), workspaceId,
       title: resume ? t("memory.resumeTitle", { title: resume.title || t("memory.untitled") }) : "New session", resumeFrom: resume?.id });
     if (!sent) set({ creatingSession: false, pendingMessage: undefined });
@@ -556,6 +565,8 @@ export const useStore = create<AgentState>((set, get, api) => {
   deleteWorkspace: (id) => {
     get().send({ type: "workspace.delete", requestId: rid(), workspaceId: id });
   },
+
+  setWorkspaceServerIds: (workspaceId, ids) => set((state) => updateWorkspaceServers(state, workspaceId, ids)),
 
   togglePinWorkspace: (id) => {
     set((s) => {
@@ -855,18 +866,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     saveNewSessionRunOptions(draftRunOptions);
     return { draftRunOptions };
   }),
-  setServerIds: (ids, sessionId) => set((state) => {
-    const serverIds = [...new Set(ids)];
-    const sid = sessionId ?? state.currentSessionId;
-    if (!sid) {
-      const draftRunOptions = { ...state.draftRunOptions, serverIds };
-      saveNewSessionRunOptions(draftRunOptions);
-      return { draftRunOptions };
-    }
-    const runOptionsBySession = { ...state.runOptionsBySession, [sid]: { ...state.runOptionsBySession[sid], serverIds } };
-    saveRunOptions(runOptionsBySession);
-    return { runOptionsBySession };
-  }),
+  setServerIds: (ids, sessionId) => set((state) => updateConversationServers(state, ids, sessionId)),
   setRunThinking: (modelId, level, sessionId) => set((state) => {
     const sid = sessionId ?? state.currentSessionId;
     if (!sid) {

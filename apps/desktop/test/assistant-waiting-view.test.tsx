@@ -3,14 +3,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useExternalStoreRuntime, type ThreadMessageLike } from "@assistant-ui/react";
 import { ACTIVITY_TITLE_TOOL } from "@qone/protocol";
 import { AssistantParts } from "../src/components/assistant-ui/assistant-parts";
+import type { PositionedCompaction } from "../src/components/assistant-ui/compaction-ranges";
 import { createMessageConverter } from "../src/lib/runtime-message-converter";
 import { useStore, type AgentState } from "../src/store";
 
-function Fixture({ message }: { message: ThreadMessageLike }) {
+function Fixture({ message, compactions }: { message: ThreadMessageLike; compactions?: PositionedCompaction[] }) {
   const runtime = useExternalStoreRuntime({ messages: [message], isRunning: message.status?.type === "running",
     convertMessage: (value: ThreadMessageLike) => value, onNew: async () => {} });
   return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{
-    AssistantMessage: () => <MessagePrimitive.Root><AssistantParts /></MessagePrimitive.Root>,
+    AssistantMessage: () => <MessagePrimitive.Root><AssistantParts compactions={compactions} /></MessagePrimitive.Root>,
   }} /></AssistantRuntimeProvider>;
 }
 
@@ -129,10 +130,10 @@ test("finished reasoning followed by a model gap still has waiting feedback", ()
 });
 
 test("automatic compaction and image generation use their own feedback", () => {
-  withState({ activeRunId: "run", currentSessionId: "session", autoCompactionStatuses: {
-    session: { id: "compact", runId: "run", throughMessageId: "user", partIndex: 0, startedAt: Date.now() },
-  } }, () => {
-    const html = render();
+  const pending = { id: "compact", runId: "run", throughMessageId: "user", partIndex: 0, startedAt: Date.now() };
+  withState({ activeRunId: "run", currentSessionId: "session", autoCompactionStatuses: { session: pending } }, () => {
+    const html = renderToStaticMarkup(<Fixture message={{ id: "streaming", role: "assistant", content: [], status: { type: "running" } }}
+      compactions={[{ ...pending, status: "running", source: "automatic" }]} />);
     expect(html).toContain('data-slot="context-compaction"');
     expect(html).not.toContain('data-slot="assistant-waiting"');
   });

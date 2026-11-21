@@ -12,5 +12,6 @@ export function isRuntimeMessageKey(value: unknown): value is RuntimeMessageKey 
 }
 
 export function runtimeMessage(locale: RuntimeLocale, code: RuntimeMessageKey, values?: Record<string, unknown>): string {
-  return runtimeCopy[code][locale].replace(/\{(p\d+)\}/g, (placeholder, name: string) => String(values?.[name] ?? placeholder));
+  return runtimeCopy[code][locale].replace(/\{([a-z][a-z\d_]*)\}/gi, (placeholder, name: string) =>
+    values && Object.hasOwn(values, name) ? String(values[name] ?? placeholder) : placeholder);
 }

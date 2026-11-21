@@ -1,4 +1,4 @@
-import { Client, StreamableHTTPClientTransport, SSEClientTransport, UnauthorizedError, DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/client";
+import { Client, StreamableHTTPClientTransport, SSEClientTransport, UnauthorizedError, DEFAULT_REQUEST_TIMEOUT_MSEC, SdkError, SdkErrorCode, SdkHttpError, type CallToolResult } from "@modelcontextprotocol/client";
 import { isDeepStrictEqual } from "node:util";
 import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
@@ -7,6 +7,7 @@ import { TreeKillingStdioTransport } from "./stdio-transport";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSecureServiceUrl } from "@qone/protocol";
+import { toolProxyEnvironment } from "@qone/protocol/proxy-environment";
 import { HostedMcpOAuth, type HostedOAuthAuthorization, type HostedOAuthCredential } from "./hosted-oauth";
 import { resolveMcpStdioLaunch } from "./stdio-launch";
 import { McpAccountLoginRequiredError } from "./auth-error";
@@ -500,10 +501,14 @@ export class McpManager {
     }
   }
 
-  async connect(config: McpServerConfig): Promise<ToolDefinition[]> {
+  async connect(config: McpServerConfig, { reconnect = false } = {}): Promise<ToolDefinition[]> {
     this.register(config);
     const registration = this.registrations.get(config.id)!;
     registration.used = true;
+    if (reconnect && this.conns.has(config.id)) {
+      if (registration.calls) throw new Error(`MCP server ${config.name} is in use; reconnect after its calls finish`);
+      await this.releaseConnection(config.id);
+    }
     await this.ensureConnection(registration);
     return registration.tools;
   }
@@ -561,11 +566,11 @@ export class McpManager {
         ...(config.authMode === "github-device" ? { onUnauthorized: () => this.refreshGitHubToken(config) } : {}),
       } : undefined;
     controller.signal.throwIfAborted();
-    const stdioEnv = resolvedEnv ? { ...getDefaultEnvironment(), ...resolvedEnv } : undefined;
+    const stdioEnv = config.command ? { ...getDefaultEnvironment(), ...toolProxyEnvironment(process.env, resolvedEnv) } : undefined;
     // Do not let npm prepend the app workspace's node_modules/.bin (and its bundled Node).
     const stdioCwd = config.cwd ?? homedir();
     const launch = config.command
-      ? await resolveMcpStdioLaunch(config.command, config.args ?? [], { env: stdioEnv, cwd: stdioCwd, signal: controller.signal })
+      ? await resolveMcpStdioLaunch(config.command, config.args ?? [], { env: resolvedEnv ? stdioEnv : undefined, cwd: stdioCwd, signal: controller.signal })
       : undefined;
     const httpOptions = { ...(authProvider ? { authProvider } : {}), requestInit: { ...(headers ? { headers } : {}), signal: controller.signal } };
     const transport = config.url
@@ -686,13 +691,27 @@ export class McpManager {
     check();
     registration.calls++;
     registration.used = true;
+    const currentTool = () => registration.metadata?.find(tool => tool.name === name);
+    const call = (connection: Conn) => this.authenticated(config, () => connection.client.callTool({ name, arguments: args }, { signal }));
     try {
-      const pending = this.ensureConnection(registration);
-      const connection = await waitForConnection(pending, signal);
+      const connection = await waitForConnection(this.ensureConnection(registration), signal);
       check();
-      const current = registration.metadata?.find(tool => tool.name === name);
+      const current = currentTool();
       if (!current || (advertised && !isDeepStrictEqual(current.inputSchema, advertised.inputSchema))) throw new Error(`MCP tool ${name} changed; use the refreshed tool definition`);
-      return await this.authenticated(config, () => connection.client.callTool({ name, arguments: args }, { signal }));
+      if (current.annotations?.readOnlyHint !== true) return await call(connection);
+      const first = await call(connection).then(result => ({ result }), error => ({ error: error as unknown }));
+      const original = () => { if ("error" in first) throw first.error; return first.result; };
+      const live = this.conns.get(config.id);
+      const retryable = "error" in first ? isTransientMcpError(first.error) : isToolFetchFailure(first.result, name);
+      // Replacing a connection must not interrupt another caller (which may be writing).
+      if (!retryable || signal?.aborted || (live === connection && registration.calls > 1) || !this.permitted(registration) || this.staleConnections.has(config.id)) return original();
+      if (live === connection) await this.releaseConnection(config.id);
+      check();
+      const replacement = await waitForConnection(this.ensureConnection(registration), signal);
+      check();
+      const refreshed = currentTool();
+      if (refreshed?.annotations?.readOnlyHint !== true || !isDeepStrictEqual(refreshed.inputSchema, current.inputSchema)) return original();
+      return await call(replacement);
     } catch (error) {
       if (error instanceof McpAccountLoginRequiredError) {
         registration.authRequired = true;
@@ -761,6 +780,21 @@ export class McpManager {
     this.pendingOAuth.clear();
     this.pendingHostedOAuth.clear();
   }
+}
+
+function isTransientMcpError(error: unknown): boolean {
+  if (error instanceof SdkHttpError) return [502, 503, 504].includes(error.data.status);
+  if (error instanceof SdkError) return error.code === SdkErrorCode.ConnectionClosed || error.code === SdkErrorCode.RequestTimeout;
+  return error instanceof TypeError && error.message === "fetch failed";
+}
+
+function isToolFetchFailure(result: CallToolResult, name: string): boolean {
+  if (!result.isError || result.content?.length !== 1) return false;
+  const part = result.content[0];
+  if (part?.type !== "text") return false;
+  // Some stdio servers flatten a rejected fetch into one text error instead of an HTTP status.
+  const text = part.text.trim();
+  return text === "fetch failed" || text === `${name} error: fetch failed`;
 }
 
 function waitForConnection<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {

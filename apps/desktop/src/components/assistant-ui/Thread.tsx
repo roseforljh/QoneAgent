@@ -31,11 +31,14 @@ import { TooltipIconButton } from "./tooltip-icon-button";
 import { AssistantMessageActions, UserMessageActions } from "./message-actions";
 import { SelectedTextActions } from "./selected-text-actions";
 import { Button } from "../ui/Button";
+import { CodexIcon } from "../ui/CodexIcon";
+import paperclipIcon from "../../assets/codex-icons/paperclip-light-20.svg";
 import { cn } from "../../lib/utils";
 import { ModelPicker } from "./model-picker";
 import { RunOptionsPopover } from "./run-options-popover";
 import { ConversationMapAui } from "./elements/conversation-map.aui";
 import { ContextCompactionMarker } from "./context-compaction-marker";
+import { compactionAssistantId, type PositionedCompaction } from "./compaction-ranges";
 import { RunFileChangesSummary } from "./run-file-changes-summary";
 import { ComposerLoadingSkeleton, ConversationLoadingSkeleton } from "./loading-skeleton";
 import { SessionThreadViewport, ThreadScrollFollower } from "./thread-scroll-follower";
@@ -91,6 +94,8 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const messageStructure = useMemo(createMessageStructureSelector, []);
   const threadMessages = useAuiState((state) => messageStructure(state.thread.messages));
   const chatRunError = useConversationStore((state) => state.chatRunError);
+  const messages = useConversationStore((state) => state.messages);
+  const activeRunId = useConversationStore((state) => state.activeRunId);
   const compactions = useConversationStore((state) => state.compactions);
   const compactionStatus = useConversationStore((state) => state.currentSessionId ? state.compactionStatuses[state.currentSessionId] : undefined);
   const autoCompactionStatus = useConversationStore((state) => state.currentSessionId ? state.autoCompactionStatuses[state.currentSessionId] : undefined);
@@ -106,22 +111,31 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const compactionMarkersByMessage = useMemo(() => {
     const visibleAnchorByUser = new Map([...pairedUserIdByAssistant].map(([assistantId, userId]) => [userId, assistantId]));
     const visibleMessageIds = new Set(threadMessages.map((message) => message.id));
-    type Marker = { id: string; status: "running" | "completed" | "interrupted"; source: "manual" | "automatic"; startedAt: number };
+    type Marker = Omit<PositionedCompaction, "partIndex"> & { throughMessageId: string; runId?: string; partIndex?: number };
     const after = new Map<string, Marker[]>();
     const between = new Map<string, Marker[]>();
-    for (const marker of [
-      ...compactions.filter((item) => item.partIndex === undefined || !item.runId).map((item) => ({ id: item.id, throughMessageId: item.throughMessageId, startedAt: item.createdAt, status: item.status, source: item.source })),
-      ...(compactionStatus ? [{ id: compactionStatus.requestId, throughMessageId: compactionStatus.throughMessageId, startedAt: compactionStatus.startedAt, status: "running" as const, source: "manual" as const }] : []),
-      ...(autoCompactionStatus && autoCompactionStatus.partIndex === undefined ? [{ id: autoCompactionStatus.id, throughMessageId: autoCompactionStatus.throughMessageId, startedAt: autoCompactionStatus.startedAt, status: "running" as const, source: "automatic" as const }] : []),
-    ]) {
+    const within = new Map<string, PositionedCompaction[]>();
+    const markers: Marker[] = compactions.map((item) => ({ ...item, startedAt: item.createdAt }));
+    if (compactionStatus) markers.push({ ...compactionStatus, id: compactionStatus.requestId, status: "running", source: "manual" });
+    if (autoCompactionStatus) markers.push({ ...autoCompactionStatus, status: "running", source: "automatic" });
+    const messageIndices = markers.length ? new Map(messages.map((message, index) => [message.id, index])) : undefined;
+    const streamingRunId = visibleMessageIds.has("streaming") ? activeRunId : undefined;
+    for (const marker of markers) {
+      if (marker.runId && marker.partIndex !== undefined) {
+        const assistantId = compactionAssistantId(messages, messageIndices?.get(marker.throughMessageId) ?? -1, marker.runId, streamingRunId);
+        if (assistantId && visibleMessageIds.has(assistantId)) {
+          within.set(assistantId, [...(within.get(assistantId) ?? []), { ...marker, partIndex: marker.partIndex }]);
+          continue;
+        }
+      }
       const pairedAssistantId = visibleAnchorByUser.get(marker.throughMessageId);
       const anchorId = pairedAssistantId ?? marker.throughMessageId;
       if (!visibleMessageIds.has(anchorId)) continue;
       const target = pairedAssistantId ? between : after;
       target.set(anchorId, [...(target.get(anchorId) ?? []), marker]);
     }
-    return { after, between };
-  }, [compactions, compactionStatus, autoCompactionStatus, pairedUserIdByAssistant, threadMessages]);
+    return { after, between, within };
+  }, [messages, activeRunId, compactions, compactionStatus, autoCompactionStatus, pairedUserIdByAssistant, threadMessages]);
   const errorMessageId = chatRunError && chatRunError.sessionId === currentSessionId ? chatRunErrorMessageId(chatRunError.userMessageId) : undefined;
   const latestAssistantId = useMemo(() => {
     for (let index = threadMessages.length - 1; index >= 0; index--) {
@@ -160,6 +174,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           ? <UserMessage />
           : <AssistantMessage
             userMessageId={state.pairedUserIdByAssistant.get(message.id)}
+            compactions={state.compactionMarkersByMessage.within.get(message.id)}
             betweenContent={state.compactionMarkersByMessage.between.get(message.id)?.map((marker) => (
               <ContextCompactionMarker key={marker.id} status={marker.status} source={marker.source} startedAt={marker.startedAt} />
             ))}
@@ -184,7 +199,9 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
   const messageListRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   return (
-    <ThreadPrimitive.Root
+    <ComposerPrimitive.AttachmentDropzone
+      render={<ThreadPrimitive.Root />}
+      disabled={!canChat}
       ref={threadRef}
       data-conversation-id={currentSessionId}
       className="aui-root aui-thread-root relative bg-background text-foreground flex h-full flex-col items-stretch px-4 [--q-chat-bg:var(--background)]"
@@ -242,7 +259,14 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
           </ThreadScrollFollower>
         </SessionThreadViewport>
       </>}
-    </ThreadPrimitive.Root>
+      {canChat && <div className="q-thread-drop-overlay" aria-hidden="true">
+        <div className="q-thread-drop-card">
+          <div className="q-thread-drop-icon"><CodexIcon src={paperclipIcon} className="size-5" /></div>
+          <strong>{t("attachment.dropTitle")}</strong>
+          <p>{t("attachment.dropDescription")}</p>
+        </div>
+      </div>}
+    </ComposerPrimitive.AttachmentDropzone>
   );
 };
 const ProjectImportPrompt: FC<{ compact?: boolean }> = ({ compact = false }) => {
@@ -334,11 +358,10 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerQueue allowSideChat={!session?.sideChat} />
       <ComposerPrimitive.Unstable_TriggerPopoverRoot>
-      <ComposerPrimitive.AttachmentDropzone asChild>
         <div
           ref={shellRef}
           data-slot="aui_composer-shell"
-          className="q-composer-shell relative z-10 flex w-full cursor-text flex-col gap-0 rounded-(--composer-radius) bg-(--composer-bg) p-0 transition-[border-color,box-shadow] data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]"
+          className="q-composer-shell relative z-10 flex w-full cursor-text flex-col gap-0 rounded-(--composer-radius) bg-(--composer-bg) p-0 transition-[border-color,box-shadow]"
         >
           {editingQueueItem && (
             <div className="flex items-center justify-between px-2.5 py-1 text-xs text-muted-foreground" role="status">
@@ -361,7 +384,6 @@ const Composer: FC<{ placeholder: string }> = ({ placeholder }) => {
             <ComposerToolsPopover anchor={shellRef} tools={tools} open={toolsMenuOpen} onOpenChange={setToolsMenuOpen} onToolSelect={onToolSelect} />
           } />
         </div>
-      </ComposerPrimitive.AttachmentDropzone>
       </ComposerPrimitive.Unstable_TriggerPopoverRoot>
     </ComposerPrimitive.Root>
     </>
@@ -456,7 +478,7 @@ const continueFailedRun = (owner: ReturnType<typeof useConversationStoreApi>, pr
   owner.getState().runAgent(prompt, undefined, undefined, undefined, undefined, undefined, undefined, true);
 };
 
-const AssistantMessage: FC<{ userMessageId?: string; betweenContent?: ReactNode }> = memo(({ userMessageId, betweenContent }) => {
+const AssistantMessage: FC<{ userMessageId?: string; betweenContent?: ReactNode; compactions?: readonly PositionedCompaction[] }> = memo(({ userMessageId, betweenContent, compactions }) => {
   const owner = useConversationStoreApi();
   const { t } = useLocale();
   const messageId = useAuiState((state) => state.message.id);
@@ -505,7 +527,7 @@ const AssistantMessage: FC<{ userMessageId?: string; betweenContent?: ReactNode 
               <button type="button" className="mt-1 flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground" onClick={() => continueFailedRun(owner, t("chat.continueMessage"))}>
                 <CornerDownRightIcon className="size-3.5" />{t("chat.continueMessage")}
               </button>
-            </div> : <AssistantParts />}
+            </div> : <AssistantParts compactions={compactions} />}
             {!answerError && <>
               {lastOfRun && <DeliveredFiles runIds={runIds} />}
               <MessageSourcesView />

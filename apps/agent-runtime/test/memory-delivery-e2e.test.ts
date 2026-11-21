@@ -108,6 +108,8 @@ test("scoped preference deltas and explicit continuation preserve serialized req
     const scoped = await save("a", "A_ONLY_PREFERENCE", { workspaceId: a!.id });
     const preferenceId = scoped.state.notes.find((note) => note.content === "A_ONLY_PREFERENCE")!.id;
     await save("rule", projectRule, { workspaceId: a!.id });
+    await save("a-third", "A_THIRD_PREFERENCE", { workspaceId: a!.id });
+    await save("a-fourth", "A_FOURTH_PREFERENCE", { workspaceId: a!.id });
     await save("b", "B_ONLY_PREFERENCE", { workspaceId: b!.id });
     const turn = async (sessionId: string, message: string) => {
       const from = requests.length;
@@ -118,6 +120,7 @@ test("scoped preference deltas and explicit continuation preserve serialized req
     };
     const first = await turn(currentA.id, "修一下这个 Bug");
     expect(latest(first)).toContain("A_ONLY_PREFERENCE");
+    expect(latest(first)).toContain("A_FOURTH_PREFERENCE");
     expect(latest(first)).toContain("GLOBAL_PREFERENCE");
     expect(latest(first)).toContain("AUTOMATIC_PREFERENCE");
     expect(latest(first)).toContain('\\"automatic\\":true');

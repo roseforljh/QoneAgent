@@ -5,7 +5,8 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./terminal-host": "./src/terminal-host.ts"
+    "./terminal-host": "./src/terminal-host.ts",
+    "./proxy-environment": "./src/proxy-environment.ts"
   },
   "dependencies": {
     "zod": "^4.6.7"

@@ -6,7 +6,8 @@ import { translateCurrent as t } from "./localization";
 import { localizeError } from "./lib/error-localization";
 import { invoke, listen, openUrl } from "./lib/desktop-bridge";
 import { mcpAvailable, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
-import { DEFAULT_RUN_PERMISSION_MODE, pruneRunOptionServers, saveNewSessionRunOptions, saveRunOptions, withoutServers, withRunOptionDefaults } from "./lib/run-options";
+import { DEFAULT_RUN_PERMISSION_MODE, saveNewSessionRunOptions, saveRunOptions, saveWorkspaceServerIds, withoutServers, withRunOptionDefaults } from "./lib/run-options";
+import { reconcileServerOptions } from "./store/server-options";
 import { getQoneMessageQueue, prunePausedQueues } from "./lib/qone-message-queue";
 import { queueEditsOnDisconnect, sessionStore, switchSessionState } from "./lib/session-execution-state";
 import { dispatchFilePreview, dispatchFilePreviewError, disconnectFilePreviews } from "./lib/file-preview-state";
@@ -215,16 +216,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         break;
       case "servers.state": {
         const liveIds = new Set(msg.servers.map(server => server.id));
-        useStore.setState(state => {
-          const draftRunOptions = pruneRunOptionServers(state.draftRunOptions, liveIds);
-          const entries = Object.entries(state.runOptionsBySession).map(([id, options]) => [id, pruneRunOptionServers(options, liveIds)] as const);
-          const changed = entries.some(([id, options]) => options !== state.runOptionsBySession[id]);
-          if (draftRunOptions !== state.draftRunOptions) saveNewSessionRunOptions(draftRunOptions);
-          if (!changed && draftRunOptions === state.draftRunOptions) return state;
-          const runOptionsBySession = changed ? Object.fromEntries(entries) : state.runOptionsBySession;
-          if (changed) saveRunOptions(runOptionsBySession);
-          return { draftRunOptions, runOptionsBySession };
-        });
+        useStore.setState(state => reconcileServerOptions(state, liveIds));
         dispatchServerEvent(msg);
         break;
       }
@@ -254,11 +246,13 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
             ...(modelId ? { modelId } : {}),
             ...(!st.draftRunOptions.permissionMode ? { permissionMode: DEFAULT_RUN_PERMISSION_MODE } : {}),
           };
-          // A new conversation snapshots the shared new-session configuration.
-          // Later edits in that conversation stay local to it. Servers picked in
-          // the draft belong to this conversation only, so the draft drops them.
+          // Snapshot the draft selection, including an explicit empty selection,
+          // without carrying servers over from a draft in another project.
           const stored = st.runOptionsBySession[msg.session.id];
-          const serverIds = stored?.serverIds ?? st.draftRunOptions.serverIds;
+          const workspaceId = msg.session.workspaceId;
+          const serverIds = stored?.serverIds ?? (workspaceId && (st.draftWorkspaceId === workspaceId
+            ? st.draftRunOptions.serverIds
+            : st.workspaceServerIds[workspaceId]));
           const sessionRunOptions = { ...withRunOptionDefaults(stored, newSessionDefaults), ...(serverIds ? { serverIds: [...serverIds] } : {}) };
           return {
             runOptionsBySession: { ...st.runOptionsBySession, [msg.session.id]: sessionRunOptions },
@@ -634,8 +628,15 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
           const workspaces = st.workspaces.filter((workspace) => workspace.id !== msg.workspaceId);
           const wasCurrent = st.currentWorkspaceId === msg.workspaceId;
           const nextWorkspaceId = wasCurrent ? workspaces[0]?.id : st.currentWorkspaceId;
+          let workspaceServerIds = st.workspaceServerIds;
+          if (Object.hasOwn(workspaceServerIds, msg.workspaceId)) {
+            workspaceServerIds = { ...workspaceServerIds };
+            delete workspaceServerIds[msg.workspaceId];
+            saveWorkspaceServerIds(workspaceServerIds);
+          }
           return {
             workspaces,
+            workspaceServerIds,
             currentWorkspaceId: nextWorkspaceId,
             ...(wasCurrent ? { currentSessionId: undefined, workspaceLoadingId: nextWorkspaceId, workspaceFiles: [], gitStatus: "", gitEntries: [], gitLoaded: false, openFile: undefined, gitDiffView: undefined, workspaceError: undefined, messagesLoadingSessionId: undefined, draftWorkspaceId: undefined, creatingSession: false, pendingMessage: undefined, messages: [], compactions: [], streaming: "", streamingParts: [], activeMessageSequence: undefined, preparedToolCallIds: [], toolCalls: [], runs: [], subagents: [], artifacts: [], approvals: [] } : {}),
           };

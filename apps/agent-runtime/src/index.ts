@@ -1,4 +1,5 @@
 import { connectMcp, registerMcp, mcpServerList, restoreMcpCredentials } from "./mcp-connections";
+import { installDesktopSystemProxy } from "./system-proxy";
 import { handleSessionCommand } from "./session-commands.js";
 import { handleRuntimeCommand, sessionHasActiveRun } from "./runtime-commands.js";
 import { claudeMcpToken } from "./claude-code/mcp-auth";
@@ -55,6 +56,7 @@ import { createRuntimeMemory } from "./memory/runtime-memory.js";
 import { MemoryIncidents } from "./memory/memory-incidents.js";
 import { ServerService } from "./servers/server-service.js";
 
+installDesktopSystemProxy();
 const log = createLogger("runtime");
 // The desktop starts this process with Electron in Node mode. Never pass that
 // mode on to user commands: any Electron app they launch would fail to open.

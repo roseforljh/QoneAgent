@@ -826,19 +826,35 @@ export class EventRepo {
       }
       return partsByRun.get(runId);
     };
+    // Older positioned markers always named the run's first prompt. The
+    // journal records which steers were actually delivered before compaction.
+    const latestSteer = new Map<string, string>();
+    const steerAtStart = new Map<string, string | undefined>();
     return this.db.select().from(events)
-      .where(and(eq(events.sessionId, sessionId), inArray(events.type, ["context.compacted", "context.compaction.interrupted"])))
+      .where(and(eq(events.sessionId, sessionId), inArray(events.type, ["context.compacted", "context.compaction.interrupted", "context.compaction.started", "agent.steer.delivered"])))
       .orderBy(events.sequence).all().flatMap((row) => {
         try {
           const payload: unknown = JSON.parse(row.payload);
           if (!payload || typeof payload !== "object") return [];
-          const { id, throughMessageId, createdAt, source, partIndex } = payload as { id?: unknown; throughMessageId?: unknown; createdAt?: unknown; source?: unknown; partIndex?: unknown };
+          const { id, throughMessageId, createdAt, source, partIndex, queueItemId } = payload as { id?: unknown; throughMessageId?: unknown; createdAt?: unknown; source?: unknown; partIndex?: unknown; queueItemId?: unknown };
+          const steer = row.runId ? latestSteer.get(row.runId) : undefined;
+          if (row.type === "agent.steer.delivered") {
+            if (row.runId && typeof queueItemId === "string") latestSteer.set(row.runId, queueItemId);
+            return [];
+          }
+          if (row.type === "context.compaction.started") {
+            if (typeof id === "string") steerAtStart.set(id, steer);
+            return [];
+          }
+          const anchor = source === "automatic" && typeof id === "string" ?
+            (steerAtStart.has(id) ? steerAtStart.get(id) : steer) ?? throughMessageId : throughMessageId;
+          if (typeof id === "string") steerAtStart.delete(id);
           const position = typeof partIndex === "number" && Number.isInteger(partIndex) && partIndex >= 0
             ? partIndex
             : row.runId && source === "automatic"
               ? legacyPartsForRun(row.runId)?.filter((part) => part.type !== "reasoning" && part.messageSequence < row.sequence).length : undefined;
-          return typeof id === "string" && typeof throughMessageId === "string"
-            ? [{ id, throughMessageId, ...(row.runId ? { runId: row.runId } : {}), ...(position !== undefined ? { partIndex: position } : {}), createdAt: typeof createdAt === "number" ? createdAt : row.timestamp, status: row.type === "context.compacted" ? "completed" as const : "interrupted" as const, source: source === "automatic" ? "automatic" as const : "manual" as const }]
+          return typeof id === "string" && typeof anchor === "string"
+            ? [{ id, throughMessageId: anchor, ...(row.runId ? { runId: row.runId } : {}), ...(position !== undefined ? { partIndex: position } : {}), createdAt: typeof createdAt === "number" ? createdAt : row.timestamp, status: row.type === "context.compacted" ? "completed" as const : "interrupted" as const, source: source === "automatic" ? "automatic" as const : "manual" as const }]
             : [];
         } catch { return []; }
       });

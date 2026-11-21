@@ -1,7 +1,8 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { spawn } from "node:child_process";
 import { isIP } from "node:net";
-import { lookup } from "node:dns/promises";
+import { resolvePublicUrl } from "./web-fetch-security";
+import { requestPublicUrl, type WebTransport } from "./web-fetch-transport";
 import { XMLParser } from "fast-xml-parser";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -22,43 +23,30 @@ function publicUrl(input: string): URL {
   return url;
 }
 
-function privateAddress(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized === "::1" || normalized === "::" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80") || normalized.startsWith("::ffff:")) return true;
-  const [a, b] = address.split(".").map(Number);
-  return isIP(address) === 4 && (a === 0 || a === 10 || a === 127 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a >= 224);
-}
-
-async function requirePublicResolution(url: URL): Promise<void> {
-  const addresses = await lookup(url.hostname, { all: true });
-  if (!addresses.length || addresses.some(({ address }) => privateAddress(address))) throw runtimeError("reach-public-tools.the_website_resolved_to_a_private_network_address", {});
-}
-
-async function boundedFetch(url: URL, headers: Record<string, string> = {}): Promise<string> {
+async function boundedFetch(transport: WebTransport, url: URL, headers: Record<string, string> = {}): Promise<string> {
   let current = url;
   const carriesCredentials = Object.keys(headers).some((name) => /^(authorization|cookie|proxy-authorization)$/i.test(name));
   for (let redirects = 0; redirects < 4; redirects++) {
-    await requirePublicResolution(current);
-    const response = await fetch(current, {
+    const addresses = await resolvePublicUrl(current);
+    const { response, release } = await transport(current, addresses, {
       headers: { "User-Agent": USER_AGENT, Accept: "application/json, application/xml, text/xml, text/plain, */*", ...headers },
-      signal: AbortSignal.timeout(20_000), redirect: "manual",
+      signal: AbortSignal.timeout(20_000),
     });
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      const location = response.headers.get("location");
-      if (!location) throw runtimeError("reach-public-tools.the_website_redirect_has_no_target_url", {});
-      const next = publicUrl(new URL(location, current).href);
-      if (carriesCredentials && next.origin !== current.origin) throw runtimeError("reach-public-tools.requests_carrying_credentials_cannot_redirect_to_another_origin", {});
-      current = next;
-      continue;
-    }
-    if (!response.ok) throw runtimeError("reach-public-tools.website_request_failed_http", { p0: response.status });
-    const length = Number(response.headers.get("content-length") ?? 0);
-    if (length > MAX_BYTES) throw runtimeError("reach-public-tools.website_response_is_too_large", {});
     const reader = response.body?.getReader();
-    if (!reader) return "";
-    const chunks: Uint8Array[] = [];
-    let size = 0;
     try {
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location");
+        if (!location) throw runtimeError("reach-public-tools.the_website_redirect_has_no_target_url", {});
+        const next = publicUrl(new URL(location, current).href);
+        if (carriesCredentials && next.origin !== current.origin) throw runtimeError("reach-public-tools.requests_carrying_credentials_cannot_redirect_to_another_origin", {});
+        current = next;
+        continue;
+      }
+      if (response.status < 200 || response.status >= 300) throw runtimeError("reach-public-tools.website_request_failed_http", { p0: response.status });
+      if (Number(response.headers.get("content-length") ?? 0) > MAX_BYTES) throw runtimeError("reach-public-tools.website_response_is_too_large", {});
+      if (!reader) return "";
+      const chunks: Uint8Array[] = [];
+      let size = 0;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -66,8 +54,11 @@ async function boundedFetch(url: URL, headers: Record<string, string> = {}): Pro
         if (size > MAX_BYTES) throw runtimeError("reach-public-tools.website_response_is_too_large", {});
         chunks.push(value);
       }
-    } finally { await reader.cancel().catch(() => undefined); }
-    return new TextDecoder().decode(Buffer.concat(chunks));
+      return new TextDecoder().decode(Buffer.concat(chunks));
+    } finally {
+      await reader?.cancel().catch(() => undefined);
+      await release();
+    }
   }
   throw runtimeError("reach-public-tools.too_many_website_redirects", {});
 }
@@ -119,12 +110,13 @@ async function runCli(command: string, args: string[], timeout = 60_000): Promis
   });
 }
 
-export function createReachPublicTools(options: { ytDlp: () => string | undefined; githubToken?: () => string | undefined }): ToolDefinition[] {
+export function createReachPublicTools(options: { ytDlp: () => string | undefined; githubToken?: () => string | undefined; transport?: WebTransport }): ToolDefinition[] {
+  const read = (url: URL, headers?: Record<string, string>) => boundedFetch(options.transport ?? requestPublicUrl, url, headers);
   const tools = [
     {
       name: "qone_rss_read", label: "RSS · read", description: "Read public RSS or Atom feed items without login.",
       parameters: Type.Object({ url: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
-      execute: async (_id, { url, limit }: { url: string; limit?: number }) => output(parseFeed(await boundedFetch(publicUrl(url)), limit)),
+      execute: async (_id, { url, limit }: { url: string; limit?: number }) => output(parseFeed(await read(publicUrl(url)), limit)),
     },
     {
       name: "qone_v2ex", label: "V2EX · public API", description: "Read V2EX hot/latest topics, a node, a topic, or its replies through the public API.",
@@ -137,7 +129,7 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
           topic: `/api/topics/show.json?id=${encodeURIComponent(value ?? "")}`,
           replies: `/api/replies/show.json?topic_id=${encodeURIComponent(value ?? "")}`,
         };
-        const data = JSON.parse(await boundedFetch(new URL(endpoints[kind]!, "https://www.v2ex.com"))) as unknown;
+        const data = JSON.parse(await read(new URL(endpoints[kind]!, "https://www.v2ex.com"))) as unknown;
         return output(Array.isArray(data) ? data.slice(0, limit ?? 20) : data);
       },
     },
@@ -153,7 +145,7 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
           user: `/users/${slug}`, search: `/search/repositories?q=${encodeURIComponent(slug)}&per_page=${limit ?? 20}`,
         };
         const token = options.githubToken?.();
-        const data = JSON.parse(await boundedFetch(new URL(routes[kind]!, "https://api.github.com"), {
+        const data = JSON.parse(await read(new URL(routes[kind]!, "https://api.github.com"), {
           Accept: "application/vnd.github+json", ...(token ? { Authorization: `Bearer ${token}` } : {}),
         })) as unknown;
         return output(data);
@@ -165,7 +157,7 @@ export function createReachPublicTools(options: { ytDlp: () => string | undefine
       execute: async (_id, { query, limit }: { query: string; limit?: number }) => {
         const url = new URL("https://api.bilibili.com/x/web-interface/search/all/v2");
         url.searchParams.set("keyword", query); url.searchParams.set("page", "1");
-        const data = JSON.parse(await boundedFetch(url, { Referer: BILIBILI_HOME_URL })) as { code?: number; message?: string; data?: { result?: { data?: unknown[] }[] } };
+        const data = JSON.parse(await read(url, { Referer: BILIBILI_HOME_URL })) as { code?: number; message?: string; data?: { result?: { data?: unknown[] }[] } };
         if (data.code !== 0) throw runtimeError("reach-public-tools.bilibili_search_failed", { p0: data.message ?? data.code });
         return output((data.data?.result ?? []).flatMap((group) => group.data ?? []).slice(0, limit ?? 10));
       },

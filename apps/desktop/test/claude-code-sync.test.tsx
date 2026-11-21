@@ -152,6 +152,9 @@ test("MCP sync belongs to the title row and preset reconnect reuses imported cre
     expect(commands.filter(cmd => cmd.type === "mcp.connect").at(-1)).toMatchObject({ config: server });
     await act(async () => emit({ type: "error", requestId: commands.filter(cmd => cmd.type === "mcp.connect").at(-1)!.requestId, message: "test" }));
     expect(useStore.getState().mcpConnectingIds).not.toContain(server.id);
+    await act(async () => (toggle.closest(".settings-mcp-card") as HTMLElement).click());
+    await act(async () => button(t("mcp.reconnect")).click());
+    expect(commands.filter(cmd => cmd.type === "mcp.connect").at(-1)).toMatchObject({ config: server, reconnect: true });
   });
   // Synced custom services look like presets: official icon, switch, and switching off keeps the config.
   const deepwiki = { id: "claude-deepwiki", name: "deepwiki", command: "npx", args: ["-y", "mcp-deepwiki@latest"], connected: true, toolCount: 3 };

@@ -136,7 +136,7 @@ export class DesktopUpdater {
   private installOnQuit = false;
   private readonly repo: string;
 
-  constructor(repo = process.env.QONE_UPDATE_REPO || DEFAULT_REPO) {
+  constructor(repo = process.env.QONE_UPDATE_REPO || DEFAULT_REPO, private readonly fetchRelease: typeof fetch = (...args) => fetch(...args)) {
     this.repo = repo;
   }
 
@@ -151,7 +151,7 @@ export class DesktopUpdater {
     return app.getVersion();
   }
 
-  async check(timeoutMs = CHECK_TIMEOUT_MS, fetchFn: typeof fetch = fetch): Promise<{ version: string } | null> {
+  async check(timeoutMs = CHECK_TIMEOUT_MS, fetchFn: typeof fetch = this.fetchRelease): Promise<{ version: string } | null> {
     const current = this.currentVersion();
     const url = `https://api.github.com/repos/${this.repo}/releases?per_page=10`;
     const response = await fetchFn(url, {
@@ -176,7 +176,7 @@ export class DesktopUpdater {
   async download(
     expectedVersion?: string,
     onProgress?: (percent: number) => void,
-    fetchFn: typeof fetch = fetch,
+    fetchFn: typeof fetch = this.fetchRelease,
   ): Promise<{ mode: "ready" | "external" }> {
     const target = this.pending;
     if (!target || (expectedVersion && target.version !== expectedVersion)) {

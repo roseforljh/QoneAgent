@@ -1,6 +1,6 @@
 import { ContextMenu, DropdownMenu } from "radix-ui";
 import { ChevronRightIcon } from "lucide-react";
-import { CodexIcon } from "../ui/CodexIcon";
+import { CodexIcon, CodexServerIcon } from "../ui/CodexIcon";
 import moreIcon from "../../assets/codex-icons/ellipsis-horizontal-light-16.svg";
 import plusIcon from "../../assets/codex-icons/plus-md-light-16.svg";
 import pinIcon from "../../assets/codex-icons/pin-light-16.svg";
@@ -76,6 +76,7 @@ export function SidebarEntityMenu({
   onTogglePinned,
   onRename,
   onDelete,
+  onBindServers,
   ariaLabel,
   side = "right",
   align = "start",
@@ -85,6 +86,7 @@ export function SidebarEntityMenu({
   onTogglePinned: () => void;
   onRename: () => void;
   onDelete: () => void | Promise<void>;
+  onBindServers?: () => void;
   ariaLabel: string;
   side?: "top" | "right" | "bottom" | "left";
   align?: "start" | "center" | "end";
@@ -108,6 +110,10 @@ export function SidebarEntityMenu({
             <CodexIcon src={pencilIcon} className="size-4" />
             <span>{t("sidebar.rename")}</span>
           </DropdownMenu.Item>
+          {onBindServers && <DropdownMenu.Item className="q-sidebar-menu-item" onSelect={onBindServers}>
+            <CodexServerIcon className="size-4" />
+            <span>{t("sidebar.bindServers")}</span>
+          </DropdownMenu.Item>}
           <DropdownMenu.Separator className="my-1 h-px bg-border/60 dark:bg-white/10" />
           <DropdownMenu.Item className="q-sidebar-menu-item q-sidebar-menu-item-danger" onSelect={onDelete}>
             <CodexIcon src={trashIcon} className="size-4" />
@@ -126,6 +132,7 @@ export function SidebarContextMenu({
   onTogglePinned,
   onRename,
   onDelete,
+  onBindServers,
   onNewChat,
   newChatLabel,
   disabled = false,
@@ -135,6 +142,7 @@ export function SidebarContextMenu({
   onTogglePinned: () => void;
   onRename: () => void;
   onDelete: () => void | Promise<void>;
+  onBindServers?: () => void;
   onNewChat?: () => void;
   newChatLabel?: string;
   disabled?: boolean;
@@ -159,6 +167,10 @@ export function SidebarContextMenu({
             <CodexIcon src={pencilIcon} className="size-4" />
             <span>{t("sidebar.rename")}</span>
           </ContextMenu.Item>
+          {onBindServers && <ContextMenu.Item className="q-sidebar-menu-item" onSelect={onBindServers}>
+            <CodexServerIcon className="size-4" />
+            <span>{t("sidebar.bindServers")}</span>
+          </ContextMenu.Item>}
           <ContextMenu.Separator className="my-1 h-px bg-border/60 dark:bg-white/10" />
           <ContextMenu.Item className="q-sidebar-menu-item q-sidebar-menu-item-danger" onSelect={onDelete}>
             <CodexIcon src={trashIcon} className="size-4" />

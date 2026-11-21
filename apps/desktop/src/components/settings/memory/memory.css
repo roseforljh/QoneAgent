@@ -77,12 +77,13 @@
 .memory-composer footer, .memory-note-card.is-editing footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 6px 8px 8px 13px; }
 .memory-composer footer > span { flex: 1; color: var(--muted-foreground); font-size: 11px; }
 .memory-composer .settings-select-wrap, .memory-note-card .settings-select-wrap { max-width: 55%; }
-.memory-note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-.memory-note-card { display: flex; height: 100%; flex-direction: column; gap: 10px; padding: 12px 12px 10px 14px; border: 1px solid var(--border); border-radius: 12px; outline: 0; background: var(--q-surface); cursor: text; transition: border-color .15s ease, box-shadow .15s ease; }
+.memory-note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 10px; }
+.memory-note-card { display: flex; flex-direction: column; gap: 10px; padding: 12px 12px 10px 14px; border: 1px solid var(--border); border-radius: 12px; outline: 0; background: var(--q-surface); cursor: text; transition: border-color .15s ease, box-shadow .15s ease; }
+.memory-note-card:not(.is-editing) { block-size: 10rem; }
 .memory-note-card:hover, .memory-note-card:focus-visible { border-color: color-mix(in srgb, var(--foreground) 20%, var(--border)); box-shadow: 0 6px 18px rgb(0 0 0 / 10%); }
-.memory-note-card > p { flex: 1; margin: 0; color: var(--foreground); font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.memory-note-card > p { flex: 1; margin: 0; overflow-y: auto; color: var(--foreground); font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .memory-note-card:not([tabindex]) { cursor: default; }
-.memory-note-card > footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.memory-note-card > footer { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px; }
 .memory-note-card > footer time { flex: 1; }
 .memory-note-card.is-editing { grid-column: 1 / -1; padding: 0; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 16%, transparent); cursor: default; }
 .memory-note-card.is-editing footer .memory-hint { flex: 1; font-size: 11px; }

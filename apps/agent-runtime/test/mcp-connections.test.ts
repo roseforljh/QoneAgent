@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ConfigFile, McpServerRepo, PermissionRepo } from "@qone/database";
 import { McpAccountLoginRequiredError, McpManager } from "@qone/mcp";
-import type { McpServerInfo, RuntimeEvent } from "@qone/protocol";
+import { decodeCommand, type McpServerInfo, type RuntimeEvent } from "@qone/protocol";
 import { acknowledgeMcpCredentials, connectMcp, mcpServerList, restoreMcpCredentials } from "../src/mcp-connections";
 import { handleRuntimeCommand } from "../src/runtime-commands";
 
@@ -75,6 +75,10 @@ test("startup and repeated user connects share one delayed native batch and hand
   expect(mcpServerList(h.services)[0]).toMatchObject({ connected: true, connecting: false });
   await h.manager.connect({ ...h.config, connected: true } as never);
   expect(h.handshakes()).toBe(1);
+  const reconnect = decodeCommand(JSON.stringify({ type: "mcp.connect", requestId: "reconnect", config: h.config, reconnect: true }));
+  expect(reconnect).toMatchObject({ type: "mcp.connect", reconnect: true });
+  await handleRuntimeCommand(reconnect!, h.services as never);
+  expect(h.handshakes()).toBe(2);
   expect(h.requests()).toHaveLength(1);
 });
 

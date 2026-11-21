@@ -345,14 +345,15 @@ export function handleRuntimeEvent(
     const payload = agentEvent.payload as { reason?: string; result?: unknown };
     if (payload.reason === "threshold" || payload.reason === "overflow") {
       const history = ctx.messageRepo.listBySession(agentEvent.sessionId);
-      const throughMessageId = history.find((message) => message.role === "user" && message.runId === agentEvent.runId && !message.communication)?.id ?? history.at(-1)?.id;
+      // A delivered steer starts a new assistant segment without changing the run id.
+      const throughMessageId = history.filter((message) => message.role === "user" && message.runId === agentEvent.runId && !message.communication).at(-1)?.id ?? history.at(-1)?.id;
       if (throughMessageId) {
-        const position = ctx.compactionPositions.update(agentEvent.runId, agentEvent.eventId, agentEvent.timestamp, agentEvent.type === "compaction_start", ctx.assistantPartsByRun.get(agentEvent.runId) ?? []);
+        const position = ctx.compactionPositions.update(agentEvent.runId, agentEvent.eventId, agentEvent.timestamp, agentEvent.type === "compaction_start", throughMessageId, ctx.assistantPartsByRun.get(agentEvent.runId) ?? []);
         if (agentEvent.type === "compaction_start") {
-          ctx.emit("context.compaction.started", { ...position, throughMessageId, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
+          ctx.emit("context.compaction.started", { ...position, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
         } else {
           const status = payload.result ? "completed" : "interrupted";
-          ctx.emit(status === "completed" ? "context.compacted" : "context.compaction.interrupted", { ...position, throughMessageId, createdAt: position.startedAt, status, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
+          ctx.emit(status === "completed" ? "context.compacted" : "context.compaction.interrupted", { ...position, createdAt: position.startedAt, status, source: "automatic" }, agentEvent.sessionId, agentEvent.runId);
           ctx.flushEvents();
         }
       }

@@ -80,6 +80,8 @@ test("an aborted callTool cancels the in-flight request and the connection stays
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   expect(events().some((entry) => entry.event === "slow-start")).toBe(true);
+  await expect(manager.connect(config, { reconnect: true })).rejects.toThrow("in use");
+  expect(manager.isConnected(config.id)).toBe(true);
 
   controller.abort();
   const error = await call.then(() => undefined, (reason: Error) => reason);

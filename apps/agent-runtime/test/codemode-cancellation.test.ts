@@ -2,6 +2,25 @@ import { expect, test } from "bun:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { PiAdapter } from "../src/pi-adapter";
+import { withPermission, ApprovalQueue } from "../src/permissions";
+import { serverOperationCancelled } from "@qone/protocol";
+import { Type } from "typebox";
+
+test("a nested tool abort keeps the cancellation marker instead of becoming a failure", async () => {
+  const tool = withPermission({ name: "mcp_fixture_fetch", label: "MCP fixture", description: "Wait until aborted", parameters: Type.Object({}),
+    execute: async (_id, _params, signal) => {
+      if (!signal) throw new Error("fetch failed");
+      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+      signal.throwIfAborted();
+      return { content: [], details: {} };
+    },
+  }, { queue: new ApprovalQueue(), mode: () => "full", emitApproval: () => {} });
+  const controller = new AbortController();
+  const run = tool.execute("child-1", {}, controller.signal, undefined, {} as never);
+  controller.abort();
+  expect(serverOperationCancelled(await run)).toBe(true);
+  await expect(tool.execute("child-2", {}, undefined, undefined, {} as never)).rejects.toThrow("fetch failed");
+});
 
 // A codemode script that never yields must be killed by its own deadline, and
 // the sandbox must stay usable for the next script (worker slot released).

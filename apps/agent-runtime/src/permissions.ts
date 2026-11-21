@@ -328,14 +328,23 @@ export function withPermission<T extends ToolDefinition>(
   }
 ): T {
   const inner = tool.execute;
+  const cancelled = () => ({
+    content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} cancelled.` }],
+    details: { cancelled: true },
+    isError: true,
+  }) as never;
   return {
     ...tool,
     execute: async (id, params, signal, onUpdate, ctx) => {
-      signal?.throwIfAborted();
+      const run = async () => {
+        if (signal?.aborted) return cancelled();
+        if (opts.isActive && !opts.isActive()) throw new Error("run aborted");
+        try { return await inner(id, params, signal, onUpdate, ctx); }
+        catch (error) { if (signal?.aborted) return cancelled(); throw error; }
+      };
+      if (signal?.aborted) return cancelled();
       if (opts.isActive && !opts.isActive()) throw new Error("run aborted");
-      if (opts.internal) {
-        return inner(id, params, signal, onUpdate, ctx);
-      }
+      if (opts.internal) return run();
       const context = {
         toolName: logicalToolName(tool),
         args: params,
@@ -356,13 +365,7 @@ export function withPermission<T extends ToolDefinition>(
         } as never;
       }
       if (evaluation.decision === "ask") {
-        if (signal?.aborted) {
-          return {
-            content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} cancelled.` }],
-            details: { cancelled: true },
-            isError: true,
-          } as never;
-        }
+        if (signal?.aborted) return cancelled();
         const approvalId = crypto.randomUUID();
         const name = logicalToolName(tool);
         const approval = opts.queue.request(approvalId, name, params, signal, () => evaluate().decision);
@@ -370,6 +373,7 @@ export function withPermission<T extends ToolDefinition>(
         log.info("tool waiting approval", { tool: name, approvalId });
         const approved = await approval;
         opts.emitResolved?.(approvalId, id, approved);
+        if (signal?.aborted) return cancelled();
         if (!approved) {
           return {
             content: [{ type: "text" as const, text: `Tool ${logicalToolName(tool)} rejected by user.` }],
@@ -379,9 +383,7 @@ export function withPermission<T extends ToolDefinition>(
         }
       }
 
-      signal?.throwIfAborted();
-      if (opts.isActive && !opts.isActive()) throw new Error("run aborted");
-      return inner(id, params, signal, onUpdate, ctx);
+      return run();
     },
   } as T;
 }

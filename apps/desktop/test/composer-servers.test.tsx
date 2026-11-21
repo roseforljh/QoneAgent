@@ -15,6 +15,8 @@ const { createRoot } = await import("react-dom/client");
 const { useStore } = await import("../src/store");
 const { useServerStore } = await import("../src/lib/server-state");
 const { ComposerServers } = await import("../src/components/assistant-ui/composer-servers");
+const { ProjectSection } = await import("../src/components/assistant-ui/project-section");
+const { translateCurrent } = await import("../src/localization");
 const { NestedDialog } = await import("../src/components/settings/nested-dialog");
 const { PersonalizationSection } = await import("../src/components/settings/personalization-section");
 const { withRunOptionDefaults, loadRunOptions } = await import("../src/lib/run-options");
@@ -50,6 +52,35 @@ test("selected servers use one colored capsule with a count and clear all togeth
     await act(async () => choices[0]!.click());
     expect(useStore.getState().runOptionsBySession.a?.serverIds).toEqual(["b"]);
   } finally { await act(async () => root.unmount()); host.remove(); }
+});
+
+test("the project overflow opens the shared picker and saves multiple server bindings", async () => {
+  const previous = useStore.getState();
+  const previousServers = useServerStore.getState();
+  const host = document.createElement("div"); document.body.append(host);
+  const root = createRoot(host);
+  try {
+    useStore.setState({ workspaces: [{ id: "project", name: "Project", path: ".", createdAt: 1 }], workspaceServerIds: {}, sessions: [] });
+    useServerStore.setState({ loaded: true, servers: ["a", "b"].map(id => ({ id, name: id, host: `${id}.example`, port: 22, username: "root", auth: { kind: "agent" }, status: "ready", createdAt: 0 })) });
+    await act(async () => root.render(<ProjectSection />));
+    const trigger = host.querySelector<HTMLButtonElement>(".q-sidebar-project-actions .q-sidebar-menu-trigger")!;
+    await act(async () => trigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    const bind = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === translateCurrent("sidebar.bindServers"))!;
+    await act(async () => bind.click());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const choices = dialog.querySelectorAll<HTMLButtonElement>('[role="checkbox"]');
+    expect(choices).toHaveLength(2);
+    for (const choice of choices) await act(async () => choice.click());
+    expect(useStore.getState().workspaceServerIds).toEqual({});
+    await act(async () => dialog.querySelector<HTMLButtonElement>("footer button")!.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(useStore.getState().workspaceServerIds).toEqual({ project: ["a", "b"] });
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    useStore.setState(previous, true);
+    useServerStore.setState(previousServers, true);
+  }
 });
 
 test("detail focus stays on the dialog and personalization keeps only global prompt and profile", async () => {

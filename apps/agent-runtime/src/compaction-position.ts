@@ -6,11 +6,11 @@ export function compactionPartIndex(parts: readonly AssistantMessagePart[]): num
 }
 
 export class CompactionPositions {
-  private pending = new Map<string, { id: string; runId: string; partIndex: number; startedAt: number }>();
+  private pending = new Map<string, { id: string; runId: string; throughMessageId: string; partIndex: number; startedAt: number }>();
 
-  update(runId: string, eventId: string, timestamp: number, starting: boolean, parts: readonly AssistantMessagePart[]) {
+  update(runId: string, eventId: string, timestamp: number, starting: boolean, throughMessageId: string, parts: readonly AssistantMessagePart[]) {
     const position = (!starting && this.pending.get(runId)) || {
-      id: eventId, runId, partIndex: compactionPartIndex(parts), startedAt: timestamp,
+      id: eventId, runId, throughMessageId, partIndex: compactionPartIndex(parts), startedAt: timestamp,
     };
     if (starting) this.pending.set(runId, position);
     else this.pending.delete(runId);

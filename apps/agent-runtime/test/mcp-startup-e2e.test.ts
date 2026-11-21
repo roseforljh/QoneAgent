@@ -10,18 +10,41 @@ test("cold startup discovers tools once, restores credentials before OAuth and r
   mkdirSync(data);
   const handshakes = new Map<string, number>();
   let toolCalls = 0;
+  const surrogate = String.raw`^[^\uD800-\uDFFF]*$`;
+  const noNul = { pattern: String.raw`^[^\x00]*$` };
+  const absolute = { pattern: String.raw`^\/` };
+  const inputSchema = { type: "object", properties: {
+    snapshot_path: { type: "string", minLength: 1, allOf: [noNul, { pattern: surrogate }, absolute] },
+  }, additionalProperties: false };
+  const receivedSchemas: unknown[] = [];
+  const siblingSchema = { type: "object", properties: { value: { type: "string", minLength: 5, pattern: "^[a-z]+$" } } };
+  const receivedSiblingSchemas: unknown[] = [];
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (request.method !== "POST") return new Response(null, { status: 405 });
-    if (new URL(request.url).pathname === "/v1/chat/completions") {
-      const body = await request.json() as { tools?: { function: { name: string } }[]; messages: { role: string }[] };
-      const finished = body.messages.some(message => message.role === "tool");
-      const name = body.tools?.find(tool => tool.function.name.endsWith("_echo"))?.function.name;
-      const delta = finished ? { content: "lazy tool completed" } : { tool_calls: [{ index: 0, id: "local-call", type: "function", function: { name, arguments: "{}" } }] };
-      return new Response(`data: ${JSON.stringify({ id: "local", object: "chat.completion.chunk", created: 1, model: "test", choices: [{ index: 0, delta, finish_reason: finished ? "stop" : "tool_calls" }] })}
-
-data: [DONE]
-
-`, { headers: { "Content-Type": "text/event-stream" } });
+    if (new URL(request.url).pathname === "/v1/responses") {
+      const body = await request.json() as { tools?: { name?: string; parameters?: unknown }[]; input: { type?: string }[] };
+      const tool = body.tools?.find(tool => tool.name?.endsWith("_echo"));
+      if (tool) {
+        receivedSchemas.push(tool.parameters);
+        receivedSiblingSchemas.push(body.tools?.find(tool => tool.name?.endsWith("_sibling"))?.parameters);
+        if (JSON.stringify(tool.parameters).includes(JSON.stringify(surrogate))) {
+          return Response.json({ error: { message: `Invalid schema for function '${tool.name}': ${JSON.stringify(surrogate)} is not a "regex"`, type: "invalid_request_error" } }, { status: 400 });
+        }
+      }
+      const finished = body.input.some(item => item.type === "function_call_output");
+      const output = { type: "output_text", text: "lazy tool completed", annotations: [] };
+      const item = finished
+        ? { type: "message", id: "msg_local", role: "assistant", status: "completed", content: [output] }
+        : { type: "function_call", id: "fc_local", call_id: "call_local", name: tool?.name, arguments: '{"snapshot_path":"/tmp/snapshot"}', status: "completed" };
+      const events = [
+        { type: "response.created", response: { id: "resp_local", status: "in_progress" } },
+        { type: "response.output_item.added", output_index: 0, item: finished ? { ...item, content: [] } : { ...item, arguments: "" } },
+        ...(finished ? [{ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: output.text }] : []),
+        { type: "response.output_item.done", output_index: 0, item },
+        { type: "response.completed", response: { id: "resp_local", status: "completed", usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 } } },
+      ];
+      return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+        { headers: { "Content-Type": "text/event-stream" } });
     }
     const id = new URL(request.url).pathname.slice(1);
     if (id !== "fast" && (request.headers.get("x-one") !== "one" || request.headers.get("x-two") !== "two")) return new Response(null, { status: 403 });
@@ -35,12 +58,12 @@ data: [DONE]
     if (message.method === "initialize") handshakes.set(id, (handshakes.get(id) ?? 0) + 1);
     return Response.json({ jsonrpc: "2.0", id: message.id, result: message.method === "initialize"
       ? { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: id, version: "1" } }
-      : { tools: [{ name: "echo", inputSchema: { type: "object" } }] } });
+      : { tools: [{ name: "echo", inputSchema }, { name: "sibling", inputSchema: siblingSchema }] } });
   } });
   const url = (id: string) => `http://127.0.0.1:${server.port}/${id}`;
   const headers = (id: string) => ({ "X-One": `$mcp.env:${id}/one`, "X-Two": `$mcp.env:${id}/two` });
   const settings = path.join(data, "settings.json");
-  writeFileSync(settings, JSON.stringify({ models: { "local/test": { provider: "local", model: "test", apiType: "openai-compatible", baseUrl: `http://127.0.0.1:${server.port}/v1`, contextWindow: 128000, maxTokens: 1024, input: ["text"], output: ["text"], thinking: "none" } }, mcpServers: {
+  writeFileSync(settings, JSON.stringify({ models: { "local/test": { provider: "local", model: "test", apiType: "codex", baseUrl: `http://127.0.0.1:${server.port}/v1`, contextWindow: 128000, maxTokens: 1024, input: ["text"], output: ["text"], thinking: "none" } }, mcpServers: {
     slow: { url: url("slow"), type: "http", headers: headers("slow") },
     account: { url: url("account"), type: "http", authMode: "oauth", headers: headers("account") },
     fast: { url: url("fast"), type: "http" },
@@ -134,6 +157,9 @@ data: [DONE]
     if (snapshot.type !== "mcp.list") throw new Error();
     send({ type: "secret.set", requestId: "local-key", key: "model.apiKey:local", value: "local-test-only" });
     send({ type: "agent.run", requestId: "wake-account", sessionId: session.id, message: "call echo", model: "local/test", mcpServerId: "account", permissionMode: "full" });
+    const callOrFailure = await wait(event => (event.type === "mcp.credentials.request" && event.serverId === "account")
+      || (event.type === "agent.event" && event.event.type === "agent.failed"), next);
+    if (callOrFailure.type !== "mcp.credentials.request") throw new Error(JSON.stringify(callOrFailure));
     await restore("account", {
       "mcp.env:account/one": "one", "mcp.env:account/two": "two",
       "mcp.oauth:account.client": '{"client_id":"local"}', "mcp.oauth:account.tokens": '{"access_token":"account-saved","token_type":"Bearer"}',
@@ -141,6 +167,12 @@ data: [DONE]
     await wait(event => event.type === "agent.event" && ["agent.completed", "agent.failed"].includes(event.event.type));
     expect(events.filter(event => event.type === "agent.event" && event.event.type === "agent.failed")).toEqual([]);
     expect(toolCalls).toBe(1);
+    expect(receivedSchemas).toHaveLength(3);
+    expect(receivedSchemas[0]).toEqual(inputSchema);
+    expect(receivedSiblingSchemas).toEqual([siblingSchema, siblingSchema, siblingSchema]);
+    for (const schema of receivedSchemas.slice(1)) expect(schema).toMatchObject({ properties: {
+      snapshot_path: { minLength: 1, allOf: [noNul, {}, absolute] },
+    } });
     expect(handshakes.get("account")).toBe(2);
     expect(handshakes.get("fast")).toBe(1);
   } finally { await stop(); server.stop(true); rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }); }

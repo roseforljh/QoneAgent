@@ -70,11 +70,11 @@ export function McpSection() {
   }, [servers]);
 
   // 用户在设置页主动操作 = 已授权，先下发 allow 跳过聊天页审批卡。
-  const connectAsUser = async (config: McpServerInfo) => {
+  const connectAsUser = async (config: McpServerInfo, reconnect = false) => {
     // Wait until the permission command has been written to the sidecar before
     // dispatching connect; otherwise the two Tauri invokes can arrive out of order.
     const allowed = await send({ type: "permission.set", requestId: crypto.randomUUID(), subjectId: `mcp:${config.id}`, permission: "mcp.connect", decision: "allow" });
-    const sent = allowed && await send({ type: "mcp.connect", requestId: crypto.randomUUID(), config });
+    const sent = allowed && await send({ type: "mcp.connect", requestId: crypto.randomUUID(), config, ...(reconnect ? { reconnect } : {}) });
     setPendingOn((current) => { const next = new Set(current); next.delete(config.id); return next; });
     return Boolean(sent);
   };
@@ -267,7 +267,7 @@ export function McpSection() {
     const server = presetServer(servers, preset);
     const actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] = server
       ? [
-          { label: t("mcp.reconnect"), primary: true, onClick: () => { setActionCard(null); setPendingOn((current) => new Set(current).add(server.id)); void connectAsUser(server); } },
+          { label: t("mcp.reconnect"), primary: true, onClick: () => { setActionCard(null); setPendingOn((current) => new Set(current).add(server.id)); void connectAsUser(server, true); } },
           { label: t("mcp.editKey"), onClick: () => { setActionCard(null); openKeyDialog(preset); } },
           { label: t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } },
         ]
@@ -285,7 +285,7 @@ export function McpSection() {
       if (isGithub && !server) { setGithubLoginOpen(true); return; }
       const config = server ?? { id: preset.id, name: presetName(preset), ...preset.config };
       setPendingOn((current) => new Set(current).add(config.id));
-      void connectAsUser(config);
+      void connectAsUser(config, Boolean(server));
     };
     const actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] = [{ label: server ? t("mcp.reconnect") : t(isAccount ? "mcp.signIn" : "mcp.connect"), primary: true, onClick: startConnect }];
     if (server) actions.push({ label: isAccount ? t("mcp.logout") : t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } });
@@ -297,7 +297,7 @@ export function McpSection() {
     const server = servers.find((item) => item.id === preset.id);
     const actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] = server
       ? [
-          { label: t("mcp.reconnect"), primary: true, onClick: () => { setActionCard(null); setPendingOn((current) => new Set(current).add(preset.id)); void connectAsUser(server); } },
+          { label: t("mcp.reconnect"), primary: true, onClick: () => { setActionCard(null); setPendingOn((current) => new Set(current).add(preset.id)); void connectAsUser(server, true); } },
           { label: t("mcp.editAccount"), onClick: () => { setActionCard(null); openAdd(preset); } },
           { label: t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } },
         ]
@@ -329,7 +329,7 @@ export function McpSection() {
   // 自定义服务操作框：重连、OAuth 授权（如有）、删除。
   const openCustomActions = (server: (typeof servers)[number]) => {
     const actions: { label: string; primary?: boolean; danger?: boolean; onClick: () => void | Promise<void> }[] = [
-      { label: t("mcp.reconnect"), primary: true, onClick: () => { setActionCard(null); void connectAsUser(server); } },
+      { label: t("mcp.reconnect"), primary: true, onClick: () => { setActionCard(null); void connectAsUser(server, true); } },
       { label: t("mcp.editService"), onClick: () => { setActionCard(null); openEdit(server); } },
       ...(server.url && server.authMode !== "github-device" ? [{ label: t("mcp.authorize"), onClick: () => { setActionCard(null); void send({ type: "mcp.oauth.begin", requestId: crypto.randomUUID(), serverId: server.id }); } }] : []),
       { label: t("mcp.remove"), danger: true, onClick: async () => { if (!await confirmDestructiveAction(t("mcp.deleteConfirm", { name: server.name }))) return; setActionCard(null); await deleteServer(server); } },

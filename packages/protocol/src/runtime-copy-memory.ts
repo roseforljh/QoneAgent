@@ -16,7 +16,6 @@ export const runtimeCopyMemory = {
   "memory.model_unavailable": { "en": "Choose an enabled model that supports text summaries", "zh-CN": "请选择已启用且支持文本总结的模型" },
   "memory.preference_settings": { "en": "Edit automatic preferences in Settings > Memory", "zh-CN": "请在设置 → 记忆系统中编辑自动带入的偏好" },
   "memory.preference_length": { "en": "A preference can have at most {limit} characters", "zh-CN": "一条长期偏好最多 {limit} 字" },
-  "memory.preference_limit": { "en": "A scope can have at most {limit} automatic preferences", "zh-CN": "每个生效范围最多 {limit} 条长期偏好" },
   "memory.workspace_unavailable": { "en": "This workspace is no longer available", "zh-CN": "该工作区已不可用" },
   "memory.resume_unavailable": { "en": "This summary is no longer available for this workspace, or memory is off", "zh-CN": "该摘要在此工作区已不可用，或记忆已关闭" },
 } as const;

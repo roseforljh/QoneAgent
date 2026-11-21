@@ -44,7 +44,8 @@ export function InlineQuoteChip({ text, anchor, actions }: { text: string; ancho
   const label = inlineQuoteLabel(text);
 
   return <Popover.Root open={open} onOpenChange={(next) => { cancelClose(); setOpen(next); }}>
-    <span ref={anchor} className="q-composer-quote-pill q-inline-quote" data-editable={actions ? "" : undefined} onMouseEnter={showPreview} onMouseLeave={scheduleClose}>
+    <span ref={anchor} className="q-composer-quote-pill q-inline-quote" data-editable={actions ? "" : undefined} onMouseEnter={showPreview} onMouseLeave={scheduleClose}
+      onMouseDownCapture={actions ? (event) => { if (event.button === 0) event.preventDefault(); } : undefined}>
       <Popover.Trigger asChild>
         <button type="button" className="q-composer-quote-trigger" aria-label={`${t("chat.selectedText")}: ${label}`} onClick={(event) => {
           event.preventDefault(); showPreview();

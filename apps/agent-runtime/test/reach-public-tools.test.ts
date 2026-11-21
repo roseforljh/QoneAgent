@@ -1,14 +1,13 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import * as dns from "node:dns/promises";
 
-// fetch is mocked per test; the SSRF guard's DNS lookup must not hit the real network either.
+// The SSRF guard runs before the injected HTTP transport.
 mock.module("node:dns/promises", () => ({ ...dns, lookup: async () => [{ address: "140.82.112.6", family: 4 }] }));
 const { createReachPublicTools, parseFeed } = await import("../src/reach-public-tools");
 import { listReachChannels } from "../src/reach-channels";
 import { browserScreenshotResult } from "../src/web-image";
 
-const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+const transport = (respond: (url: URL) => Response) => async (url: URL) => ({ response: respond(url), release: async () => {} });
 
 describe("Agent Reach channels", () => {
   test("converts an OpenCLI screenshot into visual input", () => {
@@ -42,11 +41,10 @@ describe("Agent Reach channels", () => {
 
   test("public GitHub route makes a direct API request and returns data", async () => {
     let requested: string | undefined;
-    globalThis.fetch = (async (url: string | URL) => {
+    const tool = createReachPublicTools({ ytDlp: () => undefined, transport: transport(url => {
       requested = String(url);
       return new Response(JSON.stringify({ full_name: "owner/repo" }), { headers: { "Content-Type": "application/json" } });
-    }) as typeof fetch;
-    const tool = createReachPublicTools({ ytDlp: () => undefined }).find((item) => item.name === "qone_github_public")!;
+    }) }).find((item) => item.name === "qone_github_public")!;
     const result = await tool.execute("test", { kind: "repo", value: "owner/repo" }, undefined as never, undefined as never);
     expect(requested).toBe("https://api.github.com/repos/owner/repo");
     expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("owner/repo") });
@@ -57,20 +55,18 @@ describe("Agent Reach channels", () => {
       ["GitHub token", "qone_github_public", { kind: "repo", value: "owner/repo" }, { githubToken: () => "secret-token" }],
     ] as const) {
       let calls = 0;
-      globalThis.fetch = (async () => {
+      const tool = createReachPublicTools({ ytDlp: () => undefined, ...options, transport: transport(() => {
         calls++;
         return new Response(null, { status: 302, headers: { Location: "https://other.example.org/collect" } });
-      }) as typeof fetch;
-      const tool = createReachPublicTools({ ytDlp: () => undefined, ...options }).find((item) => item.name === toolName)!;
+      }) }).find((item) => item.name === toolName)!;
       await expect(tool.execute("test", args, undefined as never, undefined as never)).rejects.toThrow("不能跨站重定向");
       expect(calls).toBe(1);
     }
   });
 
   test("rejects local RSS URLs and redirects to local addresses", async () => {
-    const tool = createReachPublicTools({ ytDlp: () => undefined }).find((item) => item.name === "qone_rss_read")!;
+    const tool = createReachPublicTools({ ytDlp: () => undefined, transport: transport(() => new Response(null, { status: 302, headers: { Location: "http://localhost/private" } })) }).find((item) => item.name === "qone_rss_read")!;
     await expect(tool.execute("test", { url: "http://127.0.0.1/private" }, undefined as never, undefined as never)).rejects.toThrow("公开网站");
-    globalThis.fetch = (async () => new Response(null, { status: 302, headers: { Location: "http://localhost/private" } })) as typeof fetch;
     await expect(tool.execute("test", { url: "https://example.com/feed" }, undefined as never, undefined as never)).rejects.toThrow("公开网站");
   });
 });

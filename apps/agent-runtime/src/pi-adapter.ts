@@ -29,10 +29,8 @@ import { createResourceLoader, sessionResourceLoader } from "./skills.js";
 import { runImageGeneration, runSpeechGeneration, runVideoGeneration, type GenerationContext } from "./media-generation-runner.js";
 import { createSubagentTools } from "./subagent-tools.js";
 import type { SubagentSelection } from "./subagent-selection.js";
-import { googleMediaContent, googleStreamSimple } from "./google-media.js";
-import { openAICompletionsStreamSimple } from "./openai-audio.js";
-import { codexResponsesMediaStreamSimple, openAIResponsesMediaStreamSimple } from "./openai-responses-media.js";
-import { anthropicMediaStreamSimple } from "./anthropic-media.js";
+import { googleMediaContent } from "./google-media.js";
+import { createConfiguredModelStream } from "./pi-provider-stream.js";
 import { ModelMetadataResolver } from "./model-resolver.js";
 import { configuredCapabilities } from "./media-capabilities.js";
 import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
@@ -340,19 +338,13 @@ export class PiAdapter {
         }
       }
       const firstResolved = resolved[0];
+      const streamConfiguredModel = createConfiguredModelStream();
       this.modelRuntime.registerProvider(provider, {
         name: provider,
         baseUrl: firstResolved.baseUrl,
         api: firstResolved.api as never,
-        streamSimple: ((model: Parameters<typeof googleStreamSimple>[0], context: Parameters<typeof googleStreamSimple>[1], options: Parameters<typeof googleStreamSimple>[2]) => {
-          const input = configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input;
-          if (model.api === "google-generative-ai") return googleStreamSimple(model, context, options, input.includes("video"), input);
-          if (model.api === "openai-completions") return openAICompletionsStreamSimple(model, context, options, input);
-          if (model.api === "anthropic-messages") return anthropicMediaStreamSimple(model, context, options, input);
-          if (model.api === "openai-responses") return openAIResponsesMediaStreamSimple(model, context, options, input);
-          if (model.api === "openai-codex-responses") return codexResponsesMediaStreamSimple(model, context, options, input);
-          throw new Error(`Unsupported model API: ${model.api}`);
-        }) as never,
+        streamSimple: (model, context, options) => streamConfiguredModel(model, context, options,
+          configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input),
         models: models.map((item, index) => {
           const model = resolved[index];
           const configuredInput = configuredCapabilities(this.configuredModelConfigs, `${item.provider}/${item.model}`).input;

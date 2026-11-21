@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SettingsRepo } from "@qone/database";
-import { MEMORY_PREFERENCE_MAX_LENGTH, MEMORY_PREFERENCES_PER_SCOPE, type MemoryNoteInfo, type MemoryPreferenceScope, type MemoryStateInfo, type MemorySummaryInfo } from "@qone/protocol";
+import { MEMORY_PREFERENCE_MAX_LENGTH, MEMORY_AUTOMATIC_PREFERENCES_PER_SCOPE, type MemoryNoteInfo, type MemoryPreferenceScope, type MemoryStateInfo, type MemorySummaryInfo } from "@qone/protocol";
 import { runtimeError } from "../runtime-localization.js";
 import type { StoredAutomaticPreference } from "./memory-automatic-preferences.js";
 
@@ -93,11 +93,8 @@ export class MemoryStore {
       return duplicate;
     }
     if (old?.content === value && sameScope(old)) return old;
-    if (preference) {
-      if (chars(value) > MEMORY_PREFERENCE_MAX_LENGTH) throw runtimeError("memory.preference_length", { limit: MEMORY_PREFERENCE_MAX_LENGTH });
-      if (notes.filter((note) => note.id !== options.id && sameScope(note)).length >= MEMORY_PREFERENCES_PER_SCOPE) {
-        throw runtimeError("memory.preference_limit", { limit: MEMORY_PREFERENCES_PER_SCOPE });
-      }
+    if (preference && chars(value) > MEMORY_PREFERENCE_MAX_LENGTH) {
+      throw runtimeError("memory.preference_length", { limit: MEMORY_PREFERENCE_MAX_LENGTH });
     }
     const now = Math.max(Date.now(), (old?.updatedAt ?? 0) + 1);
     const saved: MemoryNoteInfo = { id: old?.id ?? crypto.randomUUID(), content: value, origin: old?.origin ?? options.origin ?? "manual", createdAt: old?.createdAt ?? now, updatedAt: now, ...(preference && { preference }) };
@@ -161,19 +158,14 @@ export class MemoryStore {
     const automatic = this.overview()?.automaticPreferences;
     if (!automatic?.length) return [];
     const suppressed = new Set(this.repo.get<string[]>(KEY.reviewed));
-    const pinned = new Set<string>();
+    const pinned = new Set(this.notes().flatMap(({ content, preference }) => preference ? [preferenceContentKey(content, preference.workspaceId)] : []));
     const counts = new Map<string | undefined, number>();
-    for (const { content, preference } of this.notes()) {
-      if (!preference) continue;
-      pinned.add(preferenceContentKey(content, preference.workspaceId));
-      counts.set(preference.workspaceId, (counts.get(preference.workspaceId) ?? 0) + 1);
-    }
     const summaries = this.allSummaries();
     const recent = Date.now() - MEMORY_SOURCE_WINDOW_MS;
     return automatic.filter((item) => {
       const { workspaceId } = item.preference;
       const count = counts.get(workspaceId) ?? 0;
-      if (count >= MEMORY_PREFERENCES_PER_SCOPE || pinned.has(item.id) || item.keys.some((key) => suppressed.has(key))
+      if (count >= MEMORY_AUTOMATIC_PREFERENCES_PER_SCOPE || pinned.has(item.id) || item.keys.some((key) => suppressed.has(key))
         || !item.sources.every(({ id }) => summaries[id]?.content && summaries[id].sourceUpdatedAt > recent) || !isLive(item)) return false;
       counts.set(workspaceId, count + 1);
       return true;

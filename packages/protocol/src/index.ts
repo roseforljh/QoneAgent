@@ -170,7 +170,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "background-shell.stop"; requestId: string; jobId: string }
   | McpCredentialsRestored
   | { type: "mcp.list"; requestId: string }
-  | { type: "mcp.connect"; requestId: string; config: McpServerInfo }
+  | { type: "mcp.connect"; requestId: string; config: McpServerInfo; reconnect?: boolean }
   | { type: "mcp.delete"; requestId: string; serverId: string } | { type: "mcp.disconnect"; requestId: string; serverId: string }
   | { type: "mcp.oauth.begin"; requestId: string; serverId: string }
   | { type: "mcp.oauth.complete"; requestId: string; serverId: string; code: string; state: string; iss?: string }
@@ -245,7 +245,7 @@ export interface CompactionSettingsInfo {
 export interface CompactionMarkerInfo {
   id: string;
   throughMessageId: string;
-  /** Ordered visible assistant-part boundary within this run. */
+  /** Visible assistant-part boundary in the reply segment after throughMessageId. */
   runId?: string;
   partIndex?: number;
   createdAt: number;
@@ -403,7 +403,7 @@ export type GoalStatus = "active" | "paused" | "blocked" | "complete";
 /** Preferences apply globally or only to one workspace. */
 export interface MemoryPreferenceScope { workspaceId?: string }
 export const MEMORY_PREFERENCE_MAX_LENGTH = 240;
-export const MEMORY_PREFERENCES_PER_SCOPE = 3;
+export const MEMORY_AUTOMATIC_PREFERENCES_PER_SCOPE = 3;
 export interface MemoryAutomaticPreference {
   id: string;
   content: string;
@@ -1005,7 +1005,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "subagent.control": z.object({ type: z.literal("subagent.control"), ...request, runId: id, action: z.enum(["stop", "resume", "retry", "steer", "follow_up"]), message: z.string().max(32_000).optional() }),
   "mcp.credentials.restored": mcpCredentialsRestoredSchema,
   "mcp.list": z.object({ type: z.literal("mcp.list"), ...request }),
-  "mcp.connect": z.object({ type: z.literal("mcp.connect"), ...request, config: mcpConfig }),
+  "mcp.connect": z.object({ type: z.literal("mcp.connect"), ...request, config: mcpConfig, reconnect: z.boolean().optional() }),
   "mcp.delete": z.object({ type: z.literal("mcp.delete"), ...request, serverId: id }), "mcp.disconnect": z.object({ type: z.literal("mcp.disconnect"), ...request, serverId: id }),
   "mcp.oauth.begin": z.object({ type: z.literal("mcp.oauth.begin"), ...request, serverId: id }),
   "mcp.oauth.complete": z.object({ type: z.literal("mcp.oauth.complete"), ...request, serverId: id, code: id, state: id, iss: secureUrl.optional() }),

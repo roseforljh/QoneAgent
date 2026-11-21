@@ -461,7 +461,7 @@ const ChatRuntimeHost = memo(function ChatRuntimeHost({ dockView, lastError, dis
   const { t } = useLocale();
   return <>
     <div className="q-chat-shell relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <BackgroundTasks renderHeader={(taskToggle) => <ThreadHeader dockView={dockView} taskToggle={taskToggle} />}>
+      <BackgroundTasks dockOpen={Boolean(dockView)} renderHeader={(taskToggle) => <ThreadHeader dockView={dockView} taskToggle={taskToggle} />}>
         <div className="q-chat-content relative min-h-0 min-w-0 flex-1 overflow-hidden">
           {lastError && <div className="error-banner absolute inset-x-4 top-2 z-50" role="alert">
             <span>{lastError}</span>

@@ -26,7 +26,7 @@ function harness() {
     subagentStreams: new Map(), activeSubagents: new Set(), subagentRunIds: new Set(), initialUserMessageSeen: new Set(),
     approvalRuns: new Map(), approvalToolCalls: new Map(), toolCallIds: new Map(),
     compactionPositions: new CompactionPositions(),
-    send: (event: unknown) => { sent.push(event); }, emit: () => {}, flushEvents: () => {},
+    send: (event: unknown) => { sent.push(event); }, emit: (_type: string, _payload: unknown) => {}, flushEvents: () => {},
     touchSession: () => {}, sendMessages: () => {}, deliverSteer: () => {},
     queueEventPersistence: (event: AgentEvent) => { persisted.push(event); },
     runRequiresSubagentFinalization: () => false,
@@ -109,6 +109,25 @@ describe("replay journal hot path", () => {
       const delivered = { role: "user", content: [{ type: "text", text: "[QONE_SUBAGENT_LEDGER]\\nnew child update" }] };
       h.emit("message.completed", { message: delivered });
       expect(h.ctx.assistantRawMessagesByRun.get(h.run.id)).toEqual([delivered]);
+    } finally { h.close(); }
+  });
+
+  test("automatic compaction events anchor to the latest delivered steer in the same run", () => {
+    const h = harness();
+    try {
+      const markers: unknown[] = [];
+      h.ctx.emit = (type, payload) => { markers.push({ type, payload }); };
+      const { messageRepo } = h.ctx;
+      messageRepo.add(h.session.id, "user", "initial prompt", h.run.id);
+      messageRepo.addAssistant(h.session.id, "first reply", h.run.id);
+      const steer = messageRepo.add(h.session.id, "user", "steer", h.run.id);
+      const start = h.emit("compaction_start", { reason: "threshold" });
+      messageRepo.add(h.session.id, "user", "next steer", h.run.id);
+      h.emit("compaction_end", { reason: "threshold", result: {} });
+      expect(markers).toMatchObject([
+        { type: "context.compaction.started", payload: { id: start.eventId, throughMessageId: steer.id, partIndex: 0 } },
+        { type: "context.compacted", payload: { id: start.eventId, throughMessageId: steer.id, partIndex: 0 } },
+      ]);
     } finally { h.close(); }
   });
 

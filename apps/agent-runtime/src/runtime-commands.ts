@@ -309,7 +309,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       await services.authorizeCommand(subjectId, "mcp.connect", "mcp.connect", { id: config.id, name: config.name, command: config.command, url: config.url });
       services.mcpConnectionApprovals.set(config.id, config);
       services.mcpServerRepo.upsert(config);
-      await connectMcp(config, services, cmd.requestId);
+      await connectMcp(config, services, cmd.requestId, cmd.reconnect);
       return true;
     }
 

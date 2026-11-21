@@ -11,6 +11,12 @@ import { $deleteComposerToolBackward, $insertComposerCommand, $insertComposerQuo
 export type InsertComposerTool = (tool: { id: ComposerToolId; label: string }) => void;
 export type InsertComposerCommand = (command: ComposerCommand) => void;
 
+function $restoreSelection(saved: RangeSelection | null) {
+  if (saved && $getNodeByKey(saved.anchor.key)?.isAttached() && $getNodeByKey(saved.focus.key)?.isAttached()) {
+    $setSelection(saved.clone());
+  }
+}
+
 export function ComposerEditorBridge({
   onReady,
   onCommandReady,
@@ -33,10 +39,7 @@ export function ComposerEditorBridge({
   const insertAtCaret = useCallback((insert: () => void) => {
     if (!editor.isEditable()) return;
     editor.update(() => {
-      const saved = savedSelection.current;
-      if (saved && $getNodeByKey(saved.anchor.key)?.isAttached() && $getNodeByKey(saved.focus.key)?.isAttached()) {
-        $setSelection(saved.clone());
-      }
+      $restoreSelection(savedSelection.current);
       const selection = $getSelection();
       if ($isRangeSelection(selection) && !selection.isCollapsed()) {
         const [start, end] = selection.isBackward() ? [selection.focus, selection.anchor] : [selection.anchor, selection.focus];
@@ -93,11 +96,13 @@ export function ComposerEditorBridge({
     if (!root || !composer) return;
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target;
-      if (event.button !== 0 || !(target instanceof Element) || root.contains(target) || target.closest(INTERACTIVE)) return;
+      if (!editor.isEditable() || event.button !== 0 || !(target instanceof Element) || root.contains(target) || target.closest(INTERACTIVE)) return;
       // Cancel the default focus, but let popovers observe the outside press.
       event.preventDefault();
-      // Focus first, then let Lexical put its own selection back into the DOM.
+      // DOM focus may reset the caret to the start; keep the pre-focus range.
+      const saved = savedSelection.current;
       root.focus({ preventScroll: true });
+      editor.update(() => $restoreSelection(saved), { discrete: true });
       editor.focus();
     };
     composer.addEventListener("mousedown", onMouseDown);

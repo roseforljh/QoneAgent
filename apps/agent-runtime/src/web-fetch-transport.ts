@@ -1,7 +1,13 @@
-import { Agent, ProxyAgent, fetch } from "undici";
-import { getProxyForUrl } from "proxy-from-env";
+import * as nodeUndici from "undici";
+import { createRequire } from "node:module";
+import { proxyForUrl } from "./system-proxy";
 import type { LookupFunction } from "node:net";
 import { normalizeHostname, type Address } from "./web-fetch-security";
+
+// Bun's built-in undici shim ignores dispatchers; use the installed module to enforce IP pinning there too.
+const { Agent, ProxyAgent, fetch } = process.versions.bun
+  ? createRequire(import.meta.url)("undici/index.js") as typeof nodeUndici
+  : nodeUndici;
 
 export interface WebResponse {
   status: number;
@@ -19,7 +25,7 @@ export type WebTransport = (url: URL, addresses: Address[], init: WebRequest) =>
 
 /** Connect using the addresses already checked for this hop, never a second DNS lookup. */
 export const requestPublicUrl: WebTransport = async (url, addresses, init) => {
-  const proxy = getProxyForUrl(url.href);
+  const proxy = await proxyForUrl(url, init.signal);
   const target = new URL(url);
   const headers = { ...init.headers };
   const hostname = normalizeHostname(url.hostname);
@@ -39,13 +45,7 @@ export const requestPublicUrl: WebTransport = async (url, addresses, init) => {
   const dispatcher = proxy
     ? new ProxyAgent({ uri: proxy, proxyTunnel: true, requestTls: { servername: hostname } })
     : new Agent({ connect: { lookup: pinnedLookup } });
-  const release = async () => {
-    // Bun's undici compatibility layer does not expose Dispatcher.close/destroy;
-    // Node's implementation does, so close it when the host provides the method.
-    const closable = dispatcher as unknown as { close?: () => Promise<void>; destroy?: () => Promise<void> };
-    if (closable.close) await closable.close();
-    else if (closable.destroy) await closable.destroy();
-  };
+  const release = () => dispatcher.close();
   try {
     const response = await fetch(target, { headers, signal: init.signal, redirect: "manual", dispatcher });
     return { response: response as unknown as WebResponse, release };

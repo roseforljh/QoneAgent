@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SettingsRepo } from "@qone/database";
-import { MEMORY_PREFERENCE_MAX_LENGTH, MEMORY_PREFERENCES_PER_SCOPE } from "@qone/protocol";
+import { MEMORY_AUTOMATIC_PREFERENCES_PER_SCOPE, MEMORY_PREFERENCE_MAX_LENGTH } from "@qone/protocol";
 import { MEMORY_SOURCE_WINDOW_MS, MemoryStore } from "../src/memory/memory-store";
 import { MemoryConsolidator } from "../src/memory/memory-consolidator";
 import { MemoryService, MEMORY_TOOL } from "../src/memory/memory-service";
@@ -203,22 +203,24 @@ describe("memory", () => {
     expect(service.context("s", "hi")).toBe("");
   });
 
-  test("manual preferences are bounded per scope and ordinary notes are not promoted", () => {
+  test("manual preferences can exceed the automatic quota without allowing chat to promote or change notes", () => {
     const store = new MemoryStore(repo());
     store.setEnabled(true);
+    for (let i = 0; i < MEMORY_AUTOMATIC_PREFERENCES_PER_SCOPE; i++) store.saveNote(`global preference ${i}`, { preference: {} });
     const version = store.settings().version;
     const ordinary = store.saveNote("a previously saved note", { version, origin: "chat" });
     expect(ordinary.preference).toBeUndefined();
     expect(() => store.saveNote("chat cannot promote it", { id: ordinary.id, version, preference: {} })).toThrow();
-    const pref = store.saveNote(ordinary.content, { id: ordinary.id, preference: { workspaceId: "A" } });
-    expect(pref).toMatchObject({ id: ordinary.id, preference: { workspaceId: "A" } });
+    const pref = store.saveNote(ordinary.content, { id: ordinary.id, preference: {} });
+    expect(pref).toMatchObject({ id: ordinary.id, preference: {} });
+    const edited = store.saveNote("edited after reaching the old cap", { id: pref.id });
+    expect(edited.preference).toEqual({});
+    expect(memoryAddition({ retained: [], rules: [] }, store.notes(), "A")?.preferences?.[pref.id]).toEqual({ scope: "global", text: edited.content });
     expect(() => store.saveNote("chat cannot change it", { id: pref.id, version: store.settings().version })).toThrow();
     expect(() => store.deleteNote(pref.id, store.settings().version)).toThrow();
-    expect(() => store.saveNote("📝".repeat(MEMORY_PREFERENCE_MAX_LENGTH + 1), { preference: {} })).toThrow();
-    for (let i = 1; i < MEMORY_PREFERENCES_PER_SCOPE; i++) store.saveNote(`another note ${i}`, { preference: { workspaceId: "A" } });
-    expect(() => store.saveNote("above the limit", { preference: { workspaceId: "A" } })).toThrow();
-    expect(store.saveNote("another scope is independent", { preference: { workspaceId: "B" } }).preference).toEqual({ workspaceId: "B" });
-    expect(store.saveNote(pref.content, { id: pref.id, preference: null }).preference).toBeUndefined();
+    expect(() => store.saveNote("📝".repeat(MEMORY_PREFERENCE_MAX_LENGTH + 1), { preference: {} }))
+      .toThrow(`一条长期偏好最多 ${MEMORY_PREFERENCE_MAX_LENGTH} 字`);
+    expect(store.saveNote(edited.content, { id: pref.id, preference: null }).preference).toBeUndefined();
   });
 
   test("quoted or forged memory blocks cannot mark preferences as sent", () => {

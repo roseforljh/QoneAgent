@@ -8,7 +8,7 @@ const globals = {
   window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
   HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, Node: dom.window.Node,
   NodeFilter: dom.window.NodeFilter, HTMLInputElement: dom.window.HTMLInputElement,
-  CustomEvent: dom.window.CustomEvent, MutationObserver: dom.window.MutationObserver,
+  Event: dom.window.Event, CustomEvent: dom.window.CustomEvent, MutationObserver: dom.window.MutationObserver,
   getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
   requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
   cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
@@ -32,6 +32,7 @@ test("the header opens for new tasks without stealing focus and routes each row 
   const { useStore } = await import("../src/store");
   const { BackgroundTasks } = await import("../src/components/assistant-ui/background-tasks");
   const { OPEN_BACKGROUND_JOB_EVENT } = await import("../src/lib/background-job-links");
+  const { CLOSE_DOCK_PANEL_EVENT } = await import("../src/lib/dock-state");
   const { OPEN_SUBAGENT_EVENT } = await import("../src/components/assistant-ui/subagent-navigation");
   const { translateCurrent: t } = await import("../src/localization");
   const state = useStore.getState();
@@ -42,13 +43,18 @@ test("the header opens for new tasks without stealing focus and routes each row 
   const root = createRoot(host);
   const opened: unknown[] = [];
   const open = (event: Event) => opened.push([event.type, (event as CustomEvent).detail]);
+  let dockOpen = false;
+  const render = () => root.render(<BackgroundTasks dockOpen={dockOpen} renderHeader={(toggle) => <header>{toggle}</header>}>
+    <div className="q-chat-content"><input id="composer" /></div>
+  </BackgroundTasks>);
+  const setDockOpen = (value: boolean) => { dockOpen = value; render(); };
+  const closeDock = () => setDockOpen(false);
   window.addEventListener(OPEN_BACKGROUND_JOB_EVENT, open);
   window.addEventListener(OPEN_SUBAGENT_EVENT, open);
+  window.addEventListener(CLOSE_DOCK_PANEL_EVENT, closeDock);
   try {
     useStore.setState({ currentSessionId: "main", subagents: [], backgroundJobs: [oldJob, foreignJob] });
-    await act(async () => root.render(<BackgroundTasks renderHeader={(toggle) => <header>{toggle}</header>}>
-      <div className="q-chat-content"><input id="composer" /></div>
-    </BackgroundTasks>));
+    await act(async () => render());
     const composer = host.querySelector<HTMLInputElement>("#composer")!;
     expect(trigger().getAttribute("aria-expanded")).toBe("false");
     const taskPanel = panel()!;
@@ -101,9 +107,26 @@ test("the header opens for new tasks without stealing focus and routes each row 
     await act(async () => useStore.setState({ backgroundJobs: [...useStore.getState().backgroundJobs,
       { ...foreignJob, id: "fast", command: "quick check", startedAt: Date.now() }] }));
     expect(rows()[0]?.title).toBe("quick check");
+    expect(trigger().getAttribute("aria-expanded")).toBe("true");
+
+    // Right dock and cards are mutually exclusive, even for automatic opens.
+    await act(async () => setDockOpen(true));
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
+    expect(panel()).toBeNull();
+    await act(async () => useStore.setState({ backgroundJobs: [...useStore.getState().backgroundJobs,
+      { ...foreignJob, id: "active", command: "new job while dock is open", status: "running", startedAt: Date.now() }] }));
+    expect(panel()).toBeNull();
+    await act(async () => setDockOpen(false));
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
+    await act(async () => setDockOpen(true));
+    await act(async () => trigger().click());
+    expect(dockOpen).toBe(false);
+    expect(trigger().getAttribute("aria-expanded")).toBe("true");
+    expect(panel()?.hasAttribute("inert")).toBe(false);
   } finally {
     window.removeEventListener(OPEN_BACKGROUND_JOB_EVENT, open);
     window.removeEventListener(OPEN_SUBAGENT_EVENT, open);
+    window.removeEventListener(CLOSE_DOCK_PANEL_EVENT, closeDock);
     await act(async () => root.unmount());
     useStore.setState(state);
     dom.window.close();

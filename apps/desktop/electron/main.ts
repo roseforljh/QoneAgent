@@ -100,7 +100,7 @@ const sidecar = new SidecarManager(() => mainWindow);
 const terminal = new TerminalManager(() => mainWindow);
 const browserDock = new BrowserDockManager(() => mainWindow, restricted || administratorRequested ? null : devtoolsPort,
   administratorRequested ? new DockCdp() : undefined);
-const updater = new DesktopUpdater();
+const updater = new DesktopUpdater(undefined, (input, init) => net.fetch(input, init));
 
 // 窗口状态管理
 const windowStateFile = path.join(getRuntimeDir(), "window-state.json");

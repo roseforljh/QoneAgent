@@ -3,6 +3,7 @@ import { shallow } from "zustand/shallow";
 import { useStore, type AgentState } from "../../store";
 import { useLocale } from "../../localization";
 import { openBackgroundJob } from "../../lib/background-job-links";
+import { CLOSE_DOCK_PANEL_EVENT } from "../../lib/dock-state";
 import { cn } from "../../lib/utils";
 import { CodexIcon } from "../ui/CodexIcon";
 import tasksIcon from "../../assets/codex-icons/tasks-light-20.svg";
@@ -36,7 +37,7 @@ function createTaskSelector(sessionId: string | undefined) {
   };
 }
 
-export function BackgroundTasks({ renderHeader, children }: { renderHeader: (toggle: ReactNode) => ReactNode; children: ReactNode }) {
+export function BackgroundTasks({ dockOpen, renderHeader, children }: { dockOpen: boolean; renderHeader: (toggle: ReactNode) => ReactNode; children: ReactNode }) {
   const sessionId = useStore((state) => state.currentSessionId);
   const { t } = useLocale();
   const selectTasks = useMemo(() => createTaskSelector(sessionId), [sessionId]);
@@ -46,7 +47,10 @@ export function BackgroundTasks({ renderHeader, children }: { renderHeader: (tog
   const panelId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  const open = Boolean(sessionId && sessionId === openSessionId && tasks.length);
+  const open = !dockOpen && Boolean(sessionId && sessionId === openSessionId && tasks.length);
+  useEffect(() => {
+    if (dockOpen) setOpenSessionId(undefined);
+  }, [dockOpen]);
   useEffect(() => {
     const last = previous.current?.sessionId === sessionId ? previous.current : undefined;
     const viewedSince = last?.viewedSince ?? Date.now();
@@ -60,9 +64,9 @@ export function BackgroundTasks({ renderHeader, children }: { renderHeader: (tog
       statuses.set(key, task.active);
     }
     previous.current = { sessionId, viewedSince, statuses };
-    if (hasNewTask) setOpenSessionId(sessionId);
+    if (hasNewTask && !dockOpen) setOpenSessionId(sessionId);
     else if (!last || !tasks.length) setOpenSessionId(undefined);
-  }, [tasks, sessionId]);
+  }, [tasks, sessionId, dockOpen]);
 
   useEffect(() => {
     const panel = panelRef.current;
@@ -84,13 +88,16 @@ export function BackgroundTasks({ renderHeader, children }: { renderHeader: (tog
   };
   return <>
     {renderHeader(tasks.length ? <TooltipIconButton ref={triggerRef} tooltip={title} className="q-thread-header-action relative"
-      aria-expanded={open} aria-controls={panelId} data-state={open ? "open" : "closed"}
-      onClick={() => setOpenSessionId(open ? undefined : sessionId)}>
+      aria-expanded={open} aria-controls={dockOpen ? undefined : panelId} data-state={open ? "open" : "closed"}
+      onClick={() => {
+        if (dockOpen) window.dispatchEvent(new Event(CLOSE_DOCK_PANEL_EVENT));
+        setOpenSessionId(open ? undefined : sessionId);
+      }}>
       <CodexIcon src={tasksIcon} className="size-[18px]" />
       {tasks.some((task) => task.active) && <span aria-hidden="true" className="absolute end-1 top-1 size-1.5 rounded-full bg-blue-500 ring-2 ring-background" />}
     </TooltipIconButton> : null)}
     <div className="q-chat-body relative flex min-h-0 flex-1 flex-col">
-      {sessionId && tasks.length > 0 && <aside key={sessionId} ref={panelRef} id={panelId} aria-label={title} inert={!open}
+      {!dockOpen && sessionId && tasks.length > 0 && <aside key={sessionId} ref={panelRef} id={panelId} aria-label={title} inert={!open}
         data-open={open ? "" : undefined} className="q-background-tasks"
         onKeyDown={(event) => {
           if (event.key !== "Escape") return;
