@@ -85,6 +85,8 @@ function includesImageMethod(value: string[] | undefined): boolean {
 
 /** Select the image wire format with explicit configuration taking priority. */
 export function detectImageModel(input: ImageModelDetectionInput): ImageModelDetection {
+  // Vertex Gemini currently uses the conversation adapter, not an image-generation endpoint.
+  if (input.apiType === "google-vertex") return { isImageModel: false };
   if (input.manualOutput) {
     if (!includesImage(input.output)) return { isImageModel: false, source: "manual-capability" };
     return { isImageModel: true, format: isImageApiFormat(input.imageApiFormat) ? input.imageApiFormat : inferredImageFormat(input.model, input.provider, input.apiType) ?? "openai-image", source: "manual-capability" };

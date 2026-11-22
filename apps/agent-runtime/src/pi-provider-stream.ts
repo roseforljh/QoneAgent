@@ -9,6 +9,7 @@ function streamFor(
   model: Model<Api>, context: TranscriptContext, options: SimpleStreamOptions, input: readonly string[],
 ): AssistantMessageEventStream {
   switch (model.api) {
+    case "google-vertex":
     case "google-generative-ai": return googleStreamSimple(model, context, options, input.includes("video"), input);
     case "openai-completions": return openAICompletionsStreamSimple(model, context, options, input);
     case "anthropic-messages": return anthropicMediaStreamSimple(model, context, options, input);

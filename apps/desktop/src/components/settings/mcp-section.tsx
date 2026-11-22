@@ -71,8 +71,7 @@ export function McpSection() {
 
   // 用户在设置页主动操作 = 已授权，先下发 allow 跳过聊天页审批卡。
   const connectAsUser = async (config: McpServerInfo, reconnect = false) => {
-    // Wait until the permission command has been written to the sidecar before
-    // dispatching connect; otherwise the two Tauri invokes can arrive out of order.
+    // 等待权限命令写入 sidecar 后再下发 connect，避免两次 IPC 调用乱序。
     const allowed = await send({ type: "permission.set", requestId: crypto.randomUUID(), subjectId: `mcp:${config.id}`, permission: "mcp.connect", decision: "allow" });
     const sent = allowed && await send({ type: "mcp.connect", requestId: crypto.randomUUID(), config, ...(reconnect ? { reconnect } : {}) });
     setPendingOn((current) => { const next = new Set(current); next.delete(config.id); return next; });

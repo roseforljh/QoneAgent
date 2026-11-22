@@ -472,7 +472,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       }
       const config = services.modelConfigRepo.upsert(cmd.config);
       await services.adapter.configureModels(services.modelConfigRepo.list());
-      services.send({ type: "model.updated", config: config });
+      services.send({ type: "model.updated", requestId: cmd.requestId, config });
       void services.memory.refresh();
       return true;
     }

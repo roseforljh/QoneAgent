@@ -1,5 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
-import type { ModelConfigInfo } from "@qone/protocol";
+import { vertexProjectBaseUrl, vertexProjectFromBaseUrl, type ModelConfigInfo } from "@qone/protocol";
+import { defaultModelSettings, modelConfigForProvider, saveVertexModel, type ProviderProfile } from "../src/lib/model-settings";
+import { saveModelConfig, settleModelConfigSave } from "../src/lib/model-config-save";
 import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, filterPickerModels, getPickerModels, providerProfilesFromModelConfigs, readCurrentProvider, restoreProviderProfilesFromModelConfigs } from "../src/lib/model-picker-data";
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -83,6 +85,64 @@ test("recovers a provider profile from durable runtime model configs", () => {
       { id: "beta", settings: { apiType: "claude" } },
     ],
   }]);
+});
+
+test("restores a Vertex AI provider and model from runtime settings", () => {
+  const baseUrl = "https://aiplatform.googleapis.com/v1/projects/demo/locations/global";
+  const profiles = providerProfilesFromModelConfigs([
+    { ...config("vertex"), config: { apiType: "google-vertex", baseUrl } },
+  ]);
+  expect(profiles).toMatchObject([{ id: "vertex", apiType: "google-vertex", baseUrl, models: [{ settings: { apiType: "google-vertex" } }] }]);
+});
+
+test("does not leave provider endpoint fields in restored model settings", () => {
+  const [profile] = providerProfilesFromModelConfigs([{ ...config("vertex"), config: {
+    apiType: "google-vertex", baseUrl: "https://us-central1-aiplatform.googleapis.com/v1/projects/demo-project/locations/us-central1",
+    displayName: "Gemini", maxOutput: 4096,
+  } }]);
+  expect(profile!.models[0]!.settings).not.toHaveProperty("baseUrl");
+  expect(profile!.models[0]).toMatchObject({ label: "Gemini", settings: { maxOutput: 4096 } });
+});
+
+test("restores the provider format independently of a model API override", () => {
+  const baseUrl = "https://gateway.example.test/v1";
+  const [profile] = providerProfilesFromModelConfigs([{ ...config("gateway"), config: {
+    providerApiType: "codex", apiType: "openai-compatible", baseUrl,
+  } }]);
+  expect(profile).toMatchObject({ apiType: "codex", baseUrl, models: [{ settings: { apiType: "openai-compatible" } }] });
+});
+
+test("saving a Vertex edit replaces stale Google endpoints on every model and round-trips the edited model ID", () => {
+  const oldUrl = "https://generativelanguage.googleapis.com/v1beta";
+  const stale = { ...defaultModelSettings("google"), baseUrl: oldUrl, apiType: "google" as const };
+  const baseUrl = vertexProjectBaseUrl("demo-project", "us-central1");
+  const models = [{ id: "old-model", label: "Old", settings: stale }, { id: "second-model", label: "Second", settings: stale }];
+  expect(saveVertexModel(models, "old-model", "second-model")).toBeUndefined();
+  const edited = saveVertexModel(models, "old-model", "gemini-test")!;
+  const profile: ProviderProfile = { id: "vertex", name: "Vertex", apiType: "google-vertex", baseUrl, models: edited, updatedAt: 1 };
+  const configs = edited.map((model) => modelConfigForProvider(profile, model));
+  for (const item of configs) expect(item.config).toMatchObject({ providerApiType: "google-vertex", apiType: "google-vertex", baseUrl });
+  const [restored] = providerProfilesFromModelConfigs(configs);
+  expect(vertexProjectFromBaseUrl(restored!.baseUrl)).toEqual({ projectId: "demo-project", location: "us-central1" });
+  expect(restored!.models.map((item) => item.id)).toEqual(["gemini-test", "second-model"]);
+  expect(saveVertexModel(edited, "", "another-model")?.map((item) => item.id)).toEqual(["gemini-test", "second-model", "another-model"]);
+});
+
+test("model saves wait for the runtime and surface a rejected write", async () => {
+  const value = config("vertex");
+  const save = saveModelConfig({ type: "model.upsert", requestId: "first", config: value }, async () => true);
+  let confirmed = false;
+  void save.then(() => { confirmed = true; });
+  expect(settleModelConfigSave({ type: "model.updated", requestId: "unrelated", config: value })).toBe(false);
+  await Promise.resolve();
+  expect(confirmed).toBe(false);
+  expect(settleModelConfigSave({ type: "model.updated", requestId: "first", config: value })).toBe(true);
+  await save;
+  expect(confirmed).toBe(true);
+
+  const failed = saveModelConfig({ type: "model.upsert", requestId: "second", config: value }, async () => true);
+  settleModelConfigSave({ type: "error", requestId: "second", message: "write failed" });
+  await expect(failed).rejects.toThrow("write failed");
 });
 
 test("runtime file edits replace cached models without losing provider names or selection", () => {

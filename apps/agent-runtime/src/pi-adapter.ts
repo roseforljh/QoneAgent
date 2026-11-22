@@ -29,7 +29,7 @@ import { createResourceLoader, sessionResourceLoader } from "./skills.js";
 import { runImageGeneration, runSpeechGeneration, runVideoGeneration, type GenerationContext } from "./media-generation-runner.js";
 import { createSubagentTools } from "./subagent-tools.js";
 import type { SubagentSelection } from "./subagent-selection.js";
-import { googleMediaContent } from "./google-media.js";
+import { googleMediaContent, isGoogleGeminiApi } from "./google-media.js";
 import { createConfiguredModelStream } from "./pi-provider-stream.js";
 import { ModelMetadataResolver } from "./model-resolver.js";
 import { configuredCapabilities } from "./media-capabilities.js";
@@ -314,6 +314,8 @@ export class PiAdapter {
         apiKey: this.modelApiKeys.get(provider),
       })));
       for (const [index, item] of models.entries()) {
+        // Vertex Gemini is a conversation transport, not a Developer API media-generation endpoint.
+        if (resolved[index]!.api === "google-vertex") continue;
         const raw = item.config;
         const metadata = resolved[index]!.metadata;
         const detected = detectImageModel({
@@ -723,7 +725,7 @@ export class PiAdapter {
     const preparedMessages = await Promise.all(restoredMessages.map(async (message) => ({
       ...message,
       attachments: message.role === "user"
-        ? await materializeModelInputs(message.attachments, model?.api === "google-generative-ai", model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined, true)
+        ? await materializeModelInputs(message.attachments, isGoogleGeminiApi(model?.api), model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined, true)
         : message.attachments,
     })));
     const sessionManager = SessionManager.inMemory(
@@ -1069,7 +1071,7 @@ export class PiAdapter {
         && this.sessions.get(sessionId) === session && !this.stoppedRuns.has(expectedRunId) && session?.isStreaming);
       if (!session || !isCurrentRun()) return false;
       const selectedModel = session.agent.state.model;
-      const isGoogle = selectedModel?.api === "google-generative-ai";
+      const isGoogle = isGoogleGeminiApi(selectedModel?.api);
       const isCompletions = selectedModel?.api === "openai-completions";
       const input = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`).input : undefined;
       const runId = this.activeRunIds.get(sessionId);

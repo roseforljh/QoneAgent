@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { VERTEX_AI_DEFAULT_BASE_URL, vertexProjectBaseUrl } from "@qone/protocol";
 import { normalizeContext, type Api, type Model, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { streamSimple as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { streamSimple as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
@@ -6,6 +7,10 @@ import { streamSimple as streamCodex } from "@earendil-works/pi-ai/api/openai-co
 import { streamSimple as streamResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { streamSimple as streamGoogle } from "@earendil-works/pi-ai/api/google-generative-ai";
 import { createConfiguredModelStream } from "../src/pi-provider-stream.js";
+import { PiAdapter } from "../src/pi-adapter.js";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const context = normalizeContext({
   messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
@@ -52,6 +57,56 @@ async function capturePayload(invoke: (options: SimpleStreamOptions) => unknown,
 }
 
 describe("Pi provider wire payloads", () => {
+  test("Vertex streams through Express, global and regional project endpoints using the stored key and inline media", async () => {
+    const requests: Array<{ url: URL; key: string | null; authorization: string | null; body: any }> = [];
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+      requests.push({ url: new URL(request.url), key: request.headers.get("x-goog-api-key"), authorization: request.headers.get("authorization"), body: await request.json() });
+      const chunk = { candidates: [{ content: { role: "model", parts: [{ text: "Vertex reply" }] }, finishReason: "STOP" }] };
+      return new Response(`data: ${JSON.stringify(chunk)}\n\n`, { headers: { "content-type": "text/event-stream" } });
+    } });
+    const directory = await mkdtemp(join(tmpdir(), "qone-vertex-"));
+    const deltas: string[] = [];
+    const adapter = new PiAdapter((event) => {
+      if (event.type === "message.delta") deltas.push((event.payload as { delta: string }).delta);
+    });
+    try {
+      const path = join(directory, "sample.wav");
+      const bytes = Buffer.from("local audio bytes");
+      await writeFile(path, bytes);
+      const provider = "vertex-test";
+      const model = "gemini-2.5-flash";
+      const id = `${provider}/${model}`;
+      const suffix = `/publishers/google/models/${model}:streamGenerateContent`;
+      await adapter.setSecret(`model.apiKey:${provider}`, "test-vertex-key");
+      const endpoints = [VERTEX_AI_DEFAULT_BASE_URL, ...["global", "asia-northeast1"].map((region) => vertexProjectBaseUrl("test-project", region))];
+      for (const endpoint of endpoints) {
+        const { pathname: prefix } = new URL(endpoint);
+        await adapter.configureModels([{ provider, model, id, enabled: true, updatedAt: 1, config: {
+          apiType: "google-vertex", baseUrl: `http://127.0.0.1:${server.port}${prefix}${suffix}?key=discard-this`,
+          input: ["text", "audio"], output: ["text"],
+          modelMetadata: { contextWindow: 128000, maxTokens: 4096, reasoning: false, input: ["text", "audio"], output: ["text"] },
+        } }]);
+        await adapter.run("vertex-session", "Listen", { cwd: directory, model: id, attachments: [
+          { type: "file", name: "sample.wav", mimeType: "audio/wav", localPath: path, data: "" },
+        ] }, () => {});
+        expect(deltas.splice(0).join("")).toBe("Vertex reply");
+        await adapter.disposeSession("vertex-session");
+        const received = requests.at(-1)!;
+        expect(received.url.pathname).toBe(`${prefix}${suffix}`);
+        expect(received.url.searchParams.get("alt")).toBe("sse");
+        expect(received.url.searchParams.has("key")).toBe(false);
+        expect(received.key).toBe("test-vertex-key");
+        expect(received.authorization).toBeNull();
+        expect(received.body.contents[0].parts).toContainEqual({ inlineData: { mimeType: "audio/wav", data: bytes.toString("base64") } });
+      }
+      expect(requests).toHaveLength(endpoints.length);
+    } finally {
+      await adapter.disposeSession("vertex-session");
+      server.stop(true);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("OpenAI-compatible completions uses max_completion_tokens and reasoning_effort", async () => {
     const model = makeModel("openai-completions", {
       compat: { maxTokensField: "max_completion_tokens", supportsReasoningEffort: true },

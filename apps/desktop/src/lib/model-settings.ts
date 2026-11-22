@@ -1,4 +1,4 @@
-import { detectImageModel, normalizeThinkingLevelForApi, parseModelMetadataResponse, thinkingLevelsForApi as protocolThinkingLevelsForApi, type ImageApiFormat, type ModelMetadata, type ModelMetadataSource, type ModelMetadataSources, type ProviderApiType, type RunThinkingLevel } from "@qone/protocol";
+import { detectImageModel, normalizeThinkingLevelForApi, parseModelMetadataResponse, thinkingLevelsForApi as protocolThinkingLevelsForApi, type ImageApiFormat, type ModelMetadata, type ModelMetadataSource, type ModelMetadataSources, type ModelConfigInfo, type ProviderApiType, type RunThinkingLevel } from "@qone/protocol";
 
 export type Capability = "text" | "image" | "video" | "audio";
 export type ThinkingLevel = RunThinkingLevel;
@@ -54,6 +54,30 @@ export type ModelSettings = {
 export type ProviderModel = { id: string; label: string; settings?: ModelSettings };
 export type ProviderProfile = { id: string; name: string; apiType: ProviderApiType; baseUrl: string; logoUrl?: string; models: ProviderModel[]; updatedAt: number };
 
+export function modelApiTypeForProvider(provider: ProviderProfile, settings?: ModelSettings): ProviderApiType {
+  // Vertex's project/Express endpoint and key use the same protocol for every model.
+  return provider.apiType === "google-vertex" ? provider.apiType : settings?.apiType ?? provider.apiType;
+}
+
+export function modelConfigForProvider(provider: ProviderProfile, model: ProviderModel): ModelConfigInfo {
+  const apiType = modelApiTypeForProvider(provider, model.settings);
+  return {
+    id: `${provider.id}/${model.id}`, provider: provider.id, model: model.id, enabled: true, updatedAt: provider.updatedAt,
+    config: {
+      ...withProviderInputDefaults(model.settings ?? defaultModelSettings(apiType), apiType),
+      providerApiType: provider.apiType, apiType, baseUrl: provider.baseUrl, displayName: model.label,
+    },
+  };
+}
+
+export function saveVertexModel(models: ProviderModel[], previousId: string, id: string): ProviderModel[] | undefined {
+  if (previousId === id && models.some((model) => model.id === id)) return models;
+  if (models.some((model) => model.id === id)) return undefined;
+  const previous = models.find((model) => model.id === previousId);
+  const model: ProviderModel = { id, label: id, settings: { ...(previous?.settings ?? defaultModelSettings("google-vertex")), modelMetadata: undefined, metadataSources: undefined } };
+  return previous ? models.map((item) => item === previous ? model : item) : [...models, model];
+}
+
 export const capabilities: Capability[] = ["text", "image", "video", "audio"];
 export function thinkingLevelsForApi(apiType: ProviderApiType = "openai-compatible"): ThinkingLevel[] {
   return [...protocolThinkingLevelsForApi(apiType)];
@@ -78,12 +102,16 @@ export function defaultThinkingForModel(settings: { thinking?: unknown; metadata
   return normalizeThinkingLevel(explicit || (configured && configured !== "none") ? configured : DEFAULT_THINKING_LEVEL, apiType);
 }
 
+function isGeminiProvider(apiType?: ProviderApiType): boolean {
+  return apiType === "google" || apiType === "google-vertex";
+}
+
 export function defaultModelSettings(apiType?: ProviderApiType): ModelSettings {
-  return { maxOutput: 8192, maxContext: 128000, thinking: "none", input: apiType === "google" ? [...capabilities] : ["text"], output: ["text"], autoMetadata: true, metadataSources: { maxOutput: "default", maxContext: "default", thinking: "default", input: "default", output: "default" } };
+  return { maxOutput: 8192, maxContext: 128000, thinking: "none", input: isGeminiProvider(apiType) ? [...capabilities] : ["text"], output: ["text"], autoMetadata: true, metadataSources: { maxOutput: "default", maxContext: "default", thinking: "default", input: "default", output: "default" } };
 }
 
 export function withProviderInputDefaults(settings: ModelSettings, apiType: ProviderApiType): ModelSettings {
-  return apiType === "google" && settings.autoMetadata !== false && settings.metadataOverrides?.input !== true
+  return isGeminiProvider(apiType) && settings.autoMetadata !== false && settings.metadataOverrides?.input !== true
     ? { ...settings, input: [...capabilities] }
     : settings;
 }

@@ -1,7 +1,7 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { openAsBlob } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -14,11 +14,14 @@ import type {
   TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { streamSimple as streamGoogle } from "@earendil-works/pi-ai/api/google-generative-ai";
+import { streamSimple as streamVertex } from "@earendil-works/pi-ai/api/google-vertex";
 import type { MessageAttachmentInfo } from "@qone/protocol";
 import { reportMediaPhase } from "./media-phase.js";
 
 const GOOGLE_API_VERSION = "/v1beta";
 const LARGE_MEDIA_BYTES = 4 * 1024 * 1024;
+// Maximum inline part size on Vertex GenerateContent. Vertex has no Gemini Files API.
+const VERTEX_MAX_INLINE_BYTES = 256_000_000;
 const FILE_PROCESSING_TIMEOUT_MS = 30 * 60_000;
 const FILE_PROCESSING_POLL_MS = 1_000;
 const UPLOAD_CACHE_AGE_MS = 47 * 60 * 60_000;
@@ -211,6 +214,10 @@ export function youtubeUrlsFromText(value: string): string[] {
   return result;
 }
 
+export function isGoogleGeminiApi(api: string | undefined): boolean {
+  return api === "google-generative-ai" || api === "google-vertex";
+}
+
 export function googleMediaContent(attachments: readonly MessageAttachmentInfo[] = [], allowedInput?: readonly string[]): ImageContent[] {
   return attachments.flatMap((attachment) => {
     if (attachment.type === "folder") return [];
@@ -229,6 +236,7 @@ export function googleMediaContent(attachments: readonly MessageAttachmentInfo[]
 export async function prepareGooglePayload(payload: unknown, model: Model<any>, apiKey: string | undefined, signal?: AbortSignal, allowYouTube = true, allowedInput?: readonly string[]): Promise<GooglePayload> {
   const next = payload as GooglePayload;
   if (!Array.isArray(next.contents)) return next;
+  const vertex = model.api === "google-vertex";
   const seenYouTube = new Set<string>();
   const mediaUploads: Array<{ part: GooglePart; data: string; name: string }> = [];
   const localUploads: Array<{ part: GooglePart; path: string; mimeType: string }> = [];
@@ -307,7 +315,7 @@ export async function prepareGooglePayload(payload: unknown, model: Model<any>, 
           }
         } else rewrittenParts.push(part);
       } else rewrittenParts.push(part);
-      if (inline && /^(?:audio|video)\//.test(inline.mimeType) && dataBytes(inline.data) >= LARGE_MEDIA_BYTES) {
+      if (!vertex && inline && /^(?:audio|video)\//.test(inline.mimeType) && dataBytes(inline.data) >= LARGE_MEDIA_BYTES) {
         if (!apiKey) throw runtimeError("google-media.gemini_audio_video_upload_requires_an_api_key", {});
         mediaUploads.push({ part, data: inline.data, name: `qone-${inline.mimeType.replace(/[^a-z0-9]+/gi, "-")}` });
       }
@@ -324,7 +332,12 @@ export async function prepareGooglePayload(payload: unknown, model: Model<any>, 
       delete part.inlineData;
     }));
   }
-  if (localUploads.length) {
+  if (vertex) {
+    for (const { part, path, mimeType } of localUploads) {
+      if ((await stat(path)).size > VERTEX_MAX_INLINE_BYTES) throw runtimeError("google-media.vertex_inline_file_too_large", {});
+      part.inlineData = { mimeType, data: (await readFile(path, { signal })).toString("base64") };
+    }
+  } else if (localUploads.length) {
     if (!apiKey) throw runtimeError("google-media.gemini_audio_video_upload_requires_an_api_key", {});
     await Promise.all(localUploads.map(async ({ part, path, mimeType }) => {
       const file = await uploadLocalMedia(path, mimeType, model, apiKey, signal);
@@ -341,9 +354,12 @@ export function googleStreamSimple(
   allowYouTube = true,
   allowedInput?: readonly string[],
 ): AssistantMessageEventStream {
+  const vertex = model.api === "google-vertex";
+  if (vertex && !options?.apiKey?.trim()) throw runtimeError("google-media.vertex_api_key_required", {});
+  const stream = vertex ? streamVertex : streamGoogle;
   const createStream = (streamOptions?: SimpleStreamOptions) => {
     const onPayload = streamOptions?.onPayload;
-    return streamGoogle(model as never, context, {
+    return stream(model as never, context, {
       ...streamOptions,
       onPayload: async (payload, requestModel) => {
         const hasMedia = containsGoogleMedia(payload);
@@ -363,7 +379,7 @@ export function googleStreamSimple(
     let visibleContent = false;
     const hasThinking = (events: readonly AssistantMessageEvent[]) => events.some((event) => event.type === "thinking_start" || event.type === "thinking_delta" || event.type === "thinking_end");
     const hasUsableOutput = (message: Extract<AssistantMessageEvent, { type: "done" }>['message']) => message.content.some((part) => (part.type === "text" && part.text.trim().length > 0) || part.type === "toolCall");
-    const isRecoverableError = (event: AssistantMessageEvent) => event.type === "error" && /Google stream ended without a finish reason|operation timed out/i.test(event.error.errorMessage ?? "");
+    const isRecoverableError = (event: AssistantMessageEvent) => event.type === "error" && /Google (?:Vertex )?stream ended without a finish reason|operation timed out/i.test(event.error.errorMessage ?? "");
     const shouldRecover = (event: AssistantMessageEvent) => {
       if (visibleContent || !hasThinking([...buffered, event])) return false;
       if (isRecoverableError(event)) return true;

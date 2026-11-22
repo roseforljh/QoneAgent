@@ -310,7 +310,7 @@ describe("workspace-view-state robustness & ownership", () => {
     const reqId = await requestWorkspaceFiles({
       ownerId: tabId,
       workspaceId: "ws-1",
-      send: async () => false, // 模拟非 Tauri 或网络拒绝
+      send: async () => false, // 模拟非桌面环境或网络拒绝
     });
 
     // view 中应该标记发送失败错误且 loading 结束

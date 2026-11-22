@@ -85,7 +85,7 @@ export function onCloseAgentBrowserInDock(listener: (browserId: string) => void)
 }
 
 export function sandboxPreviewHtml(html: string): string {
-  // The opaque iframe origin keeps preview scripts apart from the Tauri page.
+  // 使用不透明 iframe 源将预览脚本与主应用页面隔离。
   const srcdoc = html.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;width:100%;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style></head><body><iframe sandbox="allow-scripts allow-forms allow-modals" srcdoc="${srcdoc}"></iframe></body></html>`;
 }

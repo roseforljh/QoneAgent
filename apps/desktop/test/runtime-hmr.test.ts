@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 
 test("replacing the conversation store reloads the renderer instead of retaining old IPC and queue closures", async () => {
-  // Isolate the loader and Tauri mocks from the other store tests. Inject the
-  // same hot context Vite supplies and execute the real module's HMR callback.
+  // 与其他 store 测试隔离 loader 和桌面桥接 mock，注入 Vite 同款 hot 上下文并执行真实模块的 HMR 回调。
   const child = Bun.spawn([process.execPath, "--eval", String.raw`
     import { plugin } from "bun";
     import { mock } from "bun:test";

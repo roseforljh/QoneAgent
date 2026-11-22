@@ -104,7 +104,7 @@ export class BrowserDockManager {
     view.webContents.on("preferred-size-changed", () => void this.fitWidth(session));
 
     // 拦截页面内新窗口打开，改为在当前内置浏览器内跳转，避免弹出独立窗口脱离右侧面板。
-    // 例外（同 Tauri）：用户浏览器里带窗口特性的 window.open 是第三方登录弹窗，登录结果经 window.opener 回传，必须真开窗口。
+    // 例外：用户浏览器里带窗口特性的 window.open 是第三方登录弹窗，登录结果经 window.opener 回传，必须真开窗口。
     view.webContents.setWindowOpenHandler?.(({ url: nextUrl, disposition }) => {
       if (!/^https?:\/\//i.test(nextUrl)) return { action: "deny" };
       if (browserId.startsWith("auth-page-") && disposition === "new-window") {

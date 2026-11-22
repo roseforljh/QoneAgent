@@ -2,12 +2,13 @@ import { localizeError } from "../../lib/error-localization";
 import { detectImageModel, modelNamesEqual, supportsExtendedImageQuality, type ImageApiFormat, type ProviderApiType } from "@qone/protocol";
 import { PROVIDERS_STORAGE_KEY, ACTIVE_PROVIDER_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
 import { fetchProviderModelCatalog } from "../../lib/provider-model-catalog";
-import { capabilities, defaultModelSettings, mergeFetchedModel, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withProviderInputDefaults, type Capability, type ImageGenerationSettings, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
+import { saveModelConfig } from "../../lib/model-config-save";
+import { capabilities, defaultModelSettings, mergeFetchedModel, modelApiTypeForProvider, modelConfigForProvider, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withProviderInputDefaults, type Capability, type ImageGenerationSettings, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
 import { useEffect, useRef, useState } from "react";
 import { check } from "../../lib/desktop-bridge";
 import { QoneSelect } from "../ui/Select";
 import { Check, Globe2, LoaderCircle, Plus, Save, Trash2, X } from "lucide-react";
-import { useStore } from "../../store";
+import { hasDesktopBridge, useStore } from "../../store";
 import { cn } from "../../lib/utils";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { useLocale, type LocalizedMessage } from "../../localization";
@@ -32,11 +33,12 @@ function ModelSourceSummary({ settings, isImageModel }: { settings: ModelSetting
   })}</div>;
 }
 
-function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted }: { open: boolean; provider: ProviderProfile; model?: ProviderModel; onClose: () => void; onSaved: (model: ProviderModel, previousId?: string) => void; onDeleted: (model: ProviderModel) => void }) {
+function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted }: { open: boolean; provider: ProviderProfile; model?: ProviderModel; onClose: () => void; onSaved: (model: ProviderModel, previousId?: string) => Promise<void>; onDeleted: (model: ProviderModel) => void }) {
   const { t } = useLocale();
   const [name, setName] = useState(model?.id ?? "");
   const [settings, setSettings] = useState<ModelSettings>(() => withProviderInputDefaults(model?.settings ?? defaultModelSettings(provider.apiType), model?.settings?.apiType ?? provider.apiType));
   const [fetching, setFetching] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<LocalizedMessage | null>(null);
   const fetchSequence = useRef(0);
   useEffect(() => {
@@ -45,12 +47,13 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
     setName(model?.id ?? ""); setSettings(withProviderInputDefaults(model?.settings ?? defaultModelSettings(provider.apiType), model?.settings?.apiType ?? provider.apiType)); setStatus(null); setFetching(false);
   }, [open, model?.id]);
   if (!open) return null;
-  const apiType = settings.apiType ?? provider.apiType;
+  const apiType = modelApiTypeForProvider(provider, settings);
+  const isVertex = apiType === "google-vertex";
   const detectedImage = detectImageModel({ model: name, provider: provider.id, apiType, imageApiFormat: settings.imageApiFormat, input: settings.input, output: settings.output, manualInput: settings.metadataOverrides?.input === true, manualOutput: settings.metadataOverrides?.output === true, metadata: settings.modelMetadata });
   const isImageModel = detectedImage.isImageModel;
   const imageApiFormat = settings.imageApiFormat ?? detectedImage.format;
   const visibleInput = settings.input;
-  const visibleOutput = isImageModel && !settings.metadataOverrides?.output && (settings.metadataSources?.output ?? "default") === "default" ? ["image"] as Capability[] : settings.output;
+  const visibleOutput: Capability[] = isVertex ? ["text"] : isImageModel && !settings.metadataOverrides?.output && (settings.metadataSources?.output ?? "default") === "default" ? ["image"] : settings.output;
   const thinkingOptions = thinkingLevelOptionsForApi(apiType);
   const selectedThinking = normalizeThinkingLevel(settings.thinking, apiType);
   const videoApiFormat = settings.videoGeneration?.format ?? (apiType === "google" ? "google-veo" : "");
@@ -108,11 +111,16 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
     } catch (error) { if (sequence === fetchSequence.current) setStatus(error instanceof Error && error.message === "MODEL_METADATA_UNSUPPORTED" ? { key: "model.runtimeRestartRequired" } : { key: "model.fetchConfigurationFailed", values: { error: localizeError(error) } }); }
     finally { if (sequence === fetchSequence.current) setFetching(false); }
   };
-  const save = () => {
-    if (!name.trim()) return;
-    const imageSettings = isImageModel ? { input: visibleInput, output: visibleOutput } : {};
-    onSaved({ id: name.trim(), label: name.trim(), settings: withProviderInputDefaults({ ...settings, ...imageSettings, apiType, thinking: selectedThinking }, apiType) }, model?.id);
-    onClose();
+  const save = async () => {
+    if (saving || !name.trim()) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await onSaved({ id: name.trim(), label: name.trim(), settings: withProviderInputDefaults({ ...settings, output: visibleOutput, apiType, thinking: selectedThinking }, apiType) }, model?.id);
+      onClose();
+    } catch {
+      setStatus({ key: "model.saveFailed" });
+    } finally { setSaving(false); }
   };
   const remove = async () => { if (model && await confirmDestructiveAction(t("model.deleteConfirm", { name: model.label }))) { onDeleted(model); onClose(); } };
   return (
@@ -121,14 +129,14 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
-          onClose();
+          if (!saving) onClose();
         }
       }}
     >
       <div className="settings-subdialog model-editor-dialog" role="dialog" aria-modal="true" aria-label={t("model.parameters")}>
         <div className="settings-subdialog-header">
           <div><span>{provider.name}</span><h3>{t("model.parameters")}</h3></div>
-          <button type="button" className="settings-dialog-close" onClick={onClose} aria-label={t("common.close")}><X size={17} /></button>
+          <button type="button" className="settings-dialog-close" disabled={saving} onClick={onClose} aria-label={t("common.close")}><X size={17} /></button>
         </div>
         <div className="settings-model-fetch">
           <button type="button" className="settings-secondary-action" disabled={fetching} onClick={fetchConfiguration}>
@@ -140,7 +148,7 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
         <ModelSourceSummary settings={settings} isImageModel={isImageModel} />
         <div className="settings-form-grid">
           <label className="is-wide">{t("model.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("model.namePlaceholder")} /></label>
-          <label className="is-wide">{t("model.apiType")}<QoneSelect value={apiType} onChange={(value) => updateApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("model.apiType")} /></label>
+          <label className="is-wide">{t("model.apiType")}<QoneSelect value={apiType} disabled={provider.apiType === "google-vertex"} onChange={(value) => updateApiType(value as ProviderApiType)} options={Object.entries(providerApiLabelKeys).map(([value, key]) => ({ value, label: t(key) }))} ariaLabel={t("model.apiType")} /></label>
           {!isImageModel && <>
             <label>{t("model.maxOutput")}<input type="number" min="1" value={settings.maxOutput} onChange={(event) => update("maxOutput", Math.max(1, Number(event.target.value) || 1))} /></label>
             <label>{t("model.maxContext")}<input type="number" min="1" value={settings.maxContext} onChange={(event) => update("maxContext", Math.max(1, Number(event.target.value) || 1))} /></label>
@@ -149,7 +157,7 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
         </div>
         <div className="settings-capability-grid">
           <CapabilityEditor title={t("model.inputCapabilities")} values={visibleInput} onToggle={(value) => toggleCapability("input", value)} />
-          <CapabilityEditor title={t("model.outputCapabilities")} values={visibleOutput} onToggle={(value) => toggleCapability("output", value)} />
+          {!isVertex && <CapabilityEditor title={t("model.outputCapabilities")} values={visibleOutput} onToggle={(value) => toggleCapability("output", value)} />}
         </div>
         {isImageModel && <ImageGenerationEditor format={imageApiFormat ?? "openai-image"} modelName={name} value={settings.imageGeneration} onChange={(imageGeneration) => update("imageGeneration", imageGeneration)} onFormatChange={(format) => update("imageApiFormat", format)} />}
         {!isImageModel && visibleOutput.includes("audio") && (apiType === "openai-compatible" || apiType === "google") && <div className="settings-form-grid">
@@ -160,9 +168,9 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
           {videoApiFormat && <label className="is-wide">{t("model.videoApiBaseUrl")}<input value={settings.videoGeneration?.baseUrl ?? ""} onChange={(event) => update("videoGeneration", { ...settings.videoGeneration, baseUrl: event.target.value })} placeholder={t(videoApiFormat === "google-veo" ? "model.videoApiBaseUrlPlaceholderGoogle" : "model.videoApiBaseUrlPlaceholder")} /></label>}
         </div>}
         <div className="settings-subdialog-footer">
-          {model && <button type="button" className="settings-danger-action" onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}
-          <button type="button" className="settings-secondary-action" onClick={onClose}>{t("common.cancel")}</button>
-          <button type="button" className="settings-primary-action" onClick={save}><Save size={15} />{t("model.saveParameters")}</button>
+          {model && <button type="button" className="settings-danger-action" disabled={saving} onClick={remove}><Trash2 size={15} />{t("model.delete")}</button>}
+          <button type="button" className="settings-secondary-action" disabled={saving} onClick={onClose}>{t("common.cancel")}</button>
+          <button type="button" className="settings-primary-action" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle size={15} className="settings-spin" /> : <Save size={15} />}{t("model.saveParameters")}</button>
         </div>
       </div>
     </div>
@@ -262,10 +270,15 @@ export function ModelsSection() {
   const models = provider?.models ?? modelConfigs.filter((config) => config.provider === provider?.id).map((config) => ({ id: config.model, label: config.model, settings: config.config as unknown as ModelSettings }));
   const saveModel = async (model: ProviderModel, previousId?: string) => {
     if (!provider) return;
-    const nextProfiles = profiles.map((item) => item.id === provider.id ? { ...item, models: [...item.models.filter((current) => current.id !== model.id), model], updatedAt: Date.now() } : item);
+    const removePrevious = previousId && previousId !== model.id && await confirmDestructiveAction(t("model.renameCleanupConfirm", { name: previousId }));
+    const config = modelConfigForProvider({ ...provider, updatedAt: Date.now() }, model);
+    const nextProfiles = profiles.map((item) => item.id === provider.id ? { ...item, models: [...item.models.filter((current) => current.id !== model.id && (!removePrevious || current.id !== previousId)), model], updatedAt: config.updatedAt } : item);
+    if (hasDesktopBridge()) {
+      await saveModelConfig({ type: "model.upsert", requestId: crypto.randomUUID(), config }, send);
+      if (removePrevious) await saveModelConfig({ type: "model.delete", requestId: crypto.randomUUID(), id: `${provider.id}/${previousId}` }, send);
+    }
     setProfiles(nextProfiles); saveProviderProfiles(nextProfiles);
-    if (previousId && previousId !== model.id && await confirmDestructiveAction(t("model.renameCleanupConfirm", { name: previousId }))) send({ type: "model.delete", requestId: crypto.randomUUID(), id: `${provider.id}/${previousId}` });
-    send({ type: "model.upsert", requestId: crypto.randomUUID(), config: { id: `${provider.id}/${model.id}`, provider: provider.id, model: model.id, config: { apiType: provider.apiType, baseUrl: provider.baseUrl, ...model.settings }, enabled: true, updatedAt: Date.now() } });
+    if (removePrevious && selectedModelId === `${provider.id}/${previousId}`) setSelectedModel(config.id);
   };
   const deleteModel = (model: ProviderModel) => {
     const nextProfiles = profiles.map((item) => item.id === provider?.id ? { ...item, models: item.models.filter((current) => current.id !== model.id), updatedAt: Date.now() } : item);
@@ -283,7 +296,7 @@ export function ModelsSection() {
           key={model.id}
           id={modelConfigId}
           label={model.label}
-          description={t(providerApiLabelKeys[model.settings?.apiType ?? provider.apiType])}
+          description={t(providerApiLabelKeys[modelApiTypeForProvider(provider, model.settings)])}
           selected={selected}
           onEdit={() => { setEditing(model); setEditorOpen(true); }}
           onSelect={() => setSelectedModel(modelConfigId)}

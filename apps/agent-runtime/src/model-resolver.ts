@@ -19,7 +19,7 @@ export const DEFAULT_MAX_TOKENS = 8_192;
 type PiThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 type ModelThinkingLevel = "off" | PiThinkingLevel;
 type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
-type PiApi = "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
+type PiApi = "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai" | "google-vertex";
 const QUERY_UNSAFE_PI_APIS = new Set<PiApi>([
   "openai-completions",
   "openai-responses",
@@ -98,6 +98,7 @@ function cloneMap(value: Record<string, string | null> | undefined): ThinkingLev
 function apiForProvider(apiType: ProviderApiType, config: ConfigRecord): PiApi {
   if (apiType === "claude") return "anthropic-messages";
   if (apiType === "google") return "google-generative-ai";
+  if (apiType === "google-vertex") return "google-vertex";
   if (apiType === "codex") {
     if (config.codexApi === "openai-codex-responses") return "openai-codex-responses";
     if (config.codexApi === "openai-responses") return "openai-responses";
@@ -266,7 +267,7 @@ function thinkingMapFromMetadata(metadata: ModelMetadata, api: PiApi): ThinkingL
   const map: ThinkingLevelMap = {};
   map.off = values.has("none") || hasToggle ? "none" : null;
   for (const level of ["minimal", "low", "medium", "high", "xhigh", "max"] as const) {
-    if (api === "google-generative-ai" && (level === "xhigh" || level === "max")) {
+    if ((api === "google-generative-ai" || api === "google-vertex") && (level === "xhigh" || level === "max")) {
       map[level] = null;
     } else {
       map[level] = values.has(level) ? level : null;

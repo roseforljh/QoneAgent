@@ -175,6 +175,14 @@ export const runtimeCopyMedia = {
     "en": "Gemini audio/video upload requires an API key",
     "zh-CN": "Gemini 音视频上传需要 API Key"
   },
+  "google-media.vertex_api_key_required": {
+    "en": "Add a Vertex AI API key in the provider settings",
+    "zh-CN": "请在商家配置中填写 Vertex AI API Key"
+  },
+  "google-media.vertex_inline_file_too_large": {
+    "en": "Vertex AI inline media cannot exceed 256 MB per file",
+    "zh-CN": "Vertex AI 内联媒体单个文件不能超过 256 MB"
+  },
   "google-media.gemini_files_api_returned_no_file_uri": {
     "en": "Gemini Files API returned no file URI",
     "zh-CN": "Gemini 文件接口未返回文件 URI"

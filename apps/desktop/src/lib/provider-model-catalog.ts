@@ -3,6 +3,7 @@ import { invoke } from "./desktop-bridge";
 import { hasDesktopBridge } from "../store";
 
 export async function fetchProviderModelCatalog(apiType: ProviderApiType, baseUrl: string, provider: string, enteredKey = ""): Promise<unknown> {
+  if (apiType === "google-vertex") return [];
   const endpoint = modelListUrl(apiType, baseUrl);
   if (!endpoint) throw new Error("Invalid model endpoint");
   const storedKey = !enteredKey && hasDesktopBridge() ? await invoke<string | null>("secret_get", { key: `model.apiKey:${provider}` }).catch(() => null) : null;

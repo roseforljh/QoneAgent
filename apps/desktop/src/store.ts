@@ -436,7 +436,7 @@ export const useStore = create<AgentState>((set, get, api) => {
   })(),
 
   send: (cmd) => {
-    // Browser previews do not expose Tauri's invoke bridge.
+    // 纯浏览器预览环境不暴露 Electron 桌面桥接。
     if (!hasDesktopBridge()) return Promise.resolve(false);
     if (cmd.type === "ping") handshakeRequests.add(cmd.requestId);
     if (cmd.type === "workspace.files" || cmd.type === "workspace.git" || cmd.type === "workspace.gitDiff" || cmd.type === "file.read") {

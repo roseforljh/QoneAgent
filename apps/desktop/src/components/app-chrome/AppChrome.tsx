@@ -112,7 +112,7 @@ export function AppChrome({ path, children }: AppChromeProps) {
             </Menubar.Content></Menubar.Portal>
           </Menubar.Menu>
         </Menubar.Root>
-        <div className="q-app-titlebar-drag" data-tauri-drag-region onDoubleClick={maximize} />
+        <div className="q-app-titlebar-drag" onDoubleClick={maximize} />
         {native && <div className="q-app-window-controls">
           <button type="button" aria-label={label("最小化", "Minimize")} onClick={minimize}><span aria-hidden="true" className="q-app-window-glyph q-app-window-glyph-minimize" /></button>
           <button type="button" aria-label={maximized ? label("还原窗口", "Restore window") : label("最大化", "Maximize")} onClick={maximize}><span aria-hidden="true" className={`q-app-window-glyph q-app-window-glyph-${maximized ? "restore" : "maximize"}`} /></button>

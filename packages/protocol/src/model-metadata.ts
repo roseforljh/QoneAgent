@@ -1,6 +1,7 @@
 import type { ImageApiFormat } from "./image-model";
 
-export type ProviderApiType = "openai-compatible" | "codex" | "claude" | "google";
+export const PROVIDER_API_TYPES = ["openai-compatible", "codex", "claude", "google", "google-vertex"] as const;
+export type ProviderApiType = (typeof PROVIDER_API_TYPES)[number];
 
 export type ModelCapability = "text" | "image" | "video" | "audio" | "pdf";
 

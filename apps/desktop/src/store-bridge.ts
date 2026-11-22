@@ -30,6 +30,7 @@ import type { AgentState } from "./store";
 import { runtimeEvents } from "./lib/runtime-event-payload";
 import { douyinRequests, releaseAllAppOpenCliRequests, releaseAppOpenCliRequest, serveDouyinBridgeRequest, serveAppOpenCliRequest } from "./store/app-bridge";
 import { restoreProviderProfilesFromModelConfigs } from "./lib/model-picker-data";
+import { settleModelConfigSave } from "./lib/model-config-save";
 
 function subagentChange(state: AgentState, subagents: AgentState["subagents"], trackActivity: boolean): Partial<AgentState> {
   return subagents === state.subagents ? state : { subagents, ...(trackActivity ? subagentActivity(state, subagents) : {}) };
@@ -144,6 +145,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       lastSequence = Math.max(lastSequence, msg.event.sequence);
       continue;
     }
+    if (settleModelConfigSave(msg) && msg.type === "error") continue;
     if (msg.type === "model.metadata-resolved") {
       const pending = metadataRequests.get(msg.requestId);
       if (msg.models.every((model) => model.sources && ["contextWindow", "maxTokens", "reasoning", "input", "output"].every((field) => typeof model.sources[field as keyof typeof model.sources] === "string"))) pending?.resolve(msg.models);

@@ -5,14 +5,13 @@ export async function fetchProviderModels({ apiType, piApi, baseUrl, catalogBase
   apiType: ProviderApiType; piApi: Parameters<typeof providerBaseUrl>[1]; baseUrl: string; catalogBaseUrl: string; apiKey?: string;
 }): Promise<unknown> {
   const endpointBase = catalogBaseUrl || providerBaseUrl(apiType, piApi, baseUrl);
-  if (!endpointBase) return [];
+  const url = modelListUrl(apiType, endpointBase);
+  if (!url) return [];
   const headers: Record<string, string> = { Accept: "application/json" };
   if (apiType === "claude") {
     if (apiKey) headers["x-api-key"] = apiKey;
     headers["anthropic-version"] = "2023-06-01";
   } else if (apiType !== "google" && apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const url = modelListUrl(apiType, endpointBase);
-  if (!url) return [];
   const requestUrl = new URL(url);
   if (apiType === "google" && apiKey) requestUrl.searchParams.set("key", apiKey);
   const controller = new AbortController();

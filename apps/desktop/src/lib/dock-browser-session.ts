@@ -7,8 +7,7 @@ export interface BrowserBounds {
   h: number;
 }
 
-// Webview creation and destruction must stay serialized because Tauri mutates
-// the parent window's child list. Each session still owns its own native child.
+// 子视图创建与销毁需串行执行，避免并发修改父窗口子视图列表；每个会话各自拥有独立的原生子视图。
 let nativeQueue: Promise<unknown> = Promise.resolve();
 
 function enqueue(operation: () => Promise<unknown>) {

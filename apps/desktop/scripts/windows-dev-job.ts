@@ -25,7 +25,7 @@ export function ownWindowsDevProcesses() {
     const error = api.GetLastError();
     api.CloseHandle(job);
     kernel.close();
-    throw new Error(`Unable to supervise Tauri development processes: ${error}`);
+    throw new Error(`Unable to supervise Electron development processes: ${error}`);
   }
 
   // Keep both the library and handle alive until the launcher exits. Closing

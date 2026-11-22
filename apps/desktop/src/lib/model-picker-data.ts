@@ -1,4 +1,4 @@
-import { detectImageModel, type ImageApiFormat, type ModelConfigInfo, type ModelMetadata, type ProviderApiType } from "@qone/protocol";
+import { detectImageModel, PROVIDER_API_TYPES, type ImageApiFormat, type ModelConfigInfo, type ModelMetadata, type ProviderApiType } from "@qone/protocol";
 import { defaultModelSettings, withProviderInputDefaults, type ModelSettings, type ProviderModel, type ProviderProfile } from "./model-settings";
 
 export const PROVIDERS_STORAGE_KEY = "qone-model-providers";
@@ -8,24 +8,26 @@ export const MODEL_CONFIG_CHANGE_EVENT = "qone-model-config-change";
 export type PickerProvider = { id: string; name: string; models: { id: string; label: string }[] };
 export type PickerModel = { id: string; modelName: string; label: string; detail: string };
 
-const providerApiTypes = new Set<ProviderApiType>(["openai-compatible", "codex", "claude", "google"]);
+const providerApiTypes = new Set<ProviderApiType>(PROVIDER_API_TYPES);
 
 /** Rebuild a profile from the durable runtime records when origin storage is empty. */
 export function providerProfilesFromModelConfigs(configs: ModelConfigInfo[]): ProviderProfile[] {
   const grouped = new Map<string, { models: ProviderModel[]; apiType: ProviderApiType; baseUrl: string; updatedAt: number }>();
   for (const config of configs) {
     if (!config.enabled) continue;
-    const saved = config.config ?? {};
+    const { baseUrl, providerApiType, apiType: savedApiType, displayName, ...saved } = config.config ?? {};
+    const modelApiType = providerApiTypes.has(savedApiType as ProviderApiType) ? savedApiType as ProviderApiType : undefined;
     const current = grouped.get(config.provider) ?? {
       models: [],
-      apiType: providerApiTypes.has(saved.apiType as ProviderApiType) ? saved.apiType as ProviderApiType : "openai-compatible",
-      baseUrl: typeof saved.baseUrl === "string" ? saved.baseUrl : "",
+      apiType: providerApiTypes.has(providerApiType as ProviderApiType) ? providerApiType as ProviderApiType : modelApiType ?? "openai-compatible",
+      baseUrl: typeof baseUrl === "string" ? baseUrl : "",
       updatedAt: config.updatedAt,
     };
+    const apiType = current.apiType === "google-vertex" ? current.apiType : modelApiType ?? current.apiType;
     const detectedImage = detectImageModel({
       model: config.model,
       provider: config.provider,
-      apiType: typeof saved.apiType === "string" ? saved.apiType : undefined,
+      apiType,
       imageApiFormat: typeof saved.imageApiFormat === "string" ? saved.imageApiFormat as ImageApiFormat : undefined,
       input: Array.isArray(saved.input) ? saved.input as string[] : undefined,
       output: Array.isArray(saved.output) ? saved.output as string[] : undefined,
@@ -33,23 +35,22 @@ export function providerProfilesFromModelConfigs(configs: ModelConfigInfo[]): Pr
       manualOutput: recordBoolean(saved.metadataOverrides, "output"),
       metadata: saved.modelMetadata && typeof saved.modelMetadata === "object" ? saved.modelMetadata as ModelMetadata : undefined,
     });
-    const manualInput = recordBoolean(saved.metadataOverrides, "input");
     const manualOutput = recordBoolean(saved.metadataOverrides, "output");
     const settings = withProviderInputDefaults({
-      ...defaultModelSettings(current.apiType),
+      ...defaultModelSettings(apiType),
       ...saved,
       ...(detectedImage.isImageModel ? {
         ...(manualOutput ? {} : { output: ["image"] }),
       } : {}),
-      apiType: providerApiTypes.has(saved.apiType as ProviderApiType) ? saved.apiType as ProviderApiType : current.apiType,
-    } as ModelSettings, providerApiTypes.has(saved.apiType as ProviderApiType) ? saved.apiType as ProviderApiType : current.apiType);
+      apiType,
+    } as ModelSettings, apiType);
     current.models.push({
       id: config.model,
-      label: typeof saved.displayName === "string" && saved.displayName ? saved.displayName : config.model,
+      label: typeof displayName === "string" && displayName ? displayName : config.model,
       settings,
     });
     current.updatedAt = Math.max(current.updatedAt, config.updatedAt);
-    if (!current.baseUrl && typeof saved.baseUrl === "string") current.baseUrl = saved.baseUrl;
+    if (!current.baseUrl && typeof baseUrl === "string") current.baseUrl = baseUrl;
     grouped.set(config.provider, current);
   }
   return [...grouped.entries()].map(([id, value]) => ({

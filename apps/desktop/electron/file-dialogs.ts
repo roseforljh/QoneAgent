@@ -59,7 +59,7 @@ export async function pickAttachmentFolder(
   return getAttachmentInfo(result.filePaths[0]);
 }
 
-// asset:// serves only files the renderer authorized (Tauri's asset scope). Windows paths are case-insensitive.
+// asset:// 仅允许访问渲染进程已授权的文件，Windows 路径不区分大小写。
 const authorizedAssets = new Set<string>();
 const assetKey = (filePath: string) => {
   const resolved = path.resolve(filePath);

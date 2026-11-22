@@ -342,7 +342,7 @@ function startDesktop(): void {
       if (process.platform === "win32" && filePath.startsWith("/")) {
         filePath = filePath.slice(1);
       }
-      // Only files the renderer authorized for preview, as Tauri's asset scope did; dock web pages share this session.
+      // 仅允许访问渲染进程已授权预览的文件，内置浏览器页共享同一 session。
       if (!isAuthorizedAsset(filePath)) return new Response("Forbidden", { status: 403 });
       const range = request.headers.get("Range");
       if (range) return localRangeResponse(filePath, range, request.method);

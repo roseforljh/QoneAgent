@@ -3,7 +3,7 @@ import type { MessageAttachmentInfo } from "@qone/protocol";
 import { createLogger } from "@qone/shared";
 import { runtimeText } from "./runtime-localization";
 import { canProcessMediaAttachment, configuredCapabilities, mediaCapabilitiesContext } from "./media-capabilities";
-import { googleMediaContent } from "./google-media";
+import { googleMediaContent, isGoogleGeminiApi } from "./google-media";
 import { imageContent, materializeModelInputs, promptWithAttachments } from "./pi-attachments";
 import { parseAutomaticMediaDelegation } from "./pi-message-utils";
 import { withMediaPhaseReporter } from "./media-phase";
@@ -27,7 +27,7 @@ export async function promptPiRun(input: {
 }): Promise<void> {
   const { sessionId, runId, message, session, opts, capabilities, signal } = input;
   const selectedModel = session.agent.state.model;
-  const isGoogle = selectedModel?.api === "google-generative-ai";
+  const isGoogle = isGoogleGeminiApi(selectedModel?.api);
   const isCompletions = selectedModel?.api === "openai-completions";
   const attachments = opts.attachments;
   const missingAttachmentInput = capabilities && attachments?.some(attachment => !canProcessMediaAttachment(selectedModel!.api, capabilities.input, attachment));

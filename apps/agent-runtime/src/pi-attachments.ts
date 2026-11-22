@@ -3,7 +3,7 @@ import type { CompactionEntry, FileEntry } from "@earendil-works/pi-coding-agent
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { readFile } from "node:fs/promises";
 import { parseMcpCommand, type MessageAttachmentInfo } from "@qone/protocol";
-import { googleMediaContent, localMediaMarker } from "./google-media.js";
+import { googleMediaContent, isGoogleGeminiApi, localMediaMarker } from "./google-media.js";
 import type { MediaCapability } from "./media-capabilities.js";
 
 export interface PersistedPiMessage {
@@ -175,7 +175,7 @@ export function createPiSessionEntries(
     if (message.role === "assistant" && !model) continue;
     const id = crypto.randomUUID();
     const base = { type: "message" as const, id, parentId, timestamp: new Date(message.createdAt).toISOString() };
-    const isGoogle = model?.api === "google-generative-ai";
+    const isGoogle = isGoogleGeminiApi(model?.api);
     const isCompletions = model?.api === "openai-completions";
     const images = isGoogle ? googleMediaContent(message.attachments, allowedInput)
       : [...imageContent(message.attachments, allowedInput), ...(isCompletions ? googleMediaContent(message.attachments?.filter((item) => item.mimeType.startsWith("audio/")), allowedInput) : [])];

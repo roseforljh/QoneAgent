@@ -11,6 +11,7 @@ export type WireTool = { name: string; declaration: RecordValue; key: string; pa
 export function wireTools(api: Api, payload: unknown): WireTool[] {
   const body = record(payload);
   if (!body) return [];
+  const google = api === "google-generative-ai" || api === "google-vertex";
   const found: WireTool[] = [];
   function visit(tools: unknown, path: string, scope = "") {
     list(tools).forEach((entry, index) => {
@@ -21,7 +22,7 @@ export function wireTools(api: Api, payload: unknown): WireTool[] {
       visit(item.functionDeclarations, `${at}.functionDeclarations`, scope);
       const fn = record(item.function);
       const declaration = fn ?? item;
-      const key = api === "anthropic-messages" ? "input_schema" : api === "google-generative-ai"
+      const key = api === "anthropic-messages" ? "input_schema" : google
         ? (Object.hasOwn(declaration, "parametersJsonSchema") ? "parametersJsonSchema" : "parameters") : "parameters";
       const schema = record(declaration[key]);
       if (typeof declaration.name === "string" && schema) {
@@ -29,7 +30,7 @@ export function wireTools(api: Api, payload: unknown): WireTool[] {
       }
     });
   }
-  visit(api === "google-generative-ai" ? record(body.config)?.tools : body.tools, "tools");
+  visit(google ? record(body.config)?.tools : body.tools, "tools");
   for (const key of ["messages", "input"]) list(body[key]).forEach((item, index) => visit(record(item)?.tools, `${key}[${index}].tools`));
   return found;
 }

@@ -24,10 +24,33 @@ export function isCodexSubscriptionEndpoint(value: string): boolean {
   }
 }
 
+export const VERTEX_AI_DEFAULT_BASE_URL = "https://aiplatform.googleapis.com/v1";
+
+/** Google publishes distinct hosts for global, locational and multi-region endpoints. */
+export function vertexProjectBaseUrl(projectId: string, location: string): string {
+  const project = projectId.trim();
+  const region = location.trim().toLowerCase();
+  if (!/^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|[1-9][0-9]*)$/.test(project) || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(region)) return "";
+  const url = new URL(VERTEX_AI_DEFAULT_BASE_URL);
+  if (region === "us" || region === "eu") url.hostname = `aiplatform.${region}.rep.googleapis.com`;
+  else if (region !== "global") url.hostname = `${region}-${url.hostname}`;
+  url.pathname += `/projects/${project}/locations/${region}`;
+  return url.href;
+}
+
+/** Round-trip official project URLs; retain non-matching legacy endpoints as custom URLs. */
+export function vertexProjectFromBaseUrl(baseUrl: string): { projectId: string; location: string } | undefined {
+  const match = /\/v1\/projects\/([^/]+)\/locations\/([^/]+)$/.exec(baseUrl);
+  if (!match) return;
+  const [, projectId, location] = match;
+  if (vertexProjectBaseUrl(projectId, location) === baseUrl) return { projectId, location };
+}
+
 /** Domain-only input uses the provider default; explicit proxy paths stay intact. */
 export function modelBaseUrl(apiType: string, value: string): string {
   const base = value.trim().replace(/\/+$/, "");
-  if (!base) return "";
+  const isVertex = apiType === "google-vertex";
+  if (!base) return isVertex ? VERTEX_AI_DEFAULT_BASE_URL : "";
   // The settings UI accepts a bare host (for example `api.openai.com/v1`).
   // URL treats `host:port` as a custom protocol, so add the scheme before
   // parsing instead of making valid local/proxy endpoints fail silently.
@@ -42,6 +65,11 @@ export function modelBaseUrl(apiType: string, value: string): string {
     /\/(?:chat\/completions|responses|codex\/responses|messages|interactions|models(?:\/[^/]+)?)\/?$/i,
     "",
   );
+  if (isVertex) {
+    // Pi appends publishers/google/models/{id}; retain only the optional project/location prefix.
+    url.pathname = url.pathname.replace(/\/publishers\/google\/?$/i, "");
+    url.search = "";
+  }
   // The Anthropic SDK always appends `/v1/messages` to its base URL. Keep the
   // user-facing input flexible (`host`, `/v1`, or `/v1/messages`) while
   // storing only the prefix that the SDK expects at runtime.
@@ -61,6 +89,8 @@ export function modelBaseUrl(apiType: string, value: string): string {
 
 /** Build the provider model-directory URL without corrupting query strings. */
 export function modelListUrl(apiType: string, value: string): string {
+  // Vertex Express does not expose a model directory; project models are not a Gemini directory either.
+  if (apiType === "google-vertex") return "";
   const base = modelBaseUrl(apiType, value);
   if (!base) return "";
   const url = new URL(base);

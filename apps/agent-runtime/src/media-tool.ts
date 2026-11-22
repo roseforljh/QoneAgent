@@ -6,7 +6,7 @@ import { mkdtemp, stat } from "node:fs/promises";
 import { qoneTemporaryDir } from "@qone/shared";
 import path from "node:path";
 import { downloadBilibiliOpenCli, isBilibiliUrl, readBilibiliFallback } from "./bilibili-fallback.js";
-import { localMediaMarker, youtubeUrlsFromText } from "./google-media.js";
+import { isGoogleGeminiApi, localMediaMarker, youtubeUrlsFromText } from "./google-media.js";
 import { configuredCapabilities } from "./media-capabilities.js";
 import { videoAttachmentsAsAudio } from "./media-attachments.js";
 import { extractVideoFrames, videoAttachmentFrames, videoDuration } from "./video-frames.js";
@@ -157,7 +157,7 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
         throw runtimeError("media-tool.the_current_model_or_api_format_cannot_read_audio", {});
       }
       const url = request.url.trim();
-      if (model.api === "google-generative-ai" && youtubeUrlsFromText(url).includes(url) && mode === "video") throw runtimeError("media-tool.gemini_can_recognize_youtube_urls_directly_no_download_is", {});
+      if (isGoogleGeminiApi(model.api) && youtubeUrlsFromText(url).includes(url) && mode === "video") throw runtimeError("media-tool.gemini_can_recognize_youtube_urls_directly_no_download_is", {});
       let downloaded: Awaited<ReturnType<typeof downloadVideo>>;
       let source = "yt-dlp";
       if (isDouyinUrl(url)) {

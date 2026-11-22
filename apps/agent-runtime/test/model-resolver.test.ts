@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeCommand, modelBaseUrl, modelListUrl, parseModelMetadataResponse } from "@qone/protocol";
+import { decodeCommand, modelBaseUrl, modelListUrl, parseModelMetadataResponse, vertexProjectBaseUrl, vertexProjectFromBaseUrl } from "@qone/protocol";
 import { ModelMetadataResolver } from "../src/model-resolver.js";
 
 const baseConfig = (apiType: string, extra: Record<string, unknown> = {}) => ({
@@ -158,7 +158,7 @@ describe("model metadata resolver", () => {
   });
 
   test("validates batched settings metadata requests", () => {
-    expect(decodeCommand(JSON.stringify({ type: "model.resolve-metadata", requestId: "r1", provider: "merchant", apiType: "google", baseUrl: "https://example.test", models: [{ id: "gemini-demo", metadata: { contextWindow: 123_456 } }] }))).toMatchObject({ type: "model.resolve-metadata", models: [{ id: "gemini-demo", metadata: { contextWindow: 123_456 } }] });
+    expect(decodeCommand(JSON.stringify({ type: "model.resolve-metadata", requestId: "r1", provider: "merchant", apiType: "google-vertex", baseUrl: "https://example.test", models: [{ id: "gemini-demo", metadata: { contextWindow: 123_456 } }] }))).toMatchObject({ type: "model.resolve-metadata", apiType: "google-vertex", models: [{ id: "gemini-demo", metadata: { contextWindow: 123_456 } }] });
     expect(decodeCommand(JSON.stringify({ type: "model.resolve-metadata", requestId: "r2", provider: "merchant", apiType: "google", baseUrl: "https://example.test", models: [] }))).toBeNull();
   });
 
@@ -183,7 +183,7 @@ describe("model metadata resolver", () => {
     expect(result.sources.maxTokens).toBe("config");
   });
 
-  test("maps all four UI API types to Pi APIs and endpoint semantics", async () => {
+  test("maps UI API types to Pi APIs and endpoint semantics", async () => {
     const resolver = new ModelMetadataResolver({ disableModelsDev: true });
     const cases = [
       ["openai-compatible", "openai-completions", "https://provider.example.test/v1"],
@@ -192,6 +192,7 @@ describe("model metadata resolver", () => {
       // the host/prefix even when the user enters a copied /v1 URL.
       ["claude", "anthropic-messages", "https://provider.example.test"],
       ["google", "google-generative-ai", "https://provider.example.test/v1beta"],
+      ["google-vertex", "google-vertex", "https://aiplatform.googleapis.com/v1"],
     ] as const;
     for (const [apiType, api, baseUrl] of cases) {
       const result = await resolver.resolve({
@@ -466,6 +467,23 @@ describe("model metadata resolver", () => {
     expect(result.contextWindow).toBe(222_222);
   });
 
+  test("builds and restores the official Vertex project endpoints from form fields", () => {
+    const projectId = "test-project";
+    for (const [location, host] of [
+      ["global", "aiplatform.googleapis.com"],
+      ["asia-northeast1", "asia-northeast1-aiplatform.googleapis.com"],
+      ["eu", "aiplatform.eu.rep.googleapis.com"],
+      ["us", "aiplatform.us.rep.googleapis.com"],
+    ]) {
+      const baseUrl = vertexProjectBaseUrl(` ${projectId} `, location!);
+      expect(baseUrl).toBe(`https://${host}/v1/projects/${projectId}/locations/${location}`);
+      expect(vertexProjectFromBaseUrl(baseUrl)).toEqual({ projectId, location });
+    }
+    expect(vertexProjectBaseUrl("test/project", "global")).toBe("");
+    expect(vertexProjectBaseUrl(projectId, "asia-northeast1.example.com")).toBe("");
+    expect(vertexProjectFromBaseUrl("https://proxy.test/v1/projects/test-project/locations/global")).toBeUndefined();
+  });
+
   test("normalizes bare hosts and complete endpoint URLs", () => {
     expect(modelBaseUrl("openai-compatible", "api.example.test")).toBe("https://api.example.test/v1");
     expect(modelBaseUrl("openai-compatible", "localhost:8080/v1/chat/completions")).toBe("http://localhost:8080/v1");
@@ -473,6 +491,8 @@ describe("model metadata resolver", () => {
     expect(modelBaseUrl("claude", "https://proxy.example.test/anthropic/v1/messages")).toBe("https://proxy.example.test/anthropic");
     expect(modelBaseUrl("google", "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent")).toBe("https://generativelanguage.googleapis.com/v1beta");
     expect(modelBaseUrl("google", "https://generativelanguage.googleapis.com/v1beta/interactions")).toBe("https://generativelanguage.googleapis.com/v1beta");
+    expect(modelBaseUrl("google-vertex", "")).toBe("https://aiplatform.googleapis.com/v1");
+    expect(modelListUrl("google-vertex", "")).toBe("");
     expect(modelListUrl("openai-compatible", "https://api.example.test/v1?tenant=demo")).toBe("https://api.example.test/v1/models?tenant=demo");
     expect(modelListUrl("claude", "https://api.anthropic.com")).toBe("https://api.anthropic.com/v1/models");
   });

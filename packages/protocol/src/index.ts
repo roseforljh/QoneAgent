@@ -13,7 +13,7 @@ export type { SiteConfig } from "./site-config";
 export { isDouyinUrl, douyinContentId, douyinAuthorId, isDouyinAuthorResult, isDouyinOwnerResult } from "./douyin";
 export type { DouyinAuthorResult, DouyinAuthorVideo, DouyinOwnerResult, DouyinBridgeFailure } from "./douyin";
 import type { DouyinBridgeFailure } from "./douyin";
-import type { ModelMetadata, ProviderApiType } from "./model-metadata";
+import { PROVIDER_API_TYPES, type ModelMetadata, type ProviderApiType } from "./model-metadata";
 import type { AssistantMessagePart } from "./assistant-parts";
 export { ACTIVITY_TITLE_TOOL, ACTIVITY_TITLE_MAX_LENGTH, activityTitleFromArgs } from "./activity-title";
 import type { FilePreviewInfo } from "./file-preview";
@@ -66,7 +66,7 @@ export const GENERATIVE_UI_COMPONENTS = [
   "Col", "Row", "Spacer", "Badge", "Box", "ListView",
   "ListViewItem", "Table", "Markdown", "Chart", "Alert", "Icon",
 ] as const;
-export { isCodexSubscriptionEndpoint, modelBaseUrl, modelListUrl } from "./model-endpoint";
+export { isCodexSubscriptionEndpoint, modelBaseUrl, modelListUrl, VERTEX_AI_DEFAULT_BASE_URL, vertexProjectBaseUrl, vertexProjectFromBaseUrl } from "./model-endpoint";
 export { fileMimeTypeFromName, mediaMimeTypeFromName } from "./media-mime";
 export {
   mergeModelMetadata,
@@ -76,6 +76,7 @@ export {
   normalizeParameterName,
   parseModelMetadata,
   parseModelMetadataResponse,
+  PROVIDER_API_TYPES,
 } from "./model-metadata";
 export type {
   ModelCapability,
@@ -329,7 +330,7 @@ export type RuntimeEvent =
   | { type: "permission.updated"; rule: PermissionRuleInfo }
   | { type: "model.list"; configs: ModelConfigInfo[] }
   | { type: "model.metadata-resolved"; requestId: string; models: { id: string; metadata: ModelMetadata; thinkingLevels: string[]; sources: ModelMetadataSources }[] }
-  | { type: "model.updated"; config: ModelConfigInfo }
+  | { type: "model.updated"; requestId?: string; config: ModelConfigInfo }
   | { type: "events.replay"; events: AgentEvent[] }
   | { type: "secret.saved"; requestId: string }
   | { type: "agent.event"; event: AgentEvent }
@@ -812,11 +813,13 @@ export interface McpOAuthInfo {
 export type PermissionDecision = "allow" | "ask" | "deny";
 export type RunPermissionMode = "ask" | "auto" | "full";
 export type RunThinkingLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+const GEMINI_THINKING_LEVELS = ["none", "minimal", "low", "medium", "high"] as const;
 const API_THINKING_LEVELS: Record<ProviderApiType, readonly RunThinkingLevel[]> = {
   "openai-compatible": ["none", "low", "medium", "high"],
   codex: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
   claude: ["none", "low", "medium", "high", "max"],
-  google: ["none", "minimal", "low", "medium", "high"],
+  google: GEMINI_THINKING_LEVELS,
+  "google-vertex": GEMINI_THINKING_LEVELS,
 };
 
 export function thinkingLevelsForApi(apiType: ProviderApiType = "openai-compatible"): readonly RunThinkingLevel[] {
@@ -1010,7 +1013,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "mcp.oauth.begin": z.object({ type: z.literal("mcp.oauth.begin"), ...request, serverId: id }),
   "mcp.oauth.complete": z.object({ type: z.literal("mcp.oauth.complete"), ...request, serverId: id, code: id, state: id, iss: secureUrl.optional() }),
   "model.list": z.object({ type: z.literal("model.list"), ...request }),
-  "model.resolve-metadata": z.object({ type: z.literal("model.resolve-metadata"), ...request, provider: id, apiType: z.enum(["openai-compatible", "codex", "claude", "google"]), baseUrl: z.string().max(2048), models: z.array(z.object({ id, metadata: z.record(z.string(), z.unknown()).optional() })).min(1).max(500) }),
+  "model.resolve-metadata": z.object({ type: z.literal("model.resolve-metadata"), ...request, provider: id, apiType: z.enum(PROVIDER_API_TYPES), baseUrl: z.string().max(2048), models: z.array(z.object({ id, metadata: z.record(z.string(), z.unknown()).optional() })).min(1).max(500) }),
   "model.upsert": z.object({ type: z.literal("model.upsert"), ...request, config: z.object({ id: id.optional(), provider: id, model: id, config: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), updatedAt: z.number().optional() }) }),
   "model.delete": z.object({ type: z.literal("model.delete"), ...request, id }),
   "events.replay": z.object({ type: z.literal("events.replay"), ...request, sessionId: id.optional(), afterSequence: z.number().optional() }),

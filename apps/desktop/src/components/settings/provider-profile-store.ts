@@ -1,13 +1,14 @@
 import { PROVIDERS_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT } from "../../lib/model-picker-data";
 import { requestModelMetadata } from "../../store";
-import { modelListUrl, type ProviderApiType } from "@qone/protocol";
-import { withResolvedModelSettings, type ProviderModel, type ProviderProfile } from "../../lib/model-settings";
+import { modelBaseUrl, modelListUrl, type ProviderApiType } from "@qone/protocol";
+import { modelApiTypeForProvider, withResolvedModelSettings, type ProviderModel, type ProviderProfile } from "../../lib/model-settings";
 
 export const providerApiLabelKeys = {
   "openai-compatible": "provider.openaiCompatible",
   codex: "provider.codex",
   claude: "provider.claude",
   google: "provider.google",
+  "google-vertex": "provider.vertexAi",
 } as const;
 
 export function loadProviderProfiles(): ProviderProfile[] {
@@ -32,9 +33,8 @@ export function normalizeBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, "");
 }
 
-export function modelsEndpoint(apiType: ProviderApiType, baseUrl: string) {
-  if (!baseUrl.trim()) return "";
-  try { return modelListUrl(apiType, baseUrl); } catch { return ""; }
+export function providerEndpointPreview(apiType: ProviderApiType, baseUrl: string) {
+  try { return apiType === "google-vertex" ? modelBaseUrl(apiType, baseUrl) : modelListUrl(apiType, baseUrl); } catch { return ""; }
 }
 
 export async function resolveModelSettings(provider: ProviderProfile, models: ProviderModel[]): Promise<ProviderModel[]> {
@@ -42,7 +42,7 @@ export async function resolveModelSettings(provider: ProviderProfile, models: Pr
   const resolved = [] as Awaited<ReturnType<typeof requestModelMetadata>>;
   const byApiType = new Map<ProviderApiType, ProviderModel[]>();
   for (const model of models) {
-    const apiType = model.settings?.apiType ?? provider.apiType;
+    const apiType = modelApiTypeForProvider(provider, model.settings);
     byApiType.set(apiType, [...(byApiType.get(apiType) ?? []), model]);
   }
   for (const [apiType, apiModels] of byApiType) {
