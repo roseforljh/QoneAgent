@@ -90,7 +90,8 @@ if (dbDir !== ".") mkdirSync(dbDir, { recursive: true });
 const db = openDb(dbPath);
 // Configuration lives in editable JSON files; SQLite keeps only conversation and runtime data.
 const settingsFile = new ConfigFile(qoneSettingsPath(), validateSettings);
-const stateFile = new ConfigFile(qoneStatePath());
+// 内部缓存文件采用紧凑 JSON 且无需每次写入前重读磁盘，避免 10MB+ MCP 工具缓存反复同步读写。
+const stateFile = new ConfigFile(qoneStatePath(), undefined, { compact: true, reloadBeforeWrite: false });
 if (settingsFile.error) log.warn("settings.json is invalid; configuration changes wait until it is fixed", { err: settingsFile.error.message });
 else {
   for (const section of ["mcpServers", "models", "permissions", "preferences"]) if (!settingsFile.read(section)) settingsFile.write(section, {});
@@ -382,8 +383,7 @@ const adapter = new PiAdapter((event) => eventBus.emit({
       if (!value) return undefined;
       try { return JSON.parse(value); } catch { return undefined; }
     };
-    const history: WebAccessObservation[] = toolCallRepo.listBySession(sessionId)
-      .filter((call) => call.status === "success" || call.status === "failed")
+    const history: WebAccessObservation[] = toolCallRepo.listWebAccessBySession(sessionId)
       .map((call) => ({
         toolName: call.toolName,
         args: parse(call.arguments),
@@ -440,10 +440,14 @@ const adapter = new PiAdapter((event) => eventBus.emit({
     }
   },
   onAutomaticCompaction: (sessionId, runId, context) => {
-    const history = messageRepo.listBySession(sessionId);
+    const history = messageRepo.listMetaBySession(sessionId).map((message) => ({
+      ...message,
+      rawMessage: Boolean(message.hasRawMessage),
+    }));
     const boundary = automaticCompactionBoundary(history, runId, initialUserMessageSeen.has(runId), assistantRawMessagesByRun.get(runId)?.length ?? 0);
     if (!boundary) throw new Error("Could not locate the compacted session's history boundary");
     settingsRepo.set(`compaction:${sessionId}`, { ...boundary, context } satisfies SessionCompactionCheckpoint);
+    messageRepo.pruneCompactedRawMessages(sessionId, boundary.throughMessageId);
   },
   onCustomEntry: (sessionId, entry) => {
     const entries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
@@ -459,14 +463,19 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   const subagent = subagentRunRepo.getByExecutionSession(sessionId);
   // A running prompt already comes from adapter.run, not from its SQLite row.
   if (subagent) return subagentController.restoreMessages(subagent.runId);
-  const history = messageRepo.listBySession(sessionId)
+  const checkpoint = settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`);
+  const { rows, slicedAfterBoundary } = messageRepo.listForContextRestore(sessionId, checkpoint?.throughMessageId);
+  const restoredRows = rows
     .filter((message) => message.runId !== currentRunId)
     .map(({ id, role, content, runId, communication, attachments, rawMessage, createdAt }) => ({
       id, role, content, runId, communication, createdAt,
       attachments: attachments ? JSON.parse(attachments) : undefined,
       rawMessage: rawMessage ? JSON.parse(rawMessage) : undefined,
     }));
-  const compacted = restoreCompactedContext(history, settingsRepo.get<SessionCompactionCheckpoint>(`compaction:${sessionId}`));
+  const history = slicedAfterBoundary && checkpoint
+    ? [{ id: checkpoint.throughMessageId, role: "user", content: "", runId: null, communication: null, createdAt: 0 }, ...restoredRows]
+    : restoredRows;
+  const compacted = restoreCompactedContext(history, checkpoint);
   const customEntries = settingsRepo.get<unknown[]>(`codemode.entries:${sessionId}`) ?? [];
   return [...compacted, ...customEntries.map((rawMessage) => ({ role: "custom", content: "", createdAt: Date.now(), rawMessage }))];
 }, compactionPreferences, douyinBridge, appMediaService, embeddedOpenCli);
@@ -494,9 +503,9 @@ subagentController = registerSubagentDispatcher({
   config: () => subagentConfig,
   partsByRun: assistantPartsByRun, messageSequenceByRun: assistantMessageSequenceByRun,
   assistantBuffers, streamBuffers: assistantStreamBuffers, subagentStreams, activeSubagents,
-  contextProvider: (sessionId, limit) => messageRepo.listBySession(sessionId).slice(-limit).map((message) => `${message.role}: ${message.content}`).join("\n\n"),
+  contextProvider: (sessionId, limit) => messageRepo.listMetaBySession(sessionId).slice(-limit).map((message) => `${message.role}: ${message.content}`).join("\n\n"),
   subagentContextProvider: (runId, limit) => subagentRunRepo.listMessages(runId).slice(-limit).map((message) => `${message.role}: ${message.content}`).join("\n\n"),
-  attachmentsProvider: (sessionId, runId) => messageRepo.listBySession(sessionId).flatMap((message) =>
+  attachmentsProvider: (sessionId, runId) => messageRepo.listMetaBySession(sessionId).flatMap((message) =>
     message.runId === runId && message.role === "user" && message.attachments ? JSON.parse(message.attachments) as MessageAttachmentInfo[] : []),
   runtime: () => subagentConfig.runtime,
   acknowledge: (runId) => subagentNotificationCoordinator?.acknowledge(runId),
@@ -768,7 +777,7 @@ function sendSubagentNotifications(sessionId: string, sendEvent: typeof send = s
 }
 
 function sendMessages(sessionId: string, requestId?: string, sendEvent: typeof send = send) {
-  const history = messageRepo.listBySession(sessionId);
+  const history = messageRepo.listForDisplay(sessionId);
   const messageIds = new Set(history.map((message) => message.id));
   const compactions = eventRepo.listCompactions(sessionId).filter((marker) => messageIds.has(marker.throughMessageId));
   const activeRun = runRepo.listBySession(sessionId).find((run) => ["created", "running", "waiting_approval", "paused"].includes(run.status));

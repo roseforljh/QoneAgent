@@ -19,7 +19,11 @@ export class ConfigFile {
   /** Set while the file on disk cannot be parsed; writes wait so the broken edit is never overwritten. */
   error?: Error;
 
-  constructor(readonly file: string, private validate: (data: Json) => void = () => {}) {
+  constructor(
+    readonly file: string,
+    private validate: (data: Json) => void = () => {},
+    private options: { compact?: boolean; reloadBeforeWrite?: boolean } = {},
+  ) {
     try { this.load(); }
     catch (error) { this.error = error instanceof Error ? error : new Error(String(error)); }
   }
@@ -37,10 +41,15 @@ export class ConfigFile {
 
   snapshot(): Json { return structuredClone(this.data); }
   read<T = unknown>(section: string): T | undefined { return structuredClone(this.data[section]) as T | undefined; }
+  /** 仅克隆单个键，避免读取大缓存文件（如 state.json）时整段深拷贝数 MB 对象。 */
+  readKey<T = unknown>(section: string, key: string): T | undefined {
+    const entries = this.data[section];
+    return isObject(entries) ? structuredClone(entries[key]) as T | undefined : undefined;
+  }
 
   /** Reload first so a local save cannot overwrite an external edit waiting for the watcher. */
   update<T>(section: string, change: (current: T | undefined) => unknown) {
-    this.reload();
+    if (this.options.reloadBeforeWrite !== false) this.reload();
     if (this.error) throw new Error(`${path.basename(this.file)} has a syntax error or invalid setting; fix it before saving: ${this.error.message}`);
     const next = { ...this.data };
     const value = change(this.read<T>(section));
@@ -48,11 +57,29 @@ export class ConfigFile {
     this.save(next);
   }
 
+  /** 仅更新 section 中的单个键，避免对整个 section 执行两次 structuredClone。 */
+  setKey(section: string, key: string, value: unknown) {
+    if (this.options.reloadBeforeWrite !== false) this.reload();
+    if (this.error) throw new Error(`${path.basename(this.file)} has a syntax error or invalid setting; fix it before saving: ${this.error.message}`);
+    const current = isObject(this.data[section]) ? this.data[section] as Json : {};
+    const nextSection: Json = { ...current, [key]: structuredClone(value) };
+    this.save({ ...this.data, [section]: nextSection });
+  }
+
+  deleteKey(section: string, key: string) {
+    if (this.options.reloadBeforeWrite !== false) this.reload();
+    if (this.error) throw new Error(`${path.basename(this.file)} has a syntax error or invalid setting; fix it before saving: ${this.error.message}`);
+    const current = isObject(this.data[section]) ? this.data[section] as Json : {};
+    if (!(key in current)) return;
+    const { [key]: _removed, ...rest } = current;
+    this.save({ ...this.data, [section]: rest });
+  }
+
   /** Atomic replace of one top-level section, leaving every other key as written. */
   write(section: string, value: unknown) { this.update(section, () => value); }
 
   private save(next: Json) {
-    const text = `${JSON.stringify(next, null, 2)}\n`;
+    const text = this.options.compact ? `${JSON.stringify(next)}\n` : `${JSON.stringify(next, null, 2)}\n`;
     if (text === this.lastText && existsSync(this.file)) return;
     mkdirSync(path.dirname(this.file), { recursive: true });
     const staging = `${this.file}.${process.pid}.tmp`;
@@ -123,9 +150,9 @@ export interface PreferenceStore {
 export class PreferencesRepo implements PreferenceStore {
   constructor(private file: ConfigFile, private section = "preferences") {}
   get error() { return this.file.error; }
-  get<T = unknown>(key: string): T | undefined { return this.file.read<Json>(this.section)?.[key] as T | undefined; }
-  set(key: string, value: unknown) { this.file.update<Json>(this.section, entries => ({ ...entries, [key]: value })); }
-  delete(key: string) { this.file.update<Json>(this.section, entries => { const { [key]: _removed, ...rest } = entries ?? {}; return rest; }); }
+  get<T = unknown>(key: string): T | undefined { return this.file.readKey<T>(this.section, key); }
+  set(key: string, value: unknown) { this.file.setKey(this.section, key, value); }
+  delete(key: string) { this.file.deleteKey(this.section, key); }
 }
 
 /** `mcpServers` keyed by server id, in Claude Code's shape: `type` instead of `transport`. */

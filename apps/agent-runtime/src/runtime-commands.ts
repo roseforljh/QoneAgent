@@ -403,7 +403,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         services.send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
         return true;
       }
-      const history = services.messageRepo.listBySession(cmd.sessionId);
+      const history = services.messageRepo.listMetaBySession(cmd.sessionId);
       if (!history.length) {
         services.send({ type: "error", requestId: cmd.requestId, message: runtimeText("index.there_is_no_session_content_to_compact") });
         return true;
@@ -411,7 +411,9 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       try {
         const context = await services.adapter.compactSession(cmd.sessionId, cwd, cmd.model);
         try {
-          services.settingsRepo.set(`compaction:${cmd.sessionId}`, { throughMessageId: history.at(-1)!.id, context: context } satisfies SessionCompactionCheckpoint);
+          const throughMessageId = history.at(-1)!.id;
+          services.settingsRepo.set(`compaction:${cmd.sessionId}`, { throughMessageId, context: context } satisfies SessionCompactionCheckpoint);
+          services.messageRepo.pruneCompactedRawMessages(cmd.sessionId, throughMessageId);
         } catch (error) {
           // The SQLite transcript is still intact; discard the unsaved Pi state.
           await services.adapter.disposeSession(cmd.sessionId);
@@ -583,7 +585,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       }
       services.backgroundShell.noteRun(cmd.sessionId, { model: cmd.model, permissionMode: cmd.permissionMode, thinking: cmd.thinking, serverIds: cmd.serverIds });
       if (!cmd.continuation && !cmd.goalContinuation && !cmd.replaceFromMessageId) {
-        cmd.replaceFromMessageId = repeatedUserMessageId(services.messageRepo.listBySession(cmd.sessionId).map(message => ({
+        cmd.replaceFromMessageId = repeatedUserMessageId(services.messageRepo.listMetaBySession(cmd.sessionId).map(message => ({
           ...message,
           attachments: message.attachments ? JSON.parse(message.attachments) as MessageAttachmentInfo[] : undefined,
         })), { content: cmd.message, attachments: cmd.attachments });
@@ -591,7 +593,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       if (cmd.replaceFromMessageId) {
         services.startingRunSessions.add(cmd.sessionId);
         try {
-          const history = services.messageRepo.listBySession(cmd.sessionId);
+          const history = services.messageRepo.listMetaBySession(cmd.sessionId);
           const index = history.findIndex(message => message.id === cmd.replaceFromMessageId && message.role === "user");
           if (index < 0) throw new Error("user message not found in session");
           const removedRunIds = new Set(history.slice(index).flatMap(message => message.runId ? [message.runId] : []));

@@ -102,7 +102,7 @@ export class WebAccessMemory {
     this.store.set(`${KEY_PREFIX}${sessionId}`, { hosts, ...(snapshot.browserHost ? { browserHost: snapshot.browserHost } : {}) } satisfies Snapshot);
   }
 
-  private add(sessionId: string, key: string, route: WebAccessRoute, ok: boolean, reason?: string, at = Date.now()): void {
+  private add(sessionId: string, key: string, route: WebAccessRoute, ok: boolean, reason?: string, at = Date.now(), persist = true): void {
     const snapshot = this.load(sessionId);
     const record = snapshot.hosts[key] ?? { outcomes: [] };
     const outcome: Outcome = { route, ok, ...(reason ? { reason } : {}), at };
@@ -113,10 +113,10 @@ export class WebAccessMemory {
     if (ok) record.preferred = route;
     delete snapshot.hosts[key];
     snapshot.hosts[key] = record;
-    this.save(sessionId, snapshot);
+    if (persist) this.save(sessionId, snapshot);
   }
 
-  recordToolResult(sessionId: string, toolName: string, args: unknown, result: unknown, at = Date.now()): void {
+  recordToolResult(sessionId: string, toolName: string, args: unknown, result: unknown, at = Date.now(), persist = true): void {
     const input = args && typeof args === "object" ? args as Record<string, unknown> : {};
     const isError = Boolean(result && typeof result === "object" && (result as Record<string, unknown>).isError === true);
     const details = parsedDetails(result);
@@ -124,20 +124,20 @@ export class WebAccessMemory {
       const urls = [input.url, ...(Array.isArray(input.urls) ? input.urls : [])];
       const ok = !isError && (!details?.completion || ["limit", "exhausted"].includes(String(details.completion)));
       for (const host of new Set(urls.map(hostFromUrl).filter((host): host is string => Boolean(host)))) {
-        this.add(sessionId, host, "embedded_media_bridge", ok, ok ? undefined : "embedded operation incomplete", at);
+        this.add(sessionId, host, "embedded_media_bridge", ok, ok ? undefined : "embedded operation incomplete", at, persist);
       }
       return;
     }
     if (toolName === "qone_browser_open") {
       const host = hostFromUrl(input.url);
       if (host) this.load(sessionId).browserHost = host;
-      if (host) this.add(sessionId, host, "opencli_browser_bridge", !isError, isError ? failureReason(result) : undefined, at);
+      if (host) this.add(sessionId, host, "opencli_browser_bridge", !isError, isError ? failureReason(result) : undefined, at, persist);
       return;
     }
 
     if (toolName === "qone_browser_extract" || toolName === "qone_browser_screenshot" || toolName === "qone_browser_click" || toolName === "qone_browser_get") {
       const host = this.load(sessionId).browserHost;
-      if (host) this.add(sessionId, host, "opencli_browser_bridge", !isError, isError ? failureReason(result) : undefined, at);
+      if (host) this.add(sessionId, host, "opencli_browser_bridge", !isError, isError ? failureReason(result) : undefined, at, persist);
       return;
     }
 
@@ -146,7 +146,7 @@ export class WebAccessMemory {
       const argsList = Array.isArray(input.args) ? input.args : [];
       const host = argsList.map(hostFromUrl).find(Boolean);
       const key = host ?? (site ? `site:${site}` : undefined);
-      if (key) this.add(sessionId, key, "opencli", !isError, isError ? failureReason(result) : undefined, at);
+      if (key) this.add(sessionId, key, "opencli", !isError, isError ? failureReason(result) : undefined, at, persist);
     }
   }
 
@@ -156,9 +156,11 @@ export class WebAccessMemory {
     if (history.length) {
       const snapshot: Snapshot = { hosts: {} };
       this.states.set(sessionId, snapshot);
+      // 批量重建时仅在末尾落盘一次，避免循环内逐条触发 SQLite 写入。
       for (const observation of history) {
-        this.recordToolResult(sessionId, observation.toolName, observation.args, observation.result, observation.at);
+        this.recordToolResult(sessionId, observation.toolName, observation.args, observation.result, observation.at, false);
       }
+      if (Object.keys(snapshot.hosts).length || snapshot.browserHost) this.save(sessionId, snapshot);
     }
     const snapshot = this.load(sessionId);
     const taskHosts = hostsFromTask(task);

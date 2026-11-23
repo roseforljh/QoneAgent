@@ -146,6 +146,83 @@ export class MessageRepo {
       .all();
   }
 
+  /** 界面展示消息列表不读取 raw_message 大字段，避免无意义的磁盘 overflow 页读取。 */
+  listForDisplay(sessionId: string) {
+    return this.db
+      .select({
+        id: messages.id,
+        sessionId: messages.sessionId,
+        runId: messages.runId,
+        role: messages.role,
+        content: messages.content,
+        quote: messages.quote,
+        communication: messages.communication,
+        parts: messages.parts,
+        attachments: messages.attachments,
+        model: messages.model,
+        goalId: messages.goalId,
+        createdAt: messages.createdAt,
+        updatedAt: messages.updatedAt,
+      })
+      .from(messages)
+      .where(eq(messages.sessionId, sessionId))
+      .orderBy(messages.createdAt, sql`rowid`)
+      .all();
+  }
+
+  /** 仅读取消息轻量元数据（不含 parts 与 raw_message），用于边界定位与去重检查。 */
+  listMetaBySession(sessionId: string) {
+    return this.db
+      .select({
+        id: messages.id,
+        sessionId: messages.sessionId,
+        runId: messages.runId,
+        role: messages.role,
+        content: messages.content,
+        communication: messages.communication,
+        attachments: messages.attachments,
+        hasRawMessage: sql<number>`CASE WHEN ${messages.rawMessage} IS NOT NULL THEN 1 ELSE 0 END`,
+        createdAt: messages.createdAt,
+        updatedAt: messages.updatedAt,
+      })
+      .from(messages)
+      .where(eq(messages.sessionId, sessionId))
+      .orderBy(messages.createdAt, sql`rowid`)
+      .all();
+  }
+
+  /** 仅加载上下文恢复所需的消息列；当压缩检查点仍存在时跳过检查点之前的历史行。 */
+  listForContextRestore(sessionId: string, afterMessageId?: string) {
+    const boundary = afterMessageId
+      ? this.db.select({ createdAt: messages.createdAt, rowid: sql<number>`rowid` })
+        .from(messages)
+        .where(and(eq(messages.sessionId, sessionId), eq(messages.id, afterMessageId)))
+        .get()
+      : undefined;
+    const where = boundary
+      ? and(
+        eq(messages.sessionId, sessionId),
+        sql`(${messages.createdAt} > ${boundary.createdAt} OR (${messages.createdAt} = ${boundary.createdAt} AND rowid > ${boundary.rowid}))`,
+      )
+      : eq(messages.sessionId, sessionId);
+    const rows = this.db
+      .select({
+        id: messages.id,
+        role: messages.role,
+        content: messages.content,
+        runId: messages.runId,
+        communication: messages.communication,
+        attachments: messages.attachments,
+        rawMessage: messages.rawMessage,
+        createdAt: messages.createdAt,
+      })
+      .from(messages)
+      .where(where)
+      .orderBy(messages.createdAt, sql`rowid`)
+      .all();
+    return { rows, slicedAfterBoundary: Boolean(boundary) };
+  }
+
   /** Memory needs only visible conversation text; tool transcripts and UI notices are not input. */
   visibleTextBySession(sessionId: string) {
     return this.db.select({ role: messages.role, content: messages.content }).from(messages)
@@ -162,10 +239,26 @@ export class MessageRepo {
     this.db.update(messages).set({ rawMessage: JSON.stringify(rawMessage), updatedAt: Date.now() }).where(eq(messages.id, id)).run();
   }
 
+  /** 清空压缩检查点之前（含锚点）的助手消息 raw_message；检查点之后及用户消息保持原样，不影响连续对话缓存。 */
+  pruneCompactedRawMessages(sessionId: string, throughMessageId: string) {
+    const boundary = this.db.select({ createdAt: messages.createdAt, rowid: sql<number>`rowid` })
+      .from(messages)
+      .where(and(eq(messages.sessionId, sessionId), eq(messages.id, throughMessageId)))
+      .get();
+    if (!boundary) return 0;
+    const result = this.db.$client.prepare(`
+      UPDATE messages
+      SET raw_message = NULL
+      WHERE session_id = ? AND role = 'assistant' AND raw_message IS NOT NULL
+        AND (created_at < ? OR (created_at = ? AND rowid <= ?))
+    `).run(sessionId, boundary.createdAt, boundary.createdAt, boundary.rowid);
+    return Number(result.changes);
+  }
+
   /** Replace a user turn and everything after it as one database operation. */
   truncateFrom(sessionId: string, messageId: string) {
     return this.db.transaction((tx) => {
-      const history = tx.select().from(messages).where(eq(messages.sessionId, sessionId))
+      const history = tx.select({ id: messages.id, role: messages.role, runId: messages.runId }).from(messages).where(eq(messages.sessionId, sessionId))
         .orderBy(messages.createdAt, sql`rowid`).all();
       const index = history.findIndex((message) => message.id === messageId && message.role === "user");
       if (index < 0) throw new Error("user message not found in session");
@@ -623,7 +716,7 @@ export class ToolCallRepo {
       .update(toolCalls)
       .set({
         status: sql`CASE WHEN ${toolCalls.status} = 'cancelled' THEN 'cancelled' ELSE ${status} END`,
-        resultSummary: result === undefined ? null : JSON.stringify(persistedToolResult(result)),
+        resultSummary: result === undefined ? null : JSON.stringify(persistedToolResult(result, 16_384)),
         completedAt: Date.now(),
         durationMs: durationMs ?? null,
       })
@@ -647,6 +740,24 @@ export class ToolCallRepo {
       arguments: toolCalls.arguments, resultSummary: toolCalls.resultSummary,
       status: toolCalls.status, startedAt: toolCalls.startedAt, completedAt: toolCalls.completedAt, durationMs: toolCalls.durationMs,
     }).from(toolCalls).innerJoin(runs, eq(toolCalls.runId, runs.id)).where(eq(runs.sessionId, sessionId)).orderBy(toolCalls.startedAt).all();
+  }
+
+  /** 仅查询网页访问记忆相关的工具记录，避免每轮对话反序列化整会话数十 MB 的其他工具输出。 */
+  listWebAccessBySession(sessionId: string) {
+    return this.db.select({
+      toolName: toolCalls.toolName,
+      arguments: toolCalls.arguments,
+      resultSummary: toolCalls.resultSummary,
+      status: toolCalls.status,
+      startedAt: toolCalls.startedAt,
+      completedAt: toolCalls.completedAt,
+    }).from(toolCalls).innerJoin(runs, eq(toolCalls.runId, runs.id))
+      .where(and(
+        eq(runs.sessionId, sessionId),
+        inArray(toolCalls.status, ["success", "failed"]),
+        sql`(${toolCalls.toolName} LIKE 'qone_douyin_%' OR ${toolCalls.toolName} IN ('qone_browser_open', 'qone_browser_extract', 'qone_browser_screenshot', 'qone_browser_click', 'qone_browser_get', 'qone_opencli_run'))`,
+      ))
+      .orderBy(toolCalls.startedAt).all();
   }
 }
 
@@ -816,8 +927,12 @@ export class EventRepo {
     const legacyPartsForRun = (runId: string) => {
       if (!partsByRun) {
         partsByRun = new Map();
-        for (const message of new MessageRepo(this.db).listBySession(sessionId)) {
-          if (message.role !== "assistant" || !message.runId || !message.parts) continue;
+        const assistantRows = this.db.select({ runId: messages.runId, parts: messages.parts })
+          .from(messages)
+          .where(and(eq(messages.sessionId, sessionId), eq(messages.role, "assistant"), isNotNull(messages.parts)))
+          .orderBy(messages.createdAt, sql`rowid`).all();
+        for (const message of assistantRows) {
+          if (!message.runId || !message.parts) continue;
           try {
             const parts = JSON.parse(message.parts);
             if (Array.isArray(parts)) partsByRun.set(message.runId, parts);

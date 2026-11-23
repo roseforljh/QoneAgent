@@ -66,7 +66,8 @@ describe("replay journal hot path", () => {
         const raw = JSON.parse(new MessageRepo(reopened).listBySession(h.session.id)[0]!.rawMessage!);
         expect(raw[0].content).toBe(big);
         const result = JSON.parse(new ToolCallRepo(reopened).listByRun(h.run.id)[0]!.resultSummary!);
-        expect(result.content[0].text).toBe(big);
+        expect(result.content[0].text.length).toBeLessThanOrEqual(16_384);
+        expect(result.content[0].text).toContain("truncated");
       } finally { closeDb(reopened); }
       // Lifecycle events that nothing else stores still persist.
       h.emit("agent.completed", { message: { role: "assistant", content: "done" } });

@@ -51,6 +51,9 @@ function openDatabase(path: string, driver: SqliteDriver, initialize: (sqlite: S
   sqlite.exec("PRAGMA synchronous = NORMAL;");
   sqlite.exec("PRAGMA foreign_keys = ON;");
   sqlite.exec("PRAGMA busy_timeout = 5000;");
+  // 增大页缓存并将临时排序放入内存，避免大库频繁淘汰缓存引发随机磁盘读放大。
+  sqlite.exec("PRAGMA cache_size = -32000;");
+  sqlite.exec("PRAGMA temp_store = MEMORY;");
   initialize(sqlite);
   return drizzleSqlite(sqlite, schema);
 }
@@ -396,4 +399,47 @@ function migrate(sqlite: SqliteClient) {
   const subagentMessageColumns = new Set(sqlite.prepare("PRAGMA table_info(subagent_messages)").all().map(column => (column as { name: string }).name));
   if (!subagentMessageColumns.has("raw_message")) sqlite.exec("ALTER TABLE subagent_messages ADD COLUMN raw_message TEXT");
   if (!subagentMessageColumns.has("communication")) sqlite.exec("ALTER TABLE subagent_messages ADD COLUMN communication TEXT");
+
+  // 一次性清理历史版本遗留的非回放事件，并在清理后再建新索引，避免对十万级死行建索引或同步 VACUUM 阻塞启动。
+  const pruned = sqlite.prepare("SELECT value FROM settings WHERE key = ?").get("db.migration.events_pruned_v1");
+  if (!pruned) {
+    sqlite.prepare(`DELETE FROM events WHERE type IN (
+      'message.delta', 'message.reasoning.delta',
+      'message.started', 'message.completed', 'message.block.started', 'message.block.completed',
+      'turn.started', 'turn_end', 'turn.completed', 'agent.started',
+      'agent.cancelled', 'agent.failed', 'agent_settled', 'agent.prompt_done',
+      'tool.started', 'tool.updated', 'tool.completed', 'tool.failed',
+      'context.usage', 'model.request.started', 'model.response.timing'
+    )`).run();
+    sqlite.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)").run("db.migration.events_pruned_v1", "1", Date.now());
+  }
+  sqlite.exec(`
+    CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id);
+    CREATE INDEX IF NOT EXISTS idx_events_session_type_seq ON events(session_id, type, sequence);
+  `);
+
+  // 一次性清理废弃表 browser_items 与已压缩检查点之前的助手 raw_message（不阻塞启动、不触碰未压缩上下文）。
+  const storagePruned = sqlite.prepare("SELECT value FROM settings WHERE key = ?").get("db.migration.storage_prune_v2");
+  if (!storagePruned) {
+    sqlite.exec("DROP TABLE IF EXISTS browser_items;");
+    const checkpoints = sqlite.prepare("SELECT key, value FROM settings WHERE key LIKE 'compaction:%'").all() as { key: string; value: string }[];
+    const findBoundary = sqlite.prepare("SELECT created_at, rowid FROM messages WHERE session_id = ? AND id = ?");
+    const clearBefore = sqlite.prepare(`
+      UPDATE messages
+      SET raw_message = NULL
+      WHERE session_id = ? AND role = 'assistant' AND raw_message IS NOT NULL
+        AND (created_at < ? OR (created_at = ? AND rowid <= ?))
+    `);
+    for (const row of checkpoints) {
+      const sessionId = row.key.slice("compaction:".length);
+      if (!sessionId) continue;
+      try {
+        const parsed = JSON.parse(row.value) as { throughMessageId?: unknown };
+        if (typeof parsed?.throughMessageId !== "string") continue;
+        const boundary = findBoundary.get(sessionId, parsed.throughMessageId) as { created_at: number; rowid: number } | undefined;
+        if (boundary) clearBefore.run(sessionId, boundary.created_at, boundary.created_at, boundary.rowid);
+      } catch { /* 跳过格式异常的检查点记录 */ }
+    }
+    sqlite.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)").run("db.migration.storage_prune_v2", "1", Date.now());
+  }
 }

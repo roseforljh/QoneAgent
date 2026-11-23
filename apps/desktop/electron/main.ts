@@ -204,17 +204,28 @@ function createMainWindow(): BrowserWindow {
     }
   }, 2000);
 
+  let saveStateTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleSaveWindowState = () => {
+    clearTimeout(saveStateTimer);
+    saveStateTimer = setTimeout(() => {
+      saveStateTimer = undefined;
+      saveWindowState();
+    }, 300);
+  };
+
   win.on("resized", () => {
     win.webContents.send("window:resized");
-    saveWindowState();
+    scheduleSaveWindowState();
   });
 
   win.on("moved", () => {
     win.webContents.send("window:moved");
-    saveWindowState();
+    scheduleSaveWindowState();
   });
 
   win.on("close", () => {
+    clearTimeout(saveStateTimer);
+    saveStateTimer = undefined;
     saveWindowState();
   });
 

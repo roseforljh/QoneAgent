@@ -201,7 +201,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         return true;
       }
       const previous = services.goalRepo.getBySession(cmd.sessionId);
-      if (cmd.replaceFromMessageId && !services.messageRepo.listBySession(cmd.sessionId).some((message) => message.id === cmd.replaceFromMessageId && message.role === "user")) {
+      if (cmd.replaceFromMessageId && !services.messageRepo.hasUserMessage(cmd.sessionId, cmd.replaceFromMessageId)) {
         services.send({ type: "error", requestId: cmd.requestId, message: "user message not found in session" });
         return true;
       }

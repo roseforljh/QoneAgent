@@ -336,7 +336,7 @@ export function handleRuntimeEvent(
       // native Pi message so a restart rebuilds the exact provider turn.
       // A child's message to this run shares the run id but is not the prompt.
       const row = rawUser && typeof rawUser === "object"
-        ? ctx.messageRepo.listBySession(agentEvent.sessionId).filter((message) => message.role === "user" && message.runId === agentEvent.runId && !message.communication).at(-1)
+        ? ctx.messageRepo.listMetaBySession(agentEvent.sessionId).filter((message) => message.role === "user" && message.runId === agentEvent.runId && !message.communication).at(-1)
         : undefined;
       if (row) ctx.messageRepo.setRawMessage(row.id, rawUser);
     }
@@ -344,7 +344,7 @@ export function handleRuntimeEvent(
   if ((agentEvent.type === "compaction_start" || agentEvent.type === "compaction_end") && agentEvent.sessionId && agentEvent.runId && !ctx.subagentRunRepo.get(agentEvent.runId)) {
     const payload = agentEvent.payload as { reason?: string; result?: unknown };
     if (payload.reason === "threshold" || payload.reason === "overflow") {
-      const history = ctx.messageRepo.listBySession(agentEvent.sessionId);
+      const history = ctx.messageRepo.listMetaBySession(agentEvent.sessionId);
       // A delivered steer starts a new assistant segment without changing the run id.
       const throughMessageId = history.filter((message) => message.role === "user" && message.runId === agentEvent.runId && !message.communication).at(-1)?.id ?? history.at(-1)?.id;
       if (throughMessageId) {
