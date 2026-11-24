@@ -7,7 +7,8 @@ import { CLOSE_DOCK_PANEL_EVENT } from "../../lib/dock-state";
 import { cn } from "../../lib/utils";
 import { CodexIcon } from "../ui/CodexIcon";
 import tasksIcon from "../../assets/codex-icons/tasks-light-20.svg";
-import { field, fieldInteractive, paper } from "./elements/surfaces";
+import { CodexChevronRightIcon } from "./execution-icons";
+import { field } from "./elements/surfaces";
 import { isActiveSubagent } from "../../lib/subagent-state";
 import { openSubagent } from "./subagent-navigation";
 import { TooltipIconButton } from "./tooltip-icon-button";
@@ -104,24 +105,26 @@ export function BackgroundTasks({ dockOpen, renderHeader, children }: { dockOpen
           event.stopPropagation();
           close();
         }}>
-        <div className="min-h-0 overflow-hidden">
-          <div className={cn(paper, "my-2 rounded-lg p-1")}>
-            <div className="px-1.5 py-1 text-[11px] font-medium text-muted-foreground">{title}</div>
-            <ul className="grid max-h-[min(11rem,24dvh)] gap-1 overflow-y-auto overscroll-contain">
-              {tasks.map((task) => <li key={taskKey(task)} className="min-w-0">
-                <button type="button" title={task.name}
-                  className={cn(fieldInteractive, "flex min-h-6 w-full min-w-0 cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-start text-xs focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring")}
-                  onClick={() => {
-                    close();
-                    (task.kind === "subagent" ? openSubagent : openBackgroundJob)(task.id, sessionId);
-                  }}>
-                  <span className={cn(field, "shrink-0 rounded px-0.5 text-[10px] leading-4 text-muted-foreground")}>{t(task.kind === "subagent" ? "nav.subagents" : "backgroundTasks.command")}</span>
-                  <span className={cn("min-w-0 flex-1 truncate", task.kind === "command" && "font-mono")}>{task.name}</span>
-                  {task.active && <><span className="sr-only">{t("backgroundTasks.active")}</span><span aria-hidden="true" className="size-1 shrink-0 rounded-full bg-blue-500" /></>}
-                </button>
-              </li>)}
-            </ul>
+        <div className="q-background-tasks-card">
+          <div className="q-background-tasks-head">
+            <span className="text-xs font-medium text-foreground/90">{title}</span>
+            <span className="q-background-tasks-count" aria-hidden="true">{tasks.length}</span>
           </div>
+          <ul className="q-background-tasks-list">
+            {tasks.map((task) => <li key={taskKey(task)} className="min-w-0">
+              <button type="button" title={task.name} className="q-background-tasks-row group"
+                onClick={() => {
+                  close();
+                  (task.kind === "subagent" ? openSubagent : openBackgroundJob)(task.id, sessionId);
+                }}>
+                <span aria-hidden="true" data-active={task.active ? "" : undefined} className="q-background-tasks-dot" />
+                {task.active && <span className="sr-only">{t("backgroundTasks.active")}</span>}
+                <span className={cn(field, "shrink-0 rounded px-1.5 py-0.5 text-[10.5px] leading-none text-muted-foreground")}>{t(task.kind === "subagent" ? "nav.subagents" : "backgroundTasks.command")}</span>
+                <span className={cn("min-w-0 flex-1 truncate", task.kind === "command" && "font-mono text-[11.5px]")}>{task.name}</span>
+                <CodexChevronRightIcon size={12} aria-hidden="true" className="shrink-0 text-muted-foreground/45 transition-[color,transform] duration-150 group-hover:translate-x-0.5 group-hover:text-foreground/75 motion-reduce:transition-none" />
+              </button>
+            </li>)}
+          </ul>
         </div>
       </aside>}
       {children}
