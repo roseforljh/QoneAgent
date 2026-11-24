@@ -34,6 +34,11 @@
   --q-quote-surface-elevated-secondary: #414141;
   --q-quote-surface-elevated: #303030;
 }
+/* 禁止在不可编辑标签宿主上产生原生文本选区，同时保持 display: inline 避免拉高行首光标。 */
+.aui-composer-input [data-lexical-decorator="true"]:has(.q-composer-quote-pill, .q-composer-tool-chip) {
+  user-select: none;
+  -webkit-user-select: none;
+}
 /* The shell fits the line; the trigger's definite cap sizes shrink-wrapped bubbles. */
 .q-composer-quote-pill {
   position: relative;

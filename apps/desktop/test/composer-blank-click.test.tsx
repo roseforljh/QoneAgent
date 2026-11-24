@@ -148,6 +148,91 @@ test("quote controls do not steal the caret, and blank clicks restore it after b
   expect(aui.composer().getState().text).toBe(`before ${serializeInlineQuote("quoted line")} af${serializeInlineQuote("another quote")} ter`);
 });
 
+test("focus and clicks after a leading quote chip keep the caret on the right side", async () => {
+  const host = await renderComposer();
+  host.tabIndex = 0; // 模拟侧边栏/停靠区等带 tabindex 的外层容器
+  const input = host.querySelector<HTMLElement>(".aui-lexical-input")!;
+  // 模拟空输入框失焦后插入引用时，Chromium 的 setBaseAndExtent 同步触发 focus（早于 updateListener）。
+  await act(async () => editor.update(() => { $getRoot().selectStart(); }, { discrete: true }));
+  await act(async () => { editor.blur(); });
+  const domSelection = dom.window.getSelection()!;
+  const origSetBaseAndExtent = domSelection.setBaseAndExtent.bind(domSelection);
+  domSelection.setBaseAndExtent = (anchorNode, anchorOffset, focusNode, focusOffset) => {
+    origSetBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
+    if (input.contains(anchorNode) && document.activeElement !== input) {
+      input.dispatchEvent(new dom.window.FocusEvent("focus"));
+    }
+  };
+  await act(async () => {
+    aui.composer().setQuote({ text: "quoted line", messageId: "source" });
+    await Promise.resolve();
+  });
+  domSelection.setBaseAndExtent = origSetBaseAndExtent;
+  const paragraph = input.querySelector("p")!;
+  const decorator = input.querySelector<HTMLElement>('[data-lexical-decorator="true"]')!;
+  let spacerKey = "";
+  editor.getEditorState().read(() => {
+    const last = $getRoot().getLastDescendant();
+    if (!$isTextNode(last)) throw new Error("missing trailing space after quote");
+    spacerKey = last.getKey();
+    const selection = $getSelection();
+    expect($isRangeSelection(selection) && selection.anchor).toMatchObject({ key: spacerKey, offset: 1 });
+  });
+
+  // 模拟 Chromium 原生 contenteditable.focus() 把选区重置到行首 (paragraph, 0) 的行为。
+  const nativeFocus = input.focus.bind(input);
+  input.focus = (options?: FocusOptions) => {
+    nativeFocus(options);
+    dom.window.getSelection()?.setBaseAndExtent(paragraph, 0, paragraph, 0);
+  };
+
+  // 1. 外层带 tabindex 且失焦时点击空白区，应保持在标签右侧，而不是落到行首。
+  await act(async () => {
+    editor.blur();
+    editor.update(() => $setSelection(null), { discrete: true });
+  });
+  const blankDown = new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+  await act(async () => host.querySelector("[data-blank]")!.dispatchEvent(blankDown));
+  expect(blankDown.defaultPrevented).toBe(true);
+  editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    expect($isRangeSelection(selection) && selection.anchor).toMatchObject({ key: spacerKey, offset: 1 });
+  });
+
+  // 2. 直接 DOM focus（如 Tab 或外部聚焦函数）把原生选区重置到 (p, 0) 时，微任务后恢复到标签右侧。
+  await act(async () => {
+    editor.blur();
+    input.focus();
+    await Promise.resolve();
+  });
+  editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    expect($isRangeSelection(selection) && selection.anchor).toMatchObject({ key: spacerKey, offset: 1 });
+  });
+
+  // 3. 在输入框内点击标签右侧时，即使浏览器/Lexical 误落到标签左侧也会修正回右侧；点击左侧则保留在左侧。
+  decorator.getBoundingClientRect = () => ({ x: 20, y: 10, width: 180, height: 22, top: 10, right: 200, bottom: 32, left: 20, toJSON: () => ({}) });
+  await act(async () => editor.update(() => { $getRoot().selectStart(); }, { discrete: true }));
+  await act(async () => {
+    paragraph.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, clientX: 260, clientY: 20 }));
+    paragraph.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0, clientX: 260, clientY: 20 }));
+  });
+  editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    expect($isRangeSelection(selection) && selection.anchor).toMatchObject({ key: spacerKey, offset: 1 });
+  });
+
+  await act(async () => editor.update(() => { $getRoot().selectStart(); }, { discrete: true }));
+  await act(async () => {
+    paragraph.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, clientX: 10, clientY: 20 }));
+    paragraph.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0, clientX: 10, clientY: 20 }));
+  });
+  editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    expect($isRangeSelection(selection) && selection.anchor).toMatchObject({ type: "element", offset: 0 });
+  });
+});
+
 function DropThread() {
   const runtime = useExternalStoreRuntime({ messages: [{ id: "user", role: "user", content: "Draft message" }] as const,
     convertMessage: (message) => message, isRunning: false, onNew: async () => {}, adapters: { attachments: new AnyFileAttachmentAdapter() } });
