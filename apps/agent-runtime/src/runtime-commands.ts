@@ -71,9 +71,9 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       }
       return true;
 
-    case "servers.list": case "servers.add": case "servers.rename": case "servers.delete": case "servers.test":
+    case "servers.list": case "servers.add": case "servers.update": case "servers.delete": case "servers.test":
     case "servers.move": case "servers.group.create": case "servers.group.rename": case "servers.group.delete":
-    case "servers.trust-host-key": case "servers.discover": case "servers.tunnel.close":
+    case "servers.discover": case "servers.tunnel.close":
     case "server.terminal.open": case "server.terminal.write": case "server.terminal.resize": case "server.terminal.close":
       try {
         await services.servers.handle(cmd);

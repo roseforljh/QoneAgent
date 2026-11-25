@@ -25,7 +25,7 @@ const requests = new Map<string, (ok: boolean) => void>();
 /** Resolves on the runtime's answer, so forms stay open when the server rejects them. */
 export function sendServerCommand(command: ServerCommandInput, send: (command: RuntimeCommand) => Promise<boolean>): Promise<boolean> {
   const requestId = crypto.randomUUID();
-  useServerStore.setState((state) => ({ pending: state.pending + 1, error: undefined, ...(command.type === "servers.add" ? { setup: undefined } : {}) }));
+  useServerStore.setState((state) => ({ pending: state.pending + 1, error: undefined, ...(command.type === "servers.add" || command.type === "servers.update" ? { setup: undefined } : {}) }));
   const result = new Promise<boolean>((resolve) => requests.set(requestId, resolve));
   send({ ...command, requestId } as RuntimeCommand).then(
     (sent) => { if (!sent) finish(requestId, "disconnected"); },

@@ -101,3 +101,22 @@ test("deleting a dedicated server verifies revocation, retains retry credentials
     expect(registry.list()).toEqual([other]);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+test("force delete removes an unreachable dedicated server without contacting it", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "qone-server-force-"));
+  const keyPath = path.join(directory, "dedicated");
+  const server: ServerInfo = { id: "gone", name: "Gone", host: "example.test", port: 22, username: "root", status: "host-key-changed", createdAt: 0,
+    auth: { kind: "key", keyPath, dedicated: true } };
+  const values = new Map<string, unknown>([["servers.list", [server]]]);
+  const repo = { get: (key: string) => structuredClone(values.get(key)), set: (key: string, value: unknown) => values.set(key, value) } as never;
+  const pool = { get: async () => { throw new Error("host key changed"); }, drop() {}, dropAll() {} };
+  const registry = new ServerRegistry(repo, pool as never);
+  writeFileSync(keyPath, "fixture");
+  try {
+    await expect(registry.delete(server.id)).rejects.toThrow();
+    expect(registry.list()).toHaveLength(1);
+    await registry.delete(server.id, true);
+    expect(existsSync(keyPath)).toBe(false);
+    expect(registry.list()).toEqual([]);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});

@@ -120,12 +120,6 @@
 .servers-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--q-surface-muted); }
 .servers-banner p { margin: 0; color: var(--foreground); font-size: var(--q-text-xs); line-height: 1.5; word-break: break-all; }
 .servers-banner.is-danger { border-color: color-mix(in srgb, var(--destructive) 40%, var(--border)); background: color-mix(in srgb, var(--destructive) 8%, transparent); }
-.servers-info { display: flex; flex-direction: column; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; }
-.servers-info > div { display: flex; align-items: center; gap: 12px; min-height: 38px; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--q-surface); }
-.servers-info > div:first-child { border-top: 0; }
-.servers-info dt { width: 76px; flex: none; color: var(--muted-foreground); font-size: 12px; }
-.servers-info dd { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; margin: 0; overflow: hidden; color: var(--foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.servers-info dd.is-mono { display: block; font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; }
 .server-tunnels { display: flex; flex-direction: column; gap: 6px; }
 .server-tunnels h3 { margin: 0; color: var(--muted-foreground); font-size: 11.5px; font-weight: var(--q-weight-medium); }
 .server-tunnel { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 12px; border: 1px solid var(--border); border-radius: 10px; }
@@ -135,6 +129,3 @@
 
 .server-dialog-spacer { flex: 1; }
 .server-dialog-title { display: flex; align-items: center; gap: 8px; }
-.server-dialog-title input { width: 280px; max-width: 100%; margin-left: -6px; padding: 2px 6px; border: 1px solid transparent; border-radius: 6px; outline: 0; background: transparent; color: var(--foreground); font: inherit; font-size: 15px; font-weight: var(--q-weight-medium); transition: border-color .15s ease, background .15s ease; }
-.server-dialog-title input:hover { border-color: var(--border); }
-.server-dialog-title input:focus { border-color: var(--ring); background: var(--background); }

@@ -64,49 +64,76 @@ export class ServerRegistry {
     return next;
   }
 
+  async add(input: AddServerInput, progress: (stage: ServerSetupStage) => void): Promise<ServerInfo> {
+    const server = await this.setup(crypto.randomUUID(), input, progress);
+    this.save([...this.list(), server]);
+    return server;
+  }
+
+  /**
+   * Change address, name or sign-in; omitted credentials reuse the saved ones. Saved only after it connects.
+   * `trustHostKey` (confirmed by the user) accepts whatever key the server presents now.
+   */
+  async edit(id: string, input: AddServerInput, progress: (stage: ServerSetupStage) => void, trustHostKey = false): Promise<ServerInfo> {
+    const current = this.list().find((server) => server.id === id);
+    if (!current) throw runtimeError("servers.not_found");
+    const server = await this.setup(id, input, progress, current, trustHostKey);
+    this.pool.drop(id);
+    this.save(this.list().map((item) => item.id === id ? server : item));
+    return server;
+  }
+
   /**
    * Connect, pin the host key, probe the system and, for password sign-in,
    * install a per-server Ed25519 key (ET's dedicated key) and verify it before
    * saving. The password is never stored.
    */
-  async add(input: AddServerInput, progress: (stage: ServerSetupStage) => void): Promise<ServerInfo> {
-    const id = crypto.randomUUID();
+  private async setup(id: string, input: AddServerInput, progress: (stage: ServerSetupStage) => void, current?: ServerInfo, trustHostKey = false): Promise<ServerInfo> {
     const target = { host: input.host.trim(), port: input.port, username: input.username.trim() };
+    const newSignIn = Boolean(input.password || input.keyPath || input.useAgent) || !current;
     const credentials: Credentials = input.password ? { password: input.password }
       : input.keyPath ? { privateKey: readFileSync(input.keyPath) }
-      : { agent: agentPath() };
+      : newSignIn ? { agent: agentPath() } : credentialsFor(current!);
+    // The same address keeps its pinned key; a changed one is pinned anew like a first contact.
+    const pinned = current && !trustHostKey && current.host === target.host && current.port === target.port ? current.hostKey : undefined;
     progress("host-key");
     let hostKey = "";
-    const client = await connect(target, credentials, undefined, (value) => { hostKey = value; progress("authenticating"); })
-      .catch((error) => { throw signInError(error, target.host); });
+    const client = await connect(target, credentials, pinned, (value) => { hostKey = value; progress("authenticating"); })
+      .catch((error) => {
+        // Surface the mismatch on the saved server so the form can offer to trust it.
+        if (current && error instanceof HostKeyChangedError) this.update(id, { status: "host-key-changed", statusDetail: error.presented });
+        throw signInError(error, target.host);
+      });
     try {
       progress("inspecting");
       const probe = await exec(client, PROBE, { timeoutMs: 20_000 });
-      let auth: ServerInfo["auth"] = input.keyPath ? { kind: "key", keyPath: input.keyPath, dedicated: false } : { kind: "agent" };
+      let auth: ServerInfo["auth"] = !newSignIn ? current!.auth : input.keyPath ? { kind: "key", keyPath: input.keyPath, dedicated: false } : { kind: "agent" };
+      const keyPath = path.join(keyDirectory(), id);
       if (input.password) {
         progress("securing");
         const pair = utils.generateKeyPairSync("ed25519", { comment: dedicatedComment(id) });
         const line = pair.public.trim();
-        const install = await exec(client, `umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && (grep -qxF ${shQuote(line)} ~/.ssh/authorized_keys || printf '%s\\n' ${shQuote(line)} >> ~/.ssh/authorized_keys)`, { timeoutMs: 20_000 });
+        // Replaces this server's previous dedicated key, if any.
+        const install = await exec(client, `umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && sed -i ${shQuote(`/ ${dedicatedComment(id)}$/d`)} ~/.ssh/authorized_keys && printf '%s\\n' ${shQuote(line)} >> ~/.ssh/authorized_keys`, { timeoutMs: 20_000 });
         if (install.exit_code !== 0) throw runtimeError("servers.key_install_failed", { p0: install.stderr.trim() || install.exit_code });
-        mkdirSync(keyDirectory(), { recursive: true });
-        const keyPath = path.join(keyDirectory(), id);
-        writeFileSync(keyPath, pair.private, { mode: 0o600 });
-        // The saved key must work on its own before the password is forgotten.
+        // The new key must work on its own before it replaces the saved one and the password is forgotten.
         await connect(target, { privateKey: pair.private }, hostKey).then((verified) => verified.end(), (error) => {
-          rmSync(keyPath, { force: true });
           throw runtimeError("servers.key_verify_failed", { p0: error instanceof Error ? error.message : String(error) });
         });
+        mkdirSync(keyDirectory(), { recursive: true });
+        writeFileSync(keyPath, pair.private, { mode: 0o600 });
         auth = { kind: "key", keyPath, dedicated: true };
+      } else if (current?.auth.kind === "key" && current.auth.dedicated && newSignIn) {
+        // Switching away from the dedicated key: revoke it while connected; best effort, the local key goes either way.
+        await exec(client, `sed -i ${shQuote(`/ ${dedicatedComment(id)}$/d`)} ~/.ssh/authorized_keys`, { timeoutMs: 10_000 }).catch(() => undefined);
+        rmSync(current.auth.keyPath, { force: true });
       }
-      const server: ServerInfo = {
+      return {
         id, name: input.name?.trim() || target.host, ...target, auth, hostKey,
         ...(input.groupId && this.groups().some((group) => group.id === input.groupId) ? { groupId: input.groupId } : {}),
         system: probe.stdout.trim().slice(0, 160) || undefined,
-        status: "ready", lastConnectedAt: Date.now(), createdAt: Date.now(),
+        status: "ready", lastConnectedAt: Date.now(), createdAt: current?.createdAt ?? Date.now(),
       };
-      this.save([...this.list(), server]);
-      return server;
     } finally {
       client.end();
     }
@@ -126,24 +153,15 @@ export class ServerRegistry {
     }
   }
 
-  /** Only after the user confirms in the UI: re-pin to the key the server presents now. */
-  async trustHostKey(id: string): Promise<ServerInfo> {
-    const server = this.get(id);
-    if (!server) throw runtimeError("servers.not_found");
-    this.update(id, { hostKey: undefined });
-    let presented = "";
-    const client = await connect(server, credentialsFor(server), undefined, (value) => { presented = value; });
-    client.end();
-    this.update(id, { hostKey: presented });
-    return this.test(id);
-  }
-
-  /** Revoke the dedicated key before discarding the only credential that can clean it up. */
-  async delete(id: string): Promise<void> {
+  /**
+   * Revoke the dedicated key before discarding the only credential that can clean it up.
+   * `force` skips the revocation for a server that can no longer be reached or verified.
+   */
+  async delete(id: string, force = false): Promise<void> {
     const server = this.get(id);
     if (!server) return;
     if (server.auth.kind === "key" && server.auth.dedicated) {
-      try {
+      if (!force) try {
         const result = await exec(await this.pool.get(server), `sed -i ${shQuote(`/ ${dedicatedComment(id)}$/d`)} ~/.ssh/authorized_keys && ! grep -qF ${shQuote(dedicatedComment(id))} ~/.ssh/authorized_keys`, { timeoutMs: 10_000 });
         if (result.exit_code !== 0 || result.timed_out || result.signal) throw new Error(result.stderr.trim() || `exit ${result.exit_code}`);
       } catch (error) {

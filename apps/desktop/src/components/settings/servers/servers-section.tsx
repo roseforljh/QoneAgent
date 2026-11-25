@@ -14,7 +14,7 @@ import folderOpenIcon from "../../../assets/codex-icons/folder-open-light-16.svg
 import moreIcon from "../../../assets/codex-icons/ellipsis-horizontal-light-16.svg";
 import { SectionHeader, SettingsPageHeader } from "../settings-chrome";
 import { GroupMenu, SERVER_DRAG_TYPE, ServerCard, serverAddress, type ServerActions } from "./server-card";
-import { AddServerDialog, ServerDetailDialog } from "./server-dialogs";
+import { ServerFormDialog } from "./server-dialogs";
 import "./servers.css";
 
 const COLLAPSED_KEY = "qone-server-groups-collapsed";
@@ -26,8 +26,7 @@ export function ServersSection({ onClose }: { onClose: () => void }) {
   const connected = useStore((state) => state.connected);
   const { servers, groups, tunnels, candidates, loaded, error, editingGroupId } = useServerStore();
   const [scanning, setScanning] = useState(false);
-  const [adding, setAdding] = useState<{ prefill?: ServerCandidate; groupId?: string }>();
-  const [detailId, setDetailId] = useState<string>();
+  const [adding, setAdding] = useState<{ prefill?: ServerCandidate; groupId?: string; server?: ServerInfo }>();
   const [dragId, setDragId] = useState<string>();
   const [dropTarget, setDropTarget] = useState<string>();
   const [collapsed, setCollapsed] = useState<string[]>(loadCollapsed);
@@ -41,14 +40,20 @@ export function ServersSection({ onClose }: { onClose: () => void }) {
     return useServerStore.getState().editingGroupId;
   };
   const actions: ServerActions = {
-    open: (server) => setDetailId(server.id),
+    open: (server) => setAdding({ server }),
     terminal: (server) => { openServerTerminal(server.id); onClose(); },
     test: (server) => void run({ type: "servers.test", id: server.id }),
     move: (server, groupId) => { if (server.groupId !== groupId) void run({ type: "servers.move", id: server.id, groupId }); },
     moveToNewGroup: async (server) => { const groupId = await createGroup(); if (groupId) void run({ type: "servers.move", id: server.id, groupId }); },
     remove: async (server) => {
-      if (!await confirmDestructiveAction(t("servers.deleteConfirm", { name: server.name }))) return;
-      if (await run({ type: "servers.delete", id: server.id }) && detailId === server.id) setDetailId(undefined);
+      // A changed host key can't be trusted for the revocation, so only local cleanup is possible.
+      const unreachable = server.status === "host-key-changed" && server.auth.kind === "key" && server.auth.dedicated;
+      if (!await confirmDestructiveAction(t(unreachable ? "servers.forceDeleteConfirm" : "servers.deleteConfirm", { name: server.name }))) return;
+      let ok = await run({ type: "servers.delete", id: server.id, force: unreachable });
+      if (!ok && !unreachable && server.auth.kind === "key" && server.auth.dedicated && await confirmDestructiveAction(t("servers.forceDeleteConfirm", { name: server.name }))) {
+        ok = await run({ type: "servers.delete", id: server.id, force: true });
+      }
+      if (ok) setAdding((current) => current?.server?.id === server.id ? undefined : current);
     },
   };
   const quickAdd = async (candidate: ServerCandidate) => {
@@ -151,9 +156,8 @@ export function ServersSection({ onClose }: { onClose: () => void }) {
           </>}
       </div>
 
-      <AddServerDialog open={Boolean(adding)} onOpenChange={(open) => { if (!open) setAdding(undefined); }} prefill={adding?.prefill} groupId={adding?.groupId} groups={groups} run={run} />
-      <ServerDetailDialog server={servers.find((server) => server.id === detailId)} tunnels={tunnels.filter((item) => item.serverId === detailId)}
-        onOpenChange={(open) => { if (!open) setDetailId(undefined); }} run={run} onTerminal={actions.terminal} onRemove={actions.remove} />
+      <ServerFormDialog open={Boolean(adding)} onOpenChange={(open) => { if (!open) setAdding(undefined); }} prefill={adding?.prefill} groupId={adding?.groupId} server={adding?.server} groups={groups}
+        tunnels={tunnels.filter((item) => item.serverId === adding?.server?.id)} run={run} onTerminal={actions.terminal} onRemove={actions.remove} />
     </>
   );
 }

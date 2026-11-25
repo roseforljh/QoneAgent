@@ -69,12 +69,18 @@ export class ServerService {
         await this.onToolsChanged();
         return this.broadcast(requestId);
       }
-      case "servers.rename":
-        this.registry.update(cmd.id, { name: cmd.name.trim() });
+      case "servers.update": {
+        const { requestId, type: _type, locale: _locale, id, trustHostKey, ...input } = cmd;
+        const before = this.registry.get(id);
+        const after = await this.registry.edit(id, { ...input, useAgent: input.useAgent && Boolean(availableAgent()) }, (stage) => this.send({ type: "servers.setup", requestId, stage }), trustHostKey)
+          .catch((error) => { this.broadcast(); throw error; });
+        // Open terminals and tunnels still point at the old address.
+        if (before && (before.host !== after.host || before.port !== after.port || before.username !== after.username)) this.sessions.closeServer(id);
         await this.onToolsChanged();
-        return this.broadcast(cmd.requestId);
+        return this.broadcast(requestId);
+      }
       case "servers.delete":
-        await this.registry.delete(cmd.id);
+        await this.registry.delete(cmd.id, cmd.force);
         this.sessions.closeServer(cmd.id);
         this.lastActivity.delete(cmd.id);
         await this.onToolsChanged();
@@ -92,9 +98,6 @@ export class ServerService {
         return this.broadcast(cmd.requestId);
       case "servers.test":
         await this.registry.test(cmd.id);
-        return this.broadcast(cmd.requestId);
-      case "servers.trust-host-key":
-        await this.registry.trustHostKey(cmd.id);
         return this.broadcast(cmd.requestId);
       case "servers.discover":
         return this.send({ type: "servers.discovered", requestId: cmd.requestId, candidates: await discoverServers(this.registry.list(), availableAgent()) });

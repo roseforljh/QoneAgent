@@ -65,14 +65,13 @@ export type ServerTunnelInfo = { serverId: string; remotePort: number; localPort
 export type ServerCommand =
   | { type: "servers.list"; requestId: string }
   | { type: "servers.add"; requestId: string; name?: string; host: string; port: number; username: string; password?: string; keyPath?: string; useAgent?: boolean; groupId?: string }
-  | { type: "servers.rename"; requestId: string; id: string; name: string }
-  | { type: "servers.delete"; requestId: string; id: string }
+  | { type: "servers.update"; requestId: string; id: string; name?: string; host: string; port: number; username: string; password?: string; keyPath?: string; useAgent?: boolean; groupId?: string; trustHostKey?: boolean }
+  | { type: "servers.delete"; requestId: string; id: string; force?: boolean }
   | { type: "servers.move"; requestId: string; id: string; groupId?: string }
   | { type: "servers.group.create"; requestId: string; name: string }
   | { type: "servers.group.rename"; requestId: string; id: string; name: string }
   | { type: "servers.group.delete"; requestId: string; id: string }
   | { type: "servers.test"; requestId: string; id: string }
-  | { type: "servers.trust-host-key"; requestId: string; id: string }
   | { type: "servers.discover"; requestId: string }
   | { type: "servers.tunnel.close"; requestId: string; serverId: string; localPort: number }
   | { type: "server.terminal.open"; requestId: string; terminalId: string; serverId: string; cols: number; rows: number }
@@ -94,21 +93,24 @@ const host = z.string().trim().min(1).max(255).regex(/^[^\s@/\\]+$/);
 const port = z.number().int().min(1).max(65_535);
 const size = z.number().int().min(1).max(1000);
 
+const serverFields = {
+  ...request, name: z.string().trim().max(80).optional(), host, port,
+  username: z.string().trim().min(1).max(64).regex(/^[^\s@:]+$/),
+  password: z.string().max(1024).optional(), keyPath: z.string().max(4096).optional(), useAgent: z.boolean().optional(), groupId: id.optional(),
+};
+
 export const serverCommandSchemas = {
   "servers.list": z.object({ type: z.literal("servers.list"), ...request }),
-  "servers.add": z.object({
-    type: z.literal("servers.add"), ...request, name: z.string().trim().max(80).optional(), host, port,
-    username: z.string().trim().min(1).max(64).regex(/^[^\s@:]+$/),
-    password: z.string().max(1024).optional(), keyPath: z.string().max(4096).optional(), useAgent: z.boolean().optional(), groupId: id.optional(),
-  }).refine((value) => Boolean(value.password || value.keyPath || value.useAgent), "Password, key or agent required"),
-  "servers.rename": z.object({ type: z.literal("servers.rename"), ...request, id, name: z.string().trim().min(1).max(80) }),
-  "servers.delete": z.object({ type: z.literal("servers.delete"), ...request, id }),
+  "servers.add": z.object({ type: z.literal("servers.add"), ...serverFields })
+    .refine((value) => Boolean(value.password || value.keyPath || value.useAgent), "Password, key or agent required"),
+  // Without new credentials the saved sign-in is kept.
+  "servers.update": z.object({ type: z.literal("servers.update"), ...serverFields, id, trustHostKey: z.boolean().optional() }),
+  "servers.delete": z.object({ type: z.literal("servers.delete"), ...request, id, force: z.boolean().optional() }),
   "servers.move": z.object({ type: z.literal("servers.move"), ...request, id, groupId: id.optional() }),
   "servers.group.create": z.object({ type: z.literal("servers.group.create"), ...request, name: z.string().trim().min(1).max(60) }),
   "servers.group.rename": z.object({ type: z.literal("servers.group.rename"), ...request, id, name: z.string().trim().min(1).max(60) }),
   "servers.group.delete": z.object({ type: z.literal("servers.group.delete"), ...request, id }),
   "servers.test": z.object({ type: z.literal("servers.test"), ...request, id }),
-  "servers.trust-host-key": z.object({ type: z.literal("servers.trust-host-key"), ...request, id }),
   "servers.discover": z.object({ type: z.literal("servers.discover"), ...request }),
   "servers.tunnel.close": z.object({ type: z.literal("servers.tunnel.close"), ...request, serverId: id, localPort: port }),
   "server.terminal.open": z.object({ type: z.literal("server.terminal.open"), ...request, terminalId: id, serverId: id, cols: size, rows: size }),
