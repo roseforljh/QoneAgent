@@ -1,4 +1,4 @@
-type WebAccessRoute = "opencli" | "opencli_browser_bridge" | "embedded_media_bridge";
+type WebAccessRoute = "direct_web" | "opencli" | "opencli_browser_bridge" | "embedded_media_bridge";
 type Outcome = { route: WebAccessRoute; ok: boolean; reason?: string; at: number };
 type HostRecord = { outcomes: Outcome[]; preferred?: WebAccessRoute };
 type Snapshot = { hosts: Record<string, HostRecord>; browserHost?: string };
@@ -66,9 +66,15 @@ function parsedDetails(result: unknown): Record<string, unknown> | undefined {
 }
 
 function routeLabel(route: WebAccessRoute): string {
+  if (route === "direct_web") return "Direct web fetch";
   if (route === "embedded_media_bridge") return "Qone embedded media bridge";
   if (route === "opencli") return "OpenCLI adapter";
   return "Qone built-in browser";
+}
+
+function isDirectWebFetchTool(toolName: string): boolean {
+  const leaf = toolName.startsWith("mcp:") ? toolName.split(":").slice(2).join(":") : toolName;
+  return /^(?:web_fetch|firecrawl_scrape|tavily_extract|fetch)$/i.test(leaf) || /(?:^|_)(?:web_fetch|scrape)(?:$|_)/i.test(leaf);
 }
 
 export class WebAccessMemory {
@@ -147,6 +153,14 @@ export class WebAccessMemory {
       const host = argsList.map(hostFromUrl).find(Boolean);
       const key = host ?? (site ? `site:${site}` : undefined);
       if (key) this.add(sessionId, key, "opencli", !isError, isError ? failureReason(result) : undefined, at, persist);
+      return;
+    }
+
+    if (isDirectWebFetchTool(toolName)) {
+      const urls = [input.url, ...(Array.isArray(input.urls) ? input.urls : [])];
+      for (const host of new Set(urls.map(hostFromUrl).filter((host): host is string => Boolean(host)))) {
+        this.add(sessionId, host, "direct_web", !isError, isError ? failureReason(result, details) : undefined, at, persist);
+      }
     }
   }
 

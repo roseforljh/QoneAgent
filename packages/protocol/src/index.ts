@@ -3,7 +3,7 @@ import { mcpCredentialsRestoredSchema, type McpCredentialsRestored, type McpCred
 export { mcpCredentialKeys } from "./mcp-credentials";
 import type { ClaudeCodeSyncResult, ClaudeCodeSyncTarget } from "./claude-code-sync";
 export type { ClaudeCodeSyncResult, ClaudeCodeSyncTarget, ClaudeCodeSyncIssue } from "./claude-code-sync";
-export { mcpValueSecretKeys, mcpServerIdentity, mcpPackage } from "./mcp-config";
+export { mcpValueSecretKeys, mcpServerIdentity, mcpPackage, isExternalBrowserMcp } from "./mcp-config";
 import { MEDIA_APP_IDS } from "./app-media";
 import type { MediaAppId } from "./app-media";
 export { MEDIA_APP_IDS, mediaAppFromUrl, mediaAppHostIsAlias, mediaAppContentId, mediaAppProfile, isAppMediaList } from "./app-media";

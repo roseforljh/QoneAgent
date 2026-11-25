@@ -13,21 +13,22 @@ import communication from "./system-prompts/08-communication.md" with { type: "t
 import codemode from "./system-prompts/09-codemode.md" with { type: "text" };
 import commandExecution from "./system-prompts/10-command-execution.md" with { type: "text" };
 
+const normalizeLineEndings = (text: string) => text.replace(/\r\n?/g, "\n");
+const normalizeModule = (text: string) => normalizeLineEndings(text).trim();
+
 // Explicit order is part of the product contract; directory enumeration is not.
 export const SYSTEM_PROMPT_MODULES = [
-  { file: "01-identity.md", content: identity },
-  { file: "02-behavior.md", content: behavior },
-  { file: "03-execution.md", content: execution },
-  { file: "04-web-access.md", content: webAccess },
-  { file: "05-coding.md", content: coding },
-  { file: "06-verification.md", content: verification },
-  { file: "07-safety.md", content: safety },
-  { file: "08-communication.md", content: communication },
-  { file: "09-codemode.md", content: codemode },
-  { file: "10-command-execution.md", content: commandExecution },
+  { file: "01-identity.md", content: normalizeLineEndings(identity) },
+  { file: "02-behavior.md", content: normalizeLineEndings(behavior) },
+  { file: "03-execution.md", content: normalizeLineEndings(execution) },
+  { file: "04-web-access.md", content: normalizeLineEndings(webAccess) },
+  { file: "05-coding.md", content: normalizeLineEndings(coding) },
+  { file: "06-verification.md", content: normalizeLineEndings(verification) },
+  { file: "07-safety.md", content: normalizeLineEndings(safety) },
+  { file: "08-communication.md", content: normalizeLineEndings(communication) },
+  { file: "09-codemode.md", content: normalizeLineEndings(codemode) },
+  { file: "10-command-execution.md", content: normalizeLineEndings(commandExecution) },
 ] as const;
-
-const normalizeModule = (text: string) => text.replace(/\r\n?/g, "\n").trim();
 
 // Fingerprints of earlier defaults, keyed by module so local edits stay intact.
 const LEGACY_DEFAULT_HASHES: Record<string, readonly string[]> = {
@@ -42,6 +43,7 @@ const LEGACY_DEFAULT_HASHES: Record<string, readonly string[]> = {
     "62d1e5891524cbab7f60a32a9f97a30290519f440870cb9b0834ac228a247b40",
     "b12b8b60111d402621cdcdf3cb3c9d8be3926a72677dba32545b8aabba6b2d71",
     "f671bc61b975bf5022f2a51f31f4edf39cf3f791564a7c789f2ab86cdc38bd7d",
+    "b1f99854139415189dc46d2791483b0be3ec3f5fcefd2d80d2880ed13e3287d9",
   ],
   "05-coding.md": ["d8ce33353360625a652833aa1ccd2b8a8a9a81182d1c71e2f949f977edd58aff"],
   "06-verification.md": ["3fb488926e2e46611e9e6e6ad142e3dfaeffeecbfbdd265b304422389d662628"],

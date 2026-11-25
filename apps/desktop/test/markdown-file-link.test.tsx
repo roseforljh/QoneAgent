@@ -67,11 +67,33 @@ test("inline paths use the shared Markdown file link with a filename label and C
 });
 
 test("ordinary inline code, code blocks and explicit link labels retain their semantics", () => {
-  const text = '`input.includes("image")` / `58.5~59fps` / `https://example.com/a.ts` / `//example.com/a.ts` / `javascript:alert(1)` / `C:/Repo/A.ts:0`\n\n```txt\nC:/Repo/A.ts\n```\n\n[`C:/Repo/Label.ts`](C:/Repo/Target.ts)';
+  const nonFileInlineCodes = [
+    'input.includes("image")',
+    "58.5~59fps",
+    "https://example.com/a.ts",
+    "//example.com/a.ts",
+    "javascript:alert(1)",
+    "C:/Repo/A.ts:0",
+    "/24",
+    "/plan",
+    "/index.html",
+    "/api/v1/users",
+    "/api/v1.2",
+    "/^foo$/i",
+    "\\\\n",
+    "\\\\server\\share",
+    "C:\\Users\\33039\\Desktop\\W",
+    "C:/Repo/src/*.ts",
+    "./docs",
+    "./run.sh --watch",
+    "./dev.sh && ./test.sh",
+  ];
+  const text = `${nonFileInlineCodes.map((item) => `\`${item}\``).join(" / ")}\n\n\`\`\`txt\nC:/Repo/A.ts\n\`\`\`\n\n[\`C:/Repo/Label.ts\`](C:/Repo/Target.ts)`;
   const markup = renderToStaticMarkup(<TextMessagePartProvider text={text}><MarkdownText /></TextMessagePartProvider>);
   expect(markup.match(/data-file-reference=/g)).toHaveLength(1);
   expect(markup).toContain('data-file-reference="C:/Repo/Target.ts"');
-  expect(markup.match(/aui-md-inline-code/g)).toHaveLength(7);
+  expect(markup.match(/aui-md-inline-code/g)).toHaveLength(nonFileInlineCodes.length + 1);
+  expect(markup).toContain(">/24</code>");
   expect(markup).toContain('C:/Repo/Label.ts</code>');
   expect(markup).toContain('C:/Repo/A.ts');
 });

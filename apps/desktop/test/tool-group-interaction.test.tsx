@@ -179,3 +179,43 @@ test("subagent creation becomes a one-click child link and follow-up calls keep 
     await act(async () => { useStore.setState(previous); });
   }
 });
+
+test("built-in browser tool calls render the same underlined target link and open the right dock browser on click", async () => {
+  const previous = useStore.getState();
+  const { onOpenBrowserInDock } = await import("../src/lib/browser-dock");
+  const { useBrowserTasks } = await import("../src/lib/browser-tasks");
+  const opened: unknown[] = [];
+  const off = onOpenBrowserInDock((req) => opened.push(req));
+  function Message() {
+    return <aui.MessagePrimitive.Root><SessionTimeline startIndex={0} endIndex={1} /></aui.MessagePrimitive.Root>;
+  }
+  function Fixture() {
+    const messages: ThreadMessageLike[] = [{
+      id: "browser-call", role: "assistant", status: { type: "running" },
+      content: [{
+        type: "tool-call", toolName: "qone_browser_open", toolCallId: "b-open",
+        args: { url: "https://console.zenlayer.com/calculator" },
+      }],
+    }];
+    const runtime = aui.useExternalStoreRuntime({ messages, isRunning: true, convertMessage: (message) => message, onNew: async () => {} });
+    return <aui.AssistantRuntimeProvider runtime={runtime}><aui.ThreadPrimitive.Messages components={{ AssistantMessage: Message }} /></aui.AssistantRuntimeProvider>;
+  }
+  try {
+    useBrowserTasks.getState().clear();
+    useStore.setState({ currentSessionId: "session-browser", activeRunId: "run-browser", toolCalls: [] });
+    const container = document.createElement("div"); document.body.append(container);
+    root = createRoot(container);
+    await act(async () => { root!.render(<Fixture />); });
+    const disclosure = container.querySelector<HTMLButtonElement>('[data-slot="collapsible-trigger"]')!;
+    const link = container.querySelector<HTMLButtonElement>('[data-slot="tool-target-link"]')!;
+    expect(disclosure.disabled).toBe(true);
+    expect(link).not.toBeNull();
+    expect(link.textContent).toContain("console.zenlayer.com/calculator");
+    await act(async () => { link.click(); });
+    expect(opened).toEqual([{ url: "https://console.zenlayer.com/calculator", sessionId: "session-browser" }]);
+  } finally {
+    off();
+    useBrowserTasks.getState().clear();
+    await act(async () => { useStore.setState(previous); });
+  }
+});

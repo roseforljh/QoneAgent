@@ -1,5 +1,5 @@
 import { useConversationStore } from "../../lib/conversation-context";
-import { CodexBoltIcon as BoltIcon, CodexFileSearchIcon as FileSearchIcon, CodexPenLineIcon as PenLineIcon, CodexSearchIcon as SearchIcon, CodexTerminalIcon as TerminalIcon, CodexWrenchIcon as WrenchIcon, type ExecutionIcon } from "./execution-icons";
+import { CodexBoltIcon as BoltIcon, CodexBrowserIcon as BrowserIcon, CodexFileSearchIcon as FileSearchIcon, CodexPenLineIcon as PenLineIcon, CodexSearchIcon as SearchIcon, CodexTerminalIcon as TerminalIcon, CodexWrenchIcon as WrenchIcon, type ExecutionIcon } from "./execution-icons";
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState, type FC } from "react";
 import { MessagePrimitive, useAuiState, type PartState } from "@assistant-ui/react";
 import {
@@ -33,6 +33,8 @@ import { ContextCompactionMarker } from "./context-compaction-marker";
 import { messageById, toolCallById } from "../../lib/store-indexes";
 import { backgroundJobLink, backgroundJobLinks } from "../../lib/background-job-links";
 import { BackgroundJobRow } from "./background-job-view";
+import { isBuiltInBrowserTool, nestedBrowserActivitiesByParent } from "../../lib/browser-navigation";
+import { BrowserToolCall, NestedBrowserRow } from "./browser-tool-call";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
@@ -82,6 +84,24 @@ const TOOL_META: Record<string, ToolMeta> = {
   exec: { verb: { zh: "运行", en: "Run" }, icon: TerminalIcon },
   shell_job: { verb: { zh: "查看后台命令", en: "Check background command" }, icon: TerminalIcon },
   web_search: { verb: { zh: "搜索网页", en: "Search the web" }, icon: SearchIcon },
+  qone_browser_open: { verb: { zh: "打开页面", en: "Open page" }, icon: BrowserIcon },
+  qone_browser_state: { verb: { zh: "读取页面状态", en: "Read page state" }, icon: BrowserIcon },
+  qone_browser_get: { verb: { zh: "读取页面信息", en: "Read page info" }, icon: BrowserIcon },
+  qone_browser_tabs: { verb: { zh: "查看标签页", en: "List browser tabs" }, icon: BrowserIcon },
+  qone_browser_extract: { verb: { zh: "提取页面内容", en: "Extract page content" }, icon: BrowserIcon },
+  qone_browser_click: { verb: { zh: "点击页面元素", en: "Click page element" }, icon: BrowserIcon },
+  qone_browser_fill: { verb: { zh: "填写页面表单", en: "Fill page input" }, icon: BrowserIcon },
+  qone_browser_type: { verb: { zh: "输入页面内容", en: "Type in page" }, icon: BrowserIcon },
+  qone_browser_keys: { verb: { zh: "发送页面按键", en: "Press key in page" }, icon: BrowserIcon },
+  qone_browser_wait: { verb: { zh: "等待页面响应", en: "Wait for page" }, icon: BrowserIcon },
+  qone_browser_screenshot: { verb: { zh: "截取页面", en: "Capture page screenshot" }, icon: BrowserIcon },
+  qone_browser_close: { verb: { zh: "关闭内置浏览器", en: "Close built-in browser" }, icon: BrowserIcon },
+  qone_opencli_run: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
+  qone_twitter_search: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
+  qone_twitter_tweets: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
+  qone_twitter_profile: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
+  qone_twitter_timeline: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
+  qone_twitter_trending: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
 };
 
 function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undefined, servers: readonly McpServerInfo[]): SessionTimelineStep {
@@ -105,14 +125,17 @@ const ToolCallEntry: FC<ToolCallEntryProps> = (props) => {
   const { part, showIcon } = props;
   const call = useConversationStore((state) => toolCallById(state.toolCalls, part.toolCallId));
   const nestedJobs = useConversationStore((state) => backgroundJobLinks(state.toolCalls).byParentCallId.get(part.toolCallId));
+  const nestedBrowser = useConversationStore((state) => nestedBrowserActivitiesByParent(state.toolCalls).get(part.toolCallId));
   const job = backgroundJobLink(call?.args, call?.result) ?? backgroundJobLink(part.args, part.result);
   if (part.toolName === "finalize_response") return null;
   if (isSubagentTool(part.toolName)) return <SubagentToolCall {...props} />;
+  if (isBuiltInBrowserTool(part.toolName)) return <BrowserToolCall {...props} />;
   if (job) return <BackgroundJobRow jobId={job.id} command={job.command} showIcon={showIcon} />;
-  if (!nestedJobs?.length) return <GenericToolCallEntry {...props} call={call} />;
+  if (!nestedJobs?.length && !nestedBrowser) return <GenericToolCallEntry {...props} call={call} />;
   return <div className="flex min-w-0 flex-1 flex-col gap-0.5">
     <GenericToolCallEntry {...props} call={call} />
-    {nestedJobs.map((item) => <BackgroundJobRow key={item.id} jobId={item.id} command={item.command} showIcon />)}
+    {nestedJobs?.map((item) => <BackgroundJobRow key={item.id} jobId={item.id} command={item.command} showIcon />)}
+    {nestedBrowser && <NestedBrowserRow activity={nestedBrowser} showIcon />}
   </div>;
 };
 

@@ -89,4 +89,15 @@ describe("WebAccessMemory", () => {
     expect(context).toContain("preferred-route=\"opencli_browser_bridge\"");
     expect(context).toContain("route=\"OpenCLI adapter\" status=\"failed\" reason=\"timeout\"");
   });
+
+  test("records direct web fetch MCP successes so hosts are not biased toward the built-in browser", () => {
+    const memory = new WebAccessMemory(store());
+    memory.recordToolResult("session-web", "mcp:claude-exa:web_fetch_exa", {
+      urls: ["https://docs.zenlayer.com/pricing"],
+    }, { content: [{ type: "text", text: "Pricing table" }] });
+    const context = memory.context("session-web", "查 https://docs.zenlayer.com/pricing");
+    expect(context).toContain("docs.zenlayer.com");
+    expect(context).toContain("preferred-route=\"direct_web\"");
+    expect(context).toContain("route=\"Direct web fetch\" status=\"ok\"");
+  });
 });

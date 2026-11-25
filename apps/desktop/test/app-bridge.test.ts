@@ -6,10 +6,12 @@ import {
   isManagedBrowserBusy,
   isManagedBrowserOpen,
   notifyManagedBrowserClosed,
+  openManagedBrowserInDock,
   releaseAppOpenCliRequest,
   serveAppOpenCliRequest,
   updateManagedBrowserUrl,
 } from "../src/store/app-bridge";
+import { useBrowserTasks } from "../src/lib/browser-tasks";
 
 function installMockWindow() {
   const listeners: Record<string, ((event: unknown) => void)[]> = {};
@@ -78,6 +80,7 @@ test("tab lists are read-only; page operations reuse live views and only explici
   };
 
   try {
+    useBrowserTasks.getState().clear();
     expect(await listTabs("session-a")).toEqual([]);
     await serveAppOpenCliRequest({
       type: "apps.opencli.request", requestId: "no-page", site: "browser", sessionId: "session-a",
@@ -86,7 +89,7 @@ test("tab lists are read-only; page operations reuse live views and only explici
     expect(invokeCalls).toHaveLength(0);
     expect(opened).toHaveLength(0);
 
-    // 1. 显式打开内置浏览器并弹出右侧面板
+    // 1. 显式打开内置浏览器时仅登记后台任务，不强行弹出右侧栏
     await serveAppOpenCliRequest({
       type: "apps.opencli.request",
       requestId: "req-1",
@@ -95,12 +98,16 @@ test("tab lists are read-only; page operations reuse live views and only explici
       sessionId: "session-a",
     }, send as never, invoke);
 
-    expect(opened).toHaveLength(1);
-    const browserId = opened[0]!.browserId!;
-    expect(opened[0]!.agentManaged).toBe(true);
-    expect(opened[0]!.sessionId).toBe("session-a");
+    expect(opened).toHaveLength(0);
+    const browserId = String(responses[0]!.endpoint).split("/").pop()!;
     expect(isManagedBrowserOpen(browserId)).toBe(true);
     expect(isManagedBrowserBusy(browserId)).toBe(true);
+    expect(useBrowserTasks.getState().tasks).toContainEqual(expect.objectContaining({
+      id: browserId,
+      sessionId: "session-a",
+      url: "https://www.spaceship.com/launchpad/",
+      active: true,
+    }));
     expect(responses[0]).toEqual({
       type: "apps.opencli.response",
       requestId: "req-1",
@@ -109,12 +116,20 @@ test("tab lists are read-only; page operations reuse live views and only explici
       url: "https://www.spaceship.com/launchpad/",
     });
 
+    // 用户单击右上角卡片或时间线下划线时，展开右侧栏并接管实时视图
+    openManagedBrowserInDock(browserId, "https://www.spaceship.com/launchpad/", "session-a");
+    expect(opened).toHaveLength(1);
+    expect(opened[0]!.browserId).toBe(browserId);
+    expect(opened[0]!.agentManaged).toBe(true);
+    expect(opened[0]!.sessionId).toBe("session-a");
+
     const detach = attachManagedBrowserHost(browserId);
     updateManagedBrowserUrl(browserId, "https://www.spaceship.com/login/");
     expect(await listTabs("session-a")).toEqual([{ id: browserId, url: "https://www.spaceship.com/login/" }]);
     expect(await listTabs("session-other")).toEqual([]);
+    expect(useBrowserTasks.getState().tasks.find((item) => item.id === browserId)?.url).toBe("https://www.spaceship.com/login/");
 
-    // 2. 同一轮后续操作复用同一原生视图，并再次触发右侧面板弹出
+    // 2. 右侧栏已承载时，同一轮后续操作复用同一原生视图并同步地址
     await serveAppOpenCliRequest({
       type: "apps.opencli.request",
       requestId: "req-2",
@@ -128,12 +143,13 @@ test("tab lists are read-only; page operations reuse live views and only explici
     expect(opened[1]!.browserId).toBe(browserId);
     expect(opened[1]!.url).toBe("https://www.spaceship.com/login/");
 
-    // 3. 回合结束释放句柄：右侧面板承载时保留页面供用户查看交互
+    // 3. 回合结束释放句柄：保留页面供用户查看交互，任务标记为空闲
     releaseAppOpenCliRequest("req-1", false, invoke);
     expect(liveViews.has(browserId)).toBe(true);
     expect(isManagedBrowserBusy(browserId)).toBe(false);
+    expect(useBrowserTasks.getState().tasks.find((item) => item.id === browserId)?.active).toBe(false);
 
-    // 4. 下一轮再次操作同一会话时继续复用已打开的右侧内置浏览器
+    // 4. 下一轮再次操作同一会话时继续复用已打开的内置浏览器
     await serveAppOpenCliRequest({
       type: "apps.opencli.request",
       requestId: "req-3",
@@ -143,7 +159,7 @@ test("tab lists are read-only; page operations reuse live views and only explici
     expect(invokeCalls.filter((call) => call.command === "browser_open")).toHaveLength(1);
     expect(opened[2]!.browserId).toBe(browserId);
 
-    // 5. 并发请求在主视图忙碌时开辟独立视图，避免 DockCdp 冲突
+    // 5. 并发请求在主视图忙碌时开辟独立视图，避免 DockCdp 冲突（且不强弹右侧栏）
     await serveAppOpenCliRequest({
       type: "apps.opencli.request",
       requestId: "req-concurrent",
@@ -152,8 +168,9 @@ test("tab lists are read-only; page operations reuse live views and only explici
       sessionId: "session-a",
     }, send as never, invoke);
     expect(invokeCalls.filter((call) => call.command === "browser_open")).toHaveLength(2);
-    const concurrentId = opened[3]!.browserId!;
+    const concurrentId = String(responses.at(-1)!.endpoint).split("/").pop()!;
     expect(concurrentId).not.toBe(browserId);
+    expect(opened).toHaveLength(3);
     releaseAppOpenCliRequest("req-concurrent", true, invoke);
     expect(closedInDock).toContain(concurrentId);
     expect(liveViews.has(concurrentId)).toBe(false);
@@ -168,7 +185,7 @@ test("tab lists are read-only; page operations reuse live views and only explici
     }, send, invoke);
     expect(responses.pop()).toMatchObject({ ok: false, message: expect.stringContaining("No active") });
     expect(invokeCalls.filter((call) => call.command === "browser_open")).toHaveLength(2);
-    expect(opened).toHaveLength(4);
+    expect(opened).toHaveLength(3);
     await serveAppOpenCliRequest({
       type: "apps.opencli.request",
       requestId: "req-4",
@@ -177,7 +194,7 @@ test("tab lists are read-only; page operations reuse live views and only explici
       url: "https://example.com/",
       sessionId: "session-a",
     }, send as never, invoke);
-    const rebuiltId = opened[4]!.browserId!;
+    const rebuiltId = String(responses.at(-1)!.endpoint).split("/").pop()!;
     expect(rebuiltId).not.toBe(browserId);
     expect(liveViews.has(rebuiltId)).toBe(true);
 
@@ -186,14 +203,16 @@ test("tab lists are read-only; page operations reuse live views and only explici
     expect(liveViews.has(rebuiltId)).toBe(false);
     expect(closedInDock).toContain(rebuiltId);
   } finally {
+    useBrowserTasks.getState().clear();
     offOpen();
     offClose();
     restoreWindow();
   }
 });
 
-test("unhosted agent browser closes immediately on release to avoid leaking hidden views", async () => {
-  const restoreWindow = installMockWindow();
+test("headless agent browser without session surface closes immediately on release to avoid leaking hidden views", async () => {
+  const originalWindow = (globalThis as unknown as { window?: unknown }).window;
+  (globalThis as unknown as { window: unknown }).window = undefined;
   const liveViews = new Set<string>();
   const invoke = async <T = unknown>(command: string, args?: Record<string, unknown>): Promise<T> => {
     const browserId = String(args?.browserId ?? "");
@@ -214,7 +233,8 @@ test("unhosted agent browser closes immediately on release to avoid leaking hidd
     releaseAppOpenCliRequest("req-headless", false, invoke);
     expect(liveViews.size).toBe(0);
   } finally {
-    restoreWindow();
+    useBrowserTasks.getState().clear();
+    (globalThis as unknown as { window: unknown }).window = originalWindow;
   }
 });
 

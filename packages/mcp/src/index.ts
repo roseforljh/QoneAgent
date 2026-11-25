@@ -6,7 +6,7 @@ import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import { TreeKillingStdioTransport } from "./stdio-transport";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { isSecureServiceUrl } from "@qone/protocol";
+import { isExternalBrowserMcp, isSecureServiceUrl } from "@qone/protocol";
 import { toolProxyEnvironment } from "@qone/protocol/proxy-environment";
 import { HostedMcpOAuth, type HostedOAuthAuthorization, type HostedOAuthCredential } from "./hosted-oauth";
 import { resolveMcpStdioLaunch } from "./stdio-launch";
@@ -86,6 +86,10 @@ interface PendingOAuth {
 export interface QoneMcpToolDefinition extends ToolDefinition {
   /** Internal name used for permissions, logs and the MCP call itself. */
   qoneToolName?: string;
+  /** Human-readable server display name from settings/sync for tool discovery. */
+  qoneMcpServerName?: string;
+  /** True when the MCP server launches an external browser process. */
+  qoneExternalBrowserMcp?: boolean;
 }
 
 /** Convert an arbitrary MCP name to the identifier format accepted by model APIs. */
@@ -628,10 +632,14 @@ export class McpManager {
     this.exposedToolNames.set(fullName, exposedName);
     const routing = serverId === "mcp-github"
       ? "Use this GitHub MCP tool only for authenticated GitHub data, account operations, private repositories, or writes. Use qone_github_public for structured unauthenticated GitHub API data."
-      : undefined;
+      : isExternalBrowserMcp(config)
+        ? "External browser fallback only: prefer web search/fetch first, then Qone's built-in browser (qone_browser_* / qone_opencli_*). Use this external browser only when the user explicitly asks for an external browser or Qone's built-in browser genuinely cannot support the task; never open both built-in and external browsers together."
+        : undefined;
     return {
       name: exposedName,
       qoneToolName: fullName,
+      qoneMcpServerName: config.name,
+      qoneExternalBrowserMcp: isExternalBrowserMcp(config) || undefined,
       label: `${serverId} · ${t.name}`,
       description: [routing, t.description ?? `MCP tool ${t.name} from ${serverId}`].filter(Boolean).join(" "),
       // MCP servers validate their own input; preserve the advertised schema so

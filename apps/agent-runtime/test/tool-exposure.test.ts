@@ -59,6 +59,50 @@ test("integrations defer their schemas and restore only tools used in history", 
   expect([...usedToolNames([{ role: "toolResult", toolName: "tool_search", details: { loaded: ["qone_app_list", "server_exec"] } }, { content: [{ type: "toolCall", name: "server_exec" }, { type: "toolCall", name: "qone_rss_read" }] }])]).toEqual(["qone_app_list", "server_exec", "qone_rss_read"]);
 });
 
+test("defers built-in browser tools while keeping direct web search/fetch MCP tools declared and naming MCP servers clearly", () => {
+  const dummy: ToolDefinition["execute"] = async () => ({ content: [], details: {} });
+  const browserOpen: ToolDefinition = {
+    name: "qone_browser_open", label: "Open", description: "Open built-in browser",
+    parameters: Type.Object({ url: Type.String() }), execute: dummy,
+  };
+  const exaSearch = {
+    name: "mcp_claude_123_web_search_exa",
+    qoneToolName: "mcp:claude-123:web_search_exa",
+    qoneMcpServerName: "exa",
+    label: "Exa search",
+    description: "Search the web for any topic.",
+    parameters: Type.Object({ query: Type.String() }),
+    execute: dummy,
+  };
+  const exaAgent = {
+    name: "mcp_claude_123_agent_run",
+    qoneToolName: "mcp:claude-123:agent_run",
+    qoneMcpServerName: "exa",
+    label: "Exa agent",
+    description: "Run an Exa research agent.",
+    parameters: Type.Object({ query: Type.String() }),
+    execute: dummy,
+  };
+  const playwrightTool = {
+    name: "mcp_claude_pw_browser_navigate",
+    qoneToolName: "mcp:claude-pw:browser_navigate",
+    qoneMcpServerName: "playwright",
+    qoneExternalBrowserMcp: true,
+    label: "Playwright navigate",
+    description: "Navigate external browser.",
+    parameters: Type.Object({ url: Type.String() }),
+    execute: dummy,
+  };
+  const loadout = applyToolExposure([browserOpen, exaSearch, exaAgent, playwrightTool]);
+  expect((loadout.tools[0] as { exposure?: string }).exposure).toBe("deferred");
+  expect((loadout.tools[1] as { exposure?: string }).exposure).toBeUndefined();
+  expect((loadout.tools[2] as { exposure?: string }).exposure).toBe("deferred");
+  expect((loadout.tools[3] as { exposure?: string }).exposure).toBe("deferred");
+  expect(loadout.catalog).toContain("- browser:");
+  expect(loadout.catalog).toContain("MCP server exa (claude-123), connected.");
+  expect(loadout.catalog).toContain("External browser fallback MCP server playwright (claude-pw)");
+});
+
 test("Codemode discovers a deferred MCP tool and filters a batch in one model round trip", async () => {
   const faux = fauxProvider({ provider: "qone-batch", models: [{ id: "model" }] });
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false });

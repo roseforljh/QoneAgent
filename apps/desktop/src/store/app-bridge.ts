@@ -4,7 +4,8 @@ import { resolveDouyinPage } from "../lib/douyin-page-bridge";
 import { resolveDouyinAuthorPage } from "../lib/douyin-author-page";
 import { DouyinPageError } from "../lib/douyin-video-page";
 import { BACKGROUND_BROWSER_BOUNDS } from "../lib/background-browser";
-import { closeAgentBrowserInDock, openAgentBrowserInDock } from "../lib/browser-dock";
+import { closeAgentBrowserInDock, openAgentBrowserInDock, openBrowserInDock } from "../lib/browser-dock";
+import { useBrowserTasks } from "../lib/browser-tasks";
 
 type BridgeInvoke = <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
@@ -51,6 +52,7 @@ export function isManagedBrowserBusy(browserId: string): boolean {
 export function updateManagedBrowserUrl(browserId: string, url: string): void {
   const entry = managedBrowsers.get(browserId);
   if (entry) entry.url = url;
+  useBrowserTasks.getState().updateUrl(browserId, url);
 }
 
 /** 绑定右侧内置浏览器组件为当前原生视图的宿主，卸载时在空闲态下释放索引。 */
@@ -68,6 +70,22 @@ export function attachManagedBrowserHost(browserId: string): () => void {
 /** 用户手动关闭右侧内置浏览器标签页时清理登记，确保随后销毁原生视图。 */
 export function notifyManagedBrowserClosed(browserId: string): void {
   dropManagedBrowser(browserId);
+  useBrowserTasks.getState().setActive(browserId, false);
+}
+
+/** 用户单击右上角任务卡片或时间线下划线时，展开右侧栏并接管存活的内置浏览器（若已关闭则按 URL 打开）。 */
+export function openManagedBrowserInDock(browserId: string, fallbackUrl: string, sessionId?: string): void {
+  const entry = managedBrowsers.get(browserId);
+  if (entry) {
+    openAgentBrowserInDock({
+      browserId,
+      url: entry.url || fallbackUrl,
+      sessionId: sessionId ?? (entry.sessionKey !== "__default__" ? entry.sessionKey : undefined),
+      onClaimed: () => { entry.hosted = true; },
+    });
+    return;
+  }
+  if (fallbackUrl) openBrowserInDock(fallbackUrl, sessionId);
 }
 
 export function releaseAppOpenCliRequest(requestId: string, close = false, invokeFn: BridgeInvoke = invoke): void {
@@ -80,15 +98,19 @@ export function releaseAppOpenCliRequest(requestId: string, close = false, invok
     return;
   }
   entry.activeRequests.delete(requestId);
+  if (entry.activeRequests.size === 0) {
+    useBrowserTasks.getState().setActive(browserId, false);
+  }
   if (close) {
     dropManagedBrowser(browserId);
     closeAgentBrowserInDock(browserId);
     void invokeFn("browser_close", { browserId }).catch(() => undefined);
     return;
   }
-  // 无右侧面板承载（如处于非聊天页或无 DOM 环境）时立即关闭，避免离屏视图泄漏；
-  // 已有右侧面板承载时保留页面供用户查看与交互，关闭标签页时再销毁。
-  if (!entry.hosted && entry.activeRequests.size === 0) {
+  // 无界面会话承接（headless/无 DOM 环境或无 sessionId）时立即关闭，避免离屏视图泄漏；
+  // 正常聊天会话中保留离屏原生视图，供用户随时通过右上角任务卡片或时间线下划线点击展开查看。
+  const hasSessionSurface = typeof window !== "undefined" && entry.sessionKey !== "__default__";
+  if (!entry.hosted && !hasSessionSurface && entry.activeRequests.size === 0) {
     dropManagedBrowser(browserId);
     void invokeFn("browser_close", { browserId }).catch(() => undefined);
   }
@@ -142,7 +164,7 @@ export async function serveAppOpenCliRequest(
   const primaryEntry = primaryId ? managedBrowsers.get(primaryId) : undefined;
   const reusedHandle = handleEntry?.sessionKey === sessionKey;
   const candidateEntry = reusedHandle ? handleEntry : (
-    primaryEntry && primaryEntry.hosted && primaryEntry.activeRequests.size === 0 ? primaryEntry : undefined
+    primaryEntry && primaryEntry.activeRequests.size === 0 ? primaryEntry : undefined
   );
 
   if (candidateEntry) {
@@ -162,12 +184,24 @@ export async function serveAppOpenCliRequest(
         candidateEntry.url = request.url;
       }
       candidateEntry.site = request.site;
-      openAgentBrowserInDock({
-        browserId: candidateId,
-        url: candidateEntry.url,
-        sessionId: request.sessionId,
-        onClaimed: () => { candidateEntry.hosted = true; },
-      });
+      if (request.sessionId) {
+        useBrowserTasks.getState().upsert({
+          id: candidateId,
+          sessionId: request.sessionId,
+          url: candidateEntry.url,
+          site: request.site,
+          active: true,
+        });
+      }
+      // 仅在右侧栏已经展示该内置浏览器时同步 URL，不再强行自动展开右侧栏。
+      if (candidateEntry.hosted) {
+        openAgentBrowserInDock({
+          browserId: candidateId,
+          url: candidateEntry.url,
+          sessionId: request.sessionId,
+          onClaimed: () => { candidateEntry.hosted = true; },
+        });
+      }
       await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint, url: candidateEntry.url,
         ...(passkey && reusedHandle ? { loginRequired: "passkey" as const } : {}) });
       return;
@@ -210,12 +244,16 @@ export async function serveAppOpenCliRequest(
     if (!currentPrimaryEntry || currentPrimaryEntry.activeRequests.size === 0) {
       sessionPrimaryBrowser.set(sessionKey, browserId);
     }
-    openAgentBrowserInDock({
-      browserId,
-      url: request.url,
-      sessionId: request.sessionId,
-      onClaimed: () => { entry.hosted = true; },
-    });
+    // 登记到后台浏览器任务列表，由右上角卡片弹出提示并供用户按需单击打开右侧栏，不强行顶开右侧栏。
+    if (request.sessionId) {
+      useBrowserTasks.getState().upsert({
+        id: browserId,
+        sessionId: request.sessionId,
+        url: request.url,
+        site: request.site,
+        active: true,
+      });
+    }
     await send({ type: "apps.opencli.response", requestId: request.requestId, ok: true, endpoint, url: request.url });
   } catch (error) {
     const ownsRequest = appOpenCliRequests.get(ownerRequestId) === browserId;

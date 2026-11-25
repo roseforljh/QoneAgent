@@ -25,3 +25,23 @@ export function mcpServerIdentity(config: Pick<McpServerInfo, "command" | "args"
   const pkg = mcpPackage(config);
   return pkg ? `pkg:${[pkg.name, ...pkg.rest].join("\0")}` : `cmd:${[config.command, ...config.args ?? []].join("\0")}`;
 }
+
+const EXTERNAL_BROWSER_MCP_PACKAGES = new Set([
+  "@playwright/mcp",
+  "playwright-mcp",
+  "@executeautomation/playwright-mcp-server",
+  "chrome-devtools-mcp",
+  "@modelcontextprotocol/server-puppeteer",
+  "puppeteer-mcp-server",
+  "@browserbasehq/mcp-server-browserbase",
+]);
+const EXTERNAL_BROWSER_MCP_PATTERN = /(?:^|[\\/\s:@])(?:playwright(?:[-_]mcp)?|chrome[-_]devtools[-_]mcp|server[-_]puppeteer|puppeteer[-_]mcp)(?:$|[@\s\\/:])/i;
+
+/** 识别会启动外置浏览器进程的 MCP（如 Playwright、Chrome DevTools、Puppeteer），避免与内置浏览器冲突。 */
+export function isExternalBrowserMcp(config: Pick<McpServerInfo, "id" | "name" | "command" | "args" | "url">): boolean {
+  if (config.id === "mcp-playwright") return true;
+  const pkg = mcpPackage(config)?.name.toLowerCase();
+  if (pkg && (EXTERNAL_BROWSER_MCP_PACKAGES.has(pkg) || EXTERNAL_BROWSER_MCP_PATTERN.test(pkg))) return true;
+  const tokens = [config.command, ...(config.args ?? [])].filter((item): item is string => Boolean(item));
+  return tokens.some(token => EXTERNAL_BROWSER_MCP_PATTERN.test(token));
+}

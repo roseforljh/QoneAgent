@@ -2,23 +2,50 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 type Namespace = { name: string; description: string };
 
-const REACH_TOOLS = new Set(["qone_bilibili_search", "qone_youtube_search", "qone_github_public", "qone_rss_read", "qone_podcast_transcribe"]);
-const REACH: Namespace = { name: "reach", description: "Public web data without a browser: GitHub API, Bilibili and YouTube search, RSS feeds, podcast transcription" };
+const REACH_TOOLS = new Set(["qone_bilibili_search", "qone_youtube_search", "qone_github_public", "qone_rss_read", "qone_v2ex", "qone_podcast_transcribe"]);
+const REACH: Namespace = { name: "reach", description: "Public web data without a browser: GitHub API, V2EX, Bilibili and YouTube search, RSS feeds, podcast transcription" };
 const APP_MEDIA: Namespace = { name: "app_media", description: "Download, inspect and list videos from Douyin, Bilibili, YouTube and other video apps" };
+const BROWSER: Namespace = { name: "browser", description: "Qone built-in browser and OpenCLI site adapters — use only when web search, direct URL fetch, or service MCPs cannot cover login, anti-bot, or interactive rendering" };
+// 已连接的通用网页搜索/抓取 MCP 核心工具直接声明，避免模型因搜不到工具而默认打开浏览器。
+const DIRECT_WEB_MCP_TOOLS = new Set([
+  "web_search_exa",
+  "web_fetch_exa",
+  "firecrawl_search",
+  "firecrawl_scrape",
+  "tavily_search",
+  "tavily_extract",
+  "brave_web_search",
+  "perplexity_ask",
+  "fetch",
+]);
+
+function isBuiltInBrowserToolName(name: string): boolean {
+  return name.startsWith("qone_browser_") || name.startsWith("qone_opencli_") || name.startsWith("qone_twitter_");
+}
 
 /**
  * Which tools stay declared and which load on demand. Core coding, shell,
- * browser, subagent, memory and goal tools are always declared; integrations
- * whose descriptions are large or numerous (MCP servers, SSH servers, app
+ * subagent, memory, goal, and direct web search/fetch tools are always declared;
+ * built-in browser tools and heavy integrations (MCP servers, SSH servers, app
  * media, public web APIs) are `deferred`: found with `tool_search` or called
  * from codemode scripts, so their schemas cost nothing until they are needed.
  */
 export function namespaceFor(tool: ToolDefinition, servers?: Namespace): Namespace | undefined {
-  const qoneName = (tool as ToolDefinition & { qoneToolName?: string }).qoneToolName;
+  const meta = tool as ToolDefinition & { qoneToolName?: string; qoneMcpServerName?: string; qoneExternalBrowserMcp?: boolean };
+  const qoneName = meta.qoneToolName;
   if (qoneName?.startsWith("mcp:")) {
-    const server = qoneName.split(":")[1]!;
-    return { name: `mcp_${server.replace(/[^a-zA-Z0-9_]/g, "_")}`, description: `MCP server ${server}` };
+    const parts = qoneName.split(":");
+    const server = parts[1]!;
+    const rawToolName = parts.slice(2).join(":");
+    if (DIRECT_WEB_MCP_TOOLS.has(rawToolName)) return undefined;
+    const displayName = meta.qoneMcpServerName?.trim();
+    const label = displayName && displayName !== server ? `${displayName} (${server})` : server;
+    const prefix = meta.qoneExternalBrowserMcp
+      ? `External browser fallback MCP server ${label} (prefer web search/fetch and Qone built-in browser first; use only when built-in browser cannot support the task)`
+      : `MCP server ${label}`;
+    return { name: `mcp_${server.replace(/[^a-zA-Z0-9_]/g, "_")}`, description: prefix };
   }
+  if (isBuiltInBrowserToolName(tool.name)) return BROWSER;
   if (REACH_TOOLS.has(tool.name)) return REACH;
   if (tool.name.startsWith("qone_douyin_") || tool.name.startsWith("qone_app_")) return APP_MEDIA;
   if (tool.name.startsWith("server_") && servers) return servers;
