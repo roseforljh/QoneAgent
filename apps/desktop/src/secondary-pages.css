@@ -1,12 +1,10 @@
 /* Secondary pages (settings / mcp / skills / plugins / permissions). */
 .page-shell { height: 100%; overflow: auto; scrollbar-gutter: stable; background: var(--background); }
-.page-topbar { display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 0 28px; border-bottom: 1px solid var(--border); }
-.page-topbar-minimal { justify-content: stretch; }
-.page-topbar-minimal .page-topbar-actions { width: 100%; justify-content: space-between; }
-.page-topbar-actions { display: flex; align-items: center; gap: 22px; }
-.page-back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; transition: color .15s ease, background .15s ease; }
+.page-topbar { display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 0 28px 0 20px; border-bottom: 1px solid var(--border); }
+.page-topbar-actions { display: flex; align-items: center; gap: 10px; }
+.page-back-link { display: inline-flex; align-items: center; gap: 6px; border-radius: 7px; color: var(--muted-foreground); font-size: 12px; transition: color .15s ease, background .15s ease; }
 .page-back-link-icon { width: 28px; height: 28px; align-items: center; justify-content: center; }
-.page-back-link:hover { color: var(--foreground); }
+.page-back-link:hover { background: var(--q-hover); color: var(--foreground); }
 .page-title { color: var(--muted-foreground); font-size: 13px; }
 .page-content { width: min(100% - 56px, 940px); margin: 0 auto; padding: 38px 0 80px; }
 .settings-panel { margin-bottom: 18px; padding: 25px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); }

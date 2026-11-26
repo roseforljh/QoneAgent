@@ -3,6 +3,7 @@ import { closeDb, GoalRepo, MessageRepo, openDb, QueueRepo, RunRepo, SessionRepo
 import { decodeCommand, type RuntimeCommand } from "@qone/protocol";
 import { handleRuntimeCommand } from "../src/runtime-commands";
 import { handleSessionCommand } from "../src/session-commands";
+import { RunCheckpoints } from "../src/run-checkpoints";
 
 function fixture() {
   const db = openDb(":memory:"), workspaceRepo = new WorkspaceRepo(db), sessionRepo = new SessionRepo(db);
@@ -13,7 +14,7 @@ function fixture() {
   const sent: unknown[] = [], events: string[] = [];
   const state = {
     sessionRepo, workspaceRepo, runRepo, queueRepo, goalRepo: new GoalRepo(db), messageRepo: new MessageRepo(db),
-    turnRepo: new TurnRepo(db), subagentRunRepo: new SubagentRunRepo(db),
+    turnRepo: new TurnRepo(db), subagentRunRepo: new SubagentRunRepo(db), runCheckpoints: new RunCheckpoints(new SettingsRepo(db), new Map()),
     startingRunSessions: new Set<string>(), cancelledRuns: new Set<string>(), goalContinuationTimers: new Map(), titleControllers: new Map(), backgroundShell: { noteRun() {} },
     assistantPartsByRun: new Map(), liveAssistantByRun: new Map(), initialUserMessageSeen: new Set(),
     assistantBuffers: new Map(), assistantStreamBuffers: new Map(), assistantMessageSequenceByRun: new Map(), assistantRawMessagesByRun: new Map(), toolCallIds: new Map(),

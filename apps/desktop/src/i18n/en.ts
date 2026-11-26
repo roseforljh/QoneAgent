@@ -1,5 +1,6 @@
 import type { Messages } from "./zh-CN";
 import { enNavigation } from "./navigation";
+import { enAutomation } from "./automation";
 
 export const en: Messages = {
   "servers.view.operations": "Operations",
@@ -1212,4 +1213,5 @@ export const en: Messages = {
   "composer.toolGoal": "Goal",
   "composer.toolGoalDescription": "Keep working until the goal is complete",
   ...enNavigation,
+  ...enAutomation,
 };

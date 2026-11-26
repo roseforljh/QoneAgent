@@ -31,7 +31,7 @@ import { runtimeEvents } from "./lib/runtime-event-payload";
 import { douyinRequests, releaseAllAppOpenCliRequests, releaseAppOpenCliRequest, serveDouyinBridgeRequest, serveAppOpenCliRequest } from "./store/app-bridge";
 import { restoreProviderProfilesFromModelConfigs } from "./lib/model-picker-data";
 import { settleModelConfigSave } from "./lib/model-config-save";
-
+import { handleFeatureEvent } from "./store/feature-events";
 function subagentChange(state: AgentState, subagents: AgentState["subagents"], trackActivity: boolean): Partial<AgentState> {
   return subagents === state.subagents ? state : { subagents, ...(trackActivity ? subagentActivity(state, subagents) : {}) };
 }
@@ -140,7 +140,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     }
     const msg = raw;
     if (msg.type === "error" && msg.localization) msg.message = localizeError(msg);
-    if (handleSideConversationEvent(msg)) continue;
+    if (handleSideConversationEvent(msg) || handleFeatureEvent(msg)) continue;
     if (msg.type === "agent.event" && msg.event.scope === "subagent" && !msg.event.sourceSubagentId) {
       lastSequence = Math.max(lastSequence, msg.event.sequence);
       continue;

@@ -46,6 +46,7 @@ import { ThreadScrollToBottom } from "./thread-scroll-to-bottom";
 import "./thread-viewport.css";
 import "./composer-actions.css";
 import { ComposerQueue } from "./composer-queue";
+import { ElicitationPanel } from "../mcp/ElicitationPanel";
 import { useStore } from "../../store";
 import { messageById } from "../../lib/store-indexes";
 import { createMessageStructureSelector } from "../../lib/thread-message-structure";
@@ -252,6 +253,7 @@ export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
             {canChat && <RunFileChangesSummary />}
             <div className="q-chat-composer-anchor relative w-full pb-2">
               <div className="relative mx-auto w-full q-composer-content">
+                {canChat && <ElicitationPanel />}
                 {canChat ? <Composer placeholder={t("chat.placeholder")} /> : <ProjectImportPrompt compact />}
               </div>
             </div>

@@ -2,9 +2,10 @@ import { runtimeCopyCore } from "./runtime-copy-core";
 import { runtimeCopyMedia } from "./runtime-copy-media";
 import { runtimeCopyMemory } from "./runtime-copy-memory";
 import { runtimeCopyServers } from "./runtime-copy-servers";
+import { runtimeCopyAutomation } from "./runtime-copy-automation";
 import { subagentCopy } from "./subagent-copy";
 export const runtimeCopy = {
-  ...runtimeCopyCore, ...runtimeCopyMedia, ...runtimeCopyMemory, ...runtimeCopyServers, ...subagentCopy,
+  ...runtimeCopyCore, ...runtimeCopyMedia, ...runtimeCopyMemory, ...runtimeCopyServers, ...runtimeCopyAutomation, ...subagentCopy,
   "background-shell.title": { en: "Background command", "zh-CN": "后台命令" },
   "background-shell.exited": { en: "Finished with exit code {code} after {seconds}s", "zh-CN": "已结束，退出码 {code}，用时 {seconds} 秒" },
   "background-shell.ended": { en: "Ended without an exit code after {seconds}s", "zh-CN": "未正常结束，用时 {seconds} 秒" },

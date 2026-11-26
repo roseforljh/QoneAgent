@@ -1,4 +1,5 @@
 import { zhNavigation } from "./navigation";
+import { zhAutomation } from "./automation";
 
 export const zh = {
   "servers.view.operations": "操作记录",
@@ -1211,6 +1212,7 @@ export const zh = {
   "composer.toolGoal": "目标",
   "composer.toolGoalDescription": "持续执行直到目标完成",
   ...zhNavigation,
+  ...zhAutomation,
 };
 
 export type MessageKey = keyof typeof zh;

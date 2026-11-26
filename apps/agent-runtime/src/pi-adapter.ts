@@ -25,6 +25,7 @@ import { createFileChangeTools } from "./file-change-tools.js";
 import { createMediaTools, createInternalTools, mediaToolHostFor } from "./pi-tool-kit.js";
 import { ApprovalQueue, withPermission, type PermissionRuleStore } from "./permissions.js";
 import { withBrowserSessionId } from "./app-opencli-bridge.js";
+import { withToolSession } from "./tool-session.js";
 import { elevatedPowerShell } from "./elevated-powershell.js";
 import { createResourceLoader, sessionResourceLoader } from "./skills.js";
 import { runImageGeneration, runSpeechGeneration, runVideoGeneration, type GenerationContext } from "./media-generation-runner.js";
@@ -681,11 +682,12 @@ export class PiAdapter {
     internalToolNames.add("finalize_response");
     const serverTools = mcpServerId ? [] : this.hooks.serverTools?.(workspacePath, scope) ?? [];
     // 确保内置浏览器与 OpenCLI 工具在 codemode 等异步调用路径中始终携带当前会话 ID。
-    const withBrowserSession = (tool: ToolDefinition): ToolDefinition => (
-      tool.name.startsWith("qone_browser_") || tool.name.startsWith("qone_opencli_") || tool.name.startsWith("qone_twitter_")
-        ? { ...tool, execute: (...args) => withBrowserSessionId(eventSessionId ?? sessionId, () => tool.execute(...args)) }
-        : tool
-    );
+    const withBrowserSession = (tool: ToolDefinition): ToolDefinition => {
+      const owner = eventSessionId ?? sessionId;
+      return tool.name.startsWith("qone_browser_") || tool.name.startsWith("qone_opencli_") || tool.name.startsWith("qone_twitter_")
+        ? { ...tool, execute: (...args) => withToolSession(owner, () => withBrowserSessionId(owner, () => tool.execute(...args))) }
+        : { ...tool, execute: (...args) => withToolSession(owner, () => tool.execute(...args)) };
+    };
     const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...serverTools, ...internalTools].map((t) =>
       withPermission(withBrowserSession(t), {
         queue: this.approvals,

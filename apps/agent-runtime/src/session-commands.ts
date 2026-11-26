@@ -53,6 +53,8 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
           "session.snapshot",
         ],
       });
+      // A reloaded window gets the questions MCP servers are still waiting on.
+      services.elicitations.publish();
       return true;
 
     case "session.create": {

@@ -1,4 +1,4 @@
-import { Client, StreamableHTTPClientTransport, SSEClientTransport, UnauthorizedError, DEFAULT_REQUEST_TIMEOUT_MSEC, SdkError, SdkErrorCode, SdkHttpError, type CallToolResult } from "@modelcontextprotocol/client";
+import { Client, StreamableHTTPClientTransport, SSEClientTransport, UnauthorizedError, DEFAULT_REQUEST_TIMEOUT_MSEC, SdkError, SdkErrorCode, SdkHttpError, type CallToolResult, type ElicitRequestParams, type ElicitResult } from "@modelcontextprotocol/client";
 import { isDeepStrictEqual } from "node:util";
 import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
@@ -11,6 +11,7 @@ import { toolProxyEnvironment } from "@qone/protocol/proxy-environment";
 import { HostedMcpOAuth, type HostedOAuthAuthorization, type HostedOAuthCredential } from "./hosted-oauth";
 import { resolveMcpStdioLaunch } from "./stdio-launch";
 import { McpAccountLoginRequiredError } from "./auth-error";
+import { ToolClocks } from "./tool-clock";
 import { catalogKey, configFingerprint, connectionConfig, readCatalog, type McpCatalogStore, type McpToolMetadata } from "./tool-catalog";
 export { resolveStdioLaunch } from "./stdio-launch";
 export { McpAccountLoginRequiredError } from "./auth-error";
@@ -43,6 +44,10 @@ export interface McpLifecycleOptions {
   canConnect?: (id: string) => boolean;
   onToolsChanged?: () => void;
   onAuthTargetChanged?: (config: McpServerConfig) => void;
+  /** Asks the person for input a server requested (`elicitation/create`) while one of its tools runs; `caller` is who made that call. */
+  onElicitation?: (config: McpServerConfig, params: ElicitRequestParams, signal: AbortSignal, caller?: string) => Promise<ElicitResult>;
+  /** Read inside a tool call to tag it with its caller (e.g. the conversation). */
+  callerContext?: () => string | undefined;
 }
 interface Registration {
   config: McpServerConfig;
@@ -134,6 +139,7 @@ export class McpManager {
   private oauthCallbackServers = new Map<string, Server>();
   private registrations = new Map<string, Registration>();
   private closing = new Map<string, Promise<void>>();
+  private toolClocks = new ToolClocks(DEFAULT_REQUEST_TIMEOUT_MSEC);
   private stopped = false;
 
 
@@ -581,12 +587,15 @@ export class McpManager {
       ? config.transport === "sse" ? new SSEClientTransport(new URL(config.url), httpOptions) : new StreamableHTTPClientTransport(new URL(config.url), httpOptions)
       : new TreeKillingStdioTransport({ command: launch!.command, args: launch!.args, env: stdioEnv, cwd: stdioCwd });
     const registration = this.registrations.get(config.id)!;
+    const elicit = this.lifecycle.onElicitation;
     const client = new Client({ name: "qone-agent", version: "0.0.1" }, {
-      capabilities: {},
+      capabilities: elicit ? { elicitation: { form: {}, url: {} } } : {},
       listChanged: { tools: { onChanged: (error, tools) => {
         if (!error && tools && this.conns.get(config.id)?.client === client && !this.staleConnections.has(config.id)) this.updateCatalog(registration, tools);
       } } },
     });
+    if (elicit) client.setRequestHandler("elicitation/create", (request, ctx) =>
+      this.toolClocks.whileWaiting(config.id, () => elicit(config, request.params, ctx.mcpReq.signal, this.toolClocks.caller(config.id))));
     client.onclose = () => {
       if (this.conns.get(config.id)?.client !== client) return;
       this.conns.delete(config.id);
@@ -700,7 +709,7 @@ export class McpManager {
     registration.calls++;
     registration.used = true;
     const currentTool = () => registration.metadata?.find(tool => tool.name === name);
-    const call = (connection: Conn) => this.authenticated(config, () => connection.client.callTool({ name, arguments: args }, { signal }));
+    const call = (connection: Conn) => this.authenticated(config, () => this.timedCall(connection, name, args, signal));
     try {
       const connection = await waitForConnection(this.ensureConnection(registration), signal);
       check();
@@ -727,6 +736,19 @@ export class McpManager {
       }
       throw error;
     } finally { registration.calls--; }
+  }
+
+  /** The SDK timer is replaced by one that pauses while an elicitation from this server is open. */
+  private timedCall(connection: Conn, name: string, args: Record<string, unknown>, signal?: AbortSignal) {
+    const controller = new AbortController();
+    const forward = () => controller.abort(signal!.reason);
+    if (signal?.aborted) forward();
+    else signal?.addEventListener("abort", forward, { once: true });
+    const stop = this.toolClocks.track(connection.config.id, () => controller.abort(new SdkError(SdkErrorCode.RequestTimeout, "Request timed out", { timeout: DEFAULT_REQUEST_TIMEOUT_MSEC })), this.lifecycle.callerContext?.());
+    return connection.client.callTool({ name, arguments: args }, { signal: controller.signal, timeout: 2_147_483_647 }).finally(() => {
+      stop();
+      signal?.removeEventListener("abort", forward);
+    });
   }
 
   /** Internal workflows use the same lazy connection and permission checks as model tools. */

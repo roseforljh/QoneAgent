@@ -82,6 +82,20 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       }
       return true;
 
+    case "schedule.list": case "schedule.save": case "schedule.delete": case "schedule.run":
+      try {
+        await services.schedules.handle(cmd);
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      }
+      return true;
+
+    case "mcp.elicitation.respond":
+      // An answer to a request that already ended (server cancelled, tool stopped) has nothing left to do.
+      services.elicitations.respond(cmd);
+      services.send({ type: "pong", requestId: cmd.requestId });
+      return true;
+
     case "memory.get":
     case "memory.enabled.set":
     case "memory.model.set":
@@ -625,9 +639,13 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
         }
       }
       const run = services.runRepo.create(cmd.sessionId, {
-        origin: goal ? (cmd.goalContinuation ? "goal_continuation" : "goal_kickoff") : "manual",
+        origin: goal ? (cmd.goalContinuation ? "goal_continuation" : "goal_kickoff") : cmd.origin ?? "manual",
         goalId: goal?.id,
         goalEpoch: goal?.epoch,
+      });
+      services.runCheckpoints.start(run.id, {
+        sessionId: cmd.sessionId, origin: cmd.origin, model: cmd.model, permissionMode: cmd.permissionMode,
+        thinking: cmd.thinking, serverIds: cmd.serverIds, goalId: goal?.id, goalEpoch: goal?.epoch,
       });
       services.assistantPartsByRun.set(run.id, []);
       services.liveAssistantByRun.set(run.id, { content: "", parts: [], sequence: 0 });

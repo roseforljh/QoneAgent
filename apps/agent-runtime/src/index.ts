@@ -1,4 +1,4 @@
-import { connectMcp, registerMcp, mcpServerList, restoreMcpCredentials } from "./mcp-connections";
+import { connectMcp, registerMcp, mcpServerList, restoreMcpCredentials, requestStoredSecrets } from "./mcp-connections";
 import { installDesktopSystemProxy } from "./system-proxy";
 import { handleSessionCommand } from "./session-commands.js";
 import { handleRuntimeCommand, sessionHasActiveRun } from "./runtime-commands.js";
@@ -55,6 +55,11 @@ import { AppOpenCliBridge } from "./app-opencli-bridge.js";
 import { createRuntimeMemory } from "./memory/runtime-memory.js";
 import { MemoryIncidents } from "./memory/memory-incidents.js";
 import { ServerService } from "./servers/server-service.js";
+import { RunCheckpoints } from "./run-checkpoints.js";
+import { recoverInterruptedRuns, restoreModelKeys, resumeInterruptedRuns } from "./run-recovery.js";
+import { ScheduleService } from "./schedules/schedule-service.js";
+import { McpElicitations } from "./mcp-elicitation.js";
+import { currentToolSession } from "./tool-session.js";
 
 installDesktopSystemProxy();
 const log = createLogger("runtime");
@@ -67,8 +72,16 @@ const eventBus = new EventBus<RuntimeBusEvent>();
 // NDJSON over stdio: one JSON object per line on stdout.
 // stderr is reserved for logs.
 const output = createRuntimeOutput({ write: (line) => { process.stdout.write(line); }, intervalMs: 8, maxEvents: 32 });
+// Commands the runtime sends itself (scheduled and recovered turns): their reply
+// is captured here instead of reaching the GUI as an unrelated error.
+const internalRequests = new Map<string, string | undefined>();
 // Every MCP list update also delivers official icons, resolved in the background.
 const send: typeof output.send = (event) => {
+  const requestId = (event as { requestId?: string }).requestId;
+  if ((event.type === "error" || event.type === "pong") && requestId && internalRequests.has(requestId)) {
+    if (event.type === "error") internalRequests.set(requestId, event.message);
+    return;
+  }
   output.send(event);
   if (event.type === "mcp.list") void sendMcpIcons(event.servers, stateRepo, output.send).catch((error) => log.warn("mcp icon resolution failed", { err: String(error) }));
 };
@@ -286,12 +299,24 @@ eventBus.subscribe((busEvent) => {
     subagentNotificationCoordinator: () => subagentNotificationCoordinator,
     subagentPublisher,
   }, busEvent, agentEvent, childExecution);
+  runCheckpoints.observe(agentEvent);
+  schedules.observe(agentEvent);
 });
 const assistantBuffers = new Map<string, string>();
 // Raw streamed deltas per run; survives aborts so partial answers can be saved.
 const assistantStreamBuffers = new Map<string, string[]>();
 const assistantPartsByRun = new Map<string, AssistantMessagePart[]>();
 const assistantRawMessagesByRun = new Map<string, unknown[]>();
+const runCheckpoints = new RunCheckpoints(settingsRepo, assistantRawMessagesByRun);
+const schedules: ScheduleService = new ScheduleService({
+  settings: settingsRepo, sessions: sessionRepo, workspaces: workspaceRepo, runs: runRepo, send,
+  run: runInternal,
+  busy: (sessionId) => sessionHasActiveRun(runtimeCommandServices(), sessionId),
+  sessionsChanged: () => void handle({ type: "session.list", requestId: crypto.randomUUID() }),
+  warn: (message, meta) => log.warn(message, meta),
+});
+// A subagent's question belongs to the conversation that started it.
+const elicitations = new McpElicitations((event) => send(event), (sessionId) => subagentRunRepo.getByExecutionSession(sessionId)?.parentSessionId ?? sessionId);
 const assistantMessageSequenceByRun = new Map<string, number>();
 const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }>>();
 const initialUserMessageSeen = new Set<string>();
@@ -312,8 +337,11 @@ function persistPartialAssistant(sessionId: string, runId: string, model?: strin
     .join("\n\n")
     .trim();
   const content = streamText || assistantBuffers.get(runId)?.trim() || partsText;
-  if (!content && !parts.length) return undefined;
-  return messageRepo.addAssistant(sessionId, content, runId, model, parts, undefined, assistantRawMessagesByRun.get(runId));
+  const message = content || parts.length
+    ? messageRepo.addAssistant(sessionId, content, runId, model, parts, undefined, assistantRawMessagesByRun.get(runId))
+    : undefined;
+  runCheckpoints.reset(runId);
+  return message;
 }
 
 function deliverSteer(sessionId: string, runId: string, rawUser?: unknown) {
@@ -365,6 +393,7 @@ const interruptedSubagents = subagentRunRepo.list().filter((row) => activeSubage
 const approvalRuns = new Map<string, string>();
 const approvalToolCalls = new Map<string, string>();
 const commandApprovals = new ApprovalQueue();
+const recoveredRuns = recoverInterruptedRuns({ runs: runRepo, subagents: subagentRunRepo, messages: messageRepo, settings: settingsRepo, checkpoints: runCheckpoints, nextSequence: eventJournal.next, warn: (message, meta) => log.warn(message, meta) });
 runtimeMemory.recover(() => {
   executionStats.recover();
   runRepo.markInterrupted(); // any run still "running" was killed with last process
@@ -650,6 +679,8 @@ const mcp = new McpManager(async (serverId, token) => {
   send({ type: "mcp.list", servers: mcpServerList({ mcp, mcpServerRepo, pendingMcpAuthRequests }) });
 }, {
   catalog: stateRepo,
+  onElicitation: elicitations.ask,
+  callerContext: currentToolSession,
   canConnect: id => {
     const decision = permissionRepo.get(`mcp:${id}`, "mcp.connect");
     const approved = mcpConnectionApprovals.get(id);
@@ -876,6 +907,9 @@ export function runtimeCommandServices() {
     memory,
     executionStats, executionAnalysis,
     servers,
+    schedules,
+    elicitations,
+    runCheckpoints,
     ensureModelsReady,
     browserReady,
     approvalRuns,
@@ -967,8 +1001,30 @@ async function handle(cmd: RuntimeCommand): Promise<void> {
   send({ type: "error", requestId: cmd.requestId, message: `unhandled command ${cmd.type}` });
 }
 
+/** Runs a command the runtime issues itself; resolves with its error message, if any. */
+async function runInternal(cmd: RuntimeCommand): Promise<string | undefined> {
+  internalRequests.set(cmd.requestId, undefined);
+  try {
+    await handle(cmd);
+    return internalRequests.get(cmd.requestId);
+  } catch (error) {
+    return runtimeErrorInfo(error).message;
+  } finally {
+    internalRequests.delete(cmd.requestId);
+  }
+}
+
 void initializeOptionalIntegrations().catch((error) => {
   log.error("optional integration initialization failed", { err: String(error) });
+}).then(() => restoreModelKeys(modelConfigRepo.list().filter((config) => config.enabled).map((config) => config.provider), runtimeSecrets,
+  (keys) => requestStoredSecrets(send, "models", keys), (key, value) => adapter.setSecret(key, value),
+).catch((error) => log.warn("stored model keys unavailable", { err: String(error) }))).then(() => {
+  // Automatic turns start once MCP and browser tools and model keys are in place.
+  resumeInterruptedRuns(recoveredRuns, {
+    sessions: sessionRepo, goals: goalRepo, busy: (sessionId) => sessionHasActiveRun(runtimeCommandServices(), sessionId),
+    continueGoal: scheduleGoalContinuation, run: runInternal, warn: (message, meta) => log.warn(message, meta),
+  });
+  schedules.start();
 });
 const stopConfigurationWatch = watchConfiguration(settingsFile, runtimeCommandServices);
 void modelsReady.then(() => { executionAnalysis.start(); return memory.refresh(); }).catch(() => { /* initial configuration already logged */ });
@@ -1001,6 +1057,7 @@ for await (const value of process.stdin as AsyncIterable<Uint8Array>) {
 }
 
 stopConfigurationWatch();
+schedules.stop();
 memory.close();
 executionAnalysis.close();
 executionStats.close();

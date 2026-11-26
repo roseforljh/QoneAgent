@@ -34,6 +34,24 @@ export async function registerMcp(config: McpServerInfo, services: Services): Pr
 
 export function acknowledgeMcpCredentials(reply: Restored) { pending.get(reply.requestId)?.(reply); }
 
+/** Reads stored secrets through the desktop's native channel; the GUI never sees them. */
+export function requestStoredSecrets(send: Services["send"], serverId: string, keys: string[], signal?: AbortSignal): Promise<Record<string, string>> {
+  const requestId = crypto.randomUUID();
+  return new Promise<Record<string, string>>((resolve, reject) => {
+    const finish = (error?: Error, values: Record<string, string> = {}) => {
+      clearTimeout(timer); pending.delete(requestId); signal?.removeEventListener("abort", abort);
+      error ? reject(error) : resolve(values);
+    };
+    const abort = () => finish(signal?.reason ?? new Error("MCP credential restore cancelled"));
+    const timer = setTimeout(() => finish(new Error("MCP credential storage did not respond")), 15_000);
+    pending.set(requestId, reply => reply.ok ? finish(undefined, reply.values) : finish(new Error("Stored MCP credentials could not be read")));
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
+    try { send({ type: "mcp.credentials.request", requestId, serverId, keys }); }
+    catch { finish(new Error("MCP credential storage is unavailable")); }
+  });
+}
+
 /** Runs inside the manager's connection flight, before resolving any secret references. */
 export async function restoreMcpCredentials(config: McpServerConfig, services: Pick<Services, "send" | "runtimeSecrets" | "mcp">, signal: AbortSignal) {
   const allKeys = mcpCredentialKeys(config);
@@ -43,20 +61,7 @@ export async function restoreMcpCredentials(config: McpServerConfig, services: P
   }
   const keys = allKeys.filter(key => !services.runtimeSecrets.has(key));
   if (!keys.length) return;
-  const requestId = crypto.randomUUID();
-  const values = await new Promise<Record<string, string>>((resolve, reject) => {
-    const finish = (error?: Error, values: Record<string, string> = {}) => {
-      clearTimeout(timer); pending.delete(requestId); signal.removeEventListener("abort", abort);
-      error ? reject(error) : resolve(values);
-    };
-    const abort = () => finish(signal.reason ?? new Error("MCP credential restore cancelled"));
-    const timer = setTimeout(() => finish(new Error("MCP credential storage did not respond")), 15_000);
-    pending.set(requestId, reply => reply.ok ? finish(undefined, reply.values) : finish(new Error("Stored MCP credentials could not be read")));
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) { abort(); return; }
-    try { services.send({ type: "mcp.credentials.request", requestId, serverId: config.id, keys }); }
-    catch { finish(new Error("MCP credential storage is unavailable")); }
-  });
+  const values = await requestStoredSecrets(services.send, config.id, keys, signal);
   signal.throwIfAborted();
   // Requested order restores the OAuth client before tokens. A newer in-memory value wins.
   for (const key of keys) {

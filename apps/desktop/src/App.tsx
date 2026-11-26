@@ -53,21 +53,24 @@ import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
 import { AppChrome } from "./components/app-chrome/AppChrome";
 import { ResizableSidebar } from "./components/assistant-ui/resizable-sidebar";
 import { CollapsedSidebar } from "./components/assistant-ui/collapsed-sidebar";
-import { useTheme } from "./lib/appearance";
+import { setThemeSetting, useAppearance } from "./lib/appearance";
 import { nativeDroppedDirectories, useNativePathDrop } from "./lib/native-file-drop";
 
-type Theme = "light" | "dark";
 type PendingRun = { text: string; attachments: MessageAttachmentInfo[]; goal?: boolean; quote?: MessageQuoteInfo };
 
 const Thread = lazy(async () => ({ default: (await import("./components/assistant-ui/Thread")).Thread }));
 const SettingsDialog = lazy(async () => ({ default: (await import("./components/settings/SettingsDialog")).SettingsDialog }));
 const BrowserPage = lazy(async () => ({ default: (await import("./components/browser/BrowserPage")).BrowserPage }));
+const SchedulesPage = lazy(async () => ({ default: (await import("./components/schedules/SchedulesPage")).SchedulesPage }));
 
-function ThemeButton({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
+function ThemeButton() {
+  const { t } = useLocale();
+  const { resolvedTheme: theme } = useAppearance();
+  const nextTheme = theme === "dark" ? "light" : "dark";
   return (
     <TooltipIconButton
-      tooltip={theme === "dark" ? "Light theme" : "Dark theme"}
-      onClick={onToggle}
+      tooltip={t(nextTheme === "light" ? "general.light" : "general.dark")}
+      onClick={(event) => setThemeSetting(nextTheme, event.currentTarget)}
       className="size-8"
     >
       {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
@@ -304,7 +307,7 @@ function SidebarFooter({ collapsed, onOpenSettings }: { collapsed: boolean; onOp
   );
 }
 
-function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pendingRun }: { theme: Theme; onToggleTheme: () => void; initialSettingsOpen?: boolean; pendingRun: React.MutableRefObject<PendingRun | null> }) {
+function ChatPageContent({ initialSettingsOpen = false, pendingRun }: { initialSettingsOpen?: boolean; pendingRun: React.MutableRefObject<PendingRun | null> }) {
   const { t } = useLocale();
   const sidebarCollapsed = useSidebarPreferences((state) => state.collapsed);
   const setSidebarCollapsed = useSidebarPreferences((state) => state.setCollapsed);
@@ -432,6 +435,15 @@ function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pe
                 <AnimatedSidebarIcon kind="browser" />
                 <span className="overflow-hidden whitespace-nowrap">{t("browser.title")}</span>
               </Link>
+              <Link
+                to="/schedules"
+                aria-label={t("schedules.title")}
+                data-slot="q-sidebar-app-link"
+                className="group hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] w-full items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors"
+              >
+                <AnimatedSidebarIcon kind="schedule" />
+                <span className="overflow-hidden whitespace-nowrap">{t("schedules.title")}</span>
+              </Link>
             </div>
             <div className="scrollbar-none flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-2">
               {sidebarLayout === "project" && (!workspacesLoaded || !sessionsLoaded) && <SidebarLoadingSkeleton layout="project" />}
@@ -452,7 +464,6 @@ function ChatPageContent({ theme, onToggleTheme, initialSettingsOpen = false, pe
           <SettingsDialog open={settingsOpen} onClose={closeSettings} />
         </Suspense>}
         <ChatSearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
-        <ConfirmationDialogHost />
       </div>
   );
 }
@@ -481,24 +492,23 @@ function ChatPageRuntime({ pendingRun, ...props }: Omit<React.ComponentProps<typ
 
 const StableChatPageContent = memo(ChatPageContent);
 
-function ChatPage({ theme, onToggleTheme, initialSettingsOpen = false }: { theme: Theme; onToggleTheme: () => void; initialSettingsOpen?: boolean }) {
+function ChatPage({ initialSettingsOpen = false }: { initialSettingsOpen?: boolean }) {
   const pendingRun = useRef<PendingRun | null>(null);
-  return <ChatPageRuntime pendingRun={pendingRun} theme={theme} onToggleTheme={onToggleTheme} initialSettingsOpen={initialSettingsOpen} />;
+  return <ChatPageRuntime pendingRun={pendingRun} initialSettingsOpen={initialSettingsOpen} />;
 }
 
-function PageLayout({ title, theme, onToggleTheme, children, minimalHeader = false }: { title: string; theme: Theme; onToggleTheme: () => void; children: ReactNode; minimalHeader?: boolean }) {
+function PageLayout({ title, children }: { title: string; children: ReactNode }) {
   const { t } = useLocale();
   return (
     <div className="page-shell">
-      <header className={cn("page-topbar", minimalHeader && "page-topbar-minimal")}>
-        {!minimalHeader && <Link className="brand-link" to="/"><img className="qone-logo brand-mark" src={qonePenguinUrl} alt="" aria-hidden="true" /><span>Qone</span></Link>}
+      <header className="page-topbar">
         <div className="page-topbar-actions">
-          <Link to="/" className={cn("page-back-link", minimalHeader && "page-back-link-icon")} aria-label={t("app.backHome")} title={t("app.backHome")}>
+          <Link to="/" className="page-back-link page-back-link-icon" aria-label={t("app.backHome")} title={t("app.backHome")}>
             <ArrowLeft size={16} aria-hidden="true" />
           </Link>
-          {!minimalHeader && <span className="page-title">{title}</span>}
-          <ThemeButton theme={theme} onToggle={onToggleTheme} />
+          <span className="page-title">{title}</span>
         </div>
+        <ThemeButton />
       </header>
       <main className="page-content">{children}</main>
     </div>
@@ -514,13 +524,12 @@ function ManagementPanel({ kind }: { kind: "skills" | "permissions" }) {
   const permissionRules = useStore((state) => state.permissionRules);
   const setPermission = useStore((state) => state.setPermission);
   const lastError = useStore((state) => state.lastError);
-  const { theme, toggleTheme } = useTheme();
   useEffect(() => {
     if (kind === "skills") send({ type: "skills.list", requestId: crypto.randomUUID(), cwd: workspaces.find((w) => w.id === currentWorkspaceId)?.path });
     if (kind === "permissions") send({ type: "permission.list", requestId: crypto.randomUUID() });
   }, [kind, send, workspaces, currentWorkspaceId]);
   const titles = { skills: t("nav.skills"), permissions: t("composer.permissions") };
-  return <PageLayout title={titles[kind]} theme={theme} onToggleTheme={toggleTheme}>
+  return <PageLayout title={titles[kind]}>
     {lastError && <p className="error-banner" role="alert">{lastError}</p>}
     <div className="settings-panel">
       {kind === "skills" && <div className="simple-list">{skills.length === 0 ? <p className="muted-copy">{t("app.noSkills")}</p> : skills.map((skill) => <div className="simple-list-row stacked" key={skill.id}><strong>{skill.name}</strong><small>{skill.description}</small><code>{skill.path}</code></div>)}</div>}
@@ -530,7 +539,7 @@ function ManagementPanel({ kind }: { kind: "skills" | "permissions" }) {
 }
 
 export default function App() {
-  const { theme, toggleTheme } = useTheme();
+  const { t } = useLocale();
   const { pathname } = useLocation();
   const sessions = useStore((s) => s.sessions);
   const workspaces = useStore((s) => s.workspaces);
@@ -552,8 +561,12 @@ export default function App() {
   return <AppChrome path={pathname}>
     {pathname === "/browser"
       ? <Suspense fallback={<ConversationLoadingSkeleton />}><BrowserPage /></Suspense>
+      : pathname === "/schedules"
+      ? <PageLayout title={t("schedules.title")}><Suspense fallback={null}><SchedulesPage /></Suspense></PageLayout>
       : ["/skills", "/permissions"].includes(pathname)
       ? <ManagementPanel kind={pathname.slice(1) as "skills" | "permissions"} />
-      : <ChatPage theme={theme} onToggleTheme={toggleTheme} initialSettingsOpen={pathname === "/settings"} />}
+      : <ChatPage initialSettingsOpen={pathname === "/settings"} />}
+    {/* Every page asks for confirmation through this one host. */}
+    <ConfirmationDialogHost />
   </AppChrome>;
 }

@@ -20,7 +20,9 @@ import type { FilePreviewInfo } from "./file-preview";
 import { isRuntimeMessageKey, type RuntimeLocale, type LocalizedErrorInfo, type RuntimeMessageKey } from "./localized-error";
 import { isEccBuiltinSubagentId } from "./builtin-subagents/catalog";
 import { serverCommandSchemas, type ServerCommand, type ServerEvent } from "./servers";
+import { automationCommandSchemas, type AutomationCommand, type AutomationEvent } from "./automation";
 export * from "./servers";
+export * from "./automation";
 export {
   ECC_BUILTIN_SUBAGENT_REVISION,
   ECC_BUILTIN_SUBAGENT_SOURCE,
@@ -205,6 +207,8 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
       mcpServerId?: string;
       /** Runtime-started turn: shown as `content` from `communication`; `message` stays model input. */
       notice?: { content: string; communication: AgentCommunicationInfo };
+      /** Runtime-started turns only; never accepted from the GUI. */
+      origin?: "schedule" | "recovery";
     }
   | { type: "agent.permission-mode.set"; requestId: string; sessionId: string; permissionMode: RunPermissionMode }
   | { type: "agent.steer"; requestId: string; sessionId: string; runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }
@@ -217,7 +221,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "tool.reject"; requestId: string; approvalId: string; reason?: string }
   | { type: "secret.set"; requestId: string; key: string; value: string }
   | { type: "secret.delete"; requestId: string; key: string }
-  | ServerCommand);
+  | ServerCommand | AutomationCommand);
 
 // ---------- Events (Runtime -> GUI) ----------
 
@@ -263,7 +267,7 @@ export interface LiveAssistantMessage {
 }
 
 export type RuntimeEvent =
-  | ServerEvent
+  | ServerEvent | AutomationEvent
   | { type: "pong"; requestId: string; capabilities?: string[]; compaction?: CompactionSettingsInfo }
   | { type: "session.compacted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo }
   | { type: "session.compactionInterrupted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo; message: string }
@@ -950,7 +954,7 @@ const subagentConfig = z.object({
   updatedAt: z.number().int().nonnegative(),
 });
 const commandSchemas: Record<string, z.ZodTypeAny> = {
-  ...serverCommandSchemas,
+  ...serverCommandSchemas, ...automationCommandSchemas,
   ping: z.object({ type: z.literal("ping"), ...request }),
   "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id, resumeFrom: id.optional() }),
   "session.side-chat.create": z.object({ type: z.literal("session.side-chat.create"), ...request, sessionId: id, queueItemId: id.optional(), title: id.optional() }),

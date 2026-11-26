@@ -34,6 +34,9 @@ export function CollapsedSidebar({ collapsed, onOpenSidebar, onOpenSettings }: {
         <Link to="/browser" className="q-sidebar-rail-action" title={t("browser.title")} aria-label={t("browser.title")}>
           <AnimatedSidebarIcon kind="browser" />
         </Link>
+        <Link to="/schedules" className="q-sidebar-rail-action" title={t("schedules.title")} aria-label={t("schedules.title")}>
+          <AnimatedSidebarIcon kind="schedule" />
+        </Link>
         {collapsed && <SidebarProjectsPopover />}
       </nav>
       <div className="mt-auto flex justify-center py-2">

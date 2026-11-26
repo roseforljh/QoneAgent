@@ -554,6 +554,11 @@ export class RunRepo {
     return this.db.select().from(runs).where(eq(runs.id, id)).get();
   }
 
+  /** Runs a killed process left open; read before markInterrupted closes them. */
+  listActive() {
+    return this.db.select().from(runs).where(inArray(runs.status, ["created", "running", "waiting_approval", "paused"])).all();
+  }
+
   // On boot: any run still marked running was killed with the process.
   markInterrupted() {
     this.db
@@ -813,6 +818,11 @@ export class SettingsRepo {
   set(key: string, value: unknown) {
     const row = { key, value: JSON.stringify(value), updatedAt: Date.now() };
     this.db.insert(settings).values(row).onConflictDoUpdate({ target: settings.key, set: { value: row.value, updatedAt: row.updatedAt } }).run();
+  }
+
+  /** Prefixes are internal keys; LIKE wildcards in them are escaped. */
+  deletePrefix(prefix: string) {
+    this.db.$client.prepare("DELETE FROM settings WHERE key LIKE ? ESCAPE '\\'").run(`${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
   }
 }
 
