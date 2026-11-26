@@ -1,5 +1,5 @@
 import { useConversationStore } from "../../lib/conversation-context";
-import { ComposerPrimitive, QueueItemPrimitive, useAui, useAuiState, type AppendMessage, type QueueItemState } from "@assistant-ui/react";
+import { ComposerPrimitive, useAui, useAuiState, type AppendMessage, type QueueItemState } from "@assistant-ui/react";
 import { Loader2Icon } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { Fragment, type ReactNode } from "react";
@@ -8,6 +8,7 @@ import pencilIcon from "../../assets/codex-icons/pencil-light-16.svg";
 import steerIcon from "../../assets/codex-icons/arrow-curved-right-large-typographic-light-16.svg";
 import trashIcon from "../../assets/codex-icons/trash-light-16.svg";
 import sideChatIcon from "../../assets/codex-icons/plus-chat-bubble-right-light-16.svg";
+import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { openQueuedSideConversation } from "../../lib/side-conversation";
 import { sessionStore } from "../../lib/session-execution-state";
 import { localizeError } from "../../lib/error-localization";
@@ -53,7 +54,7 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
   const removeButton = <TooltipIconButton
     tooltip={t("chat.queueRemove")}
     disabled={steering}
-    onClick={detached ? onDelete : undefined}
+    onClick={onDelete}
     className="size-7 rounded-lg text-muted-foreground transition-colors hover:text-foreground"
   ><CodexIcon src={trashIcon} className="size-4" /></TooltipIconButton>;
 
@@ -82,7 +83,7 @@ function QueueItemRow({ itemId, queueItem, message, steering = false, editing = 
         onClick={onSteer}
         className="q-composer-queue-steer h-7 w-auto gap-1 rounded-lg px-1.5 text-xs font-normal text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
       ><CodexIcon src={steerIcon} className="size-4 shrink-0" /><span>{t("chat.queueSteer")}</span></Button>}
-      {detached ? removeButton : <QueueItemPrimitive.Remove asChild>{removeButton}</QueueItemPrimitive.Remove>}
+      {removeButton}
       {!steering && <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button type="button" title={t("chat.queueMore")} aria-label={t("chat.queueMore")} disabled={editing}
@@ -133,11 +134,14 @@ export function ComposerQueue({ sessionId: ownerSessionId, allowSideChat = true 
     editing
     detached
     onDelete={() => {
-      const localId = queue?.getLocalId(recovery.id);
-      if (!queue || !localId) return;
-      queue.remove(localId);
-      sessionStore(useStore, sessionId).setState({ editingQueueItem: undefined });
-      void aui.composer().reset();
+      void confirmDestructiveAction(t("chat.queueRemoveConfirm")).then((confirmed) => {
+        if (!confirmed) return;
+        const localId = queue?.getLocalId(recovery.id);
+        if (!queue || !localId) return;
+        queue.remove(localId);
+        sessionStore(useStore, sessionId).setState({ editingQueueItem: undefined });
+        void aui.composer().reset();
+      });
     }}
   /> : null;
 
@@ -176,6 +180,11 @@ export function ComposerQueue({ sessionId: ownerSessionId, allowSideChat = true 
               message={queue?.getMessage(queueItem.id)}
               steering={queue?.adapter.steerItems.some((item) => item.id === queueItem.id)}
               onSteer={() => queue?.steerNow(queueItem.id)}
+              onDelete={() => {
+                void confirmDestructiveAction(t("chat.queueRemoveConfirm")).then((confirmed) => {
+                  if (confirmed) queue?.remove(queueItem.id);
+                });
+              }}
               onEdit={() => {
                 if (!queue) return;
                 if (!aui.composer().getState().isEmpty) {

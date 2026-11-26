@@ -16,6 +16,7 @@ import { InlineQuoteChip } from "./composer-quote";
 import { AgentCommunication, useAgentCommunication } from "./agent-communication";
 import { hasInlineQuote, INLINE_QUOTE_HREF, inlineQuotesToMarkdown } from "../../lib/inline-quote";
 import { markdownUrlTransform } from "../../lib/markdown-file-reference";
+import { remarkLineBreaks } from "../../lib/markdown-gfm";
 
 // Inline selected-text tags reach Markdown as qone-quote:N links and render as chips.
 const InlineQuotes = createContext<readonly string[]>([]);
@@ -26,14 +27,15 @@ function QuoteOrLink(props: ComponentProps<"a"> & { node?: unknown }) {
 }
 const quoteComponents = { a: QuoteOrLink };
 const quoteUrlTransform: UrlTransform = (url, key, node) => url.startsWith(INLINE_QUOTE_HREF) ? url : markdownUrlTransform(url, key, node);
+const userRemarkPlugins = [remarkLineBreaks];
 
 function UserMarkdownText() {
   const { text } = useMessagePartText();
   const inline = useMemo(() => hasInlineQuote(text) ? inlineQuotesToMarkdown(text) : undefined, [text]);
-  if (!inline) return <MarkdownText />;
+  if (!inline) return <MarkdownText remarkPlugins={userRemarkPlugins} />;
   return <InlineQuotes.Provider value={inline.quotes}>
     <TextMessagePartProvider text={inline.markdown}>
-      <MarkdownText components={quoteComponents} urlTransform={quoteUrlTransform} />
+      <MarkdownText components={quoteComponents} urlTransform={quoteUrlTransform} remarkPlugins={userRemarkPlugins} />
     </TextMessagePartProvider>
   </InlineQuotes.Provider>;
 }

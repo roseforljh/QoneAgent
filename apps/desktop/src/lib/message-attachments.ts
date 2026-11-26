@@ -85,3 +85,37 @@ export async function serializeMessageAttachments(message: AppendMessage): Promi
   }
   return attachments;
 }
+
+/** 直接将浏览器或桌面原生 File 列表序列化为协议附件（供团队模式输入框复用同一校验规则）。 */
+export async function serializeFilesToAttachments(
+  files: readonly File[],
+  existing: readonly MessageAttachmentInfo[] = [],
+): Promise<MessageAttachmentInfo[]> {
+  const added = await Promise.all(files.map(async (rawFile) => {
+    const nativeFile = rawFile as NativeAttachmentFile;
+    const isDir = Boolean(nativeFile.qoneIsDirectory);
+    const rawMime = rawFile.type || (isDir ? "inode/directory" : "application/octet-stream");
+    const isImage = !isDir && /^image\/(png|jpeg|webp|gif)$/i.test(rawMime);
+    const type: MessageAttachmentInfo["type"] = isDir ? "folder" : isImage ? "image" : "file";
+    const mimeType = isDir ? "inode/directory" : rawMime;
+    if (nativeFile.qoneLocalPath) {
+      return { type, name: rawFile.name, mimeType, data: "", localPath: nativeFile.qoneLocalPath } satisfies MessageAttachmentInfo;
+    }
+    if (!isAudioVideo(mimeType) && rawFile.size > INLINE_ATTACHMENT_LIMIT_BYTES) {
+      throw new Error(t("attachment.useLocalFile"));
+    }
+    const data = await readDataUrl(rawFile);
+    if (!isAudioVideo(mimeType) && data.length > MAX_DATA_LENGTH) {
+      throw new Error(t("attachment.tooLarge", { name: rawFile.name }));
+    }
+    if (type === "image" && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(data)) {
+      throw new Error(t("attachment.unsupportedImage", { name: rawFile.name }));
+    }
+    return { type, name: rawFile.name, mimeType, data } satisfies MessageAttachmentInfo;
+  }));
+  const merged = [...existing, ...added];
+  if (merged.reduce((total, attachment) => total + (isAudioVideo(attachment.mimeType) ? 0 : attachment.data.length), 0) > MAX_TOTAL_DATA_LENGTH) {
+    throw new Error(t("attachment.totalTooLarge"));
+  }
+  return merged;
+}

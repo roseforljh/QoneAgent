@@ -15,7 +15,6 @@ interface TeamWizardDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: ReactNode;
-  description?: ReactNode;
   steps: readonly WizardStepItem[];
   currentStep: number;
   onStepChange: (index: number) => void;
@@ -32,7 +31,6 @@ export function TeamWizardDialog({
   open,
   onOpenChange,
   title,
-  description,
   steps,
   currentStep,
   onStepChange,
@@ -55,16 +53,9 @@ export function TeamWizardDialog({
         >
           <header className="team-wizard-header">
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <Dialog.Title className="text-[16px] font-semibold tracking-tight text-foreground">
-                  {title}
-                </Dialog.Title>
-                {description && (
-                  <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-                    {description}
-                  </Dialog.Description>
-                )}
-              </div>
+              <Dialog.Title className="text-[16px] font-semibold tracking-tight text-foreground">
+                {title}
+              </Dialog.Title>
               <Dialog.Close className="nested-dialog-close" aria-label={t("common.close")}>
                 <X size={16} />
               </Dialog.Close>

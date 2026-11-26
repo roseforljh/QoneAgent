@@ -21,8 +21,12 @@ import { isRuntimeMessageKey, type RuntimeLocale, type LocalizedErrorInfo, type 
 import { isEccBuiltinSubagentId } from "./builtin-subagents/catalog";
 import { serverCommandSchemas, type ServerCommand, type ServerEvent } from "./servers";
 import { automationCommandSchemas, type AutomationCommand, type AutomationEvent } from "./automation";
+import { DIRECTORY_MIME_TYPE, messageAttachmentSchema as messageAttachment, nonMediaAttachmentBytes } from "./attachments";
+import { teamCommandSchemas, type TeamCommand, type TeamEvent } from "./team";
+export { DIRECTORY_MIME_TYPE };
 export * from "./servers";
 export * from "./automation";
+export * from "./team";
 export {
   ECC_BUILTIN_SUBAGENT_REVISION,
   ECC_BUILTIN_SUBAGENT_SOURCE,
@@ -224,7 +228,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "tool.reject"; requestId: string; approvalId: string; reason?: string }
   | { type: "secret.set"; requestId: string; key: string; value: string }
   | { type: "secret.delete"; requestId: string; key: string }
-  | ServerCommand | AutomationCommand);
+  | ServerCommand | AutomationCommand | TeamCommand);
 
 // ---------- Events (Runtime -> GUI) ----------
 
@@ -270,7 +274,7 @@ export interface LiveAssistantMessage {
 }
 
 export type RuntimeEvent =
-  | ServerEvent | AutomationEvent
+  | ServerEvent | AutomationEvent | TeamEvent
   | { type: "pong"; requestId: string; capabilities?: string[]; compaction?: CompactionSettingsInfo }
   | { type: "session.compacted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo }
   | { type: "session.compactionInterrupted"; requestId: string; sessionId: string; marker: CompactionMarkerInfo; message: string }
@@ -915,24 +919,6 @@ const mcpConfig = z.object({
     scopes: z.array(z.string()).optional(), redirectUri: secureUrl.optional(), tokenSecretKey: z.string().optional(),
   }).optional(),
 }).refine((config) => Boolean(config.command) !== Boolean(config.url) && (!config.authMode || Boolean(config.url)));
-export const DIRECTORY_MIME_TYPE = "inode/directory";
-
-const messageAttachment = z.object({
-  type: z.enum(["image", "file", "folder"]),
-  name: z.string().min(1).max(255),
-  mimeType: z.string().min(1).max(128),
-  data: z.string(),
-  localPath: z.string().min(1).max(4096).optional(),
-}).refine((attachment) => attachment.type === "folder"
-  ? attachment.mimeType === DIRECTORY_MIME_TYPE && Boolean(attachment.localPath) && attachment.data === ""
-  : attachment.localPath
-  ? attachment.data === "" && (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType))
-  : (/^(?:audio|video)\//i.test(attachment.mimeType) || attachment.data.length <= 70_000_000) &&
-    /^data:[^,]*;base64,[A-Za-z0-9+/=]+$/i.test(attachment.data) &&
-    attachment.data.toLowerCase().startsWith(`data:${attachment.mimeType.toLowerCase()}`) &&
-    (attachment.type !== "image" || /^image\/(png|jpeg|webp|gif)$/i.test(attachment.mimeType)));
-const nonMediaAttachmentBytes = (attachments: readonly { data: string; mimeType: string }[] | undefined) =>
-  attachments?.reduce((total, attachment) => total + (/^(?:audio|video)\//i.test(attachment.mimeType) ? 0 : attachment.data.length), 0) ?? 0;
 const subagentProfile = z.object({
   id: id.max(128), name: z.string().trim().min(1).max(120),
   instructions: z.string().trim().min(1).max(32_000), modelId: z.string().max(512), logo: z.string().trim().min(1).max(64).optional(),
@@ -959,7 +945,7 @@ const subagentConfig = z.object({
   updatedAt: z.number().int().nonnegative(),
 });
 const commandSchemas: Record<string, z.ZodTypeAny> = {
-  ...serverCommandSchemas, ...automationCommandSchemas,
+  ...serverCommandSchemas, ...automationCommandSchemas, ...teamCommandSchemas,
   ping: z.object({ type: z.literal("ping"), ...request }),
   "session.create": z.object({ type: z.literal("session.create"), ...request, title: z.string().optional(), workspaceId: id, resumeFrom: id.optional() }),
   "session.side-chat.create": z.object({ type: z.literal("session.side-chat.create"), ...request, sessionId: id, queueItemId: id.optional(), title: id.optional() }),

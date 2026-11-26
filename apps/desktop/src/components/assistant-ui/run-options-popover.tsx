@@ -1,7 +1,7 @@
 import { useConversationStore } from "../../lib/conversation-context";
 import { DEFAULT_RUN_PERMISSION_MODE } from "../../lib/run-options";
 import { useEffect, useRef, useState, type CSSProperties, type FC, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { AssistantModalPrimitive } from "@assistant-ui/react";
+import { Popover } from "radix-ui";
 import { CheckIcon, SnowflakeIcon } from "lucide-react";
 import type { RunPermissionMode } from "@qone/protocol";
 import { useLocale, type MessageKey } from "../../localization";
@@ -222,60 +222,66 @@ export const RunOptionsPopover: FC = () => {
     if (scope === "always") setDefaultPermissionMode("full");
   };
 
-  return <AssistantModalPrimitive.Root unstable_openOnRunStart={false} open={open} onOpenChange={setOpen}>
-    <span className="q-run-options-trigger-zone q-reveal-zone -m-1 inline-flex p-1">
-      <AssistantModalPrimitive.Trigger asChild>
-        <button type="button" className="q-run-options-trigger" data-state={open ? "open" : "closed"} data-open={open} data-permission-mode={permissionMode} aria-label={`${t("composer.permissions")}：${modeLabel}`} aria-expanded={open}>
-          <CodexIcon src={modeIcon} className="size-[15px] shrink-0" />
-          <span>{modeLabel}</span>
-        </button>
-      </AssistantModalPrimitive.Trigger>
-    </span>
-    <AssistantModalPrimitive.Content side="top" align="start" sideOffset={10} collisionPadding={12} dissmissOnInteractOutside className="q-run-options-card" aria-label={t("composer.permissions")}
-      onOpenAutoFocus={(event) => {
-        event.preventDefault();
-        (event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>("button[aria-pressed='true']")?.focus();
+  return (
+    <>
+      <Popover.Root open={open} onOpenChange={setOpen}>
+        <span className="q-run-options-trigger-zone q-reveal-zone -m-1 inline-flex p-1">
+          <Popover.Trigger asChild>
+            <button type="button" className="q-run-options-trigger" data-state={open ? "open" : "closed"} data-open={open} data-permission-mode={permissionMode} aria-label={`${t("composer.permissions")}：${modeLabel}`} aria-expanded={open}>
+              <CodexIcon src={modeIcon} className="size-[15px] shrink-0" />
+              <span>{modeLabel}</span>
+            </button>
+          </Popover.Trigger>
+        </span>
+        <Popover.Portal>
+          <Popover.Content side="top" align="start" sideOffset={10} collisionPadding={12} className="q-run-options-card z-50" aria-label={t("composer.permissions")}
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              (event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>("button[aria-pressed='true']")?.focus();
+            }}>
+            <section className="q-run-options-section" aria-label={t("composer.permissions")}>
+              <div className="q-run-options-modes">
+                {permissionModes.map((mode) => {
+                  return <button key={mode.value} type="button" data-mode={mode.value} className="q-run-options-mode" aria-pressed={permissionMode === mode.value && grantScope !== "pending"} onClick={() => choosePermissionMode(mode.value as RunPermissionMode)}>
+                    <CodexIcon src={mode.icon} className="size-[17px] shrink-0" />
+                    <span><strong>{t(mode.labelKey)}</strong><small>{t(mode.descriptionKey)}</small></span>
+                    {permissionMode === mode.value && grantScope !== "pending" && <CheckIcon size={16} className="q-run-options-check" aria-hidden="true" />}
+                  </button>;
+                })}
+              </div>
+            </section>
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+      <Dialog open={grantDialogOpen} onOpenChange={(nextOpen) => {
+        setGrantDialogOpen(nextOpen);
+        if (!nextOpen) setGrantScope(null);
       }}>
-      <section className="q-run-options-section" aria-label={t("composer.permissions")}>
-        <div className="q-run-options-modes">
-          {permissionModes.map((mode) => {
-            return <button key={mode.value} type="button" data-mode={mode.value} className="q-run-options-mode" aria-pressed={permissionMode === mode.value && grantScope !== "pending"} onClick={() => choosePermissionMode(mode.value as RunPermissionMode)}>
-              <CodexIcon src={mode.icon} className="size-[17px] shrink-0" />
-              <span><strong>{t(mode.labelKey)}</strong><small>{t(mode.descriptionKey)}</small></span>
-              {permissionMode === mode.value && grantScope !== "pending" && <CheckIcon size={16} className="q-run-options-check" aria-hidden="true" />}
-            </button>;
-          })}
-        </div>
-      </section>
-    </AssistantModalPrimitive.Content>
-    <Dialog open={grantDialogOpen} onOpenChange={(nextOpen) => {
-      setGrantDialogOpen(nextOpen);
-      if (!nextOpen) setGrantScope(null);
-    }}>
-      <DialogContent className="q-permission-dialog" showCloseButton={false}>
-        <PermissionGrant
-          capability={t("composer.permissionGrantCapability")}
-          requester="Qone"
-          reach={[
-            t("composer.permissionGrantWorkspace"),
-            t("composer.permissionGrantTools"),
-            t("composer.permissionGrantBoundary"),
-          ]}
-          scope={grantScope ?? "pending"}
-          onGrant={resolvePermissionGrant}
-          labels={{
-            requestedBy: t("composer.permissionGrantRequestedBy"),
-            thisGrants: t("composer.permissionGrantThisGrants"),
-            deny: t("composer.permissionGrantDeny"),
-            session: t("composer.permissionGrantSession"),
-            always: t("composer.permissionGrantAlways"),
-            pending: t("composer.permissionGrantPending"),
-            denied: t("composer.permissionGrantDenied"),
-            granted: t("composer.permissionGrantGranted"),
-          }}
-          className="q-permission-grant-dialog-card"
-        />
-      </DialogContent>
-    </Dialog>
-  </AssistantModalPrimitive.Root>;
+        <DialogContent className="q-permission-dialog" showCloseButton={false}>
+          <PermissionGrant
+            capability={t("composer.permissionGrantCapability")}
+            requester="Qone"
+            reach={[
+              t("composer.permissionGrantWorkspace"),
+              t("composer.permissionGrantTools"),
+              t("composer.permissionGrantBoundary"),
+            ]}
+            scope={grantScope ?? "pending"}
+            onGrant={resolvePermissionGrant}
+            labels={{
+              requestedBy: t("composer.permissionGrantRequestedBy"),
+              thisGrants: t("composer.permissionGrantThisGrants"),
+              deny: t("composer.permissionGrantDeny"),
+              session: t("composer.permissionGrantSession"),
+              always: t("composer.permissionGrantAlways"),
+              pending: t("composer.permissionGrantPending"),
+              denied: t("composer.permissionGrantDenied"),
+              granted: t("composer.permissionGrantGranted"),
+            }}
+            className="q-permission-grant-dialog-card"
+          />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 };

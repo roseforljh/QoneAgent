@@ -106,9 +106,23 @@ interface PiAdapterHooks {
   onGeneratedMedia?: (sessionId: string, runId: string, data: Uint8Array | ReadableStream<Uint8Array>, mimeType: string, extension: string, signal: AbortSignal) => Promise<string>;
 }
 
+/**
+ * 隔离会话（如团队模式成员执行）：不读写会话库、记忆、子代理与后台任务，
+ * 工具调用先经 gate 判定，返回拒绝原因时在审批前直接拒绝。
+ */
+export interface IsolatedSessionPolicy {
+  gate(toolName: string, args: unknown): string | undefined;
+  /** 会话专属的内部工具（不经审批），用于提交结构化结果。 */
+  tools?: ToolDefinition[];
+  /** 稳定的缓存复用键（例如按群聊 ID），用于 prompt_cache_key 与服务器状态稳定化，与并发隔离用 sessionId 解耦。 */
+  cacheKey?: string;
+}
+
 export class PiAdapter {
   private isSideConversation: (sessionId: string) => boolean = () => false;
   setSideConversationResolver(resolve: (sessionId: string) => boolean) { this.isSideConversation = resolve; }
+  private isolatedSession: (sessionId: string) => IsolatedSessionPolicy | undefined = () => undefined;
+  setIsolatedSessionResolver(resolve: (sessionId: string) => IsolatedSessionPolicy | undefined) { this.isolatedSession = resolve; }
   private emit: EmitFn;
   private sessions = new Map<string, AgentSession>();
   private runs = new Map<string, AgentSession>();
@@ -124,6 +138,8 @@ export class PiAdapter {
   private toolCatalogs = new WeakMap<AgentSession, string>();
   private serverScopes = new WeakMap<AgentSession, string>();
   private sessionServerTargets = new Map<string, readonly ServerExecutionTarget[]>();
+  /** 隔离会话的服务器状态稳定快照，与主会话分池，避免一次性或高频团队键挤出普通会话的 256 槽位。 */
+  private isolatedServerTargets = new Map<string, readonly ServerExecutionTarget[]>();
   private sentToolCatalogs = new WeakMap<AgentSession, string>();
   private staleSessions = new Set<string>();
   /** 复用已学习的网关 Schema 降级映射，避免模型配置刷新后再次触发 400 并改变工具前缀。 */
@@ -397,6 +413,8 @@ export class PiAdapter {
     this.sessions.delete(sessionId);
     this.sessionSettingsManagers.delete(sessionId);
     this.staleSessions.delete(sessionId);
+    // 普通会话需跨重建保留 sessionServerTargets；仅清理无 cacheKey 的一次性隔离会话条目。
+    this.isolatedServerTargets.delete(sessionId);
     const key = this.sessionResourceKeys.get(sessionId);
     this.sessionResourceKeys.delete(sessionId);
     if (key && ![...this.sessionResourceKeys.values()].includes(key)) {
@@ -625,6 +643,7 @@ export class PiAdapter {
     const isCurrent = () => this.sessionEpochs.get(sessionId) === epoch;
     const workspacePath = cwd ?? process.cwd();
     const sideConversation = this.isSideConversation(sessionId);
+    const isolated = this.isolatedSession(sessionId);
     const resourceKey = sideConversation
       ? `${subagentDepth > 0 ? "subagent-side-chat" : "side-chat"}:${sessionId}`
       : subagentDepth > 0 ? `subagent:${workspacePath}` : workspacePath;
@@ -662,7 +681,7 @@ export class PiAdapter {
     ] });
     // A background result is delivered as a new turn of this conversation, so only
     // top-level chats can start one; a subagent or side chat has no turn to wake.
-    const backgroundShell = subagentDepth === 0 && !sideConversation && !mcpServerId ? this.backgroundShell : undefined;
+    const backgroundShell = subagentDepth === 0 && !sideConversation && !mcpServerId && !isolated ? this.backgroundShell : undefined;
     const builtinTools = [
       createReadTool(workspacePath),
       backgroundShell ? backgroundShell.wrap(this.hooks.secrets?.wrap(powershell as ToolDefinition) ?? powershell as ToolDefinition, eventSessionId) : powershell,
@@ -676,7 +695,7 @@ export class PiAdapter {
       : this.customTools;
     const policy = this.subagentPolicy?.();
     const canDelegate = this.delegateSubagent && (!subagentRunId || (policy?.allowNested ?? true)) && subagentDepth < (policy?.maxDepth ?? 3);
-    const subagentTools = sideConversation ? [] : createSubagentTools({
+    const subagentTools = sideConversation || isolated ? [] : createSubagentTools({
       controller: this.subagentController, delegate: this.delegateSubagent, canDelegate: Boolean(canDelegate),
       eventSessionId, subagentRunId, subagentDepth, modelName, maxConcurrent: policy?.maxConcurrent,
       parentRunId: () => this.activeRunIds.get(sessionId),
@@ -696,12 +715,12 @@ export class PiAdapter {
       openCli: this.openCli,
       registerMediaDirectory: (runId, directory) => this.registerMediaDirectory(runId, directory),
     }, sessionId), workspacePath, modelName);
-    const memoryTools = sideConversation || subagentDepth > 0 || mcpServerId ? [] : this.hooks.memoryTools?.(sessionId) ?? [];
-    const deliveryTools = subagentDepth > 0 || mcpServerId ? [] : [
+    const memoryTools = sideConversation || subagentDepth > 0 || mcpServerId || isolated ? [] : this.hooks.memoryTools?.(sessionId) ?? [];
+    const deliveryTools = subagentDepth > 0 || mcpServerId || isolated ? [] : [
       ...this.hooks.deliveryTools?.(eventSessionId, workspacePath, () => this.activeRunIds.get(sessionId)) ?? [],
       ...this.hooks.secrets ? [this.hooks.secrets.tool(eventSessionId, workspacePath, scope)] : [],
     ];
-    const internalTools = [...createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId), ...memoryTools, ...deliveryTools, ...(backgroundShell ? [backgroundShell.tool(eventSessionId)] : [])];
+    const internalTools = [...createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId), ...memoryTools, ...deliveryTools, ...(backgroundShell ? [backgroundShell.tool(eventSessionId)] : []), ...(isolated?.tools ?? [])];
     const internalToolNames = new Set(internalTools.map((tool) => tool.name));
     internalToolNames.add("finalize_response");
     const serverTools = mcpServerId ? [] : this.hooks.serverTools?.(workspacePath, scope, eventSessionId) ?? [];
@@ -712,8 +731,17 @@ export class PiAdapter {
         ? { ...tool, execute: (...args) => withToolSession(owner, () => withBrowserSessionId(owner, () => tool.execute(...args))) }
         : { ...tool, execute: (...args) => withToolSession(owner, () => tool.execute(...args)) };
     };
+    const gated = (tool: ToolDefinition): ToolDefinition => !isolated || internalToolNames.has(tool.name) ? tool : {
+      ...tool,
+      execute: (id, params, ...rest) => {
+        const reason = isolated.gate((tool as ToolDefinition & { qoneToolName?: string }).qoneToolName ?? tool.name, params);
+        return reason
+          ? Promise.resolve({ content: [{ type: "text" as const, text: reason }], details: { denied: true, reason: "isolated-policy" }, isError: true } as never)
+          : tool.execute(id, params, ...rest);
+      },
+    };
     const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...serverTools, ...internalTools].map((t) =>
-      withPermission(withBrowserSession(this.hooks.secrets?.wrap(t) ?? t), {
+      gated(withPermission(withBrowserSession(this.hooks.secrets?.wrap(t) ?? t), {
         queue: this.approvals,
         workspacePath,
         rules: this.permissionRules,
@@ -732,7 +760,7 @@ export class PiAdapter {
           if (!isCurrent()) return;
           this.push("approval.resolved", { approvalId, toolCallId, approved }, eventSessionId, this.activeRunIds.get(sessionId));
         },
-      })
+      }))
     );
     assertModelToolNames(wrapped.map((tool) => tool.name));
     // Integrations load on demand (tool_search / codemode); see tool-exposure.ts.
@@ -754,19 +782,20 @@ export class PiAdapter {
       model = modelRuntime.getModel(provider, modelId);
       if (!model) throw new Error(`configured model not found: ${modelName}`);
     }
-    const restoredMessages = this.restoreMessages?.(sessionId, this.activeRunIds.get(sessionId)) ?? [];
+    const restoredMessages = isolated ? [] : this.restoreMessages?.(sessionId, this.activeRunIds.get(sessionId)) ?? [];
     const preparedMessages = await Promise.all(restoredMessages.map(async (message) => ({
       ...message,
       attachments: message.role === "user"
         ? await materializeModelInputs(message.attachments, isGoogleGeminiApi(model?.api), model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined, true)
         : message.attachments,
     })));
+    const cacheSessionId = isolated?.cacheKey ?? sessionId;
     const sessionManager = SessionManager.inMemory(
       workspacePath,
       undefined,
       createPiSessionEntries(workspacePath, preparedMessages, model,
         model ? configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input : undefined,
-        sessionId),
+        cacheSessionId),
     );
     const sessionSettings = SettingsManager.inMemory();
     sessionSettings.applyOverrides(this.compactionOverrides());
@@ -785,15 +814,17 @@ export class PiAdapter {
           serverTools: serverTools.map(tool => tool.name),
           servers: () => mcpServerId ? [] : this.hooks.serverTargets?.(scope) ?? [],
           stabilizeServers: (targets) => {
-            const next = stabilizeServerTargets(this.sessionServerTargets.get(sessionId), targets);
+            const targetCache = isolated ? this.isolatedServerTargets : this.sessionServerTargets;
+            const targetKey = isolated ? cacheSessionId : sessionId;
+            const next = stabilizeServerTargets(targetCache.get(targetKey), targets);
             if (!next.length) {
-              this.sessionServerTargets.delete(sessionId);
+              targetCache.delete(targetKey);
             } else {
-              this.sessionServerTargets.delete(sessionId);
-              this.sessionServerTargets.set(sessionId, next);
-              if (this.sessionServerTargets.size > 256) {
-                const oldest = this.sessionServerTargets.keys().next().value;
-                if (oldest !== undefined) this.sessionServerTargets.delete(oldest);
+              targetCache.delete(targetKey);
+              targetCache.set(targetKey, next);
+              if (targetCache.size > 256) {
+                const oldest = targetCache.keys().next().value;
+                if (oldest !== undefined) targetCache.delete(oldest);
               }
             }
             return next;
@@ -823,7 +854,7 @@ export class PiAdapter {
     // finished result reports once. The stream object itself is returned untouched, so
     // the agent loop's `for await (... of response)` keeps working exactly as before.
     const originalStream = session.agent.streamFunction;
-    const reportUsage = (usage: ProviderUsageReport) => this.hooks.usageObserved?.(usageSessionId, usage, mcpServerId || subagentRunId || sideConversation ? "other" : "chat");
+    const reportUsage = (usage: ProviderUsageReport) => this.hooks.usageObserved?.(isolated ? undefined : usageSessionId, usage, mcpServerId || subagentRunId || sideConversation || isolated ? "other" : "chat");
     session.agent.streamFunction = (streamModel, context, options) => {
       const observed = observeRequestUsage(String(streamModel.api), streamModel, options, reportUsage);
       const stream = this.observeStream(
@@ -850,7 +881,7 @@ export class PiAdapter {
     }
 
     const onAutomaticCompaction = this.hooks.onAutomaticCompaction;
-    if (onAutomaticCompaction && eventSessionId === sessionId && !subagentRunId) session.subscribe((event) => {
+    if (onAutomaticCompaction && eventSessionId === sessionId && !subagentRunId && !isolated) session.subscribe((event) => {
       if (event.type !== "compaction_end" || !event.result || event.aborted || event.reason === "manual" || !isCurrent()) return;
       const runId = this.activeRunIds.get(sessionId);
       if (runId && this.runs.get(runId) === session) onAutomaticCompaction(sessionId, runId, captureCompactedContext(session));
@@ -863,7 +894,7 @@ export class PiAdapter {
     });
     this.sessionFinalizers.set(session, subscribeSessionEvents({
       sessionId, eventSessionId, session, runs: this.runs, activeRunIds: this.activeRunIds, isCurrent,
-      toolNameByModelName, hooks: this.hooks,
+      toolNameByModelName, hooks: isolated ? {} : this.hooks,
       push: (type, payload, fromSessionId, runId) => this.push(type, payload, fromSessionId, runId),
     }));
 
@@ -936,6 +967,7 @@ export class PiAdapter {
     const configuredImageModel = opts.model ? this.imageModelConfigs.get(opts.model) : undefined;
     const configuredSpeechModel = opts.model ? this.speechModelConfigs.get(opts.model) : undefined;
     const configuredVideoModel = opts.model ? this.videoModelConfigs.get(opts.model) : undefined;
+    const isolated = Boolean(this.isolatedSession(sessionId));
     let session: AgentSession | undefined;
     try {
       if (configuredImageModel) {
@@ -963,14 +995,14 @@ export class PiAdapter {
       this.runs.set(runId, session);
       const previousAssistants = new Set(session.messages.filter((item) => item.role === "assistant"));
       const selectedModel = session.agent.state.model;
-      if (selectedModel) this.hooks.executionModel?.(runId, `${selectedModel.provider}/${selectedModel.id}`);
+      if (selectedModel && !isolated) this.hooks.executionModel?.(runId, `${selectedModel.provider}/${selectedModel.id}`);
       const capabilities = selectedModel ? configuredCapabilities(this.configuredModelConfigs, `${selectedModel.provider}/${selectedModel.id}`) : undefined;
       const policy = this.subagentPolicy?.();
       const canDelegate = Boolean(this.delegateSubagent && (!opts.subagentRunId || (policy?.allowNested ?? true)) && (opts.subagentDepth ?? 0) < (policy?.maxDepth ?? 3));
       const catalog = this.toolCatalogs.get(session) ?? "";
       const toolCatalog = catalog && this.sentToolCatalogs.get(session) !== catalog ? catalog : "";
       if (toolCatalog) this.sentToolCatalogs.set(session, catalog);
-      const memoryAllowed = !opts.subagentRunId && !opts.mcpServerId && !this.isSideConversation(sessionId);
+      const memoryAllowed = !opts.subagentRunId && !opts.mcpServerId && !this.isSideConversation(sessionId) && !isolated;
       if (memoryAllowed && opts.memoryUserMessage !== undefined && this.hooks.memoryAddition) {
         const current = session;
         this.memoryDeliveries.set(runId, () => !mediaController.signal.aborted ? this.hooks.memoryAddition!(sessionId, runId, {
@@ -982,7 +1014,7 @@ export class PiAdapter {
         sessionId, runId, message, session, opts, capabilities, canDelegate,
         delegate: this.delegateSubagent, catalog: this.subagentController?.catalog?.(),
         videoNotice: this.rememberVideoAttachments(runId, opts.attachments), toolCatalog,
-        webContext: () => this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "",
+        webContext: () => isolated ? "" : this.hooks.webAccessContext?.(opts.eventSessionId ?? sessionId, message) ?? "",
         memoryContext: () => memoryAllowed ? this.hooks.memoryContext?.(sessionId, opts.memoryUserMessage ?? "", opts.model) ?? "" : "",
         signal: mediaController.signal,
         phase: phase => this.push("media.phase", { phase: "provider-processing", status: phase }, opts.eventSessionId ?? sessionId, runId),
@@ -1015,7 +1047,7 @@ export class PiAdapter {
           this.runModes.delete(sessionId);
           this.pendingApprovalIds.delete(sessionId);
           try {
-            if (!session || opts.mcpServerId || ((this.restoreMessages || this.staleSessions.has(sessionId)) && session.isIdle)) await this.disposeSession(sessionId);
+            if (!session || opts.mcpServerId || isolated || ((this.restoreMessages || this.staleSessions.has(sessionId)) && session.isIdle)) await this.disposeSession(sessionId);
           } finally {
             if (this.mediaRunControllers.get(runId) === mediaController && this.activeRunIds.get(sessionId) === runId) {
               this.activeRunIds.delete(sessionId);

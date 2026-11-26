@@ -1,4 +1,5 @@
 import type { SubagentLogoId } from "@qone/protocol";
+import type { TeamAvatarId } from "./avatar";
 import type { TeamBot, TeamGroupTemplate } from "./types";
 
 /** 预设机器人配置项，文案通过国际化键值解析以保持通用性。 */
@@ -9,36 +10,9 @@ export interface TeamBotPreset {
   descriptionKey: string;
   promptKey: string;
   logo: SubagentLogoId;
+  avatar: TeamAvatarId;
   capabilities: string[];
 }
-
-/** 精选给自定义机器人头像选择的常用图标列表（全部属于 SUBAGENT_LOGO_IDS）。 */
-export const TEAM_BOT_LOGO_CHOICES: readonly SubagentLogoId[] = [
-  "sparkles",
-  "robot",
-  "code",
-  "terminal",
-  "shield",
-  "cpu",
-  "cloud",
-  "database",
-  "bug",
-  "rocket",
-  "search",
-  "palette",
-  "brain",
-  "git-branch",
-  "bolt",
-  "compass",
-  "feather",
-  "chart-bar",
-  "book",
-  "puzzle",
-  "antenna",
-  "crown",
-  "target",
-  "wand",
-] as const;
 
 /** 可选能力标签清单（用户也可以自由输入任意自定义标签）。 */
 export const TEAM_CAPABILITY_KEYS = [
@@ -61,6 +35,7 @@ export const DEFAULT_TEAM_BOT_PRESETS: readonly TeamBotPreset[] = [
     descriptionKey: "team.preset.coordinator.desc",
     promptKey: "team.preset.coordinator.prompt",
     logo: "crown",
+    avatar: "orbit",
     capabilities: ["planning", "review"],
   },
   {
@@ -70,6 +45,7 @@ export const DEFAULT_TEAM_BOT_PRESETS: readonly TeamBotPreset[] = [
     descriptionKey: "team.preset.engineer.desc",
     promptKey: "team.preset.engineer.prompt",
     logo: "code",
+    avatar: "prism",
     capabilities: ["coding", "testing"],
   },
   {
@@ -79,6 +55,7 @@ export const DEFAULT_TEAM_BOT_PRESETS: readonly TeamBotPreset[] = [
     descriptionKey: "team.preset.devops.desc",
     promptKey: "team.preset.devops.prompt",
     logo: "terminal",
+    avatar: "jade",
     capabilities: ["ops", "coding"],
   },
   {
@@ -88,6 +65,7 @@ export const DEFAULT_TEAM_BOT_PRESETS: readonly TeamBotPreset[] = [
     descriptionKey: "team.preset.reviewer.desc",
     promptKey: "team.preset.reviewer.prompt",
     logo: "shield",
+    avatar: "ember",
     capabilities: ["review", "testing"],
   },
   {
@@ -97,6 +75,7 @@ export const DEFAULT_TEAM_BOT_PRESETS: readonly TeamBotPreset[] = [
     descriptionKey: "team.preset.researcher.desc",
     promptKey: "team.preset.researcher.prompt",
     logo: "search",
+    avatar: "ink",
     capabilities: ["research", "writing"],
   },
   {
@@ -106,6 +85,7 @@ export const DEFAULT_TEAM_BOT_PRESETS: readonly TeamBotPreset[] = [
     descriptionKey: "team.preset.designer.desc",
     promptKey: "team.preset.designer.prompt",
     logo: "palette",
+    avatar: "petal",
     capabilities: ["design", "planning"],
   },
 ] as const;

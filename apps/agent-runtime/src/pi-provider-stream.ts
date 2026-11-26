@@ -3,7 +3,7 @@ import { anthropicMediaStreamSimple } from "./anthropic-media.js";
 import { googleStreamSimple } from "./google-media.js";
 import { openAICompletionsStreamSimple } from "./openai-audio.js";
 import { codexResponsesMediaStreamSimple, openAIResponsesMediaStreamSimple } from "./openai-responses-media.js";
-import { repairRejectedSchema, wireTools, type WireTool } from "./tool-schema-recovery.js";
+import { repairRejectedSchemas, wireTools, type WireTool } from "./tool-schema-recovery.js";
 
 function streamFor(
   model: Model<Api>, context: TranscriptContext, options: SimpleStreamOptions, input: readonly string[],
@@ -20,6 +20,7 @@ function streamFor(
 }
 
 type Repair = { original: string; schema: WireTool["schema"] };
+const MAX_SCHEMA_RETRIES = 8;
 
 /** A provider registration owns the learned repairs; changing its config discards them. */
 export function createConfiguredModelStream() {
@@ -31,9 +32,13 @@ export function createConfiguredModelStream() {
     const repairs = learned.get(modelKey) ?? new Map<string, Repair>();
     learned.set(modelKey, repairs);
     const activeRepairs = new Map(repairs);
+    const pendingRepairs = new Map<string, Repair>();
+    const downgradedInTurn = new Set<string>();
     let sentPayload: unknown;
     let responseStatus: number | undefined;
-    function attempt(repair?: { name: string } & Repair) {
+
+    function attempt() {
+      responseStatus = undefined;
       return streamFor(model, context, {
         ...options,
         onResponse: (response, requestModel) => {
@@ -42,47 +47,65 @@ export function createConfiguredModelStream() {
         },
         onPayload: async (payload, requestModel) => {
           const body = (await options?.onPayload?.(payload, requestModel)) ?? payload;
-          if (repair || activeRepairs.size) {
+          if (pendingRepairs.size || activeRepairs.size) {
             for (const entry of wireTools(model.api, body)) {
-              const candidate = repair?.name === entry.name ? repair : activeRepairs.get(entry.name);
+              const candidate = pendingRepairs.get(entry.name) ?? activeRepairs.get(entry.name);
               if (candidate && JSON.stringify(entry.schema) === candidate.original) {
                 // Replace only this SDK-generated wire field. The executing tool and its schema are untouched.
                 entry.declaration[entry.key] = candidate.schema;
               }
             }
           }
-          if (!repair) sentPayload = body;
+          sentPayload = body;
           return body;
         },
       }, input);
     }
-    const first = attempt();
+
     const output = createAssistantMessageEventStream();
     void (async () => {
-      let started = false;
-      for await (const event of first) {
-        if (!started && event.type === "error" && event.reason === "error" && !options?.signal?.aborted) {
-          const fix = repairRejectedSchema(event.error.errorMessage ?? "", wireTools(model.api, sentPayload), responseStatus);
-          if (fix) {
-            // Learn only a successful first downgrade for the exact declaration. Do not compound changes.
-            const original = JSON.stringify(fix.tool.schema);
-            const previous = activeRepairs.get(fix.tool.name);
-            if (!previous || JSON.stringify(previous.schema) !== original) {
-              const repair = { name: fix.tool.name, original, schema: fix.schema };
-              let second: AssistantMessageEventStream;
-              try { second = attempt(repair); }
-              catch { output.push(event); return; }
-              for await (const next of second) {
-                if (next.type === "done") repairs.set(repair.name, repair);
-                output.push(next);
+      let current = attempt();
+      let retries = 0;
+      while (true) {
+        let started = false;
+        let retried = false;
+        for await (const event of current) {
+          if (!started && event.type === "error" && event.reason === "error" && !options?.signal?.aborted && retries < MAX_SCHEMA_RETRIES) {
+            const fixes = repairRejectedSchemas(event.error.errorMessage ?? "", wireTools(model.api, sentPayload), responseStatus);
+            const primary = fixes[0];
+            if (primary && !downgradedInTurn.has(primary.tool.name)) {
+              // 同一工具最多降级一次，杜绝重复降级循环；同批次其他未降级工具的相同非法字面量一并修复。
+              const previous = activeRepairs.get(primary.tool.name);
+              const primaryOriginal = JSON.stringify(primary.tool.schema);
+              if (!previous || JSON.stringify(previous.schema) !== primaryOriginal) {
+                for (const fix of fixes) {
+                  if (downgradedInTurn.has(fix.tool.name)) continue;
+                  const original = JSON.stringify(fix.tool.schema);
+                  const prior = activeRepairs.get(fix.tool.name);
+                  if (prior && JSON.stringify(prior.schema) === original) continue;
+                  pendingRepairs.set(fix.tool.name, { original, schema: fix.schema });
+                  downgradedInTurn.add(fix.tool.name);
+                }
+                retries++;
+                try {
+                  current = attempt();
+                  retried = true;
+                  break;
+                } catch {
+                  output.push(event);
+                  return;
+                }
               }
-              return;
             }
           }
+          started = true;
+          sentPayload = undefined;
+          if (event.type === "done" && pendingRepairs.size) {
+            for (const [name, repair] of pendingRepairs) repairs.set(name, repair);
+          }
+          output.push(event);
         }
-        started = true;
-        sentPayload = undefined;
-        output.push(event);
+        if (!retried) return;
       }
     })();
     return output;

@@ -139,7 +139,18 @@ export function MemoryAutomaticPreferences({ preferences, summaries, workspaces,
         <p>{item.content}</p>
         <footer>
           <span className="memory-chip">{options.find((option) => option.value === noteScope(item))?.label ?? t("memory.scopeMissing")}</span>
-          <button type="button" className="memory-button" disabled={busy} onClick={() => void onEdit(item.id, null)}>{t("memory.removeAutomaticPreference")}</button>
+          <button
+            type="button"
+            className="memory-button"
+            disabled={busy}
+            onClick={async () => {
+              if (await confirmDestructiveAction(t("memory.removeAutomaticPreferenceConfirm"))) {
+                await onEdit(item.id, null);
+              }
+            }}
+          >
+            {t("memory.removeAutomaticPreference")}
+          </button>
           <button type="button" className="memory-button" disabled={busy} onClick={() => setEditing(item.id)}>{t("memory.edit")}</button>
         </footer>
       </>}

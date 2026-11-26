@@ -1,16 +1,18 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
+  type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowUp,
-  AtSign,
   CornerUpLeft,
   Crown,
   Laptop,
@@ -18,33 +20,50 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { ServerInfo } from "@qone/protocol";
+import type { MessageAttachmentInfo, ServerInfo } from "@qone/protocol";
+import { confirmDestructiveAction } from "../../lib/confirm-action";
+import { localizeError } from "../../lib/error-localization";
+import { serializeFilesToAttachments } from "../../lib/message-attachments";
+import { pickNativeAttachmentFiles, useNativeFileDrop } from "../../lib/native-file-drop";
 import {
   applyMentionSelection,
   detectActiveMention,
   extractMentionsFromText,
+  moveSelectedMentions,
   type ActiveMentionQuery,
+  type SelectedMention,
 } from "../../lib/team/mentions";
 import type { TeamBot, TeamGroup, TeamMentionRef, TeamMessage } from "../../lib/team/types";
 import { useLocale } from "../../localization";
+import { hasDesktopBridge, useStore } from "../../store";
 import { cn } from "../../lib/utils";
-import { CodexServerIcon } from "../ui/CodexIcon";
-import { SubagentLogo } from "../settings/subagent-logo";
+import { CodexPlusIcon, CodexServerIcon } from "../ui/CodexIcon";
+import { ModelPicker } from "../assistant-ui/model-picker";
+import { RunOptionsPopover } from "../assistant-ui/run-options-popover";
+import { TeamAttachmentStrip } from "./TeamAttachmentStrip";
+import { TeamAvatar } from "./TeamAvatar";
 
 export interface TeamComposerHandle {
-  insertMention: (label: string) => void;
+  insertMention: (bot: TeamBot) => void;
   setDraft: (value: string) => void;
   focus: () => void;
+}
+
+export interface TeamComposerDraft {
+  text: string;
+  mentions: SelectedMention[];
+  attachments?: MessageAttachmentInfo[];
 }
 
 interface TeamComposerProps {
   group: TeamGroup;
   members: readonly TeamBot[];
   servers: readonly ServerInfo[];
+  drafts: Map<string, TeamComposerDraft>;
   replyTo?: TeamMessage;
   replySenderName?: string;
   onCancelReply: () => void;
-  onSend: (content: string, mentions: TeamMentionRef[]) => void;
+  onSend: (content: string, mentions: TeamMentionRef[], attachments?: MessageAttachmentInfo[]) => void;
   onOpenServerPicker: () => void;
   onOpenCreateAndAddBot: () => void;
 }
@@ -64,6 +83,7 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
       group,
       members,
       servers,
+      drafts,
       replyTo,
       replySenderName,
       onCancelReply,
@@ -74,18 +94,83 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
     ref,
   ) {
     const { t } = useLocale();
+    const composerBoxRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const [text, setText] = useState("");
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [draft, setComposerDraft] = useState<TeamComposerDraft>(() => drafts.get(group.id) ?? { text: "", mentions: [], attachments: [] });
+    const { text, mentions: selectedMentions } = draft;
+    const attachments = draft.attachments ?? [];
+    const attachmentsRef = useRef(attachments);
+    attachmentsRef.current = attachments;
+    const setText = useCallback((value: string, mention?: SelectedMention, edit?: { start: number; end: number }) => {
+      setComposerDraft((previous) => {
+        const mentions = moveSelectedMentions(previous.text, value, previous.mentions, edit);
+        if (mention) mentions.push(mention);
+        return { ...previous, text: value, mentions };
+      });
+    }, []);
+    const isDirect = Boolean(group.directBotId);
     const [caret, setCaret] = useState(0);
     const [activeMention, setActiveMention] = useState<ActiveMentionQuery | null>(null);
     const [highlightedIndex, setHighlightedIndex] = useState(0);
+    const [dropHovering, setDropHovering] = useState(false);
+
+    const addFiles = useCallback(async (files: File[]) => {
+      if (!files.length) return;
+      try {
+        const next = await serializeFilesToAttachments(files, attachmentsRef.current);
+        setComposerDraft((previous) => ({ ...previous, attachments: next }));
+      } catch (error) {
+        useStore.setState({ lastError: localizeError(error) });
+      }
+    }, []);
+
+    useNativeFileDrop(composerBoxRef, addFiles, setDropHovering);
+
+    const handlePickFiles = () => {
+      if (hasDesktopBridge()) {
+        void pickNativeAttachmentFiles().then(addFiles).catch((error) => {
+          useStore.setState({ lastError: localizeError(error) });
+        });
+      } else {
+        fileInputRef.current?.click();
+      }
+    };
+
+    const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      event.target.value = "";
+      void addFiles(files);
+    };
+
+    const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = Array.from(event.clipboardData?.items ?? [])
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file));
+      if (!files.length) return;
+      event.preventDefault();
+      void addFiles(files);
+    };
+
+    const removeAttachment = (index: number) => {
+      const target = attachmentsRef.current[index];
+      if (!target) return;
+      void confirmDestructiveAction(t("team.attachmentRemoveConfirm", { name: target.name })).then((confirmed) => {
+        if (!confirmed) return;
+        setComposerDraft((previous) => ({
+          ...previous,
+          attachments: (previous.attachments ?? []).filter((_, idx) => idx !== index),
+        }));
+      });
+    };
 
     const allLabel = t("team.mentionAll");
     const allLabels = useMemo(() => [...new Set([allLabel, "全体成员", "全体", "Everyone", "all"])], [allLabel]);
 
     const parsedMentions = useMemo(
-      () => extractMentionsFromText(text, members, allLabels),
-      [text, members, allLabels],
+      () => isDirect ? [] : extractMentionsFromText(text, members, allLabels, selectedMentions),
+      [text, members, allLabels, selectedMentions, isDirect],
     );
 
     const boundServers = useMemo(
@@ -133,6 +218,13 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
       });
     }, []);
 
+    useEffect(() => {
+      if (draft.text || (draft.attachments?.length ?? 0) > 0) drafts.set(group.id, draft);
+      else drafts.delete(group.id);
+    }, [drafts, group.id, draft]);
+
+    useEffect(() => { resizeTextarea(); }, [resizeTextarea]);
+
     const focusAt = useCallback((position: number) => {
       requestAnimationFrame(() => {
         const element = textareaRef.current;
@@ -146,28 +238,28 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
     }, []);
 
     const insertMentionAtCaret = useCallback(
-      (label: string) => {
-        const token = `@${label} `;
+      (ref: TeamMentionRef) => {
+        const token = `@${ref.label} `;
         const currentCaret = textareaRef.current?.selectionStart ?? caret;
         const before = text.slice(0, currentCaret);
         const after = text.slice(currentCaret);
         const spacer = before.length > 0 && !/\s$/.test(before) ? " " : "";
         const nextText = `${before}${spacer}${token}${after}`;
         const nextCaret = before.length + spacer.length + token.length;
-        setText(nextText);
+        setText(nextText, { start: before.length + spacer.length, ref }, { start: currentCaret, end: currentCaret });
         setActiveMention(null);
         setHighlightedIndex(0);
         focusAt(nextCaret);
       },
-      [caret, focusAt, text],
+      [caret, focusAt, setText, text],
     );
 
     useImperativeHandle(
       ref,
       () => ({
-        insertMention: insertMentionAtCaret,
+        insertMention: (bot) => insertMentionAtCaret({ kind: "bot", targetId: bot.id, label: bot.name }),
         setDraft: (value: string) => {
-          setText(value);
+          setComposerDraft((previous) => ({ ...previous, text: value, mentions: [] }));
           setActiveMention(null);
           setHighlightedIndex(0);
           focusAt(value.length);
@@ -180,49 +272,30 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
     const handleTextChange = (nextValue: string, nextCaret: number) => {
       setText(nextValue);
       setCaret(nextCaret);
-      setActiveMention(detectActiveMention(nextValue, nextCaret));
+      setActiveMention(isDirect ? null : detectActiveMention(nextValue, nextCaret));
       setHighlightedIndex(0);
       resizeTextarea();
     };
 
     const pickOption = (option: MentionOption) => {
+      const ref: TeamMentionRef = { kind: option.kind, targetId: option.key, label: option.label };
       if (!activeMention) {
-        insertMentionAtCaret(option.label);
+        insertMentionAtCaret(ref);
         return;
       }
       const { nextText, nextCaret } = applyMentionSelection(text, activeMention, option.label);
-      setText(nextText);
+      setText(nextText, { start: activeMention.start, ref }, activeMention);
       setActiveMention(null);
       focusAt(nextCaret);
     };
 
-    const removeMentionChip = (mention: TeamMentionRef) => {
-      const escaped = mention.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const next = text.replace(new RegExp(`@${escaped}\\s?`, "gi"), "").trimStart();
-      setText(next);
-      setActiveMention(null);
-      textareaRef.current?.focus();
-    };
-
-    const triggerMentionMenu = () => {
-      const element = textareaRef.current;
-      const pos = element?.selectionStart ?? text.length;
-      const before = text.slice(0, pos);
-      const after = text.slice(pos);
-      const spacer = before.length > 0 && !/\s$/.test(before) ? " " : "";
-      const nextText = `${before}${spacer}@${after}`;
-      const nextCaret = before.length + spacer.length + 1;
-      setText(nextText);
-      setCaret(nextCaret);
-      setActiveMention({ start: nextCaret - 1, end: nextCaret, query: "" });
-      focusAt(nextCaret);
-    };
+    const canSend = Boolean(text.trim() || attachments.length > 0);
 
     const submit = () => {
       const trimmed = text.trim();
-      if (!trimmed) return;
-      onSend(trimmed, parsedMentions);
-      setText("");
+      if (!trimmed && attachments.length === 0) return;
+      onSend(trimmed, parsedMentions, attachments.length > 0 ? attachments : undefined);
+      setComposerDraft({ text: "", mentions: [], attachments: [] });
       setCaret(0);
       setActiveMention(null);
       setHighlightedIndex(0);
@@ -266,7 +339,18 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
 
     return (
       <div className="team-composer-wrap shrink-0">
-        <div className="team-composer-box">
+        <div
+          ref={composerBoxRef}
+          className={cn("team-composer-box", dropHovering && "is-drop-hover")}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="sr-only"
+            tabIndex={-1}
+            onChange={handleFileInputChange}
+          />
           {/* @ 成员弹层 */}
           <AnimatePresence>
             {activeMention && (
@@ -302,7 +386,7 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
                             <Users size={14} />
                           </span>
                         ) : option.bot ? (
-                          <SubagentLogo logo={option.bot.logo} name={option.bot.name} size={28} />
+                          <TeamAvatar bot={option.bot} size={28} />
                         ) : null}
 
                         <div className="min-w-0 flex-1">
@@ -344,8 +428,8 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
             )}
           </AnimatePresence>
 
-          {/* 顶部上下文条：引用回复 + 已解析的 @成员胶囊 */}
-          {(replyTo || parsedMentions.length > 0) && (
+          {/* 顶部上下文条：引用回复 + 待发附件 */}
+          {(replyTo || attachments.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 border-b border-border/60 px-3.5 py-2">
               {replyTo && (
                 <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg bg-muted/70 px-2 py-1 text-[11.5px] text-muted-foreground">
@@ -365,22 +449,11 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
                 </div>
               )}
 
-              {parsedMentions.map((mention) => (
-                <span
-                  key={`${mention.kind}:${mention.targetId}`}
-                  className="inline-flex h-6 items-center gap-1 rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 text-[11.5px] font-medium text-indigo-700 dark:text-indigo-300"
-                >
-                  <span>@{mention.label}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeMentionChip(mention)}
-                    className="rounded-full p-0.5 opacity-70 hover:opacity-100"
-                    aria-label={mention.label}
-                  >
-                    <X size={10} />
-                  </button>
-                </span>
-              ))}
+              <TeamAttachmentStrip
+                attachments={attachments}
+                workspaceId={group.execution.workspaceId}
+                onRemove={removeAttachment}
+              />
             </div>
           )}
 
@@ -396,31 +469,35 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
               onClick={(event) => {
                 const pos = event.currentTarget.selectionStart ?? 0;
                 setCaret(pos);
-                setActiveMention(detectActiveMention(text, pos));
+                setActiveMention(isDirect ? null : detectActiveMention(text, pos));
               }}
               onKeyUp={(event) => {
                 if (["ArrowDown", "ArrowUp", "Enter", "Escape", "Tab"].includes(event.key)) return;
                 const pos = event.currentTarget.selectionStart ?? 0;
                 setCaret(pos);
-                setActiveMention(detectActiveMention(text, pos));
+                setActiveMention(isDirect ? null : detectActiveMention(text, pos));
               }}
               onKeyDown={handleKeyDown}
-              placeholder={t("team.mentionHint")}
+              onPaste={handlePaste}
+              placeholder={t(isDirect ? "team.member.directPlaceholder" : "team.mentionHint")}
               className="w-full resize-none bg-transparent text-[13.5px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/80"
             />
           </div>
 
-          {/* 底部工具条 */}
+          {/* 底部工具条：与主页面对齐（左：+ 直接选文件、权限模式、服务器；右：模型选择、发送） */}
           <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
-            <div className="flex items-center gap-1">
+            <div className="q-composer-actions-leading flex min-w-0 items-center gap-1">
               <button
                 type="button"
-                onClick={triggerMentionMenu}
-                className="inline-flex h-7 items-center gap-1 rounded-full border border-transparent px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onClick={handlePickFiles}
+                title={t("attachment.add")}
+                aria-label={t("attachment.add")}
+                className="q-composer-tools-trigger inline-flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
-                <AtSign size={13} />
-                <span>{t("team.mentionButton")}</span>
+                <CodexPlusIcon className="size-4" />
               </button>
+
+              <RunOptionsPopover />
 
               <button
                 type="button"
@@ -446,20 +523,23 @@ export const TeamComposer = forwardRef<TeamComposerHandle, TeamComposerProps>(
               </button>
             </div>
 
-            <button
-              type="button"
-              disabled={!text.trim()}
-              onClick={submit}
-              aria-label={t("team.send")}
-              className={cn(
-                "inline-flex size-8 items-center justify-center rounded-full transition-all",
-                text.trim()
-                  ? "bg-primary text-primary-foreground hover:opacity-90 active:scale-95"
-                  : "bg-muted text-muted-foreground/60 cursor-not-allowed",
-              )}
-            >
-              <ArrowUp size={15} />
-            </button>
+            <div className="q-composer-actions-trailing flex min-w-0 items-center justify-end gap-1.5">
+              <ModelPicker />
+              <button
+                type="button"
+                disabled={!canSend}
+                onClick={submit}
+                aria-label={t("team.send")}
+                className={cn(
+                  "inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-all",
+                  canSend
+                    ? "bg-primary text-primary-foreground hover:opacity-90 active:scale-95"
+                    : "bg-muted text-muted-foreground/60 cursor-not-allowed",
+                )}
+              >
+                <ArrowUp size={15} />
+              </button>
+            </div>
           </div>
         </div>
       </div>

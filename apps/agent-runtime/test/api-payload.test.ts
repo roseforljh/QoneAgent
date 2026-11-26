@@ -209,6 +209,78 @@ describe("Pi provider wire payloads", () => {
     },
   );
 
+  test("repairs identical rejected regex pattern across all sibling tools in a single retry without harming healthy patterns", async () => {
+    const badPattern = String.raw`^[^\uD800-\uDFFF]*$`;
+    const makeBadTool = (name: string) => ({
+      name,
+      description: name,
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string", minLength: 1, pattern: badPattern } },
+        required: ["path"],
+      },
+    });
+    const healthy = {
+      name: "healthy_tool",
+      description: "healthy",
+      parameters: {
+        type: "object",
+        properties: { label: { type: "string", pattern: "^[a-z]+$" } },
+        required: ["label"],
+      },
+    };
+    const transcript = normalizeContext({
+      messages: context.messages,
+      tools: [makeBadTool("mcp_mcp-rea_open_binary"), makeBadTool("mcp_mcp-rea_extract_artifact"), healthy],
+    });
+    let calls = 0;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        calls++;
+        const body = await request.json() as { tools?: Array<{ name?: string; parameters?: unknown }> };
+        for (let i = 0; i < (body.tools?.length ?? 0); i++) {
+          const t = body.tools![i]!;
+          if (JSON.stringify(t.parameters).includes(JSON.stringify(badPattern))) {
+            return Response.json({
+              message: `Invalid schema for function '${t.name}': '${badPattern}' is not a 'regex'.`,
+              type: "invalid_request_error",
+              param: `tools[${i}].parameters`,
+              code: "invalid_function_parameters",
+            }, { status: 400 });
+          }
+        }
+        // 验证健康工具的 pattern 未被误伤
+        const healthySent = body.tools?.find((t) => t.name === "healthy_tool");
+        expect(healthySent?.parameters).toEqual(healthy.parameters);
+        const events = [
+          { type: "response.created", response: { id: "resp_1", status: "in_progress" } },
+          { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] } },
+          { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "ok" },
+          { type: "response.output_item.done", output_index: 0, item: { type: "message", id: "msg_1", role: "assistant", status: "completed", content: [{ type: "output_text", text: "ok", annotations: [] }] } },
+          { type: "response.completed", response: { id: "resp_1", status: "completed", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } },
+        ];
+        return new Response(events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(""), {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      },
+    });
+    try {
+      const run = createConfiguredModelStream();
+      const model = makeModel("openai-responses", { baseUrl: `http://127.0.0.1:${server.port}/v1` });
+      const firstResult = await run(model, transcript, { apiKey: "local-only", transport: "sse", maxRetries: 0 }, []).result();
+      expect(firstResult.stopReason).toBe("stop");
+      expect(calls).toBe(2);
+      // 第二轮应复用已学习的全部修复，0 次 400
+      const secondResult = await run(model, transcript, { apiKey: "local-only", transport: "sse", maxRetries: 0 }, []).result();
+      expect(secondResult.stopReason).toBe("stop");
+      expect(calls).toBe(3);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("native schema conversion still applies before gateway recovery", async () => {
     const run = createConfiguredModelStream();
     const input = normalizeContext({ messages: context.messages, tools: [{

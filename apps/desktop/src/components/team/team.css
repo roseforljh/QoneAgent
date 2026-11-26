@@ -10,29 +10,34 @@
   color: var(--foreground);
 }
 
-/* 左侧群聊与机器人库栏 */
+/* 左侧群聊栏：严格对齐主页面 .q-sidebar 的底色与极轻分割线 */
 .team-sidebar {
   display: flex;
-  width: 276px;
-  min-width: 248px;
-  max-width: 308px;
-  flex-shrink: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   flex-direction: column;
-  border-right: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-  background: color-mix(in srgb, var(--q-surface-muted) 45%, var(--background));
+  border-right: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  background: var(--q-sidebar);
+}
+
+:root[data-pane-resizing] .team-sidebar,
+:root[data-pane-resizing] .team-inspector {
+  pointer-events: none;
 }
 
 .team-sidebar-head {
   display: flex;
-  height: 52px;
+  height: var(--q-thread-header-height, 46px);
+  min-height: var(--q-thread-header-height, 46px);
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
 }
 
 .team-sidebar-title {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   letter-spacing: -0.015em;
   color: var(--foreground);
@@ -44,7 +49,7 @@
   gap: 3px;
   padding: 3px;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
 }
 
 .team-segmented-btn {
@@ -65,7 +70,7 @@
 }
 
 .team-segmented-btn.is-active {
-  background: var(--background);
+  background: var(--q-surface);
   color: var(--foreground);
   box-shadow: 0 1px 2px color-mix(in srgb, #000 10%, transparent);
 }
@@ -76,21 +81,198 @@
   width: 100%;
   align-items: center;
   gap: 10px;
-  padding: 10px;
-  border-radius: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
   border: 1px solid transparent;
   text-align: left;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .team-group-item:hover {
-  background: color-mix(in srgb, var(--foreground) 4.5%, transparent);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
 }
 
 .team-group-item.is-active {
+  background: var(--q-sidebar-selected-bg);
+}
+
+.team-avatar {
+  flex: none;
+  display: block;
+  user-select: none;
+}
+
+.team-avatar.is-custom {
+  border-radius: 999px;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.team-avatar-trigger {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.team-avatar-trigger:hover {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+
+.team-avatar-trigger:active {
+  transform: scale(0.96);
+}
+
+.team-avatar-trigger-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 42%);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.team-avatar-trigger:hover .team-avatar-trigger-overlay,
+.team-avatar-trigger:focus-visible .team-avatar-trigger-overlay,
+.team-group-avatar-trigger:hover .team-avatar-trigger-overlay,
+.team-group-avatar-trigger:focus-visible .team-avatar-trigger-overlay {
+  opacity: 1;
+}
+
+.team-group-avatar-trigger {
+  position: relative;
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 4%, var(--background));
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.team-group-avatar-trigger:hover {
+  border-color: color-mix(in srgb, var(--foreground) 28%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.team-group-avatar-trigger:active {
+  transform: scale(0.96);
+}
+
+.team-avatar-crop-stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--foreground) 8%, var(--background));
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.team-avatar-crop-stage:active {
+  cursor: grabbing;
+}
+
+.team-avatar-crop-image {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+  will-change: transform;
+}
+
+.team-avatar-crop-mask {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 999px;
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 52%), inset 0 0 0 2px rgb(255 255 255 / 88%);
+}
+
+.team-avatar-crop-controls {
+  display: flex;
+  width: 100%;
+  max-width: 300px;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-avatar-crop-step {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   background: var(--background);
-  border-color: color-mix(in srgb, var(--border) 95%, transparent);
-  box-shadow: 0 1px 3px color-mix(in srgb, #000 7%, transparent);
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.team-avatar-crop-step:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--background));
+  border-color: color-mix(in srgb, var(--foreground) 24%, transparent);
+}
+
+.team-avatar-crop-step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.team-avatar-crop-slider {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  accent-color: var(--foreground);
+  cursor: pointer;
+}
+
+/* 成员驱动模型标签：可点击进入编辑 */
+.team-model-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 9.5rem;
+  height: 18px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 3%, transparent);
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  line-height: 1;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.team-model-chip:hover {
+  border-color: color-mix(in srgb, var(--foreground) 28%, transparent);
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  color: var(--foreground);
 }
 
 .team-avatar-stack {
@@ -100,7 +282,7 @@
 }
 
 .team-avatar-stack > * {
-  box-shadow: 0 0 0 2px var(--background);
+  background: var(--background);
   border-radius: 999px;
 }
 
@@ -119,45 +301,13 @@
 
 .team-chat-header {
   display: flex;
-  min-height: 54px;
+  min-height: var(--q-thread-header-height, 46px);
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  background: color-mix(in srgb, var(--background) 92%, transparent);
-  backdrop-filter: blur(10px);
-}
-
-.team-roster-strip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 18px;
-  overflow-x: auto;
+  padding: 6px 18px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  background: color-mix(in srgb, var(--q-surface-muted) 28%, var(--background));
-}
-
-.team-roster-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 9px 0 4px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: var(--background);
-  font-size: 12px;
-  color: var(--foreground);
-  white-space: nowrap;
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.14s ease;
-}
-
-.team-roster-pill:hover {
-  border-color: color-mix(in srgb, var(--foreground) 28%, var(--border));
-  background: color-mix(in srgb, var(--foreground) 3%, var(--background));
-  transform: translateY(-0.5px);
 }
 
 .team-presence-dot {
@@ -178,36 +328,7 @@
   background: #0ea5e9;
 }
 
-/* 执行环境 Popover 与胶囊 */
-.team-env-trigger {
-  display: inline-flex;
-  height: 30px;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
-  background: color-mix(in srgb, var(--q-surface-muted) 52%, var(--background));
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--foreground);
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.team-env-trigger:hover {
-  border-color: color-mix(in srgb, var(--foreground) 30%, var(--border));
-  background: color-mix(in srgb, var(--foreground) 5%, var(--background));
-}
-
-.team-env-trigger.has-servers {
-  border-color: color-mix(in srgb, #0ea5e9 34%, var(--border));
-  background: color-mix(in srgb, #0ea5e9 10%, var(--background));
-  color: color-mix(in srgb, #0369a1 85%, var(--foreground));
-}
-
-:root[data-theme="dark"] .team-env-trigger.has-servers {
-  color: #7dd3fc;
-}
+/* 浮层容器 */
 
 .team-popover-panel {
   z-index: 60;
@@ -218,6 +339,20 @@
   background: var(--popover);
   color: var(--popover-foreground);
   box-shadow: 0 14px 36px color-mix(in srgb, #000 16%, transparent);
+}
+
+.team-member-popover {
+  width: min(288px, var(--radix-popover-content-available-width));
+  transform-origin: var(--radix-popover-content-transform-origin);
+  animation: team-member-popover-in 0.15s ease-out;
+}
+
+@keyframes team-member-popover-in {
+  from { opacity: 0; transform: scale(0.96); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-member-popover { animation: none; }
 }
 
 .team-strategy-card {
@@ -241,11 +376,12 @@
   background: color-mix(in srgb, var(--foreground) 5%, transparent);
 }
 
-/* 群聊消息流 */
+/* 群聊消息流：预留稳定滚动条槽位，防止展开卡片时横向宽度抖动 */
 .team-message-stream {
   flex: 1;
   min-height: 0;
   padding: 20px 24px 12px;
+  scrollbar-gutter: stable;
 }
 
 .team-message-inner {
@@ -259,10 +395,10 @@
 
 .team-bubble-user {
   max-width: min(78%, 620px);
-  padding: 10px 14px;
-  border-radius: 16px 16px 4px 16px;
-  background: var(--primary);
-  color: var(--primary-foreground);
+  padding: 10px 15px;
+  border-radius: 18px 18px 5px 18px;
+  background: var(--q-user-message-background, color-mix(in oklab, var(--foreground) 7%, transparent));
+  color: var(--q-user-message-text, var(--foreground));
   font-size: 13.5px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -272,14 +408,70 @@
 .team-bubble-bot {
   max-width: min(86%, 680px);
   padding: 11px 14px;
-  border-radius: 4px 16px 16px 16px;
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-  background: color-mix(in srgb, var(--q-surface-muted) 38%, var(--background));
+  border-radius: 5px 16px 16px 16px;
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  background: var(--q-surface);
   color: var(--foreground);
   font-size: 13.5px;
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* 含执行过程卡片的气泡锁定最小宽度，避免卡片展开收起引起横向抖动 */
+.team-bubble-bot.has-step-card {
+  min-width: min(100%, 440px);
+}
+
+/* 机器人流式回复三点依次跳动动画 */
+.team-typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 1.25em;
+  padding: 0 2px;
+  vertical-align: middle;
+  color: var(--muted-foreground);
+}
+
+.team-typing-dots.is-inline {
+  margin-left: 6px;
+}
+
+.team-typing-dots > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.42;
+  will-change: transform, opacity;
+  animation: team-typing-bounce 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.team-typing-dots > span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.team-typing-dots > span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes team-typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.38;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-typing-dots > span {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 .team-mention-chip {
@@ -295,141 +487,11 @@
 }
 
 .team-bubble-user .team-mention-chip {
-  background: color-mix(in srgb, var(--primary-foreground) 18%, transparent);
-  color: var(--primary-foreground);
+  background: color-mix(in srgb, var(--q-mention-color, #5e6ad2) 18%, transparent);
+  color: var(--q-mention-color, #5e6ad2);
 }
 
-/* Marked 风格 Agent Run Status Card（参考 marked.dev / @eliakuratli） */
-.team-run-card {
-  width: 100%;
-  max-width: 580px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
-  background: color-mix(in srgb, var(--card) 94%, var(--q-surface-muted));
-  box-shadow: 0 1px 2px color-mix(in srgb, #000 5%, transparent), 0 8px 24px -16px color-mix(in srgb, #000 18%, transparent);
-  overflow: hidden;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
-}
-
-.team-run-card:hover {
-  border-color: color-mix(in srgb, var(--foreground) 22%, var(--border));
-}
-
-.team-run-card.is-active {
-  border-color: color-mix(in srgb, #0ea5e9 38%, var(--border));
-}
-
-.team-run-card-head {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 13px;
-  text-align: left;
-  transition: background 0.15s ease;
-}
-
-.team-run-card-head:hover {
-  background: color-mix(in srgb, var(--foreground) 2.5%, transparent);
-}
-
-.team-run-status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 550;
-  white-space: nowrap;
-  border: 1px solid transparent;
-}
-
-.team-run-status-pill.is-running,
-.team-run-status-pill.is-planning,
-.team-run-status-pill.is-queued {
-  background: color-mix(in srgb, #0ea5e9 12%, transparent);
-  border-color: color-mix(in srgb, #0ea5e9 28%, transparent);
-  color: #0284c7;
-}
-
-:root[data-theme="dark"] .team-run-status-pill.is-running,
-:root[data-theme="dark"] .team-run-status-pill.is-planning,
-:root[data-theme="dark"] .team-run-status-pill.is-queued {
-  color: #7dd3fc;
-}
-
-.team-run-status-pill.is-awaiting_runtime {
-  background: color-mix(in srgb, #6366f1 11%, transparent);
-  border-color: color-mix(in srgb, #6366f1 25%, transparent);
-  color: #4f46e5;
-}
-
-:root[data-theme="dark"] .team-run-status-pill.is-awaiting_runtime {
-  color: #a5b4fc;
-}
-
-.team-run-status-pill.is-completed {
-  background: color-mix(in srgb, #10b981 12%, transparent);
-  border-color: color-mix(in srgb, #10b981 26%, transparent);
-  color: #059669;
-}
-
-:root[data-theme="dark"] .team-run-status-pill.is-completed {
-  color: #6ee7b7;
-}
-
-.team-run-status-pill.is-paused {
-  background: color-mix(in srgb, #f59e0b 12%, transparent);
-  border-color: color-mix(in srgb, #f59e0b 28%, transparent);
-  color: #b45309;
-}
-
-:root[data-theme="dark"] .team-run-status-pill.is-paused {
-  color: #fcd34d;
-}
-
-.team-run-status-pill.is-failed,
-.team-run-status-pill.is-cancelled {
-  background: color-mix(in srgb, var(--destructive) 10%, transparent);
-  border-color: color-mix(in srgb, var(--destructive) 22%, transparent);
-  color: var(--destructive);
-}
-
-.team-run-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: currentColor;
-  animation: team-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes team-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.82); }
-}
-
-.team-run-timeline {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 13px 12px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
-}
-
-.team-run-step {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 6px 8px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--foreground) 2.5%, transparent);
-}
-
-/* 底部群聊输入浮岛 */
+/* 底部群聊输入浮岛：复用主页面 --q-surface 表面层 */
 .team-composer-wrap {
   padding: 8px 24px 18px;
 }
@@ -440,14 +502,15 @@
   max-width: 820px;
   margin: 0 auto;
   border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--border) 95%, transparent);
-  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  background: var(--q-surface);
   box-shadow: 0 2px 10px -4px color-mix(in srgb, #000 10%, transparent);
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.team-composer-box:focus-within {
-  border-color: color-mix(in srgb, var(--foreground) 32%, var(--border));
+.team-composer-box:focus-within,
+.team-composer-box.is-drop-hover {
+  border-color: color-mix(in srgb, var(--foreground) 28%, var(--border));
   box-shadow: 0 4px 18px -6px color-mix(in srgb, #000 14%, transparent);
 }
 
@@ -483,14 +546,59 @@
   background: color-mix(in srgb, var(--foreground) 6.5%, transparent);
 }
 
-/* 右侧详情与任务抽屉 */
+/* 右侧群资料与成员抽屉：宽度由 TeamResizableInspector 控制 */
+.team-inspector-pane {
+  min-width: 0;
+  overflow: visible;
+}
+
+.team-inspector-resizer {
+  position: absolute;
+  z-index: 30;
+  inset-block: 0;
+  left: -8px;
+  width: 16px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+
+.team-inspector-resizer span {
+  position: absolute;
+  inset-block: 0;
+  left: 7px;
+  width: 1px;
+  opacity: 0;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--foreground) 25%, transparent), transparent);
+  transition: opacity 120ms ease;
+}
+
+.team-inspector-resizer:hover span,
+.team-inspector-resizer:focus-visible span,
+.team-inspector-pane[data-resizing] .team-inspector-resizer span {
+  opacity: 1;
+}
+
 .team-inspector {
   display: flex;
-  width: 312px;
-  flex-shrink: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   flex-direction: column;
-  border-left: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-  background: color-mix(in srgb, var(--q-surface-muted) 35%, var(--background));
+  border-left: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  background: var(--background);
+}
+
+.team-inspector-head {
+  display: flex;
+  height: var(--q-thread-header-height, 46px);
+  min-height: var(--q-thread-header-height, 46px);
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
 }
 
 /* 弹窗内网格与卡片 */
@@ -522,20 +630,32 @@
   background: color-mix(in srgb, var(--foreground) 4.5%, var(--background));
 }
 
-.team-logo-grid {
+.team-portrait-panel {
+  align-self: start;
+  gap: 16px;
+}
+
+.team-portrait-grid {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  justify-items: center;
+  gap: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
 .team-logo-choice {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  padding: 3px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.16s ease;
+}
+
+.team-logo-choice:active {
+  transform: scale(0.94);
 }
 
 .team-logo-choice:hover {
@@ -706,22 +826,70 @@
   padding: 14px;
 }
 
-@media (max-width: 960px) {
-  .team-sidebar {
-    width: 232px;
-    min-width: 212px;
-  }
-  .team-inspector {
-    width: 272px;
+/* 团队弹窗底部动作按钮：独立于懒加载的 servers.css，具备悬停文本高亮与轻微点击按压动效 */
+.team-dialog-btn,
+.team-wizard-dialog .servers-button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 13px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 95%, transparent);
+  background: color-mix(in srgb, var(--foreground) 3%, var(--background));
+  color: color-mix(in srgb, var(--foreground) 76%, var(--muted-foreground));
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.14s ease;
+}
+
+.team-dialog-btn:hover:not(:disabled),
+.team-wizard-dialog .servers-button:hover:not(:disabled) {
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--foreground) 30%, var(--border));
+  background: color-mix(in srgb, var(--foreground) 8%, var(--background));
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 10%, transparent);
+}
+
+.team-dialog-btn:active:not(:disabled),
+.team-wizard-dialog .servers-button:active:not(:disabled) {
+  transform: scale(0.96) translateY(0.5px);
+}
+
+.team-dialog-btn:disabled,
+.team-wizard-dialog .servers-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.team-dialog-btn.is-primary,
+.team-wizard-dialog .servers-button.is-primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.team-dialog-btn.is-primary:hover:not(:disabled),
+.team-wizard-dialog .servers-button.is-primary:hover:not(:disabled) {
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 88%, #ffffff);
+  box-shadow: 0 2px 10px -2px color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-dialog-btn:active:not(:disabled),
+  .team-wizard-dialog .servers-button:active:not(:disabled) {
+    transform: none;
   }
 }
 
 @media (max-width: 720px) {
   .team-template-grid {
     grid-template-columns: 1fr;
-  }
-  .team-logo-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
   .team-wizard-split,
   .team-wizard-split-balanced {

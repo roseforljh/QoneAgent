@@ -147,7 +147,8 @@ test("cold startup discovers tools once, restores credentials before OAuth and r
     await stop(); events = []; child = start(); collecting = collect(child);
     send({ type: "mcp.list", requestId: "cached-restart" });
     await wait(event => event.type === "mcp.list" && event.servers.some(server => server.id === "fast" && server.available));
-    expect(events.filter(event => event.type === "mcp.credentials.request")).toHaveLength(0);
+    // 启动时的模型密钥恢复复用同一凭据通道（serverId: "models"），此处仅断言没有任何 MCP 服务器发起凭据请求。
+    expect(events.filter(event => event.type === "mcp.credentials.request" && event.serverId !== "models")).toHaveLength(0);
     expect(handshakes.get("account")).toBe(1);
     expect(handshakes.get("fast")).toBe(1);
     expect(handshakes.get("slow")).toBeUndefined();

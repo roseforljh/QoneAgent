@@ -87,6 +87,7 @@ export function McpSection() {
   };
 
   const deleteServer = async (server: McpServerInfo) => {
+    if (!await confirmDestructiveAction(t("mcp.deleteConfirm", { name: server.name }))) return;
     try {
       if (hasDesktopBridge()) {
         const oauthKeys = [server.oauth?.tokenSecretKey ?? `mcp.oauth:${server.id}`, `mcp.oauth:${server.id}.client`, `mcp.oauth:${server.id}.tokens`];
@@ -337,7 +338,7 @@ export function McpSection() {
       { label: t("mcp.reconnect"), primary: true, onClick: () => { setActionCard(null); void connectAsUser(server, true); } },
       { label: t("mcp.editService"), onClick: () => { setActionCard(null); openEdit(server); } },
       ...(server.url && server.authMode !== "github-device" ? [{ label: t("mcp.authorize"), onClick: () => { setActionCard(null); void send({ type: "mcp.oauth.begin", requestId: crypto.randomUUID(), serverId: server.id }); } }] : []),
-      { label: t("mcp.remove"), danger: true, onClick: async () => { if (!await confirmDestructiveAction(t("mcp.deleteConfirm", { name: server.name }))) return; setActionCard(null); await deleteServer(server); } },
+      { label: t("mcp.remove"), danger: true, onClick: () => { setActionCard(null); void deleteServer(server); } },
     ];
     const connecting = connectingIds.includes(server.id);
     setActionCard({ server, name: server.name, icon: serverIcon(server), status: connecting ? t("mcp.connectingStatus") : mcpAvailable(server) ? t(server.connected ? "mcp.connectedStatus" : "mcp.standbyStatus") : t("mcp.disconnectedStatus"), statusError: !server.disabled && !connecting && !mcpAvailable(server), actions });

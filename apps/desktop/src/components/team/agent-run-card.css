@@ -1,0 +1,204 @@
+/* 机器人回复气泡内的单步执行过程卡片：固定容器宽度，零展开收起横向抖动 */
+.team-step-card {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--background) 74%, var(--q-surface));
+  overflow: hidden;
+  transition: border-color 0.16s ease;
+}
+
+.team-step-card:hover {
+  border-color: color-mix(in srgb, var(--foreground) 22%, var(--border));
+}
+
+.team-step-card.is-active {
+  border-color: color-mix(in srgb, #0ea5e9 42%, var(--border));
+}
+
+.team-step-card.is-attention {
+  border-color: color-mix(in srgb, #f59e0b 52%, var(--border));
+}
+
+.team-step-card.is-failed {
+  border-color: color-mix(in srgb, var(--destructive) 36%, var(--border));
+}
+
+.team-run-progress {
+  height: 2px;
+  width: 100%;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  overflow: hidden;
+}
+
+.team-run-progress-bar {
+  height: 100%;
+  background: #0ea5e9;
+  transition: width 0.3s ease;
+}
+
+.team-run-progress-bar.is-live {
+  background: linear-gradient(90deg, #0ea5e9, #38bdf8, #0ea5e9);
+  background-size: 200% 100%;
+  animation: team-run-shimmer 2s linear infinite;
+}
+
+@keyframes team-run-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: 0 0; }
+}
+
+.team-step-card-head {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  text-align: left;
+  overflow: hidden;
+  transition: background 0.14s ease;
+}
+
+.team-step-card-head:hover {
+  background: color-mix(in srgb, var(--foreground) 3%, transparent);
+}
+
+.team-step-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 7px 10px 9px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.team-run-meta-chip {
+  display: inline-flex;
+  height: 19px;
+  align-items: center;
+  gap: 3.5px;
+  padding: 0 5.5px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  background: var(--q-surface);
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.team-step-ops-badge {
+  display: inline-flex;
+  height: 19px;
+  align-items: center;
+  gap: 3.5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--foreground) 4%, var(--q-surface));
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.team-step-ops-badge.is-warn {
+  border-color: color-mix(in srgb, var(--destructive) 36%, transparent);
+  color: var(--destructive);
+}
+
+.team-run-ops-panel {
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  background: color-mix(in srgb, var(--background) 85%, var(--q-surface));
+  overflow: hidden;
+}
+
+.team-run-ops-list {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 0;
+  margin: 0;
+  list-style: none;
+}
+
+.team-run-ops-list.is-scrollable {
+  max-height: 184px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.team-run-ops-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 3.5px 8px;
+  font-size: 11px;
+}
+
+.team-run-ops-row + .team-run-ops-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
+}
+
+.team-run-ops-tool {
+  flex-shrink: 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  padding: 1px 5.5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.team-run-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, #f59e0b 40%, var(--border));
+  background: color-mix(in srgb, #f59e0b 8%, var(--background));
+  padding: 8px 10px;
+  color: #92400e;
+}
+
+:root[data-theme="dark"] .team-run-approval {
+  color: #fde68a;
+}
+
+.team-run-approval-code {
+  margin: 0;
+  max-height: 92px;
+  overflow: auto;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--background) 86%, transparent);
+  padding: 5px 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--foreground);
+}
+
+.team-run-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  padding-top: 7px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-run-progress-bar.is-live {
+    animation: none;
+  }
+}

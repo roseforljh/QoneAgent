@@ -15,11 +15,34 @@ export type MessageTextSegment =
   | { kind: "text"; start: number; value: string }
   | { kind: "mention"; start: number; value: string; ref?: TeamMentionRef };
 
-const BOUNDARY_BEFORE_AT = /(^|[\s([{"'，。！？；：、])$/;
+export interface SelectedMention {
+  start: number;
+  ref: TeamMentionRef;
+}
+
+const EMAIL_CHAR_BEFORE_AT = /[A-Za-z0-9._+-]$/;
+const BOUNDARY_AFTER_MENTION = /[\s.,!?;:()[\]{}"'，。！？；：、]/;
+
+/** 文本改变后保留没被编辑的显式提及，避免同名机器人按文本被选错。 */
+export function moveSelectedMentions(
+  before: string, after: string, selected: readonly SelectedMention[], edit?: { start: number; end: number },
+): SelectedMention[] {
+  if (!selected.length) return [];
+  const delta = after.length - before.length;
+  let { start, end } = edit ?? { start: 0, end: before.length };
+  if (!edit) {
+    while (start < before.length && start < after.length && before[start] === after[start]) start++;
+    while (end > start && end + delta > start && before[end - 1] === after[end + delta - 1]) end--;
+  }
+  return selected.flatMap((mention) => {
+    if (mention.start + mention.ref.label.length + 1 <= start) return [mention];
+    return mention.start >= end ? [{ ...mention, start: mention.start + delta }] : [];
+  });
+}
 
 /**
  * 检测输入框光标前是否正处于 `@关键词` 输入态。
- * 忽略邮箱地址（如 foo@bar）以避免误触发。
+ * 支持在任意位置（含紧跟中文后）触发，仅忽略邮箱地址（如 foo@bar）。
  */
 export function detectActiveMention(text: string, caret: number): ActiveMentionQuery | null {
   const safeCaret = Math.max(0, Math.min(caret, text.length));
@@ -27,7 +50,7 @@ export function detectActiveMention(text: string, caret: number): ActiveMentionQ
   const atIndex = before.lastIndexOf("@");
   if (atIndex === -1) return null;
   const prefix = before.slice(0, atIndex);
-  if (prefix.length > 0 && !BOUNDARY_BEFORE_AT.test(prefix)) return null;
+  if (prefix.length > 0 && EMAIL_CHAR_BEFORE_AT.test(prefix)) return null;
   const query = before.slice(atIndex + 1);
   // 提及关键词不允许跨空白或换行，避免普通句子中的 @ 长时间锁住弹层。
   if (/[\s\r\n]/.test(query)) return null;
@@ -50,6 +73,7 @@ export function extractMentionsFromText(
   text: string,
   members: readonly TeamBot[],
   allLabels: readonly string[],
+  selected: readonly SelectedMention[] = [],
 ): TeamMentionRef[] {
   const candidates: Array<{ token: string; ref: TeamMentionRef }> = [
     ...allLabels.map((label) => ({
@@ -65,6 +89,18 @@ export function extractMentionsFromText(
   const matched: Array<{ start: number; end: number; ref: TeamMentionRef }> = [];
   const seen = new Set<string>();
   const lower = text.toLocaleLowerCase();
+  const validBounds = (start: number, end: number) =>
+    (start === 0 || !EMAIL_CHAR_BEFORE_AT.test(text[start - 1])) &&
+    (end === text.length || BOUNDARY_AFTER_MENTION.test(text[end]));
+  const keyOf = (ref: TeamMentionRef) => `${ref.kind}:${ref.targetId}`;
+
+  for (const { start, ref } of selected) {
+    const token = `@${ref.label}`;
+    const end = start + token.length;
+    if (lower.slice(start, end) !== token.toLocaleLowerCase() || !validBounds(start, end)) continue;
+    matched.push({ start, end, ref });
+    seen.add(keyOf(ref));
+  }
 
   for (const candidate of candidates) {
     const needle = candidate.token.toLocaleLowerCase();
@@ -74,12 +110,8 @@ export function extractMentionsFromText(
       if (idx === -1) break;
       const end = idx + candidate.token.length;
       const overlaps = matched.some((span) => idx < span.end && end > span.start);
-      const before = idx === 0 ? "" : text.slice(0, idx);
-      const afterChar = text[end] ?? "";
-      const validBefore = before.length === 0 || BOUNDARY_BEFORE_AT.test(before);
-      const validAfter = !afterChar || /[\s.,!?;:()[\]{}"'，。！？；：、]/.test(afterChar);
-      if (!overlaps && validBefore && validAfter) {
-        const key = `${candidate.ref.kind}:${candidate.ref.targetId}`;
+      if (!overlaps && validBounds(idx, end)) {
+        const key = keyOf(candidate.ref);
         if (!seen.has(key)) {
           seen.add(key);
           matched.push({ start: idx, end, ref: candidate.ref });
@@ -89,7 +121,12 @@ export function extractMentionsFromText(
       from = idx + 1;
     }
   }
-  return matched.sort((left, right) => left.start - right.start).map((item) => item.ref);
+  const ordered = new Map<string, TeamMentionRef>();
+  for (const { ref } of matched.sort((left, right) => left.start - right.start)) {
+    const key = keyOf(ref);
+    if (!ordered.has(key)) ordered.set(key, ref);
+  }
+  return [...ordered.values()];
 }
 
 /** 把消息正文拆分为普通文本与 @高亮片段，供气泡内安全渲染。 */

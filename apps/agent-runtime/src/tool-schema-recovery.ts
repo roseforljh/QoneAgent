@@ -64,9 +64,15 @@ function schemaError(error: string, status?: number) {
   if (body) return { message: body, path: "" };
 }
 
-export function repairRejectedSchema(error: string, tools: WireTool[], status?: number): { tool: WireTool; schema: RecordValue } | undefined {
+export interface RejectedSchemaRepair {
+  tool: WireTool;
+  schema: RecordValue;
+}
+
+/** 识别被网关拒绝的 Schema 声明；若报错点名了具体非法字面量（如 surrogate 正则），同步精准清理同批次其他工具中完全相同的非法值。 */
+export function repairRejectedSchemas(error: string, tools: WireTool[], status?: number): RejectedSchemaRepair[] {
   const rejection = schemaError(error, status);
-  if (!rejection) return;
+  if (!rejection) return [];
   const { message, path } = rejection;
   const named = /^invalid (?:input )?schema for (?:function|tool) ["'`]([^"'`]+)["'`]\s*:?[ \t]*/i.exec(message);
   const canonical = (value: string) => value.replaceAll("_", "").toLowerCase();
@@ -77,23 +83,49 @@ export function repairRejectedSchema(error: string, tools: WireTool[], status?: 
   };
   const matches = tools.filter((tool) => atPath(path, tool) || atPath(message, tool) || tool.name === named?.[1]);
   // A path in a bad-request error is not enough by itself; it must describe a schema rejection, never tool arguments.
-  if (!matches.length || (!named && !/\b(?:schema|keyword|pattern|regex|not supported|not permitted|unknown field)\b/i.test(message))) return;
+  if (!matches.length || (!named && !/\b(?:schema|keyword|pattern|regex|not supported|not permitted|unknown field)\b/i.test(message))) return [];
   const tool = matches[0]!;
-  if (matches.some((other) => other.name !== tool.name || JSON.stringify(other.schema) !== JSON.stringify(tool.schema))) return;
+  if (matches.some((other) => other.name !== tool.name || JSON.stringify(other.schema) !== JSON.stringify(tool.schema))) return [];
   const detail = named ? message.slice(named[0].length) : message;
   const keyword = /["'`]([\w$]+)["'`]\s+is (?:not (?:supported|permitted|allowed)|unsupported)/i.exec(detail)?.[1]
     ?? (/\b(?:pattern|regex)\b/i.test(detail) ? "pattern" : undefined);
-  const exact = keyword && (project(tool.schema, (key, value) => {
+
+  const exactValues = new Set<string>();
+  const matchesExactValue = (key: string, value: unknown): boolean => {
     if (key !== keyword || typeof value !== "string") return false;
     const quoted = JSON.stringify(value);
-    return detail.includes(quoted) || detail.includes(JSON.stringify(quoted).slice(1, -1)) || detail.includes(`'${value}'`);
-  }) as RecordValue);
+    const hit = detail.includes(quoted) || detail.includes(JSON.stringify(quoted).slice(1, -1)) || detail.includes(`'${value}'`);
+    if (hit) exactValues.add(value);
+    return hit;
+  };
+
+  const exact = keyword ? (project(tool.schema, matchesExactValue) as RecordValue) : undefined;
   const original = JSON.stringify(tool.schema);
-  if (exact && JSON.stringify(exact) !== original) return { tool, schema: exact };
+  if (exact && JSON.stringify(exact) !== original) {
+    const repaired: RejectedSchemaRepair[] = [{ tool, schema: exact }];
+    if (exactValues.size > 0) {
+      // 同批次其他工具若带有完全一致的非法字面量（如多个 MCP 工具共享 ^[^\uD800-\uDFFF]*$），一次重试全部精准移除，不误伤其他约束。
+      for (const candidate of tools) {
+        if (candidate.name === tool.name) continue;
+        const candidateOriginal = JSON.stringify(candidate.schema);
+        const candidateFixed = project(candidate.schema, (key, value) => key === keyword && typeof value === "string" && exactValues.has(value)) as RecordValue;
+        if (JSON.stringify(candidateFixed) !== candidateOriginal) {
+          repaired.push({ tool: candidate, schema: candidateFixed });
+        }
+      }
+    }
+    return repaired;
+  }
+
   const schema = project(tool.schema, keyword && !core.has(keyword) ? (key) => key === keyword : (key) => !core.has(key)) as RecordValue;
-  if (JSON.stringify(schema) !== original) return { tool, schema };
+  if (JSON.stringify(schema) !== original) return [{ tool, schema }];
   if (keyword) {
     const reduced = project(tool.schema, (key) => !core.has(key)) as RecordValue;
-    if (JSON.stringify(reduced) !== original) return { tool, schema: reduced };
+    if (JSON.stringify(reduced) !== original) return [{ tool, schema: reduced }];
   }
+  return [];
+}
+
+export function repairRejectedSchema(error: string, tools: WireTool[], status?: number): RejectedSchemaRepair | undefined {
+  return repairRejectedSchemas(error, tools, status)[0];
 }

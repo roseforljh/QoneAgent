@@ -254,6 +254,37 @@ export const goals = sqliteTable(
   (t) => [index("idx_goals_session").on(t.sessionId)],
 );
 
+// 团队模式：实体以协议 JSON 存于 data 列，建表与查询见 team-repo.ts。
+export const teamBots = sqliteTable("team_bots", {
+  id: text("id").primaryKey(),
+  data: text("data").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const teamGroups = sqliteTable("team_groups", {
+  id: text("id").primaryKey(),
+  data: text("data").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const teamMessages = sqliteTable("team_messages", {
+  id: text("id").primaryKey(),
+  groupId: text("group_id").notNull().references(() => teamGroups.id, { onDelete: "cascade" }),
+  data: text("data").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (t) => [index("idx_team_messages_group").on(t.groupId, t.createdAt)]);
+
+export const teamRuns = sqliteTable("team_runs", {
+  id: text("id").primaryKey(),
+  groupId: text("group_id").notNull().references(() => teamGroups.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  data: text("data").notNull(),
+  startedAt: integer("started_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (t) => [index("idx_team_runs_group").on(t.groupId, t.startedAt)]);
+
 export const goalEvents = sqliteTable(
   "goal_events",
   {

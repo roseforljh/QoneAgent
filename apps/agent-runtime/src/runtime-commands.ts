@@ -124,6 +124,16 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       }
       return true;
 
+    case "team.state.get": case "team.state.import": case "team.bot.save": case "team.bot.delete":
+    case "team.group.create": case "team.group.update": case "team.group.delete": case "team.group.clear":
+    case "team.message.send": case "team.run.action":
+      try {
+        await services.team.handle(cmd);
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      }
+      return true;
+
     case "mcp.elicitation.respond":
       // An answer to a request that already ended (server cancelled, tool stopped) has nothing left to do.
       services.elicitations.respond(cmd);

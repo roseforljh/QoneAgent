@@ -14,8 +14,10 @@ import { SideConversationService } from "./side-conversation.js";
 
 import { createLogger, EventBus, qoneDatabasePath, qoneSettingsPath, qoneStatePath, SequencedEventJournal } from "@qone/shared";
 import type { RuntimeCommand, AgentEvent, AssistantMessagePart, SessionInfo, SubagentConfigInfo, GoalInfo, MessageAttachmentInfo, MessageQuoteInfo, AgentCommunicationInfo, SessionSearchResult, McpServerInfo } from "@qone/protocol";
-import { decodeCommand, REMOVED_BUILTIN_SUBAGENT_IDS, serverOperationInfo, serverOperationCancelled } from "@qone/protocol";
-import { openDb, ConfigFile, mcpServersFrom, SessionRepo, MessageRepo, RunRepo, ExecutionUsageRepo, ExecutionIncidentRepo, ExecutionLessonRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, PreferencesRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo } from "@qone/database";
+import { decodeCommand, REMOVED_BUILTIN_SUBAGENT_IDS, serverOperationInfo, serverOperationCancelled, supportsMemorySummary } from "@qone/protocol";
+import { TeamService } from "./team/team-service.js";
+import { PiTeamTurnRunner } from "./team/team-agent-runner.js";
+import { openDb, ConfigFile, mcpServersFrom, SessionRepo, MessageRepo, RunRepo, ExecutionUsageRepo, ExecutionIncidentRepo, ExecutionLessonRepo, GoalRepo, SubagentRunRepo, SubagentNotificationRepo, TurnRepo, WorkspaceRepo, ToolCallRepo, McpServerRepo, ModelConfigRepo, SettingsRepo, PreferencesRepo, QueueRepo, EventRepo, ArtifactRepo, PermissionRepo, SkillRepo, TeamRepo } from "@qone/database";
 import { McpManager } from "@qone/mcp";
 import { DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, PiAdapter, type PiCompactionPreferences } from "./pi-adapter.js";
 import { ApprovalQueue } from "./permissions.js";
@@ -273,6 +275,8 @@ function runRequiresSubagentFinalization(sessionId: string, runId: string): bool
   return [...direct, ...recovered].length > 0;
 }
 eventBus.subscribe((busEvent) => {
+  // 团队模式成员回合是隔离会话：事件只交给团队编排，不进入普通会话持久化与回放。
+  if (teamRunner.observe(busEvent)) return;
   const childExecution = busEvent.scope === "subagent" || Boolean(busEvent.runId && subagentRunIds.has(busEvent.runId));
   const approvalParent = busEvent.runId && (busEvent.type === "approval.requested" || busEvent.type === "approval.resolved") ? subagentRunRepo.get(busEvent.runId)?.parentSessionId : undefined;
   const replayEvent = eventJournal.record((sequence) => ({
@@ -512,6 +516,14 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   return [...compacted, ...customEntries.map((rawMessage) => ({ role: "custom", content: "", createdAt: Date.now(), rawMessage }))];
 }, compactionPreferences, douyinBridge, appMediaService, embeddedOpenCli);
 adapter.setSideConversationResolver((sessionId) => Boolean(sideConversations.metadata(sessionId)));
+const teamRunner = new PiTeamTurnRunner(adapter);
+const team = new TeamService({
+  repo: new TeamRepo(db), runner: teamRunner, send, servers: () => servers.registry.list(),
+  workspacePath: (id) => id ? workspaceRepo.get(id)?.path : undefined,
+  modelConfigs: () => modelConfigRepo.list(),
+  canChat: (config) => supportsMemorySummary(config) && !adapter.isDirectGenerationModel(config.id),
+  concurrency: () => subagentConfig.runtime.maxConcurrent,
+});
 subagentNotificationCoordinator = new SubagentNotificationCoordinator(
   subagentNotificationRepo,
   subagentRunRepo,
@@ -910,6 +922,7 @@ export function runtimeCommandServices() {
     executionStats, executionAnalysis,
     servers,
     schedules,
+    team,
     elicitations,
     runCheckpoints,
     ensureModelsReady,

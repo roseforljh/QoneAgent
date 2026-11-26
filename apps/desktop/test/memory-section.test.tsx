@@ -20,6 +20,7 @@ test("memory settings show active automatic preferences, keep notes separate, an
   dom.window.localStorage.setItem(GENERAL_SETTINGS_KEY, JSON.stringify({ language: "zh-CN" }));
   initLocale();
   const { useStore } = await import("../src/store");
+  const { resolveConfirmation } = await import("../src/lib/confirm-action");
   const { dispatchMemoryState, dispatchMemoryError, resetMemoryRequests, useMemoryStore } = await import("../src/lib/memory-state");
   const { MemorySection } = await import("../src/components/settings/memory/memory-section");
   const initial = useStore.getState();
@@ -71,7 +72,12 @@ test("memory settings show active automatic preferences, keep notes separate, an
     await act(async () => button("以前的任务", suggested!).click());
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("完成 A");
     await act(async () => document.querySelector<HTMLButtonElement>(".nested-dialog-close")!.click());
+    const sentCountBeforeRemove = sent.length;
     await act(async () => button("移除", ignored!).click());
+    await act(async () => resolveConfirmation(false));
+    expect(sent).toHaveLength(sentCountBeforeRemove);
+    await act(async () => button("移除", ignored!).click());
+    await act(async () => resolveConfirmation(true));
     expect(sent.at(-1)).toMatchObject({ type: "memory.preference.edit", id: "ignored", value: null });
     state.automaticPreferences!.pop();
     await reply();

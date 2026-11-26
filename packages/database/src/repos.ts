@@ -3,6 +3,8 @@ import { sessions, messages, runs, subagentRuns, subagentNotifications, subagent
 import type { Db } from "./index.js";
 import { persistedToolResult, type AgentCommunicationInfo, type CompactionMarkerInfo, type AssistantMessagePart, type GoalInfo, type GoalStatus, type MessageAttachmentInfo, type QueueItemInfo, type RunPermissionMode, type RunThinkingLevel, type SubagentNotificationInfo, type SubagentDependencyState, type SubagentFailureKind } from "@qone/protocol";
 
+export { TeamRepo } from "./team-repo.js";
+
 export class SessionRepo {
   constructor(private db: Db) {}
 

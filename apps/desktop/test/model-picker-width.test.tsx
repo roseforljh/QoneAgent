@@ -16,7 +16,7 @@ beforeAll(async () => {
   const globals = {
     window: view, document: view.document, navigator: view.navigator,
     HTMLElement: view.HTMLElement, HTMLInputElement: view.HTMLInputElement,
-    Element: view.Element, Node: view.Node, Event: view.Event, CustomEvent: view.CustomEvent,
+    Element: view.Element, Node: view.Node, NodeFilter: view.NodeFilter, Event: view.Event, CustomEvent: view.CustomEvent,
     MutationObserver: view.MutationObserver,
     ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
     getComputedStyle: view.getComputedStyle.bind(view), IS_REACT_ACT_ENVIRONMENT: true,
@@ -132,4 +132,71 @@ test("each conversation keeps its own provider, and the logo switches it for tha
   // Same model name exists in Alpha, so it is kept; the other conversation is untouched.
   expect(useStore.getState().runOptionsBySession.s1?.modelId).toBe("alpha/shared");
   expect(useStore.getState().runOptionsBySession.s2?.modelId).toBe("beta/b1");
+});
+
+test("a team member following the conversation model gets the same picker and can save or reset overrides", async () => {
+  const { Dialog } = await import("radix-ui");
+  const { BotEditorDialog } = await import("../src/components/team/BotEditorDialog");
+  useStore.setState({
+    modelConfigsLoaded: true,
+    selectedModelId: "alpha/a",
+    modelConfigs: [["beta", "b1"], ["beta", "b2"], ["alpha", "a"]].map(([provider, model]) => ({
+      id: `${provider}/${model}`, provider, model, config: {}, enabled: true, updatedAt: 1,
+    })),
+  });
+  let saved: { modelId: string; id?: string; thinking?: string } | undefined;
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => root!.render(<Dialog.Root open>
+    <Dialog.Content aria-describedby={undefined}>
+      <Dialog.Title>Create group</Dialog.Title>
+      <BotEditorDialog open nested onOpenChange={() => {}} onSave={({ modelId, thinking }, id) => { saved = { modelId, id, thinking }; }}
+        editingBot={{ id: "preset-test", name: "测试成员", roleTitle: "测试", description: "", systemPrompt: "",
+          logo: "robot", modelId: "", capabilities: [], source: "preset", createdAt: 1, updatedAt: 1 }} />
+    </Dialog.Content>
+  </Dialog.Root>));
+  const trigger = document.querySelector<HTMLButtonElement>(".team-wizard-footer .q-model-picker-trigger")!;
+  expect(trigger).not.toBeNull();
+  const click = async (selector: string) => {
+    const button = document.querySelector<HTMLButtonElement>(selector);
+    expect(button).not.toBeNull();
+    await act(async () => button!.click());
+  };
+  const label = () => trigger.querySelector(".q-model-picker-trigger-name")?.textContent;
+  const submit = () => click(".team-wizard-footer .servers-button.is-primary");
+  expect(label()).toBe("a");
+  expect(trigger.title).toMatch(/默认|default/i);
+  await submit(); // 下一步
+  await submit();
+  expect(saved?.modelId).toBe("");
+  await act(async () => trigger.click());
+  const panel = document.querySelector(".q-model-picker-simple[data-active=true]");
+  expect(panel).not.toBeNull();
+  expect(panel?.closest('[aria-hidden="true"]')).toBeNull();
+  expect(panel?.querySelector(".q-model-picker-model-name")?.textContent).toBe("a");
+  const slider = panel?.querySelector('[role="slider"]');
+  expect(slider).not.toBeNull();
+  expect(slider?.getAttribute("aria-disabled")).toBeNull();
+  const effort = slider?.getAttribute("aria-valuenow");
+  const key = effort === slider?.getAttribute("aria-valuemax") ? "Home" : "End";
+  await act(async () => { slider?.dispatchEvent(new view.KeyboardEvent("keydown", { key, bubbles: true })); });
+  expect(slider?.getAttribute("aria-valuenow")).not.toBe(effort);
+  await click(".q-model-picker-reset");
+  await act(async () => trigger.click());
+  await click(".q-model-picker-provider-button");
+  await click(".q-model-picker-advanced [role=option]:first-child");
+  expect(label()).toBe("b1");
+  await act(async () => trigger.click());
+  await click(".q-model-picker-model-button");
+  await click(".q-model-picker-advanced [role=option]:last-child");
+  expect(label()).toBe("b2");
+  await submit();
+  expect(saved).toMatchObject({ id: "preset-test", modelId: "beta/b2" });
+  await act(async () => trigger.click());
+  await click(".q-model-picker-reset");
+  expect(label()).toBe("a");
+  await submit();
+  expect(saved).toMatchObject({ id: "preset-test", modelId: "", thinking: undefined });
+  expect(useStore.getState().selectedModelId).toBe("alpha/a");
 });

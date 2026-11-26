@@ -6,7 +6,7 @@ import { useStore } from "../../../store";
 import { cn } from "../../../lib/utils";
 import { invoke } from "../../../lib/desktop-bridge";
 import { openBrowserInDock } from "../../../lib/browser-dock";
-import { confirmAction } from "../../../lib/confirm-action";
+import { confirmAction, confirmDestructiveAction } from "../../../lib/confirm-action";
 import { sendServerCommand, useServerStore } from "../../../lib/server-state";
 import { useLocale } from "../../../localization";
 import { QoneSelect } from "../../ui/Select";
@@ -127,7 +127,15 @@ export function ServerFormDialog({ open, onOpenChange, prefill, groupId, server,
             <div key={tunnel.localPort} className="server-tunnel">
               <span><strong>{t("servers.tunnel", { remote: tunnel.remotePort })}</strong><small>{tunnel.url}</small></span>
               <button type="button" className="servers-icon-button" onClick={() => openBrowserInDock(tunnel.url, useStore.getState().currentSessionId)} aria-label={t("servers.openBrowser")} title={t("servers.openBrowser")}><ExternalLink size={14} /></button>
-              <button type="button" className="servers-icon-button" onClick={() => void run({ type: "servers.tunnel.close", serverId: server.id, localPort: tunnel.localPort })} aria-label={t("common.close")}><X size={14} /></button>
+              <button
+                type="button"
+                className="servers-icon-button"
+                onClick={async () => {
+                  if (!await confirmDestructiveAction(t("servers.tunnelCloseConfirm", { port: String(tunnel.localPort) }))) return;
+                  await run({ type: "servers.tunnel.close", serverId: server.id, localPort: tunnel.localPort });
+                }}
+                aria-label={t("common.close")}
+              ><X size={14} /></button>
             </div>
           ))}
         </section>}

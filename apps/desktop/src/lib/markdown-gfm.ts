@@ -36,3 +36,27 @@ export function remarkQoneGfm(this: ThisParameterType<typeof remarkGfm>) {
   remarkGfm.call(this, { singleTilde: false });
   return splitLiteralAutolinks;
 }
+
+/** 将软换行转为 Markdown 硬换行，保留用户在输入框中按 Shift+Enter 输入的每一行。 */
+export function remarkLineBreaks() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (!node.children || node.type === "code" || node.type === "inlineCode") return;
+      const children: MarkdownNode[] = [];
+      for (const child of node.children) {
+        if (child.type === "text" && child.value && /[\r\n]/.test(child.value)) {
+          const lines = child.value.split(/\r?\n/);
+          lines.forEach((line, index) => {
+            if (index > 0) children.push({ type: "break" });
+            if (line.length > 0) children.push({ type: "text", value: line });
+          });
+        } else {
+          visit(child);
+          children.push(child);
+        }
+      }
+      node.children = children;
+    };
+    visit(tree);
+  };
+}

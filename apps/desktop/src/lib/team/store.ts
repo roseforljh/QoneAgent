@@ -1,65 +1,44 @@
 import { create } from "zustand";
-import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
-import type { ServerInfo, SubagentProfileInfo } from "@qone/protocol";
+import { normalizeTeamExecution, type MessageAttachmentInfo, type TeamRunDefaults } from "@qone/protocol";
 import { instantiatePresetBots } from "./presets";
 import type {
   TeamBot,
   TeamBotPresence,
   TeamChatMode,
+  TeamApprovalCommandInput,
+  TeamCommandInput,
   TeamExecutionConfig,
   TeamGroup,
   TeamMentionRef,
   TeamMessage,
+  TeamRunAction,
   TeamRunCard,
-  TeamRunStep,
   TeamRuntimeEvent,
+  TeamStateSnapshot,
   TeamTransport,
 } from "./types";
 
-const STORAGE_KEY = "qone-team-workspace-v1";
+/** 旧版纯前端持久化的数据键；首次连上后端且团队表为空时导入一次后删除。 */
+const LEGACY_STORAGE_KEY = "qone-team-workspace-v1";
+const ACTIVE_GROUP_KEY = "qone-team-active-group";
 
-/** 无 DOM 测试环境下退化为内存存储，避免 persist 中间件报错。 */
-const memoryStorage = new Map<string, string>();
-const safeStorage: StateStorage = {
-  getItem: (name) => {
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        return window.localStorage.getItem(name);
-      }
-    } catch {
-      // 忽略受限存储环境异常
-    }
-    return memoryStorage.get(name) ?? null;
-  },
-  setItem: (name, value) => {
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.setItem(name, value);
-        return;
-      }
-    } catch {
-      // 忽略受限存储环境异常
-    }
-    memoryStorage.set(name, value);
-  },
-  removeItem: (name) => {
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.removeItem(name);
-        return;
-      }
-    } catch {
-      // 忽略受限存储环境异常
-    }
-    memoryStorage.delete(name);
-  },
-};
+function storage(): Storage | undefined {
+  try {
+    return typeof window !== "undefined" ? window.localStorage : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
-/** 可热插拔的运行时传输器；接入真实后端编排引擎时通过 setTeamTransport 注入。 */
-let activeTransport: TeamTransport = {};
+/** 运行时传输器：由 store-bridge 注入基于运行时连接的实现。 */
+let activeTransport: TeamTransport | undefined;
 
-export function setTeamTransport(transport: TeamTransport): void {
+export function setTeamTransport(transport: TeamTransport | undefined): void {
   activeTransport = transport;
+}
+
+function sendTeam(command: TeamCommandInput | TeamApprovalCommandInput) {
+  void activeTransport?.send(command);
 }
 
 export interface CreateBotInput {
@@ -68,7 +47,9 @@ export interface CreateBotInput {
   description: string;
   systemPrompt: string;
   logo: TeamBot["logo"];
+  avatar?: string;
   modelId: string;
+  thinking?: TeamBot["thinking"];
   capabilities: string[];
 }
 
@@ -76,8 +57,10 @@ export interface CreateGroupInput {
   name: string;
   description: string;
   announcement?: string;
+  avatar?: string;
   memberBotIds: string[];
   coordinatorBotId: string;
+  directBotId?: string;
   mode?: TeamChatMode;
   maxAutoRounds?: number;
   execution: TeamExecutionConfig;
@@ -87,19 +70,15 @@ export interface SendGroupMessageInput {
   groupId: string;
   content: string;
   mentions: TeamMentionRef[];
+  attachments?: MessageAttachmentInfo[];
   replyToMessageId?: string;
-  servers: readonly ServerInfo[];
-  labels: {
-    localTarget: string;
-    smartTarget: string;
-    coordinateStep: (coordinatorName: string) => string;
-    mentionStep: (botName: string) => string;
-    awaitingNote: string;
-  };
+  /** 沿用当前全局模型、权限模式与活跃项目。 */
+  defaults?: TeamRunDefaults;
 }
 
 interface TeamStoreState {
-  initialized: boolean;
+  /** 已收到后端全量状态。 */
+  loaded: boolean;
   bots: TeamBot[];
   groups: TeamGroup[];
   activeGroupId?: string;
@@ -107,12 +86,12 @@ interface TeamStoreState {
   runsByGroup: Record<string, TeamRunCard[]>;
   presenceByGroup: Record<string, Record<string, TeamBotPresence>>;
 
-  ensureInitialized: (translate: (key: string) => string) => void;
-  syncFromSubagents: (profiles: readonly SubagentProfileInfo[]) => void;
+  ensurePresets: (translate: (key: string) => string) => void;
 
   selectGroup: (groupId: string) => void;
   createGroup: (input: CreateGroupInput) => TeamGroup;
-  updateGroup: (groupId: string, patch: Partial<Omit<TeamGroup, "id" | "createdAt">>) => void;
+  openDirectChat: (bot: TeamBot) => void;
+  updateGroup: (groupId: string, patch: Partial<Omit<TeamGroup, "id" | "createdAt" | "directBotId">>) => void;
   deleteGroup: (groupId: string) => void;
   clearGroupMessages: (groupId: string) => void;
 
@@ -123,449 +102,307 @@ interface TeamStoreState {
   removeMemberFromGroup: (groupId: string, botId: string) => void;
 
   sendMessage: (input: SendGroupMessageInput) => TeamMessage | null;
-  updateRunAction: (groupId: string, runId: string, action: "pause" | "resume" | "cancel") => void;
+  updateRunAction: (runId: string, action: TeamRunAction) => void;
+  resolveApproval: (approvalId: string, approved: boolean) => void;
   dispatchRuntimeEvent: (event: TeamRuntimeEvent) => void;
 }
 
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
 
-/** 规范化执行环境配置：未绑定服务器时保证本机启用且策略不会悬空。 */
-export function normalizeExecutionConfig(config: TeamExecutionConfig): TeamExecutionConfig {
-  const uniqueServers = [...new Set(config.serverIds.filter(Boolean))];
-  if (uniqueServers.length === 0) {
-    return {
-      ...config,
-      serverIds: [],
-      allowLocal: true,
-      strategy: config.strategy === "servers-preferred" ? "smart" : config.strategy,
-    };
+/** 群成员去重、统筹必须是成员、执行环境按共享规则规范化。 */
+function normalizeGroup(group: TeamGroup): TeamGroup {
+  const memberBotIds = [...new Set(group.memberBotIds)];
+  const coordinatorBotId = memberBotIds.includes(group.coordinatorBotId) ? group.coordinatorBotId : memberBotIds[0] ?? "";
+  return { ...group, memberBotIds, coordinatorBotId, execution: normalizeTeamExecution(group.execution) };
+}
+
+function groupBy<T extends { groupId: string }>(items: readonly T[]): Record<string, T[]> {
+  const result: Record<string, T[]> = {};
+  for (const item of items) {
+    result[item.groupId] ??= [];
+    result[item.groupId].push(item);
   }
+  return result;
+}
+
+function upsertById<T extends { id: string }>(list: readonly T[] | undefined, item: T): T[] {
+  const current = list ?? [];
+  const index = current.findIndex((entry) => entry.id === item.id);
+  if (index === -1) return [...current, item];
+  const next = [...current];
+  next[index] = item;
+  return next;
+}
+
+/** 读取旧版 localStorage 数据并转换为后端导入格式。 */
+function readLegacyState(): Omit<TeamStateSnapshot, "presence"> | undefined {
+  const raw = storage()?.getItem(LEGACY_STORAGE_KEY);
+  if (!raw) return undefined;
+  try {
+    const state = (JSON.parse(raw) as { state?: Record<string, unknown> }).state ?? {};
+    const bots = Array.isArray(state.bots) ? (state.bots as TeamBot[]) : [];
+    const groups = Array.isArray(state.groups) ? (state.groups as TeamGroup[]) : [];
+    const flatten = <T,>(value: unknown) => Object.values((value ?? {}) as Record<string, T[]>).flat();
+    const messages = flatten<TeamMessage>(state.messagesByGroup);
+    const runs = flatten<TeamRunCard>(state.runsByGroup);
+    return bots.length || groups.length ? { bots, groups, messages, runs } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function applySnapshot(state: TeamStateSnapshot, activeGroupId: string | undefined) {
   return {
-    ...config,
-    serverIds: uniqueServers,
-    allowLocal: config.strategy === "local-only" ? true : config.allowLocal,
+    loaded: true,
+    bots: state.bots,
+    groups: state.groups,
+    messagesByGroup: groupBy(state.messages),
+    runsByGroup: groupBy(state.runs),
+    presenceByGroup: state.presence,
+    activeGroupId: state.groups.some((group) => group.id === activeGroupId) ? activeGroupId : state.groups[0]?.id,
   };
 }
 
-/** 按群组路由策略与服务器状态推导状态卡上展示的目标环境标签。 */
-function resolveStepTarget(
-  execution: TeamExecutionConfig,
-  servers: readonly ServerInfo[],
-  labels: { localTarget: string; smartTarget: string },
-): Pick<TeamRunStep, "targetKind" | "targetId" | "targetLabel"> {
-  const bound = servers.filter((server) => execution.serverIds.includes(server.id));
-  if (execution.strategy === "local-only" || bound.length === 0) {
-    return { targetKind: "local", targetLabel: labels.localTarget };
-  }
-  if (execution.strategy === "servers-preferred") {
-    const ready = bound.find((server) => server.status === "ready") ?? bound[0];
-    return { targetKind: "server", targetId: ready.id, targetLabel: ready.name };
-  }
-  return { targetKind: "auto", targetLabel: labels.smartTarget };
-}
+/**
+ * 团队模式前端状态：后端运行时是唯一数据源，本地只做乐观更新与事件合并。
+ * 所有写操作经 TeamTransport 发给后端，后端广播的全量/增量事件覆盖本地状态。
+ */
+export const useTeamStore = create<TeamStoreState>()((set, get) => ({
+  loaded: false,
+  bots: [],
+  groups: [],
+  activeGroupId: storage()?.getItem(ACTIVE_GROUP_KEY) ?? undefined,
+  messagesByGroup: {},
+  runsByGroup: {},
+  presenceByGroup: {},
 
-export const useTeamStore = create<TeamStoreState>()(
-  persist(
-    (set, get) => ({
-      initialized: false,
-      bots: [],
-      groups: [],
-      activeGroupId: undefined,
-      messagesByGroup: {},
-      runsByGroup: {},
-      presenceByGroup: {},
+  ensurePresets: (translate) => {
+    const state = get();
+    if (!state.loaded) return;
+    const existing = new Set(state.bots.map((bot) => bot.id));
+    const missing = instantiatePresetBots(translate).filter((bot) => !existing.has(bot.id));
+    if (!missing.length) return;
+    set({ bots: [...state.bots, ...missing] });
+    for (const bot of missing) sendTeam({ type: "team.bot.save", bot });
+  },
 
-      ensureInitialized: (translate) => {
-        const state = get();
-        if (state.initialized && state.bots.length > 0) return;
-        const now = Date.now();
-        const presetBots = instantiatePresetBots(translate, now);
-        const existingIds = new Set(state.bots.map((bot) => bot.id));
-        const mergedBots = [...state.bots, ...presetBots.filter((bot) => !existingIds.has(bot.id))];
-        set({
-          initialized: true,
-          bots: mergedBots,
-          activeGroupId: state.activeGroupId ?? state.groups[0]?.id,
-        });
+  selectGroup: (groupId) => {
+    storage()?.setItem(ACTIVE_GROUP_KEY, groupId);
+    set({ activeGroupId: groupId });
+  },
+
+  createGroup: (input) => {
+    const now = Date.now();
+    const group = normalizeGroup({
+      id: uid("team-group"),
+      name: input.name.trim(),
+      description: input.description.trim(),
+      announcement: input.announcement?.trim() ?? "",
+      ...(input.avatar ? { avatar: input.avatar } : {}),
+      memberBotIds: input.memberBotIds,
+      coordinatorBotId: input.coordinatorBotId,
+      ...(input.directBotId ? { directBotId: input.directBotId } : {}),
+      mode: input.mode ?? "execute",
+      maxAutoRounds: input.maxAutoRounds ?? 50,
+      execution: input.execution,
+      createdAt: now,
+      updatedAt: now,
+    });
+    set((state) => ({ groups: [group, ...state.groups] }));
+    get().selectGroup(group.id);
+    sendTeam({ type: "team.group.create", group });
+    return group;
+  },
+
+  openDirectChat: (bot) => {
+    const existing = get().groups.find((group) => group.directBotId === bot.id);
+    if (existing) {
+      get().selectGroup(existing.id);
+      return;
+    }
+    get().createGroup({
+      name: bot.name,
+      description: "",
+      directBotId: bot.id,
+      memberBotIds: [bot.id],
+      coordinatorBotId: bot.id,
+      execution: { allowLocal: true, serverIds: [], strategy: "smart" },
+    });
+  },
+
+  updateGroup: (groupId, patch) => {
+    const current = get().groups.find((group) => group.id === groupId);
+    if (!current) return;
+    const roster = current.directBotId ? { memberBotIds: current.memberBotIds, coordinatorBotId: current.coordinatorBotId } : {};
+    const next = normalizeGroup({ ...current, ...patch, ...roster, updatedAt: Date.now() });
+    set((state) => ({ groups: state.groups.map((group) => (group.id === groupId ? next : group)) }));
+    const { id: _id, createdAt: _createdAt, directBotId: _directBotId, ...fields } = next;
+    sendTeam({ type: "team.group.update", groupId, patch: fields });
+  },
+
+  deleteGroup: (groupId) => {
+    set((state) => {
+      const groups = state.groups.filter((group) => group.id !== groupId);
+      return { groups, activeGroupId: state.activeGroupId === groupId ? groups[0]?.id : state.activeGroupId };
+    });
+    sendTeam({ type: "team.group.delete", groupId });
+  },
+
+  clearGroupMessages: (groupId) => {
+    set((state) => ({
+      messagesByGroup: { ...state.messagesByGroup, [groupId]: [] },
+      runsByGroup: { ...state.runsByGroup, [groupId]: [] },
+      presenceByGroup: { ...state.presenceByGroup, [groupId]: {} },
+    }));
+    sendTeam({ type: "team.group.clear", groupId });
+  },
+
+  createBot: (input) => {
+    const now = Date.now();
+    const bot: TeamBot = {
+      id: uid("bot-custom"),
+      name: input.name.trim(),
+      roleTitle: input.roleTitle.trim(),
+      description: input.description.trim(),
+      systemPrompt: input.systemPrompt.trim(),
+      logo: input.logo,
+      ...(input.avatar ? { avatar: input.avatar } : {}),
+      modelId: input.modelId,
+      ...(input.thinking ? { thinking: input.thinking } : {}),
+      capabilities: [...new Set(input.capabilities.map((item) => item.trim()).filter(Boolean))],
+      source: "custom",
+      createdAt: now,
+      updatedAt: now,
+    };
+    set((state) => ({ bots: [...state.bots, bot] }));
+    sendTeam({ type: "team.bot.save", bot });
+    return bot;
+  },
+
+  updateBot: (botId, patch) => {
+    const current = get().bots.find((bot) => bot.id === botId);
+    if (!current) return;
+    const bot: TeamBot = {
+      ...current,
+      ...patch,
+      name: (patch.name ?? current.name).trim(),
+      roleTitle: (patch.roleTitle ?? current.roleTitle).trim(),
+      description: (patch.description ?? current.description).trim(),
+      systemPrompt: (patch.systemPrompt ?? current.systemPrompt).trim(),
+      updatedAt: Date.now(),
+    };
+    set((state) => ({ bots: upsertById(state.bots, bot) }));
+    sendTeam({ type: "team.bot.save", bot });
+  },
+
+  deleteBot: (botId) => {
+    set((state) => ({
+      bots: state.bots.filter((bot) => bot.id !== botId),
+      groups: state.groups.map((group) =>
+        group.memberBotIds.includes(botId)
+          ? normalizeGroup({ ...group, memberBotIds: group.memberBotIds.filter((id) => id !== botId) })
+          : group,
+      ),
+    }));
+    sendTeam({ type: "team.bot.delete", botId });
+  },
+
+  addMemberToGroup: (groupId, botId) => {
+    const group = get().groups.find((item) => item.id === groupId);
+    if (!group || group.directBotId || group.memberBotIds.includes(botId)) return;
+    get().updateGroup(groupId, { memberBotIds: [...group.memberBotIds, botId] });
+  },
+
+  removeMemberFromGroup: (groupId, botId) => {
+    const group = get().groups.find((item) => item.id === groupId);
+    if (!group || group.memberBotIds.length <= 1) return;
+    get().updateGroup(groupId, { memberBotIds: group.memberBotIds.filter((id) => id !== botId) });
+  },
+
+  sendMessage: ({ groupId, content, mentions, attachments, replyToMessageId, defaults }) => {
+    const trimmed = content.trim();
+    const attached = attachments?.length ? attachments : undefined;
+    const group = get().groups.find((item) => item.id === groupId);
+    if ((!trimmed && !attached) || !group || (group.directBotId && !group.memberBotIds.length)) return null;
+    const message: TeamMessage = {
+      id: uid("team-msg"),
+      groupId,
+      senderKind: "user",
+      content: trimmed,
+      mentions,
+      ...(attached ? { attachments: attached } : {}),
+      replyToMessageId,
+      mode: group.mode,
+      createdAt: Date.now(),
+    };
+    // 乐观追加用户消息；后端以同一 ID 回推带运行卡片的正式消息。
+    set((state) => ({
+      messagesByGroup: { ...state.messagesByGroup, [groupId]: upsertById(state.messagesByGroup[groupId], message) },
+    }));
+    sendTeam({
+      type: "team.message.send",
+      groupId,
+      messageId: message.id,
+      content: trimmed,
+      mentions,
+      ...(attached ? { attachments: attached } : {}),
+      ...(replyToMessageId ? { replyToMessageId } : {}),
+      mode: group.mode,
+      ...(defaults ? { defaults } : {}),
+    });
+    return message;
+  },
+
+  updateRunAction: (runId, action) => {
+    sendTeam({ type: "team.run.action", runId, action });
+  },
+
+  resolveApproval: (approvalId, approved) => {
+    sendTeam(approved ? { type: "tool.approve", approvalId } : { type: "tool.reject", approvalId });
+  },
+
+  dispatchRuntimeEvent: (event) => {
+    if (event.type === "team.state") {
+      const { state } = event;
+      const empty = !state.bots.length && !state.groups.length && !state.messages.length && !state.runs.length;
+      const legacy = empty ? readLegacyState() : undefined;
+      if (legacy) {
+        // 承接旧版本地数据：交给后端导入，导入完成后的全量状态再落到界面。
+        storage()?.removeItem(LEGACY_STORAGE_KEY);
+        sendTeam({ type: "team.state.import", state: legacy });
+        return;
+      }
+      set((current) => applySnapshot(state, current.activeGroupId));
+      return;
+    }
+    if (event.type === "team.message.append") {
+      const { message } = event;
+      set((state) => ({
+        messagesByGroup: { ...state.messagesByGroup, [message.groupId]: upsertById(state.messagesByGroup[message.groupId], message) },
+      }));
+      return;
+    }
+    if (event.type === "team.message.delta") {
+      set((state) => {
+        const list = state.messagesByGroup[event.groupId];
+        const index = list?.findIndex((message) => message.id === event.messageId) ?? -1;
+        if (!list || index === -1) return state;
+        const next = [...list];
+        next[index] = { ...next[index], content: next[index].content + event.delta };
+        return { messagesByGroup: { ...state.messagesByGroup, [event.groupId]: next } };
+      });
+      return;
+    }
+    if (event.type === "team.run.upsert") {
+      const { run } = event;
+      set((state) => ({ runsByGroup: { ...state.runsByGroup, [run.groupId]: upsertById(state.runsByGroup[run.groupId], run) } }));
+      return;
+    }
+    set((state) => ({
+      presenceByGroup: {
+        ...state.presenceByGroup,
+        [event.groupId]: { ...(state.presenceByGroup[event.groupId] ?? {}), [event.botId]: event.presence },
       },
-
-      syncFromSubagents: (profiles) => {
-        if (!profiles.length) return;
-        set((state) => {
-          const nextBots = [...state.bots];
-          let changed = false;
-          for (const profile of profiles) {
-            if (!profile.enabled) continue;
-            const linkedId = `bot-subagent-${profile.id}`;
-            const existingIndex = nextBots.findIndex((bot) => bot.id === linkedId || bot.linkedSubagentId === profile.id);
-            const mapped: TeamBot = {
-              id: linkedId,
-              name: profile.name,
-              roleTitle: profile.name,
-              description: profile.instructions.slice(0, 120),
-              systemPrompt: profile.instructions,
-              logo: (profile.logo as TeamBot["logo"]) || "robot",
-              modelId: profile.modelId ?? "",
-              capabilities: profile.tools?.slice(0, 4) ?? [],
-              source: "subagent",
-              linkedSubagentId: profile.id,
-              createdAt: profile.updatedAt || Date.now(),
-              updatedAt: profile.updatedAt || Date.now(),
-            };
-            if (existingIndex === -1) {
-              nextBots.push(mapped);
-              changed = true;
-            } else if (nextBots[existingIndex].updatedAt < mapped.updatedAt) {
-              nextBots[existingIndex] = { ...nextBots[existingIndex], ...mapped };
-              changed = true;
-            }
-          }
-          return changed ? { bots: nextBots } : state;
-        });
-      },
-
-      selectGroup: (groupId) => set({ activeGroupId: groupId }),
-
-      createGroup: (input) => {
-        const now = Date.now();
-        const memberBotIds = [...new Set(input.memberBotIds)];
-        const coordinatorBotId = memberBotIds.includes(input.coordinatorBotId)
-          ? input.coordinatorBotId
-          : memberBotIds[0] ?? "";
-        const group: TeamGroup = {
-          id: uid("team-group"),
-          name: input.name.trim(),
-          description: input.description.trim(),
-          announcement: input.announcement?.trim() ?? "",
-          memberBotIds,
-          coordinatorBotId,
-          mode: input.mode ?? "execute",
-          maxAutoRounds: input.maxAutoRounds ?? 6,
-          execution: normalizeExecutionConfig(input.execution),
-          createdAt: now,
-          updatedAt: now,
-        };
-        set((state) => ({
-          groups: [group, ...state.groups],
-          activeGroupId: group.id,
-          messagesByGroup: { ...state.messagesByGroup, [group.id]: [] },
-          runsByGroup: { ...state.runsByGroup, [group.id]: [] },
-        }));
-        return group;
-      },
-
-      updateGroup: (groupId, patch) => {
-        set((state) => ({
-          groups: state.groups.map((group) => {
-            if (group.id !== groupId) return group;
-            const nextExecution = patch.execution
-              ? normalizeExecutionConfig(patch.execution)
-              : group.execution;
-            const nextMembers = patch.memberBotIds ? [...new Set(patch.memberBotIds)] : group.memberBotIds;
-            const requestedCoordinator = patch.coordinatorBotId ?? group.coordinatorBotId;
-            const nextCoordinator = nextMembers.includes(requestedCoordinator)
-              ? requestedCoordinator
-              : nextMembers[0] ?? "";
-            return {
-              ...group,
-              ...patch,
-              memberBotIds: nextMembers,
-              coordinatorBotId: nextCoordinator,
-              execution: nextExecution,
-              updatedAt: Date.now(),
-            };
-          }),
-        }));
-      },
-
-      deleteGroup: (groupId) => {
-        set((state) => {
-          const nextGroups = state.groups.filter((group) => group.id !== groupId);
-          const { [groupId]: _m, ...nextMessages } = state.messagesByGroup;
-          const { [groupId]: _r, ...nextRuns } = state.runsByGroup;
-          const { [groupId]: _p, ...nextPresence } = state.presenceByGroup;
-          return {
-            groups: nextGroups,
-            activeGroupId: state.activeGroupId === groupId ? nextGroups[0]?.id : state.activeGroupId,
-            messagesByGroup: nextMessages,
-            runsByGroup: nextRuns,
-            presenceByGroup: nextPresence,
-          };
-        });
-      },
-
-      clearGroupMessages: (groupId) => {
-        set((state) => ({
-          messagesByGroup: { ...state.messagesByGroup, [groupId]: [] },
-          runsByGroup: { ...state.runsByGroup, [groupId]: [] },
-          presenceByGroup: { ...state.presenceByGroup, [groupId]: {} },
-        }));
-      },
-
-      createBot: (input) => {
-        const now = Date.now();
-        const bot: TeamBot = {
-          id: uid("bot-custom"),
-          name: input.name.trim(),
-          roleTitle: input.roleTitle.trim(),
-          description: input.description.trim(),
-          systemPrompt: input.systemPrompt.trim(),
-          logo: input.logo,
-          modelId: input.modelId,
-          capabilities: [...new Set(input.capabilities.map((item) => item.trim()).filter(Boolean))],
-          source: "custom",
-          createdAt: now,
-          updatedAt: now,
-        };
-        set((state) => ({ bots: [...state.bots, bot] }));
-        return bot;
-      },
-
-      updateBot: (botId, patch) => {
-        set((state) => ({
-          bots: state.bots.map((bot) =>
-            bot.id === botId
-              ? {
-                  ...bot,
-                  ...patch,
-                  name: patch.name !== undefined ? patch.name.trim() : bot.name,
-                  roleTitle: patch.roleTitle !== undefined ? patch.roleTitle.trim() : bot.roleTitle,
-                  description: patch.description !== undefined ? patch.description.trim() : bot.description,
-                  systemPrompt: patch.systemPrompt !== undefined ? patch.systemPrompt.trim() : bot.systemPrompt,
-                  updatedAt: Date.now(),
-                }
-              : bot,
-          ),
-        }));
-      },
-
-      deleteBot: (botId) => {
-        set((state) => ({
-          bots: state.bots.filter((bot) => bot.id !== botId),
-          groups: state.groups.map((group) => {
-            if (!group.memberBotIds.includes(botId)) return group;
-            const nextMembers = group.memberBotIds.filter((id) => id !== botId);
-            return {
-              ...group,
-              memberBotIds: nextMembers,
-              coordinatorBotId:
-                group.coordinatorBotId === botId ? (nextMembers[0] ?? "") : group.coordinatorBotId,
-              updatedAt: Date.now(),
-            };
-          }),
-        }));
-      },
-
-      addMemberToGroup: (groupId, botId) => {
-        const group = get().groups.find((item) => item.id === groupId);
-        if (!group || group.memberBotIds.includes(botId)) return;
-        get().updateGroup(groupId, { memberBotIds: [...group.memberBotIds, botId] });
-      },
-
-      removeMemberFromGroup: (groupId, botId) => {
-        const group = get().groups.find((item) => item.id === groupId);
-        if (!group || group.memberBotIds.length <= 1) return;
-        get().updateGroup(groupId, {
-          memberBotIds: group.memberBotIds.filter((id) => id !== botId),
-        });
-      },
-
-      sendMessage: ({ groupId, content, mentions, replyToMessageId, servers, labels }) => {
-        const trimmed = content.trim();
-        if (!trimmed) return null;
-        const state = get();
-        const group = state.groups.find((item) => item.id === groupId);
-        if (!group) return null;
-
-        const now = Date.now();
-        const messageId = uid("team-msg");
-        const runId = uid("team-run");
-
-        const message: TeamMessage = {
-          id: messageId,
-          groupId,
-          senderKind: "user",
-          content: trimmed,
-          mentions,
-          replyToMessageId,
-          runCardId: runId,
-          mode: group.mode,
-          createdAt: now,
-        };
-
-        // 依据实际 @ 提及或群统筹生成结构化执行计划卡，不做任何硬编码假回复。
-        const groupBots = group.memberBotIds
-          .map((id) => state.bots.find((bot) => bot.id === id))
-          .filter((bot): bot is TeamBot => Boolean(bot));
-        const coordinator =
-          groupBots.find((bot) => bot.id === group.coordinatorBotId) ?? groupBots[0];
-        const target = resolveStepTarget(group.execution, servers, labels);
-        const mentionedAll = mentions.some((item) => item.kind === "all");
-        const mentionedBots = mentionedAll
-          ? groupBots
-          : mentions
-              .filter((item) => item.kind === "bot")
-              .map((item) => groupBots.find((bot) => bot.id === item.targetId))
-              .filter((bot): bot is TeamBot => Boolean(bot));
-
-        const steps: TeamRunStep[] = mentionedBots.length > 0
-          ? mentionedBots.map((bot) => ({
-              id: uid("team-step"),
-              title: labels.mentionStep(bot.name),
-              botId: bot.id,
-              status: activeTransport.sendGroupMessage ? "pending" : "awaiting",
-              ...target,
-            }))
-          : coordinator
-            ? [
-                {
-                  id: uid("team-step"),
-                  title: labels.coordinateStep(coordinator.name),
-                  botId: coordinator.id,
-                  status: activeTransport.sendGroupMessage ? "pending" : "awaiting",
-                  ...target,
-                },
-              ]
-            : [];
-
-        const run: TeamRunCard = {
-          id: runId,
-          groupId,
-          triggerMessageId: messageId,
-          title: trimmed.length > 56 ? `${trimmed.slice(0, 56)}…` : trimmed,
-          coordinatorBotId: coordinator?.id ?? "",
-          status: activeTransport.sendGroupMessage ? "queued" : "awaiting_runtime",
-          mode: group.mode,
-          strategy: group.execution.strategy,
-          targetServerIds: [...group.execution.serverIds],
-          allowLocal: group.execution.allowLocal,
-          steps,
-          startedAt: now,
-          updatedAt: now,
-          note: activeTransport.sendGroupMessage ? undefined : labels.awaitingNote,
-        };
-
-        set((current) => ({
-          messagesByGroup: {
-            ...current.messagesByGroup,
-            [groupId]: [...(current.messagesByGroup[groupId] ?? []), message],
-          },
-          runsByGroup: {
-            ...current.runsByGroup,
-            [groupId]: [...(current.runsByGroup[groupId] ?? []), run],
-          },
-          groups: current.groups.map((item) =>
-            item.id === groupId ? { ...item, updatedAt: now } : item,
-          ),
-        }));
-
-        if (activeTransport.sendGroupMessage) {
-          void activeTransport.sendGroupMessage({ group, message, run, bots: groupBots });
-        }
-
-        return message;
-      },
-
-      updateRunAction: (groupId, runId, action) => {
-        const now = Date.now();
-        set((state) => ({
-          runsByGroup: {
-            ...state.runsByGroup,
-            [groupId]: (state.runsByGroup[groupId] ?? []).map((run) => {
-              if (run.id !== runId) return run;
-              if (action === "pause") {
-                return {
-                  ...run,
-                  status: "paused",
-                  updatedAt: now,
-                  steps: run.steps.map((step) =>
-                    step.status === "running" || step.status === "pending"
-                      ? { ...step, status: "paused" }
-                      : step,
-                  ),
-                };
-              }
-              if (action === "resume") {
-                return {
-                  ...run,
-                  status: activeTransport.sendGroupMessage ? "running" : "awaiting_runtime",
-                  updatedAt: now,
-                  steps: run.steps.map((step) =>
-                    step.status === "paused"
-                      ? { ...step, status: activeTransport.sendGroupMessage ? "pending" : "awaiting" }
-                      : step,
-                  ),
-                };
-              }
-              return {
-                ...run,
-                status: "cancelled",
-                updatedAt: now,
-                finishedAt: now,
-                steps: run.steps.map((step) =>
-                  step.status === "running" || step.status === "pending" || step.status === "paused" || step.status === "awaiting"
-                    ? { ...step, status: "paused" }
-                    : step,
-                ),
-              };
-            }),
-          },
-        }));
-        void activeTransport.updateRunStatus?.(runId, action);
-      },
-
-      dispatchRuntimeEvent: (event) => {
-        if (event.type === "team.message.append") {
-          set((state) => ({
-            messagesByGroup: {
-              ...state.messagesByGroup,
-              [event.message.groupId]: [
-                ...(state.messagesByGroup[event.message.groupId] ?? []),
-                event.message,
-              ],
-            },
-          }));
-          return;
-        }
-        if (event.type === "team.run.upsert") {
-          set((state) => {
-            const list = state.runsByGroup[event.run.groupId] ?? [];
-            const exists = list.some((item) => item.id === event.run.id);
-            return {
-              runsByGroup: {
-                ...state.runsByGroup,
-                [event.run.groupId]: exists
-                  ? list.map((item) => (item.id === event.run.id ? event.run : item))
-                  : [...list, event.run],
-              },
-            };
-          });
-          return;
-        }
-        if (event.type === "team.bot.presence") {
-          set((state) => ({
-            presenceByGroup: {
-              ...state.presenceByGroup,
-              [event.groupId]: {
-                ...(state.presenceByGroup[event.groupId] ?? {}),
-                [event.botId]: event.presence,
-              },
-            },
-          }));
-        }
-      },
-    }),
-    {
-      name: STORAGE_KEY,
-      storage: createJSONStorage(() => safeStorage),
-      partialize: (state) => ({
-        initialized: state.initialized,
-        bots: state.bots,
-        groups: state.groups,
-        activeGroupId: state.activeGroupId,
-        messagesByGroup: state.messagesByGroup,
-        runsByGroup: state.runsByGroup,
-      }),
-    },
-  ),
-);
+    }));
+  },
+}));

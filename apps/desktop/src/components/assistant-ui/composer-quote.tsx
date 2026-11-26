@@ -4,6 +4,7 @@ import { $getNearestNodeFromDOMNode, HISTORY_PUSH_TAG } from "lexical";
 import { $isDirectiveNode, type DirectiveChipProps, type DirectiveNode } from "@assistant-ui/react-lexical";
 import { Popover } from "radix-ui";
 import { useLocale } from "../../localization";
+import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { CodexIcon } from "../ui/CodexIcon";
 import { $createComposerQuote } from "../../lib/composer-tool-editor";
 import { inlineQuoteLabel } from "../../lib/inline-quote";
@@ -18,6 +19,7 @@ type QuoteActions = { onRemove: () => void; onEdit: (text: string) => void };
 
 /** Selected-text chip at its place in the composer: hover to read, edit or remove it. */
 export function ComposerQuoteChip({ directiveId }: DirectiveChipProps) {
+  const { t } = useLocale();
   const [editor] = useLexicalComposerContext();
   const anchor = useRef<HTMLSpanElement>(null);
   const withNode = (change: (node: DirectiveNode) => void) => editor.update(() => {
@@ -25,7 +27,11 @@ export function ComposerQuoteChip({ directiveId }: DirectiveChipProps) {
     if ($isDirectiveNode(node)) change(node);
   }, { tag: HISTORY_PUSH_TAG });
   const actions: QuoteActions | undefined = editor.isEditable() ? {
-    onRemove: () => withNode((node) => node.remove()),
+    onRemove: () => {
+      void confirmDestructiveAction(t("chat.removeSelectedTextConfirm")).then((confirmed) => {
+        if (confirmed) withNode((node) => node.remove());
+      });
+    },
     onEdit: (text) => withNode((node) => node.replace($createComposerQuote(text))),
   } : undefined;
   return <InlineQuoteChip text={directiveId} anchor={anchor} actions={actions} />;

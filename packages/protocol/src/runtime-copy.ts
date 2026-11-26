@@ -3,9 +3,10 @@ import { runtimeCopyMedia } from "./runtime-copy-media";
 import { runtimeCopyMemory } from "./runtime-copy-memory";
 import { runtimeCopyServers } from "./runtime-copy-servers";
 import { runtimeCopyAutomation } from "./runtime-copy-automation";
+import { runtimeCopyTeam } from "./runtime-copy-team";
 import { subagentCopy } from "./subagent-copy";
 export const runtimeCopy = {
-  ...runtimeCopyCore, ...runtimeCopyMedia, ...runtimeCopyMemory, ...runtimeCopyServers, ...runtimeCopyAutomation, ...subagentCopy,
+  ...runtimeCopyCore, ...runtimeCopyMedia, ...runtimeCopyMemory, ...runtimeCopyServers, ...runtimeCopyAutomation, ...runtimeCopyTeam, ...subagentCopy,
   "background-shell.title": { en: "Background command", "zh-CN": "后台命令" },
   "background-shell.exited": { en: "Finished with exit code {code} after {seconds}s", "zh-CN": "已结束，退出码 {code}，用时 {seconds} 秒" },
   "background-shell.ended": { en: "Ended without an exit code after {seconds}s", "zh-CN": "未正常结束，用时 {seconds} 秒" },

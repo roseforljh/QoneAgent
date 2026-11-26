@@ -1,27 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  Camera,
   Check,
   Crown,
   Laptop,
+  Pencil,
   Plus,
+  RotateCcw,
   Search,
   Sparkles,
   X,
 } from "lucide-react";
 import type { ServerInfo, WorkspaceInfo } from "@qone/protocol";
+import { isCustomAvatar } from "../../lib/team/avatar";
 import { DEFAULT_TEAM_GROUP_TEMPLATES } from "../../lib/team/presets";
 import type {
   TeamBot,
-  TeamBotSource,
   TeamExecutionStrategy,
   TeamGroupTemplate,
 } from "../../lib/team/types";
 import type { CreateGroupInput } from "../../lib/team/store";
 import { useLocale } from "../../localization";
 import { cn } from "../../lib/utils";
-import { SubagentLogo } from "../settings/subagent-logo";
+import { TeamAvatar, TeamGroupAvatar } from "./TeamAvatar";
+import { TeamAvatarCropDialog } from "./TeamAvatarCropDialog";
+import { BotModelChip } from "./BotModelChip";
 import { QoneSelect } from "../ui/Select";
 import { CodexServerIcon } from "../ui/CodexIcon";
 import { ServerPickerDialog } from "../assistant-ui/server-picker-dialog";
@@ -37,6 +42,8 @@ interface CreateTeamGroupDialogProps {
   /** 新建自定义机器人并自动勾选时传入的刚创建的 bot ID。 */
   newlyCreatedBotId?: string;
   onRequestCreateBot: () => void;
+  /** 编辑成员（人设与驱动模型）。 */
+  onEditBot: (bot: TeamBot) => void;
   onSubmit: (input: CreateGroupInput) => void;
 }
 
@@ -59,17 +66,21 @@ export function CreateTeamGroupDialog({
   initialTemplateId,
   newlyCreatedBotId,
   onRequestCreateBot,
+  onEditBot,
   onSubmit,
 }: CreateTeamGroupDialogProps) {
   const { t } = useLocale();
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState(0);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [avatar, setAvatar] = useState("");
+  const [cropImageUrl, setCropImageUrl] = useState<string | null>(null);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [coordinatorId, setCoordinatorId] = useState("");
   const [memberSearch, setMemberSearch] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<"all" | TeamBotSource>("all");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "preset" | "custom">("all");
   const [serverIds, setServerIds] = useState<string[]>([]);
   const [allowLocal, setAllowLocal] = useState(true);
   const [strategy, setStrategy] = useState<TeamExecutionStrategy>("smart");
@@ -114,8 +125,15 @@ export function CreateTeamGroupDialog({
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setCropImageUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
     setStep(0);
+    setAvatar("");
     setMemberSearch("");
     setSourceFilter("all");
     setServerIds([]);
@@ -136,6 +154,33 @@ export function CreateTeamGroupDialog({
       setStrategy("smart");
     }
   }, [open, initialTemplateId, applyTemplate]);
+
+  useEffect(() => () => {
+    if (cropImageUrl) URL.revokeObjectURL(cropImageUrl);
+  }, [cropImageUrl]);
+
+  const openGroupAvatarPicker = () => {
+    avatarInputRef.current?.click();
+  };
+
+  const handleGroupAvatarSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const nextUrl = URL.createObjectURL(file);
+    setCropImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return nextUrl;
+    });
+  };
+
+  const closeCropDialog = (nextOpen: boolean) => {
+    if (nextOpen) return;
+    setCropImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  };
 
   useEffect(() => {
     if (!open || !newlyCreatedBotId) return;
@@ -197,6 +242,7 @@ export function CreateTeamGroupDialog({
     onSubmit({
       name,
       description,
+      ...(avatar ? { avatar } : {}),
       memberBotIds: memberIds,
       coordinatorBotId: coordinatorId || memberIds[0],
       execution: {
@@ -215,7 +261,6 @@ export function CreateTeamGroupDialog({
         open={open}
         onOpenChange={onOpenChange}
         title={t("team.dialog.createGroupTitle")}
-        description={t("team.dialog.createGroupDesc")}
         steps={wizardSteps}
         currentStep={step}
         onStepChange={setStep}
@@ -317,7 +362,7 @@ export function CreateTeamGroupDialog({
                       <div className="flex items-center justify-between gap-2">
                         <div className="team-avatar-stack">
                           {templateBots.map((bot) => (
-                            <SubagentLogo key={bot.id} logo={bot.logo} name={bot.name} size={26} />
+                            <TeamAvatar key={bot.id} bot={bot} size={26} />
                           ))}
                         </div>
                         {isSelected ? (
@@ -344,25 +389,60 @@ export function CreateTeamGroupDialog({
               </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-4 border-t border-border/70 pt-5 sm:grid-cols-2">
-              <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
-                <span>{t("team.dialog.groupName")}</span>
-                <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder={t("team.dialog.groupNamePlaceholder")}
-                  className="h-10 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none focus:border-foreground/40"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
-                <span>{t("team.dialog.groupDesc")}</span>
-                <input
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  placeholder={t("team.dialog.groupDescPlaceholder")}
-                  className="h-10 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none focus:border-foreground/40"
-                />
-              </label>
+            <section className="flex flex-col gap-4 border-t border-border/70 pt-5 sm:flex-row sm:items-end">
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                tabIndex={-1}
+                onChange={handleGroupAvatarSelected}
+              />
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openGroupAvatarPicker}
+                  title={t("team.inspector.groupAvatarHint")}
+                  aria-label={t("team.inspector.groupAvatarHint")}
+                  className="team-group-avatar-trigger"
+                >
+                  <TeamGroupAvatar group={{ avatar, name }} members={selectedMembers} size={48} stackSize={24} />
+                  <span className="team-avatar-trigger-overlay" aria-hidden="true">
+                    <Camera size={15} />
+                  </span>
+                </button>
+                {isCustomAvatar(avatar) && (
+                  <button
+                    type="button"
+                    onClick={() => setAvatar("")}
+                    title={t("team.inspector.groupAvatarReset")}
+                    aria-label={t("team.inspector.groupAvatarReset")}
+                    className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                )}
+              </div>
+              <div className="grid min-w-0 flex-1 grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span>{t("team.dialog.groupName")}</span>
+                  <input
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder={t("team.dialog.groupNamePlaceholder")}
+                    className="h-10 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none focus:border-foreground/40"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span>{t("team.dialog.groupDesc")}</span>
+                  <input
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                    placeholder={t("team.dialog.groupDescPlaceholder")}
+                    className="h-10 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none focus:border-foreground/40"
+                  />
+                </label>
+              </div>
             </section>
           </div>
         )}
@@ -392,7 +472,7 @@ export function CreateTeamGroupDialog({
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
-                {(["all", "preset", "subagent", "custom"] as const).map((source) => (
+                {(["all", "preset", "custom"] as const).map((source) => (
                   <button
                     key={source}
                     type="button"
@@ -428,15 +508,17 @@ export function CreateTeamGroupDialog({
                           : "border-border/75 bg-background hover:bg-foreground/[0.025]",
                       )}
                     >
-                      <SubagentLogo logo={bot.logo} name={bot.name} size={30} />
+                      <TeamAvatar bot={bot} size={38} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <strong className="truncate text-xs font-medium text-foreground">
                             {bot.name}
                           </strong>
-                          <span className="rounded bg-muted px-1 py-0.5 text-[9.5px] text-muted-foreground">
-                            {t(`team.source.${bot.source}` as Parameters<typeof t>[0])}
-                          </span>
+                          {bot.source === "custom" && (
+                            <span className="rounded bg-muted px-1 py-0.5 text-[9.5px] text-muted-foreground">
+                              {t("team.source.custom")}
+                            </span>
+                          )}
                         </div>
                         <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                           {bot.roleTitle}
@@ -473,9 +555,6 @@ export function CreateTeamGroupDialog({
                   {selectedMembers.length}
                 </span>
               </div>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {t("team.dialog.selectedRosterHint")}
-              </p>
 
               <div className="mt-3 flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-0.5">
                 {selectedMembers.length === 0 ? (
@@ -495,18 +574,31 @@ export function CreateTeamGroupDialog({
                             : "border-border/75 bg-background",
                         )}
                       >
-                        <SubagentLogo logo={bot.logo} name={bot.name} size={26} />
+                        <TeamAvatar bot={bot} size={32} />
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-xs font-medium text-foreground">{bot.name}</div>
-                          <div className="truncate text-[10.5px] text-muted-foreground">
-                            {isCoordinator ? t("team.coordinator") : bot.roleTitle}
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate text-[10.5px] text-muted-foreground">
+                              {bot.roleTitle}
+                            </span>
+                            <BotModelChip bot={bot} onClick={() => onEditBot(bot)} />
                           </div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => onEditBot(bot)}
+                          title={t("team.editBot")}
+                          aria-label={t("team.editBot")}
+                          className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          <Pencil size={12} />
+                        </button>
                         <button
                           type="button"
                           onClick={() => setCoordinatorId(bot.id)}
                           title={t("team.setCoordinator")}
                           aria-label={t("team.setCoordinator")}
+                          aria-pressed={isCoordinator}
                           className={cn(
                             "inline-flex size-6 items-center justify-center rounded-md transition-colors",
                             isCoordinator
@@ -687,11 +779,7 @@ export function CreateTeamGroupDialog({
                   {t("team.dialog.summaryPreview")}
                 </div>
                 <div className="mt-2 flex items-center gap-3">
-                  <div className="team-avatar-stack">
-                    {selectedMembers.slice(0, 4).map((bot) => (
-                      <SubagentLogo key={bot.id} logo={bot.logo} name={bot.name} size={28} />
-                    ))}
-                  </div>
+                  <TeamGroupAvatar group={{ avatar, name }} members={selectedMembers} size={36} stackSize={28} maxStack={4} />
                   <div className="min-w-0 flex-1">
                     <strong className="block truncate text-sm font-semibold text-foreground">
                       {name.trim()}
@@ -718,6 +806,14 @@ export function CreateTeamGroupDialog({
         description={t("team.env.serverPickerDesc")}
         ids={serverIds}
         onChange={setServerIds}
+      />
+
+      <TeamAvatarCropDialog
+        open={Boolean(cropImageUrl)}
+        imageUrl={cropImageUrl}
+        onOpenChange={closeCropDialog}
+        onRechoose={openGroupAvatarPicker}
+        onConfirm={(dataUrl) => setAvatar(dataUrl)}
       />
     </>
   );

@@ -22,6 +22,8 @@ export interface ModelPickerControl {
   thinkingByModel?: Record<string, ThinkingLevel>;
   setModel(id: string): void;
   setThinking(id: string, level: ThinkingLevel): void;
+  /** 为空时跟随默认模型，重置按钮恢复此状态。 */
+  defaultLabel?: string;
 }
 
 export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) => {
@@ -31,12 +33,16 @@ export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) =
   const setSessionModel = useConversationStore((s) => s.setSelectedModel);
   const sessionRunOptions = useConversationStore((s) => s.currentSessionId ? s.runOptionsBySession[s.currentSessionId] : s.draftRunOptions);
   const setSessionThinking = useConversationStore((s) => s.setRunThinking);
-  const selectedModelId = control ? control.modelId : sessionModelId;
+  const defaultLabel = control?.defaultLabel;
+  const followsDefault = defaultLabel !== undefined && !control?.modelId;
+  // 继承只影响存储；选择器照常展示实际生效的模型。
+  const selectedModelId = followsDefault || !control ? sessionModelId : control.modelId;
   const setSelectedModel = control ? control.setModel : setSessionModel;
   const runOptions = control ? { thinkingByModel: control.thinkingByModel } : sessionRunOptions;
   const setThinking = control ? control.setThinking : setSessionThinking;
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
+  const [dialogBoundary, setDialogBoundary] = useState<Element | null>(null);
   const [view, setView] = useState<"simple" | "advanced">("simple");
   const [list, setList] = useState<"models" | "providers">("models");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -84,12 +90,15 @@ export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) =
   const thinkingIndex = Math.max(0, thinkingOptions.findIndex((option) => option.value === thinking));
   const displayLabel = activeModel?.label ?? t("chat.configureModel");
   const thinkingLabel = activeModel ? t(thinkingOptions[thinkingIndex]?.labelKey ?? "") : "";
-  const openLabel = t(activeModel && thinkingOptions.length >= 2 ? "model.selectEffort" : "chat.selectModel");
+  const canSetEffort = Boolean(activeModel && thinkingOptions.length >= 2);
+  const openLabel = t(canSetEffort ? "model.selectEffort" : "chat.selectModel");
 
   useEffect(() => {
     // Before the runtime's model list arrives, "not found" only means "not loaded yet".
-    if (modelConfigsLoaded && models.length > 0 && !selected) setSelectedModel(models[0].id);
-  }, [modelConfigsLoaded, models, selected, setSelectedModel]);
+    if (modelConfigsLoaded && models.length > 0 && !selected && !followsDefault) {
+      setSelectedModel(defaultLabel === undefined ? models[0].id : "");
+    }
+  }, [modelConfigsLoaded, models, selected, followsDefault, defaultLabel, setSelectedModel]);
 
   const measurePanels = useCallback(() => {
     const simple = simpleRef.current;
@@ -143,7 +152,8 @@ export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) =
   const preparePicker = () => {
     setProviderData({ all: readPickerProviders(), current: readCurrentProvider() });
     setList("models");
-    setView(activeModel && thinkingOptions.length >= 2 ? "simple" : "advanced");
+    // 即使当前没有推理档位，也保留已配置服务商的切换入口。
+    setView(canSetEffort || providerChoices.length > 0 ? "simple" : "advanced");
     setSearch("");
     setSearchOpen(false);
     setPanelHeights(undefined);
@@ -151,8 +161,10 @@ export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) =
 
   if (!modelConfigsLoaded) return <Skeleton aria-busy="true" className="h-4 w-28 rounded-md" />;
 
-  return <Popover.Root open={open} onOpenChange={(nextOpen) => {
+  // 对话框里的浮层在父弹窗范围内避让，并接管焦点，避免被父弹窗拦截点击。
+  return <Popover.Root modal={Boolean(dialogBoundary)} open={open} onOpenChange={(nextOpen) => {
     if (nextOpen) {
+      setDialogBoundary(triggerRef.current?.closest('[role="dialog"]') ?? null);
       setOpenTriggerWidth(Math.max(
         triggerRef.current?.offsetWidth ?? 0,
         openLabelRef.current?.offsetWidth ?? 0,
@@ -162,7 +174,7 @@ export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) =
     setOpen(nextOpen);
   }}>
     <Popover.Trigger asChild>
-      <button ref={triggerRef} type="button" aria-label={open ? openLabel : t("chat.selectModel")} title={open ? openLabel : displayLabel} aria-expanded={open} data-selected={Boolean(selected)} data-state={open ? "open" : "closed"} className="q-model-picker-trigger" style={!open || openTriggerWidth === undefined ? undefined : { width: openTriggerWidth }}>
+      <button ref={triggerRef} type="button" aria-label={open ? openLabel : t("chat.selectModel")} title={open ? openLabel : followsDefault ? `${defaultLabel} · ${displayLabel}` : displayLabel} aria-expanded={open} data-selected={Boolean(selected)} data-state={open ? "open" : "closed"} className="q-model-picker-trigger" style={!open || openTriggerWidth === undefined ? undefined : { width: openTriggerWidth }}>
         <span ref={openLabelRef} className="q-model-picker-trigger-measure" aria-hidden="true"><span>{openLabel}</span><ChevronDownIcon size={14} /></span>
         {open ? <span className="q-model-picker-trigger-placeholder">{openLabel}</span> : <>
           <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={16} />
@@ -175,7 +187,7 @@ export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) =
       </button>
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content side="top" align="center" sideOffset={8} collisionPadding={12} className="q-model-picker-card"
+      <Popover.Content side="top" align="center" sideOffset={8} collisionBoundary={dialogBoundary} collisionPadding={12} className="q-model-picker-card"
         onOpenAutoFocus={(event) => { event.preventDefault(); measurePanels(); }}
         onKeyDown={(event) => {
           if (view !== "advanced" || (event.target as HTMLElement).closest('input, [role="slider"]')) return;
@@ -203,13 +215,16 @@ export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) =
                 </span>
               </button>
               <Popover.Close asChild>
-                <button type="button" className="q-model-picker-reset" disabled={!activeModel || activeModel.id === models[0]?.id} onClick={() => models[0] && setSelectedModel(models[0].id)} aria-label={t("model.resetToDefault")} title={t("model.resetToDefault")}><RotateCcwIcon size={16} /></button>
+                <button type="button" className="q-model-picker-reset" disabled={defaultLabel !== undefined ? followsDefault : !activeModel || activeModel.id === models[0]?.id} onClick={() => defaultLabel !== undefined ? setSelectedModel("") : models[0] && setSelectedModel(models[0].id)} aria-label={defaultLabel ?? t("model.resetToDefault")} title={defaultLabel ?? t("model.resetToDefault")}><RotateCcwIcon size={16} /></button>
               </Popover.Close>
             </div>
-            <ThinkingWave options={thinkingOptions} index={thinkingIndex} disabled={!activeModel} showLabel={false} onSelect={(index) => {
+            {canSetEffort && <ThinkingWave options={thinkingOptions} index={thinkingIndex} disabled={!activeModel} showLabel={false} onSelect={(index) => {
               const level = thinkingOptions[index];
-              if (activeModel && level) setThinking(activeModel.id, level.value as ThinkingLevel);
-            }} />
+              if (!activeModel || !level) return;
+              // 自定义推理强度时，成员需同时保存适用该档位的模型。
+              if (followsDefault) setSelectedModel(activeModel.id);
+              setThinking(activeModel.id, level.value as ThinkingLevel);
+            }} />}
           </div>
           <div ref={advancedRef} className="q-model-picker-advanced" aria-hidden={view !== "advanced"} inert={view !== "advanced"} data-active={view === "advanced"}>
             {list === "providers" ? <>

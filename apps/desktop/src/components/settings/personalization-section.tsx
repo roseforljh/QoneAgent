@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ClaudeCodeSyncButton } from "./ClaudeCodeSyncButton";
 import { useStore } from "../../store";
+import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { revealItemInDir } from "../../lib/desktop-bridge";
 import { useLocale } from "../../localization";
 import { MemoryChips, type MemoryChip } from "../assistant-ui/elements/memory-chips";
@@ -89,7 +90,11 @@ export function PersonalizationSection() {
         label={t("personalization.savedProfile")}
         forgetLabel={(text) => t("personalization.clearProfileField", { text })}
         onForget={(id) => {
-          if (id === "nickname" || id === "occupation" || id === "details") updateProfile(id, "");
+          if (id !== "nickname" && id !== "occupation" && id !== "details") return;
+          const chipText = `${t(`personalization.${id}`)}: ${profile[id]}`;
+          void confirmDestructiveAction(t("personalization.clearProfileFieldConfirm", { text: chipText })).then((ok) => {
+            if (ok) updateProfile(id, "");
+          });
         }}
         className="mb-4 max-w-none"
       />}

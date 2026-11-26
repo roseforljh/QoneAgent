@@ -37,9 +37,10 @@ import { ProjectSection } from "./components/assistant-ui/project-section";
 import { ConversationLoadingSkeleton, ComposerLoadingSkeleton, SidebarLoadingSkeleton } from "./components/assistant-ui/loading-skeleton";
 import { TooltipIconButton } from "./components/assistant-ui/tooltip-icon-button";
 import { Link, useLocation } from "@tanstack/react-router";
-import { ArrowLeft, Moon, Sun, X } from "lucide-react";
+import { Moon, Sun, X } from "lucide-react";
 import { CodexIcon } from "./components/ui/CodexIcon";
 import sidebarIcon from "./assets/codex-icons/sidebar-light-16.svg";
+import closeIcon from "./assets/codex-icons/xmark-md-light-16.svg";
 import gearIcon from "./assets/codex-icons/gear-light-16.svg";
 import { cn } from "./lib/utils";
 import { ConfirmationDialogHost } from "./components/ui/ConfirmationDialog";
@@ -510,8 +511,8 @@ function PageLayout({ title, children }: { title: string; children: ReactNode })
     <div className="page-shell">
       <header className="page-topbar">
         <div className="page-topbar-actions">
-          <Link to="/" className="page-back-link page-back-link-icon" aria-label={t("app.backHome")} title={t("app.backHome")}>
-            <ArrowLeft size={16} aria-hidden="true" />
+          <Link to="/" className="page-back-link page-back-link-icon" aria-label={t("common.close")} title={t("common.close")}>
+            <CodexIcon src={closeIcon} className="size-4" />
           </Link>
           <span className="page-title">{title}</span>
         </div>

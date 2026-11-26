@@ -5,7 +5,7 @@ import { lastUserTurn } from "./lib/agent-communication";
 import { translateCurrent as t } from "./localization";
 import { localizeError } from "./lib/error-localization";
 import { invoke, listen, openUrl } from "./lib/desktop-bridge";
-import { mcpAvailable, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
+import { mcpAvailable, assistantPartsFromPiMessage, applyAssistantToolEvent, applyReasoningDelta, type AssistantMessagePart, type ArtifactInfo, type CompactionMarkerInfo, type MessageInfo, type RunInfo, type RuntimeCommand, type RuntimeEvent, type SessionInfo } from "@qone/protocol";
 import { DEFAULT_RUN_PERMISSION_MODE, saveNewSessionRunOptions, saveRunOptions, saveWorkspaceServerIds, withoutServers, withRunOptionDefaults } from "./lib/run-options";
 import { reconcileServerOptions } from "./store/server-options";
 import { getQoneMessageQueue, prunePausedQueues } from "./lib/qone-message-queue";
@@ -32,6 +32,7 @@ import { douyinRequests, releaseAllAppOpenCliRequests, releaseAppOpenCliRequest,
 import { restoreProviderProfilesFromModelConfigs } from "./lib/model-picker-data";
 import { settleModelConfigSave } from "./lib/model-config-save";
 import { handleFeatureEvent, resetFeatureRequests } from "./store/feature-events";
+import { setTeamTransport, useTeamStore } from "./lib/team/store";
 function subagentChange(state: AgentState, subagents: AgentState["subagents"], trackActivity: boolean): Partial<AgentState> {
   return subagents === state.subagents ? state : { subagents, ...(trackActivity ? subagentActivity(state, subagents) : {}) };
 }
@@ -56,6 +57,8 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
   if (wired) return;
   if (!hasDesktopBridge() || typeof listen !== "function" || typeof invoke !== "function") return;
   wired = true;
+  // 团队模式的全部写操作直连运行时：补齐 requestId 后经同一条运行时连接发送。
+  setTeamTransport({ send: (command) => useStore.getState().send({ ...command, requestId: rid() } as RuntimeCommand) });
 
   const receive = (payload: RuntimeEvent | RuntimeEvent[] | string) => {
     for (const raw of runtimeEvents(payload)) {
@@ -139,6 +142,10 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
     }
     const msg = raw;
     if (msg.type === "error" && msg.localization) msg.message = localizeError(msg);
+    if (msg.type === "team.state" || msg.type === "team.message.append" || msg.type === "team.message.delta" || msg.type === "team.run.upsert" || msg.type === "team.bot.presence") {
+      useTeamStore.getState().dispatchRuntimeEvent(msg);
+      continue;
+    }
     if (handleSideConversationEvent(msg) || handleFeatureEvent(msg)) continue;
     if (msg.type === "agent.event" && msg.event.scope === "subagent" && !msg.event.sourceSubagentId) {
       lastSequence = Math.max(lastSequence, msg.event.sequence);
@@ -207,6 +214,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         s.send({ type: "permission.list", requestId: rid() });
         s.send({ type: "global-prompt.get", requestId: rid() });
         s.send({ type: "servers.list", requestId: rid() });
+        s.send({ type: "team.state.get", requestId: rid() });
         s.send({ type: "events.replay", requestId: rid(), sessionId: eventStore.getState().currentSessionId, afterSequence: lastSequence });
         break;
       case "memory.state":

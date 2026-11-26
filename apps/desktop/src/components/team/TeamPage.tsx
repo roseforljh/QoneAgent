@@ -1,23 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { Laptop, Plus, Sparkles } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 import { useStore } from "../../store";
 import { sendServerCommand, useServerStore } from "../../lib/server-state";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
+import { usePaneSizes } from "../../lib/pane-size-preferences";
 import { DEFAULT_TEAM_GROUP_TEMPLATES } from "../../lib/team/presets";
 import { useTeamStore, type CreateBotInput, type CreateGroupInput } from "../../lib/team/store";
 import type { TeamBot, TeamGroup, TeamMentionRef, TeamMessage } from "../../lib/team/types";
 import { useLocale } from "../../localization";
 import { Button } from "../ui/Button";
-import { SubagentLogo } from "../settings/subagent-logo";
+import { CodexIcon } from "../ui/CodexIcon";
+import sidebarIcon from "../../assets/codex-icons/sidebar-light-16.svg";
+import { TooltipIconButton } from "../assistant-ui/tooltip-icon-button";
+import { ResizableSidebar } from "../assistant-ui/resizable-sidebar";
+import { TeamAvatar } from "./TeamAvatar";
 import { ServerPickerDialog } from "../assistant-ui/server-picker-dialog";
 import { TeamSidebar } from "./TeamSidebar";
 import { TeamChatHeader } from "./TeamChatHeader";
 import { TeamMessageList } from "./TeamMessageList";
-import { TeamComposer, type TeamComposerHandle } from "./TeamComposer";
+import { TeamComposer, type TeamComposerDraft, type TeamComposerHandle } from "./TeamComposer";
 import { TeamInspector } from "./TeamInspector";
+import { TeamResizableInspector } from "./TeamResizableInspector";
+import type { TeamMemberActions } from "./TeamMemberCard";
 import { CreateTeamGroupDialog } from "./CreateTeamGroupDialog";
 import { BotEditorDialog } from "./BotEditorDialog";
+import { TeamAddMemberDialog } from "./TeamAddMemberDialog";
 import "./team.css";
 
 const EMPTY_MESSAGES: TeamMessage[] = [];
@@ -27,27 +34,35 @@ const EMPTY_PRESENCE = {};
 export function TeamPage() {
   const { t } = useLocale();
   const composerRef = useRef<TeamComposerHandle>(null);
+  const drafts = useRef(new Map<string, TeamComposerDraft>());
 
-  // 读取项目已有的全局真实配置（服务器、模型、项目目录、子代理）
+  // 读取项目已有的全局真实配置（服务器、模型、项目目录）
   const connected = useStore((state) => state.connected);
   const send = useStore((state) => state.send);
   const workspaces = useStore((state) => state.workspaces);
-  const modelConfigs = useStore((state) => state.modelConfigs);
-  const subagentProfiles = useStore((state) => state.subagentConfig.profiles);
+  const selectedModelId = useStore((state) => state.selectedModelId);
+  const permissionMode = useStore((state) =>
+    state.currentSessionId
+      ? state.runOptionsBySession[state.currentSessionId]?.permissionMode ?? state.draftRunOptions.permissionMode
+      : state.draftRunOptions.permissionMode,
+  );
+  const currentWorkspaceId = useStore((state) => state.currentWorkspaceId);
+  const chooseWorkspace = useStore((state) => state.chooseWorkspace);
   const servers = useServerStore((state) => state.servers);
   const serversLoaded = useServerStore((state) => state.loaded);
 
-  // 团队状态库
+  // 团队状态库（后端运行时为唯一数据源）
+  const loaded = useTeamStore((state) => state.loaded);
   const bots = useTeamStore((state) => state.bots);
   const groups = useTeamStore((state) => state.groups);
   const activeGroupId = useTeamStore((state) => state.activeGroupId);
   const messagesByGroup = useTeamStore((state) => state.messagesByGroup);
   const runsByGroup = useTeamStore((state) => state.runsByGroup);
   const presenceByGroup = useTeamStore((state) => state.presenceByGroup);
-  const ensureInitialized = useTeamStore((state) => state.ensureInitialized);
-  const syncFromSubagents = useTeamStore((state) => state.syncFromSubagents);
+  const ensurePresets = useTeamStore((state) => state.ensurePresets);
   const selectGroup = useTeamStore((state) => state.selectGroup);
   const createGroup = useTeamStore((state) => state.createGroup);
+  const openDirectChat = useTeamStore((state) => state.openDirectChat);
   const updateGroup = useTeamStore((state) => state.updateGroup);
   const deleteGroup = useTeamStore((state) => state.deleteGroup);
   const clearGroupMessages = useTeamStore((state) => state.clearGroupMessages);
@@ -60,23 +75,29 @@ export function TeamPage() {
   const updateRunAction = useTeamStore((state) => state.updateRunAction);
 
   // 界面交互状态
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const sidebarWidth = usePaneSizes((state) => state.sidebarWidth);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [createGroupTemplateId, setCreateGroupTemplateId] = useState<string | undefined>(undefined);
   const [botDialogOpen, setBotDialogOpen] = useState(false);
   const [editingBot, setEditingBot] = useState<TeamBot | undefined>(undefined);
   const [botCreateTarget, setBotCreateTarget] = useState<"library" | "create-group" | "active-group">("library");
   const [newlyCreatedBotId, setNewlyCreatedBotId] = useState<string | undefined>(undefined);
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [serverPickerOpen, setServerPickerOpen] = useState(false);
-  const [replyTo, setReplyTo] = useState<TeamMessage | undefined>(undefined);
+  const [replyMessage, setReplyTo] = useState<TeamMessage | undefined>(undefined);
 
+  // 响应应用顶栏与 Ctrl+B 的侧边栏切换事件
   useEffect(() => {
-    ensureInitialized((key) => t(key as Parameters<typeof t>[0]));
-  }, [ensureInitialized, t]);
+    const toggleSidebar = () => setSidebarCollapsed((collapsed) => !collapsed);
+    window.addEventListener("qone-toggle-sidebar", toggleSidebar);
+    return () => window.removeEventListener("qone-toggle-sidebar", toggleSidebar);
+  }, []);
 
+  // 后端状态到达后补齐当前语言的预设成员。
   useEffect(() => {
-    syncFromSubagents(subagentProfiles);
-  }, [subagentProfiles, syncFromSubagents]);
+    if (loaded) ensurePresets((key) => t(key as Parameters<typeof t>[0]));
+  }, [loaded, ensurePresets, t]);
 
   useEffect(() => {
     if (connected && !serversLoaded) {
@@ -94,10 +115,11 @@ export function TeamPage() {
     return map;
   }, [bots]);
 
-  const activeGroup = useMemo(
-    () => groups.find((group) => group.id === activeGroupId) ?? groups[0],
-    [groups, activeGroupId],
-  );
+  const activeGroup = useMemo(() => {
+    const group = groups.find((item) => item.id === activeGroupId) ?? groups[0];
+    const peer = group?.directBotId ? botsById.get(group.directBotId) : undefined;
+    return group && peer ? { ...group, name: peer.name } : group;
+  }, [groups, activeGroupId, botsById]);
 
   const activeMembers = useMemo(() => {
     if (!activeGroup) return [];
@@ -109,11 +131,18 @@ export function TeamPage() {
   const activeMessages = activeGroup ? (messagesByGroup[activeGroup.id] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES;
   const activeRuns = activeGroup ? (runsByGroup[activeGroup.id] ?? EMPTY_RUNS) : EMPTY_RUNS;
   const activePresence = activeGroup ? (presenceByGroup[activeGroup.id] ?? EMPTY_PRESENCE) : EMPTY_PRESENCE;
+  const replyTo = replyMessage?.groupId === activeGroup?.id ? replyMessage : undefined;
 
-  // 切换群聊时清除未发出的回复引用。
+  // 切换会话时清除未发出的回复引用。
   const handleSelectGroup = (groupId: string) => {
     setReplyTo(undefined);
     selectGroup(groupId);
+  };
+
+  const handleOpenDirectChat = (bot: TeamBot) => {
+    setReplyTo(undefined);
+    openDirectChat(bot);
+    requestAnimationFrame(() => composerRef.current?.focus());
   };
 
   const replySenderName = useMemo(() => {
@@ -147,6 +176,12 @@ export function TeamPage() {
     }
   };
 
+  const memberActions: TeamMemberActions = {
+    onDirectChat: activeGroup?.directBotId ? undefined : handleOpenDirectChat,
+    onMentionBot: activeGroup?.directBotId ? undefined : (bot) => composerRef.current?.insertMention(bot),
+    onEditBot: (bot) => openBotEditor("library", bot),
+  };
+
   const handleCreateGroup = (input: CreateGroupInput) => {
     createGroup(input);
   };
@@ -167,42 +202,46 @@ export function TeamPage() {
     clearGroupMessages(activeGroup.id);
   };
 
-  const handleSendMessage = (content: string, mentions: TeamMentionRef[]) => {
+  const handleRemoveMember = async (botId: string) => {
     if (!activeGroup) return;
-    sendMessage({
+    const memberName = botsById.get(botId)?.name ?? "";
+    if (!(await confirmDestructiveAction(t("team.removeMemberConfirm", { name: memberName, group: activeGroup.name })))) return;
+    removeMemberFromGroup(activeGroup.id, botId);
+  };
+
+  const handleSendMessage = (content: string, mentions: TeamMentionRef[], attachments?: import("@qone/protocol").MessageAttachmentInfo[]) => {
+    if (!activeGroup) return;
+    const sent = sendMessage({
       groupId: activeGroup.id,
       content,
       mentions,
+      attachments,
       replyToMessageId: replyTo?.id,
-      servers,
-      labels: {
-        localTarget: t("team.env.local"),
-        smartTarget: t("team.env.smart"),
-        coordinateStep: (name) => t("team.run.coordinateStep", { name }),
-        mentionStep: (name) => t("team.run.mentionStep", { name }),
-        awaitingNote: t("team.run.awaitingNote"),
+      defaults: {
+        ...(selectedModelId ? { model: selectedModelId } : {}),
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
       },
     });
+    if (!sent) return;
+    setReplyTo(undefined);
   };
 
   return (
     <div className="team-shell">
-      <TeamSidebar
-        groups={groups}
-        bots={bots}
-        activeGroupId={activeGroup?.id}
-        messagesByGroup={messagesByGroup}
-        serversById={serversById}
-        onSelectGroup={handleSelectGroup}
-        onOpenCreateGroup={() => openCreateGroup()}
-        onOpenCreateBot={() => openBotEditor("library")}
-        onEditBot={(bot) => openBotEditor("library", bot)}
-        onDeleteBot={(bot) => void handleDeleteBot(bot)}
-        onDeleteGroup={(group) => void handleDeleteGroup(group)}
-        onAddBotToActiveGroup={(botId) => {
-          if (activeGroup) addMemberToGroup(activeGroup.id, botId);
-        }}
-      />
+      <ResizableSidebar collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed}>
+        <TeamSidebar
+          groups={groups}
+          bots={bots}
+          activeGroupId={activeGroup?.id}
+          messagesByGroup={messagesByGroup}
+          serversById={serversById}
+          onSelectGroup={handleSelectGroup}
+          onOpenCreateGroup={() => openCreateGroup()}
+          onDeleteGroup={(group) => void handleDeleteGroup(group)}
+          onCollapse={() => setSidebarCollapsed(true)}
+        />
+      </ResizableSidebar>
 
       <main className="team-stage">
         {activeGroup ? (
@@ -210,61 +249,70 @@ export function TeamPage() {
             <TeamChatHeader
               group={activeGroup}
               members={activeMembers}
-              presence={activePresence}
-              servers={servers}
               workspaces={workspaces}
-              inspectorOpen={inspectorOpen}
-              onToggleInspector={() => setInspectorOpen((prev) => !prev)}
+              currentWorkspaceId={currentWorkspaceId}
+              onImportWorkspace={() => void chooseWorkspace()}
+              sidebarCollapsed={sidebarCollapsed}
+              onExpandSidebar={() => setSidebarCollapsed(false)}
               onUpdateGroup={(patch) => updateGroup(activeGroup.id, patch)}
-              onOpenServerPicker={() => setServerPickerOpen(true)}
-              onMentionBot={(bot) => composerRef.current?.insertMention(bot.name)}
-              onOpenAddMember={() => setInspectorOpen(true)}
             />
 
-            <TeamMessageList
-              group={activeGroup}
-              members={activeMembers}
-              botsById={botsById}
-              serversById={serversById}
-              messages={activeMessages}
-              runs={activeRuns}
-              onReply={(message) => {
-                setReplyTo(message);
-                composerRef.current?.focus();
-              }}
-              onMentionBot={(bot) => composerRef.current?.insertMention(bot.name)}
-              onQuickPrompt={(prompt) => composerRef.current?.setDraft(prompt)}
-              onRunAction={(runId, action) => updateRunAction(activeGroup.id, runId, action)}
-            />
+            <div className="relative flex min-h-0 flex-1 flex-col">
 
-            <TeamComposer
-              ref={composerRef}
-              group={activeGroup}
-              members={activeMembers}
-              servers={servers}
-              replyTo={replyTo}
-              replySenderName={replySenderName}
-              onCancelReply={() => setReplyTo(undefined)}
-              onSend={handleSendMessage}
-              onOpenServerPicker={() => setServerPickerOpen(true)}
-              onOpenCreateAndAddBot={() => openBotEditor("active-group")}
-            />
+              <TeamMessageList
+                key={`messages:${activeGroup.id}`}
+                group={activeGroup}
+                members={activeMembers}
+                botsById={botsById}
+                serversById={serversById}
+                messages={activeMessages}
+                runs={activeRuns}
+                presence={activePresence}
+                memberActions={memberActions}
+                onReply={(message) => {
+                  setReplyTo(message);
+                  composerRef.current?.focus();
+                }}
+                onQuickPrompt={(prompt) => composerRef.current?.setDraft(prompt)}
+                onRunAction={updateRunAction}
+              />
+
+              {activeGroup.directBotId && activeMembers.length === 0 ? (
+                <p className="p-4 text-center text-xs text-muted-foreground">{t("team.member.unavailable")}</p>
+              ) : (
+                <TeamComposer
+                  key={`composer:${activeGroup.id}`}
+                  ref={composerRef}
+                  group={activeGroup}
+                  members={activeMembers}
+                  servers={servers}
+                  drafts={drafts.current}
+                  replyTo={replyTo}
+                  replySenderName={replySenderName}
+                  onCancelReply={() => setReplyTo(undefined)}
+                  onSend={handleSendMessage}
+                  onOpenServerPicker={() => setServerPickerOpen(true)}
+                  onOpenCreateAndAddBot={() => openBotEditor("active-group")}
+                />
+              )}
+            </div>
           </>
         ) : (
           /* 首次进入团队模式的零门槛引导画布 */
-          <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
+          <div className="relative flex flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
+            {sidebarCollapsed && (
+              <TooltipIconButton
+                tooltip={t("sidebar.expand")}
+                onClick={() => setSidebarCollapsed(false)}
+                className="absolute top-3 left-3.5 size-8"
+              >
+                <CodexIcon src={sidebarIcon} className="size-4" />
+              </TooltipIconButton>
+            )}
             <div className="w-full max-w-[680px] text-center">
-              <div className="mx-auto inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs text-muted-foreground">
-                <Laptop size={12} />
-                <span>{t("team.subtitle")}</span>
-              </div>
-
-              <h1 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
                 {t("team.emptyGroupsTitle")}
               </h1>
-              <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-                {t("team.emptyGroupsDesc")}
-              </p>
 
               <div className="mt-6 flex items-center justify-center gap-2.5">
                 <Button onClick={() => openCreateGroup()}>
@@ -292,7 +340,7 @@ export function TeamPage() {
                       <div className="flex items-center justify-between">
                         <div className="team-avatar-stack">
                           {templateBots.map((bot) => (
-                            <SubagentLogo key={bot.id} logo={bot.logo} name={bot.name} size={26} />
+                            <TeamAvatar key={bot.id} bot={bot} size={26} />
                           ))}
                         </div>
                         <span className="text-[11px] font-medium text-muted-foreground">
@@ -316,35 +364,45 @@ export function TeamPage() {
         )}
       </main>
 
-      <AnimatePresence initial={false}>
-        {activeGroup && inspectorOpen && (
-          <motion.div
-            initial={{ width: 0, opacity: 0 }}
-            animate={{ width: "auto", opacity: 1 }}
-            exit={{ width: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="flex overflow-hidden"
-          >
-            <TeamInspector
-              group={activeGroup}
-              members={activeMembers}
-              allBots={bots}
-              botsById={botsById}
-              serversById={serversById}
-              runs={activeRuns}
-              onClose={() => setInspectorOpen(false)}
-              onUpdateGroup={(patch) => updateGroup(activeGroup.id, patch)}
-              onAddMember={(botId) => addMemberToGroup(activeGroup.id, botId)}
-              onRemoveMember={(botId) => removeMemberFromGroup(activeGroup.id, botId)}
-              onEditBot={(bot) => openBotEditor("library", bot)}
-              onOpenCreateBot={() => openBotEditor("active-group")}
-              onOpenServerPicker={() => setServerPickerOpen(true)}
-              onClearMessages={() => void handleClearMessages()}
-              onRunAction={(runId, action) => updateRunAction(activeGroup.id, runId, action)}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {activeGroup && (
+        <TeamResizableInspector
+          reservedLeftWidth={sidebarCollapsed ? 0 : sidebarWidth}
+        >
+          <TeamInspector
+            key={activeGroup.id}
+            group={activeGroup}
+            members={activeMembers}
+            serversById={serversById}
+            activeWorkspace={
+              workspaces.find((ws) => ws.id === activeGroup.execution.workspaceId)
+              ?? workspaces.find((ws) => ws.id === currentWorkspaceId)
+              ?? workspaces[0]
+            }
+            presence={activePresence}
+            memberActions={memberActions}
+            onUpdateGroup={(patch) => updateGroup(activeGroup.id, patch)}
+            onOpenAddMember={() => setAddMemberOpen(true)}
+            onRemoveMember={(botId) => void handleRemoveMember(botId)}
+            onOpenServerPicker={() => setServerPickerOpen(true)}
+            onClearMessages={() => void handleClearMessages()}
+          />
+        </TeamResizableInspector>
+      )}
+
+      {activeGroup && !activeGroup.directBotId && (
+        <TeamAddMemberDialog
+          open={addMemberOpen}
+          onOpenChange={setAddMemberOpen}
+          group={activeGroup}
+          allBots={bots}
+          onAddMembers={(botIds) => {
+            for (const botId of botIds) addMemberToGroup(activeGroup.id, botId);
+          }}
+          onOpenCreateBot={() => openBotEditor("active-group")}
+          onEditBot={(bot) => openBotEditor("library", bot)}
+          onDeleteBot={(bot) => void handleDeleteBot(bot)}
+        />
+      )}
 
       <CreateTeamGroupDialog
         open={createGroupOpen}
@@ -355,6 +413,7 @@ export function TeamPage() {
         initialTemplateId={createGroupTemplateId}
         newlyCreatedBotId={newlyCreatedBotId}
         onRequestCreateBot={() => openBotEditor("create-group")}
+        onEditBot={(bot) => openBotEditor("create-group", bot)}
         onSubmit={handleCreateGroup}
       />
 
@@ -362,7 +421,6 @@ export function TeamPage() {
         open={botDialogOpen}
         onOpenChange={setBotDialogOpen}
         editingBot={editingBot}
-        modelConfigs={modelConfigs}
         nested={botCreateTarget === "create-group"}
         onSave={handleSaveBot}
       />

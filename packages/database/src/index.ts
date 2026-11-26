@@ -4,6 +4,7 @@ import { drizzleSqlite, SqliteClient } from "./sqlite-client.js";
 import * as schema from "./schema.js";
 
 export * from "./repos.js";
+import { migrateTeamTables } from "./team-repo.js";
 export * from "./config-file.js";
 export {
   sessions,
@@ -23,6 +24,10 @@ export {
   events,
   goals,
   goalEvents,
+  teamBots,
+  teamGroups,
+  teamMessages,
+  teamRuns,
 } from "./schema.js";
 
 export type Db = ReturnType<typeof openDb>;
@@ -442,4 +447,5 @@ function migrate(sqlite: SqliteClient) {
     }
     sqlite.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)").run("db.migration.storage_prune_v2", "1", Date.now());
   }
+  migrateTeamTables(sqlite);
 }

@@ -626,7 +626,11 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
             <div className="q-workspace-dock-actions flex shrink-0 items-center gap-0.5 ps-1">
               {view === "terminal" ? (
                 <DockTerminalActions
-                  onClear={() => { if (activeTabId) terminalApiRefs.current.get(activeTabId)?.current?.clear(); }}
+                  onClear={() => {
+                    void confirmDestructiveAction(t("dock.terminalClearConfirm")).then((confirmed) => {
+                      if (confirmed && activeTabId) terminalApiRefs.current.get(activeTabId)?.current?.clear();
+                    });
+                  }}
                   onRestart={() => { if (activeTabId) terminalApiRefs.current.get(activeTabId)?.current?.restart(); }}
                 />
               ) : null}

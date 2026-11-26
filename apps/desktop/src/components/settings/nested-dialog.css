@@ -7,6 +7,7 @@
 .nested-dialog > header p { margin: 4px 0 0; color: var(--muted-foreground); font-size: var(--q-text-xs); line-height: 1.5; }
 .nested-dialog-body { display: flex; flex-direction: column; gap: 14px; padding: 6px 20px 16px; overflow-y: auto; }
 .nested-dialog > footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--q-surface-muted) 45%, transparent); }
+.nested-dialog > footer.is-split { justify-content: space-between; gap: 12px; }
 @keyframes nested-dialog-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes nested-dialog-in { from { opacity: 0; transform: translate(-50%, -48%) scale(.97); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
 

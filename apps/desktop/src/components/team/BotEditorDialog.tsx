@@ -1,20 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Plus, X } from "lucide-react";
-import type { ModelConfigInfo, SubagentLogoId } from "@qone/protocol";
-import { TEAM_BOT_LOGO_CHOICES, TEAM_CAPABILITY_KEYS } from "../../lib/team/presets";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { ArrowLeft, ArrowRight, Camera, Plus, X } from "lucide-react";
+import type { TeamThinkingLevel } from "@qone/protocol";
+import { TEAM_CAPABILITY_KEYS } from "../../lib/team/presets";
+import { avatarIdOf, customAvatarOf, TEAM_AVATAR_IDS } from "../../lib/team/avatar";
 import type { TeamBot } from "../../lib/team/types";
 import type { CreateBotInput } from "../../lib/team/store";
 import { useLocale } from "../../localization";
 import { cn } from "../../lib/utils";
-import { SubagentLogo } from "../settings/subagent-logo";
-import { QoneSelect } from "../ui/Select";
+import { ModelPicker } from "../assistant-ui/model-picker";
+import { TeamAvatar } from "./TeamAvatar";
+import { TeamAvatarCropDialog } from "./TeamAvatarCropDialog";
 import { TeamWizardDialog } from "./TeamWizardDialog";
 
 interface BotEditorDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editingBot?: TeamBot;
-  modelConfigs: readonly ModelConfigInfo[];
   nested?: boolean;
   onSave: (input: CreateBotInput, editingBotId?: string) => void;
 }
@@ -23,62 +24,81 @@ export function BotEditorDialog({
   open,
   onOpenChange,
   editingBot,
-  modelConfigs,
   nested = false,
   onSave,
 }: BotEditorDialogProps) {
   const { t } = useLocale();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [roleTitle, setRoleTitle] = useState("");
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [logo, setLogo] = useState<SubagentLogoId>("robot");
+  const [avatar, setAvatar] = useState<string>(TEAM_AVATAR_IDS[0]);
+  const [cropImageUrl, setCropImageUrl] = useState<string | null>(null);
   const [modelId, setModelId] = useState("");
+  const [thinking, setThinking] = useState<TeamThinkingLevel | undefined>(undefined);
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [customCapability, setCustomCapability] = useState("");
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setCropImageUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
     setStep(0);
     if (editingBot) {
       setName(editingBot.name);
       setRoleTitle(editingBot.roleTitle);
       setDescription(editingBot.description);
       setSystemPrompt(editingBot.systemPrompt);
-      setLogo(editingBot.logo);
+      setAvatar(customAvatarOf(editingBot) ?? avatarIdOf(editingBot));
       setModelId(editingBot.modelId);
+      setThinking(editingBot.thinking);
       setCapabilities([...editingBot.capabilities]);
     } else {
       setName("");
       setRoleTitle("");
       setDescription("");
       setSystemPrompt("");
-      setLogo("sparkles");
+      setAvatar(avatarIdOf({ id: crypto.randomUUID() }));
       setModelId("");
+      setThinking(undefined);
       setCapabilities(["coding"]);
     }
     setCustomCapability("");
   }, [open, editingBot]);
 
-  const modelOptions = useMemo(() => {
-    const enabled = modelConfigs.filter((item) => item.enabled);
-    return [
-      { value: "", label: t("team.dialog.botModelDefault") },
-      ...enabled.map((item) => ({
-        value: item.id,
-        label:
-          typeof item.config?.displayName === "string" && item.config.displayName
-            ? item.config.displayName
-            : item.model,
-        description: `${item.provider} · ${item.model}`,
-      })),
-    ];
-  }, [modelConfigs, t]);
+  useEffect(() => () => {
+    if (cropImageUrl) URL.revokeObjectURL(cropImageUrl);
+  }, [cropImageUrl]);
 
-  const selectedModelLabel =
-    modelOptions.find((option) => option.value === modelId)?.label ??
-    t("team.dialog.botModelDefault");
+  const openImagePicker = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImageSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // 重置 value，确保取消后重复选同一张本地图仍能触发 onChange。
+    event.target.value = "";
+    if (!file) return;
+    const nextUrl = URL.createObjectURL(file);
+    setCropImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return nextUrl;
+    });
+  };
+
+  const closeCropDialog = (nextOpen: boolean) => {
+    if (nextOpen) return;
+    setCropImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  };
 
   const wizardSteps = useMemo(
     () => [
@@ -113,8 +133,10 @@ export function BotEditorDialog({
         roleTitle: roleTitle.trim() || name.trim(),
         description,
         systemPrompt,
-        logo,
+        logo: editingBot?.logo ?? "robot",
+        avatar,
         modelId,
+        thinking: modelId ? thinking : undefined,
         capabilities,
       },
       editingBot?.id,
@@ -133,15 +155,14 @@ export function BotEditorDialog({
       onOpenChange={onOpenChange}
       nested={nested}
       title={t(editingBot ? "team.dialog.botTitleEdit" : "team.dialog.botTitleCreate")}
-      description={t("team.dialog.botDesc")}
       steps={wizardSteps}
       currentStep={step}
       onStepChange={setStep}
       maxReachableStep={canSave ? 1 : 0}
       footer={
         <>
-          <div className="flex items-center gap-2">
-            {step > 0 ? (
+          <div className="flex min-w-0 items-center gap-2">
+            {step > 0 && (
               <button
                 type="button"
                 className="servers-button inline-flex items-center gap-1.5"
@@ -150,14 +171,20 @@ export function BotEditorDialog({
                 <ArrowLeft size={13} />
                 {t("team.dialog.prevStep")}
               </button>
-            ) : (
-              <span className="text-xs text-muted-foreground">
-                {t("team.dialog.stepCounter", { current: step + 1, total: wizardSteps.length })}
-              </span>
             )}
+            <ModelPicker control={{
+              modelId,
+              defaultLabel: t("team.dialog.botModelDefault"),
+              thinkingByModel: modelId && thinking ? { [modelId]: thinking } : {},
+              setModel: (id) => {
+                setModelId(id);
+                if (id !== modelId) setThinking(undefined);
+              },
+              setThinking: (_id, level) => setThinking(level),
+            }} />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button type="button" className="servers-button" onClick={() => onOpenChange(false)}>
               {t("common.cancel")}
             </button>
@@ -185,46 +212,61 @@ export function BotEditorDialog({
         </>
       }
     >
-      {/* 第 1 步：左侧实时名片与图标选择器，右侧基础身份与模型 */}
+      {/* 第 1 步：角色头像与成员资料。模型与定时任务一样从底栏选择。 */}
       {step === 0 && (
         <div className="team-wizard-split-balanced">
-          <div className="team-wizard-panel gap-3.5">
-            <div className="text-[11px] font-medium text-muted-foreground">
-              {t("team.dialog.botPreview")}
-            </div>
-
-            <div className="flex items-center gap-3.5 rounded-xl border border-border/80 bg-background p-3.5">
-              <SubagentLogo logo={logo} name={name || "Bot"} size={48} />
-              <div className="min-w-0 flex-1">
-                <strong className="block truncate text-sm font-semibold text-foreground">
+          <div className="team-wizard-panel team-portrait-panel">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              tabIndex={-1}
+              onChange={handleImageSelected}
+            />
+            <div className="flex min-w-0 items-center gap-4">
+              <button
+                type="button"
+                onClick={openImagePicker}
+                title={t("team.dialog.avatarUploadHint")}
+                aria-label={t("team.dialog.avatarUploadHint")}
+                className="team-avatar-trigger"
+              >
+                <TeamAvatar bot={{ id: editingBot?.id ?? "preview", avatar, name: "" }} size={76} />
+                <span className="team-avatar-trigger-overlay" aria-hidden="true">
+                  <Camera size={18} />
+                </span>
+              </button>
+              <div className="min-w-0">
+                <strong className="block truncate text-base font-semibold text-foreground">
                   {name.trim() || t("team.dialog.botName")}
                 </strong>
-                <div className="truncate text-xs text-muted-foreground">
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">
                   {roleTitle.trim() || t("team.dialog.botRole")}
                 </div>
-                <div className="mt-1.5 truncate text-[11px] text-muted-foreground/85">
-                  {selectedModelLabel}
-                </div>
+                <button
+                  type="button"
+                  onClick={openImagePicker}
+                  className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <Camera size={11} />
+                  <span>{t("team.dialog.avatarUploadHint")}</span>
+                </button>
               </div>
             </div>
-
-            <div>
-              <span className="mb-2 block text-[11px] font-medium text-muted-foreground">
-                {t("team.dialog.botLogo")}
-              </span>
-              <div className="grid grid-cols-6 gap-1.5">
-                {TEAM_BOT_LOGO_CHOICES.map((choice) => (
-                  <button
-                    key={choice}
-                    type="button"
-                    onClick={() => setLogo(choice)}
-                    aria-pressed={logo === choice}
-                    className={cn("team-logo-choice", logo === choice && "is-selected")}
-                  >
-                    <SubagentLogo logo={choice} name={name || choice} size={28} />
-                  </button>
-                ))}
-              </div>
+            <div role="group" aria-label={t("team.dialog.botLogo")} className="team-portrait-grid">
+              {TEAM_AVATAR_IDS.map((id, index) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setAvatar(id)}
+                  aria-label={`${t("team.dialog.botLogo")} ${index + 1}`}
+                  aria-pressed={avatar === id}
+                  className={cn("team-logo-choice", avatar === id && "is-selected")}
+                >
+                  <TeamAvatar bot={{ id, name: "" }} size={40} />
+                </button>
+              ))}
             </div>
           </div>
 
@@ -248,19 +290,6 @@ export function BotEditorDialog({
                 className="h-10 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none focus:border-foreground/40"
               />
             </label>
-
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t("team.dialog.botModel")}
-              </span>
-              <QoneSelect
-                value={modelId}
-                onChange={setModelId}
-                options={modelOptions}
-                ariaLabel={t("team.dialog.botModel")}
-                triggerClassName="qone-select-trigger-compact w-full"
-              />
-            </div>
 
             <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
               <span>{t("team.dialog.botSummary")}</span>
@@ -358,6 +387,13 @@ export function BotEditorDialog({
           </section>
         </div>
       )}
+      <TeamAvatarCropDialog
+        open={Boolean(cropImageUrl)}
+        imageUrl={cropImageUrl}
+        onOpenChange={closeCropDialog}
+        onRechoose={openImagePicker}
+        onConfirm={(dataUrl) => setAvatar(dataUrl)}
+      />
     </TeamWizardDialog>
   );
 }

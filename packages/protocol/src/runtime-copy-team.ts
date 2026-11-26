@@ -1,0 +1,20 @@
+/** 团队模式运行时文案：步骤标题、运行备注与错误。 */
+export const runtimeCopyTeam = {
+  "team.step.plan": { "en": "{name} plans the work", "zh-CN": "{name} 统筹拆解任务" },
+  "team.step.summary": { "en": "{name} summarizes the results", "zh-CN": "{name} 汇总结论" },
+  "team.step.fix": { "en": "fix", "zh-CN": "修复" },
+  "team.step.recheck": { "en": "recheck", "zh-CN": "复验" },
+  "team.step.blocked": { "en": "Not run: a step it depends on failed", "zh-CN": "未执行：依赖的步骤失败" },
+  "team.step.no_verdict": { "en": "No verdict was submitted", "zh-CN": "未提交验收结论" },
+  "team.note.repair_exhausted": { "en": "A check still failed after the automatic fixes; the coordinator reports what remains.", "zh-CN": "自动修复后验收仍未通过，由统筹汇总剩余问题。" },
+  "team.step.respond": { "en": "{name} responds", "zh-CN": "{name} 响应" },
+  "team.note.awaiting_confirmation": { "en": "The plan is ready. Continue to execute it.", "zh-CN": "计划已生成，点「继续」确认后开始执行。" },
+  "team.note.rounds_limited": { "en": "Reached the automatic collaboration limit ({max} rounds); {count} more step(s) were not run.", "zh-CN": "已达到自动协作轮次上限（{max} 轮），另有 {count} 个步骤未执行。" },
+  "team.note.interrupted": { "en": "Qone restarted while this task was running. Continue to resume from the last finished step.", "zh-CN": "任务运行中 Qone 已重启，点「继续」从上次完成的步骤恢复。" },
+  "team.note.no_members": { "en": "No member in this group can respond.", "zh-CN": "群内没有可以响应的成员。" },
+  "team.error.group_missing": { "en": "This group no longer exists", "zh-CN": "这个群聊已被删除" },
+  "team.error.run_missing": { "en": "This task no longer exists", "zh-CN": "这个任务已不存在" },
+  "team.error.subagent_separate": { "en": "Subagents are managed separately and cannot join a team.", "zh-CN": "子代理独立管理，不能加入团队。" },
+  "team.error.no_model": { "en": "No chat model is available. Add one in Settings > Models first.", "zh-CN": "没有可用的对话模型，请先在设置里的「模型」中添加。" },
+  "team.error.empty_reply": { "en": "{name} returned no reply", "zh-CN": "{name} 没有返回任何内容" },
+} as const;
