@@ -1,7 +1,8 @@
+import type { AppWindow } from "./app-window";
 import * as pty from "node-pty";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { app, type BrowserWindow } from "electron";
+import { app } from "electron";
 import { killProcessTree } from "./process-tree";
 import { resolveWindowsShell } from "./system-path";
 import type { AdministratorTerminalHost, TerminalProcess } from "./administrator-terminal-host";
@@ -13,10 +14,10 @@ interface TerminalSession {
 
 export class TerminalManager {
   private sessions = new Map<string, TerminalSession>();
-  private getMainWindow: () => BrowserWindow | null;
+  private getMainWindow: () => AppWindow | null;
   administratorHost: AdministratorTerminalHost | null = null;
 
-  constructor(getMainWindow: () => BrowserWindow | null, private spawnPty: typeof pty.spawn = pty.spawn) {
+  constructor(getMainWindow: () => AppWindow | null, private spawnPty: typeof pty.spawn = pty.spawn) {
     this.getMainWindow = getMainWindow;
   }
 

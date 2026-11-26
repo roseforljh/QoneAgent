@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useIsPresent } from "motion/react";
 import { invoke } from "../../lib/desktop-bridge";
 import { listen } from "../../lib/desktop-bridge";
 import { openUrl } from "../../lib/desktop-bridge";
@@ -36,6 +37,9 @@ export function BrowserPage() {
   const hostRefs = useRef(new Map<string, HTMLDivElement>());
   const sessions = useRef(new Map<string, BrowserSession>());
   const syncLayouts = useRef(new Map<string, () => void>());
+  const routePresent = useIsPresent();
+  const routePresentRef = useRef(routePresent);
+  routePresentRef.current = routePresent;
   const activeTabRef = useRef("auth-page-browser");
   const [tabs, setTabs] = useState<BrowserTab[]>([{ id: "auth-page-browser", url: INITIAL_URL, loading: true }]);
   const [activeTabId, setActiveTabId] = useState("auth-page-browser");
@@ -90,7 +94,7 @@ export function BrowserPage() {
         sessions.current.set(tab.id, session);
         const sync = () => {
           const host = hostRefs.current.get(tab.id);
-          session.update(host ? clipBrowserBounds(host.getBoundingClientRect(), window.innerWidth, window.innerHeight) : undefined, activeTabRef.current === tab.id);
+          session.update(host ? clipBrowserBounds(host.getBoundingClientRect(), window.innerWidth, window.innerHeight) : undefined, routePresentRef.current && activeTabRef.current === tab.id);
         };
         syncLayouts.current.set(tab.id, sync);
       }
@@ -102,7 +106,7 @@ export function BrowserPage() {
       window.removeEventListener("resize", resize);
       window.removeEventListener("transitionend", resize);
     };
-  }, [tabs, activeTabId]);
+  }, [tabs, activeTabId, routePresent]);
 
   useEffect(() => {
     if (activeTab) setAddress(activeTab.url);

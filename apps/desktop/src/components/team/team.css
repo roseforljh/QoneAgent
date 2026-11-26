@@ -1,0 +1,730 @@
+/* 团队模式全局样式：严格复用主主题 Token，兼容亮色、暗色与自定义强调色。 */
+
+.team-shell {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* 左侧群聊与机器人库栏 */
+.team-sidebar {
+  display: flex;
+  width: 276px;
+  min-width: 248px;
+  max-width: 308px;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-right: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  background: color-mix(in srgb, var(--q-surface-muted) 45%, var(--background));
+}
+
+.team-sidebar-head {
+  display: flex;
+  height: 52px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.team-sidebar-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--foreground);
+}
+
+.team-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.team-segmented-btn {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.team-segmented-btn:hover {
+  color: var(--foreground);
+}
+
+.team-segmented-btn.is-active {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 10%, transparent);
+}
+
+.team-group-item {
+  position: relative;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.team-group-item:hover {
+  background: color-mix(in srgb, var(--foreground) 4.5%, transparent);
+}
+
+.team-group-item.is-active {
+  background: var(--background);
+  border-color: color-mix(in srgb, var(--border) 95%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 7%, transparent);
+}
+
+.team-avatar-stack {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.team-avatar-stack > * {
+  box-shadow: 0 0 0 2px var(--background);
+  border-radius: 999px;
+}
+
+.team-avatar-stack > *:not(:first-child) {
+  margin-left: -9px;
+}
+
+/* 中央群聊主舞台 */
+.team-stage {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.team-chat-header {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.team-roster-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 18px;
+  overflow-x: auto;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  background: color-mix(in srgb, var(--q-surface-muted) 28%, var(--background));
+}
+
+.team-roster-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px 0 4px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: var(--background);
+  font-size: 12px;
+  color: var(--foreground);
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.14s ease;
+}
+
+.team-roster-pill:hover {
+  border-color: color-mix(in srgb, var(--foreground) 28%, var(--border));
+  background: color-mix(in srgb, var(--foreground) 3%, var(--background));
+  transform: translateY(-0.5px);
+}
+
+.team-presence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: #10b981;
+}
+
+.team-presence-dot.is-working,
+.team-presence-dot.is-thinking {
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #f59e0b 24%, transparent);
+}
+
+.team-presence-dot.is-waiting {
+  background: #0ea5e9;
+}
+
+/* 执行环境 Popover 与胶囊 */
+.team-env-trigger {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--q-surface-muted) 52%, var(--background));
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.team-env-trigger:hover {
+  border-color: color-mix(in srgb, var(--foreground) 30%, var(--border));
+  background: color-mix(in srgb, var(--foreground) 5%, var(--background));
+}
+
+.team-env-trigger.has-servers {
+  border-color: color-mix(in srgb, #0ea5e9 34%, var(--border));
+  background: color-mix(in srgb, #0ea5e9 10%, var(--background));
+  color: color-mix(in srgb, #0369a1 85%, var(--foreground));
+}
+
+:root[data-theme="dark"] .team-env-trigger.has-servers {
+  color: #7dd3fc;
+}
+
+.team-popover-panel {
+  z-index: 60;
+  width: 344px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 14px 36px color-mix(in srgb, #000 16%, transparent);
+}
+
+.team-strategy-card {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.team-strategy-card:hover {
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.team-strategy-card.is-selected {
+  border-color: color-mix(in srgb, var(--foreground) 25%, var(--border));
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+/* 群聊消息流 */
+.team-message-stream {
+  flex: 1;
+  min-height: 0;
+  padding: 20px 24px 12px;
+}
+
+.team-message-inner {
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.team-bubble-user {
+  max-width: min(78%, 620px);
+  padding: 10px 14px;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.team-bubble-bot {
+  max-width: min(86%, 680px);
+  padding: 11px 14px;
+  border-radius: 4px 16px 16px 16px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--q-surface-muted) 38%, var(--background));
+  color: var(--foreground);
+  font-size: 13.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.team-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  margin: 0 1px;
+  border-radius: 5px;
+  font-weight: 600;
+  font-size: 0.94em;
+  background: color-mix(in srgb, var(--q-mention-color, #5e6ad2) 15%, transparent);
+  color: var(--q-mention-color, #5e6ad2);
+}
+
+.team-bubble-user .team-mention-chip {
+  background: color-mix(in srgb, var(--primary-foreground) 18%, transparent);
+  color: var(--primary-foreground);
+}
+
+/* Marked 风格 Agent Run Status Card（参考 marked.dev / @eliakuratli） */
+.team-run-card {
+  width: 100%;
+  max-width: 580px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  background: color-mix(in srgb, var(--card) 94%, var(--q-surface-muted));
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 5%, transparent), 0 8px 24px -16px color-mix(in srgb, #000 18%, transparent);
+  overflow: hidden;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.team-run-card:hover {
+  border-color: color-mix(in srgb, var(--foreground) 22%, var(--border));
+}
+
+.team-run-card.is-active {
+  border-color: color-mix(in srgb, #0ea5e9 38%, var(--border));
+}
+
+.team-run-card-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.team-run-card-head:hover {
+  background: color-mix(in srgb, var(--foreground) 2.5%, transparent);
+}
+
+.team-run-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.team-run-status-pill.is-running,
+.team-run-status-pill.is-planning,
+.team-run-status-pill.is-queued {
+  background: color-mix(in srgb, #0ea5e9 12%, transparent);
+  border-color: color-mix(in srgb, #0ea5e9 28%, transparent);
+  color: #0284c7;
+}
+
+:root[data-theme="dark"] .team-run-status-pill.is-running,
+:root[data-theme="dark"] .team-run-status-pill.is-planning,
+:root[data-theme="dark"] .team-run-status-pill.is-queued {
+  color: #7dd3fc;
+}
+
+.team-run-status-pill.is-awaiting_runtime {
+  background: color-mix(in srgb, #6366f1 11%, transparent);
+  border-color: color-mix(in srgb, #6366f1 25%, transparent);
+  color: #4f46e5;
+}
+
+:root[data-theme="dark"] .team-run-status-pill.is-awaiting_runtime {
+  color: #a5b4fc;
+}
+
+.team-run-status-pill.is-completed {
+  background: color-mix(in srgb, #10b981 12%, transparent);
+  border-color: color-mix(in srgb, #10b981 26%, transparent);
+  color: #059669;
+}
+
+:root[data-theme="dark"] .team-run-status-pill.is-completed {
+  color: #6ee7b7;
+}
+
+.team-run-status-pill.is-paused {
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  border-color: color-mix(in srgb, #f59e0b 28%, transparent);
+  color: #b45309;
+}
+
+:root[data-theme="dark"] .team-run-status-pill.is-paused {
+  color: #fcd34d;
+}
+
+.team-run-status-pill.is-failed,
+.team-run-status-pill.is-cancelled {
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  border-color: color-mix(in srgb, var(--destructive) 22%, transparent);
+  color: var(--destructive);
+}
+
+.team-run-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: team-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes team-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.82); }
+}
+
+.team-run-timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 13px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.team-run-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--foreground) 2.5%, transparent);
+}
+
+/* 底部群聊输入浮岛 */
+.team-composer-wrap {
+  padding: 8px 24px 18px;
+}
+
+.team-composer-box {
+  position: relative;
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border) 95%, transparent);
+  background: var(--card);
+  box-shadow: 0 2px 10px -4px color-mix(in srgb, #000 10%, transparent);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.team-composer-box:focus-within {
+  border-color: color-mix(in srgb, var(--foreground) 32%, var(--border));
+  box-shadow: 0 4px 18px -6px color-mix(in srgb, #000 14%, transparent);
+}
+
+.team-mention-popover {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 50;
+  max-height: 270px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 16%, transparent);
+}
+
+.team-mention-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 9px;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.team-mention-option:hover,
+.team-mention-option.is-highlighted {
+  background: color-mix(in srgb, var(--foreground) 6.5%, transparent);
+}
+
+/* 右侧详情与任务抽屉 */
+.team-inspector {
+  display: flex;
+  width: 312px;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-left: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  background: color-mix(in srgb, var(--q-surface-muted) 35%, var(--background));
+}
+
+/* 弹窗内网格与卡片 */
+.team-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.team-template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.team-template-card:hover {
+  border-color: color-mix(in srgb, var(--foreground) 28%, var(--border));
+  background: color-mix(in srgb, var(--foreground) 2.5%, var(--background));
+}
+
+.team-template-card.is-selected {
+  border-color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 4.5%, var(--background));
+}
+
+.team-logo-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.team-logo-choice {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.team-logo-choice:hover {
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.team-logo-choice.is-selected {
+  border-color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+/* 多步骤向导弹窗：宽敞比例 + 顶部步骤条 + 单层焦点画布 */
+.team-wizard-overlay {
+  position: fixed;
+  z-index: 105;
+  inset: 0;
+  background: rgb(0 0 0 / 54%);
+  backdrop-filter: blur(2px);
+  animation: nested-dialog-fade 0.14s ease-out;
+}
+
+.team-wizard-overlay.is-nested {
+  z-index: 112;
+}
+
+.team-wizard-dialog {
+  position: fixed;
+  z-index: 106;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  width: min(840px, calc(100vw - 56px));
+  height: min(620px, calc(100dvh - 56px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  outline: 0;
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: 0 28px 90px rgb(0 0 0 / 34%);
+  transform: translate(-50%, -50%);
+  animation: nested-dialog-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+.team-wizard-dialog.is-nested {
+  z-index: 113;
+  width: min(760px, calc(100vw - 64px));
+  height: min(580px, calc(100dvh - 64px));
+}
+
+.team-wizard-header {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+}
+
+.team-wizard-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-wizard-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.team-wizard-step:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--foreground) 4.5%, transparent);
+  color: var(--foreground);
+}
+
+.team-wizard-step.is-active {
+  border-color: color-mix(in srgb, var(--foreground) 20%, var(--border));
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  color: var(--foreground);
+}
+
+.team-wizard-step.is-done {
+  color: var(--foreground);
+}
+
+.team-wizard-step-badge {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+  color: var(--muted-foreground);
+}
+
+.team-wizard-step.is-active .team-wizard-step-badge {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.team-wizard-step.is-done .team-wizard-step-badge {
+  background: color-mix(in srgb, #10b981 18%, transparent);
+  color: #10b981;
+}
+
+.team-wizard-step-line {
+  height: 1px;
+  flex: 1;
+  max-width: 44px;
+  background: color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+.team-wizard-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.team-wizard-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 24px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  background: color-mix(in srgb, var(--q-surface-muted) 42%, transparent);
+}
+
+.team-wizard-split {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1.55fr) minmax(240px, 1fr);
+  gap: 18px;
+}
+
+.team-wizard-split-balanced {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.team-wizard-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--q-surface-muted) 28%, var(--background));
+  padding: 14px;
+}
+
+@media (max-width: 960px) {
+  .team-sidebar {
+    width: 232px;
+    min-width: 212px;
+  }
+  .team-inspector {
+    width: 272px;
+  }
+}
+
+@media (max-width: 720px) {
+  .team-template-grid {
+    grid-template-columns: 1fr;
+  }
+  .team-logo-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .team-wizard-split,
+  .team-wizard-split-balanced {
+    grid-template-columns: 1fr;
+  }
+}

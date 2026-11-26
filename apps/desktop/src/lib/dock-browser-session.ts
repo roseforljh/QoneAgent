@@ -1,3 +1,7 @@
+import { attachNativeUnderlay, setNativeUnderlayHole } from "./native-underlay";
+
+export { acquireNativeOverlayLock } from "./native-underlay";
+
 type BrowserInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 export interface BrowserBounds {
@@ -16,61 +20,6 @@ function enqueue(operation: () => Promise<unknown>) {
   return result;
 }
 
-// 原生浏览器视图绘制在网页 DOM 之上。优先通过应用层模态框显式引用计数锁控制隐藏，
-// 同时仅对标准 aria-modal="true" 节点保留兜底观察，不再耦合 Radix 内部属性选择器。
-const FALLBACK_MODAL_SELECTOR = '[aria-modal="true"]';
-const modalListeners = new Set<() => void>();
-let explicitOverlayLocks = 0;
-let domModalOpen = false;
-let modalObserver: MutationObserver | undefined;
-
-function isOverlayBlocking(): boolean {
-  return explicitOverlayLocks > 0 || domModalOpen;
-}
-
-function notifyOverlayListeners() {
-  modalListeners.forEach((listener) => listener());
-}
-
-/** 对话框/弹窗打开时显式持有原生浏览器遮挡锁，关闭或卸载时调用返回函数释放。 */
-export function acquireNativeOverlayLock(): () => void {
-  const wasBlocking = isOverlayBlocking();
-  explicitOverlayLocks += 1;
-  let released = false;
-  if (!wasBlocking && isOverlayBlocking()) notifyOverlayListeners();
-  return () => {
-    if (released) return;
-    released = true;
-    const prev = isOverlayBlocking();
-    explicitOverlayLocks = Math.max(0, explicitOverlayLocks - 1);
-    if (prev !== isOverlayBlocking()) notifyOverlayListeners();
-  };
-}
-
-function checkModal() {
-  const open = document.querySelector(FALLBACK_MODAL_SELECTOR) !== null;
-  if (open === domModalOpen) return;
-  const prev = isOverlayBlocking();
-  domModalOpen = open;
-  if (prev !== isOverlayBlocking()) notifyOverlayListeners();
-}
-
-function watchModals(listener: () => void): () => void {
-  modalListeners.add(listener);
-  if (typeof document !== "undefined" && typeof MutationObserver !== "undefined" && !modalObserver) {
-    modalObserver = new MutationObserver(checkModal);
-    modalObserver.observe(document.body, { childList: true, subtree: true });
-    domModalOpen = document.querySelector(FALLBACK_MODAL_SELECTOR) !== null;
-  }
-  return () => {
-    modalListeners.delete(listener);
-    if (modalListeners.size > 0) return;
-    modalObserver?.disconnect();
-    modalObserver = undefined;
-    domModalOpen = false;
-  };
-}
-
 export interface DockBrowserSessionOptions {
   /** 原生视图已由外部桥接打开，挂载时直接接管而不再重复调用 browser_open。 */
   alreadyOpen?: boolean;
@@ -78,6 +27,8 @@ export interface DockBrowserSessionOptions {
   parkBounds?: BrowserBounds;
   /** 卸载时是否销毁原生视图；返回 false 时仅移回离屏，避免中断进行中的模型操作。 */
   shouldCloseOnDispose?: () => boolean;
+  /** 视图被隐藏时收到隐藏前的页面截图，重新显示时收到 undefined。 */
+  onSnapshot?: (dataUrl: string | undefined) => void;
 }
 
 export function createDockBrowserSession(
@@ -98,6 +49,8 @@ export function createDockBrowserSession(
   let appliedBounds = "";
   let visible = false;
   let readyNotified = false;
+  /** 本会话在弹窗挖洞登记表里的键。 */
+  const hole = {};
 
   const report = (error: unknown) => {
     if (!disposed && typeof onError === "function") {
@@ -110,17 +63,18 @@ export function createDockBrowserSession(
   };
 
   const hideChild = async () => {
-    if (options?.parkBounds) {
-      await invoke("browser_bounds", { browserId, ...options.parkBounds });
-    } else {
-      await invoke("browser_visible", { browserId, visible: false });
-    }
+    setNativeUnderlayHole(hole, undefined);
+    const snapshot = options?.parkBounds
+      ? await invoke("browser_bounds", { browserId, ...options.parkBounds })
+      : await invoke("browser_visible", { browserId, visible: false });
     visible = false;
     appliedBounds = "";
+    if (!disposed && typeof snapshot === "string") options?.onSnapshot?.(snapshot);
   };
 
   const closeChild = async () => {
     if (closed) return;
+    setNativeUnderlayHole(hole, undefined);
     if (options?.shouldCloseOnDispose && !options.shouldCloseOnDispose()) {
       // 模型仍在操作该视图，仅将其移回离屏区域，等待释放或显式关闭时再销毁。
       if (opened) await hideChild();
@@ -187,6 +141,7 @@ export function createDockBrowserSession(
         if (!visible) {
           await invoke("browser_visible", { browserId, visible: true });
           visible = true;
+          options?.onSnapshot?.(undefined);
           if (disposed) {
             await closeChild();
             return;
@@ -206,6 +161,7 @@ export function createDockBrowserSession(
             readyNotified = true;
             onOpen?.();
           }
+          if (visible) setNativeUnderlayHole(hole, desired.bounds);
           break;
         }
       }
@@ -217,13 +173,13 @@ export function createDockBrowserSession(
     }
   };
 
-  // 调用方最近一次请求的位置与可见性；模态框关闭后据此恢复。
+  // 调用方最近一次请求的位置与可见性。弹窗不再影响可见性，由 native-underlay 把视图沉到主界面之下。
   let requested: { bounds?: BrowserBounds; visible: boolean } = { visible: false };
   const apply = () => {
     if (disposed || failed) return;
     const nextBounds = requested.bounds ?? desired?.bounds;
     if (!nextBounds) return;
-    const next = { bounds: nextBounds, visible: requested.visible && !!requested.bounds && !isOverlayBlocking() };
+    const next = { bounds: nextBounds, visible: requested.visible && !!requested.bounds };
     if (JSON.stringify(desired) === JSON.stringify(next)) return;
     desired = next;
     // Inactive unopened tab: don't create native child yet
@@ -233,7 +189,7 @@ export function createDockBrowserSession(
       void enqueue(sync).catch(report);
     }
   };
-  const unwatchModals = watchModals(apply);
+  const detachUnderlay = attachNativeUnderlay(invoke);
 
   return {
     update(bounds: BrowserBounds | undefined, nextVisible: boolean) {
@@ -248,7 +204,8 @@ export function createDockBrowserSession(
     dispose() {
       if (disposed) return;
       disposed = true;
-      unwatchModals();
+      detachUnderlay();
+      setNativeUnderlayHole(hole, undefined);
       void enqueue(closeChild).catch((error) => console.error("Failed to close native browser", browserId, error));
     },
   };

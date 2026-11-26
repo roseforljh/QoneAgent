@@ -1,5 +1,93 @@
-.q-agent-communication { align-self: stretch; min-width: 0; margin-block: 8px 16px; border: 1px solid color-mix(in oklab, var(--ring) 28%, var(--border)); border-inline-start: 3px solid var(--ring); border-radius: 10px; padding: 10px 13px; background: color-mix(in oklab, var(--ring) 5%, var(--background)); overflow-wrap: anywhere; }
-.q-agent-communication-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; color: var(--muted-foreground); font-size: var(--q-text-xs); }
-.q-agent-communication-heading strong { color: var(--foreground); font-weight: 500; }
-.q-agent-communication-label { padding: 1px 5px; border-radius: 4px; background: color-mix(in oklab, var(--ring) 13%, transparent); color: var(--foreground); font-size: 10px; }
-.q-agent-communication-content { min-width: 0; font-size: var(--q-text-sm); line-height: 1.6; }
+/* 系统级静默提示（如重启恢复）：对齐阅读中轴，无外框与强调色 */
+.q-agent-communication-system {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding-block: 2px;
+  color: var(--muted-foreground);
+  font-size: var(--q-text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.q-agent-communication-system .q-agent-communication-icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  opacity: 0.7;
+}
+
+.q-agent-communication-system .q-agent-communication-content {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* 代理间通信 / 定时任务：极轻中性灰容器，保持与对话流一致的克制层级 */
+.q-agent-communication {
+  min-width: 0;
+  border: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.q-subagent-panel-scroll .q-agent-communication,
+.q-subagent-panel-scroll .q-agent-communication-system {
+  margin-block: 10px 14px;
+}
+
+.q-agent-communication-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 5px;
+  color: var(--muted-foreground);
+  font-size: var(--q-text-xs);
+  line-height: 1.4;
+}
+
+.q-agent-communication-heading .q-agent-communication-icon {
+  width: 13px;
+  height: 13px;
+  margin-inline-end: 1px;
+  opacity: 0.6;
+}
+
+.q-agent-communication-peer {
+  color: color-mix(in oklab, var(--foreground) 72%, transparent);
+  font-weight: 500;
+}
+
+.q-agent-communication-arrow {
+  opacity: 0.45;
+}
+
+.q-agent-communication-content {
+  min-width: 0;
+  color: color-mix(in oklab, var(--foreground) 85%, transparent);
+  font-size: var(--q-text-sm);
+  line-height: 1.58;
+}
+
+/* 覆盖聊天正文默认的段落字号、颜色与底边距，保证内外层级统一且上下留白对称 */
+.aui-thread-root .q-agent-communication-content .aui-md,
+.q-agent-communication-content .aui-md {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.aui-thread-root .q-agent-communication-content .aui-md .aui-md-p,
+.q-agent-communication-content .aui-md .aui-md-p {
+  color: inherit;
+  line-height: inherit;
+}
+
+.aui-thread-root .q-agent-communication-content .aui-md > :last-child,
+.q-agent-communication-content .aui-md > :last-child {
+  margin-block-end: 0;
+}

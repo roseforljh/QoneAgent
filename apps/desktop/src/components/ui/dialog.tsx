@@ -47,6 +47,13 @@ function DialogOverlay({
   )
 }
 
+// Rendered inside DialogPrimitive.Content, which Radix mounts only while the dialog is open
+// (or animating out). The DialogContent wrapper itself stays mounted for a closed <Dialog>.
+function NativeOverlayLock() {
+  React.useEffect(() => acquireNativeOverlayLock(), [])
+  return null
+}
+
 function DialogContent({
   className,
   children,
@@ -56,7 +63,6 @@ function DialogContent({
   showCloseButton?: boolean
 }) {
   const { t } = useLocale()
-  React.useEffect(() => acquireNativeOverlayLock(), [])
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
@@ -68,6 +74,7 @@ function DialogContent({
         )}
         {...props}
       >
+        <NativeOverlayLock />
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close

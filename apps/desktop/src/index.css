@@ -166,6 +166,9 @@
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 body { background: var(--background); color: var(--foreground); font-size: var(--q-text-base); }
+/* 弹窗打开时内置浏览器沉在主界面之下（lib/native-underlay）：底色交给 #root，由它的遮罩挖出网页区域。 */
+html[data-native-underlay], html[data-native-underlay] body { background: transparent; }
+html[data-native-underlay] #root { background: var(--background); }
 
 /* Use the same system font stack across navigation and content. */
 .q-sidebar {

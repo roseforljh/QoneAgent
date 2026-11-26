@@ -117,7 +117,7 @@ test("the real message renderer shows one phase header across reasoning and mult
   ];
   const html = renderToStaticMarkup(<Fixture content={content} />);
   expect(html.match(/data-slot="tool-timeline"/g)).toHaveLength(1);
-  expect(html).toMatch(/title="(?:读取了 src\/first\.ts、src\/second\.ts|Read src\/first\.ts and src\/second\.ts)"/);
+  expect(html).toMatch(/title="(?:读取了 src\/second\.ts|Read src\/second\.ts)"/);
   const active = renderToStaticMarkup(<Fixture running content={[
     ...content, { type: "reasoning", text: "Evaluate", status: { type: "running" } },
   ]} />);
@@ -160,7 +160,7 @@ test("mixed tools have one semantic summary and final content remains outside ex
     read("followup-a"), read("followup-b"),
   ]} />);
   expect(html.match(/data-slot="tool-timeline"/g)).toHaveLength(2);
-  expect(html).toMatch(/title="(?:读取了 src\/source\.ts，运行了命令|Read src\/source\.ts and ran a command)"/);
+  expect(html).toMatch(/title="(?:运行了 bun test|Ran bun test)"/);
   expect(html).toContain("Phase result");
   const final = renderToStaticMarkup(<Fixture content={[read("a"), read("b"), { type: "text", text: "Final answer" }]} />);
   expect(final).toContain("Final answer");

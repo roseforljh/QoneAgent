@@ -1,6 +1,6 @@
 import {
   app,
-  BrowserWindow,
+  BaseWindow,
   Menu,
   Tray,
   protocol,
@@ -16,6 +16,7 @@ import { ensureGlobalInstructions, getRuntimeDir } from "./data-paths";
 import { SidecarManager } from "./sidecar";
 import { TerminalManager } from "./terminal-manager";
 import { BrowserDockManager } from "./browser-dock-manager";
+import { AppWindow } from "./app-window";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { DesktopUpdater } from "./updater";
 import { installDevtoolsShortcutGuard } from "./devtools-policy";
@@ -93,7 +94,7 @@ async function devtoolsPort(): Promise<number> {
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== "production";
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: AppWindow | null = null;
 let tray: Tray | null = null;
 
 const sidecar = new SidecarManager(() => mainWindow);
@@ -157,7 +158,7 @@ function openExternalLink(url: string): void {
   if (/^(https?|mailto):/i.test(url)) void shell.openExternal(url);
 }
 
-function createMainWindow(): BrowserWindow {
+function createMainWindow(): AppWindow {
   const savedState = loadWindowState();
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
@@ -171,7 +172,7 @@ function createMainWindow(): BrowserWindow {
 
   const iconCandidate = path.join(__dirname, "../resources/icon.png");
 
-  const win = new BrowserWindow({
+  const win = new AppWindow({
     width,
     height,
     minWidth: 800,
@@ -181,16 +182,15 @@ function createMainWindow(): BrowserWindow {
     autoHideMenuBar: true,
     title: "QoneAgent",
     icon: fs.existsSync(iconCandidate) ? iconCandidate : undefined,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
-      sandbox: restricted || administratorRequested,
-      devTools: !restricted && !administratorRequested,
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
     backgroundColor: "#1e1e1e",
     show: true,
     alwaysOnTop: true,
+  }, {
+    preload: path.join(__dirname, "preload.cjs"),
+    sandbox: restricted || administratorRequested,
+    devTools: !restricted && !administratorRequested,
+    contextIsolation: true,
+    nodeIntegration: false,
   });
 
   if (!placed) win.center();
@@ -249,18 +249,25 @@ function createMainWindow(): BrowserWindow {
   }
   installContextMenu(win.webContents);
   if (isDev) {
-    win.loadURL(devUrl).catch(() => {
-      setTimeout(() => win.loadURL(devUrl).catch(() => {}), 1500);
+    win.webContents.loadURL(devUrl).catch(() => {
+      setTimeout(() => win.webContents.loadURL(devUrl).catch(() => {}), 1500);
     });
   } else {
-    win.loadURL("app://localhost/");
+    void win.webContents.loadURL("app://localhost/");
   }
 
   installDevtoolsShortcutGuard(win.webContents);
 
+  // 主界面重载时弹窗状态随页面一起消失，内置浏览器不能继续压在主界面下面。
+  win.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) browserDock.setUnderlay(false);
+  });
+
   win.webContents.on("did-finish-load", () => {
     win.show();
     win.focus();
+    // BaseWindow 获得焦点不会自动把键盘焦点交给主界面视图。
+    win.webContents.focus();
     win.flashFrame(true);
   });
 
@@ -369,7 +376,7 @@ function startDesktop(): void {
     createTray();
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
+      if (BaseWindow.getAllWindows().length === 0) {
         mainWindow = createMainWindow();
       }
     });

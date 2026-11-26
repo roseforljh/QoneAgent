@@ -1,7 +1,8 @@
+import type { AppWindow } from "./app-window";
 import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
-import { app, session, Notification, type BrowserWindow } from "electron";
+import { app, session, Notification } from "electron";
 import { getRootDataDir } from "./data-paths";
 import { getSecrets, persistRuntimeSecret } from "./secret-store";
 import { killProcessTree } from "./process-tree";
@@ -20,9 +21,9 @@ export class SidecarManager {
   private readiness: Promise<void> = Promise.resolve();
   private batchQueue: unknown[] = [];
   private batchTimer: NodeJS.Timeout | null = null;
-  private getMainWindow: () => BrowserWindow | null;
+  private getMainWindow: () => AppWindow | null;
 
-  constructor(getMainWindow: () => BrowserWindow | null) {
+  constructor(getMainWindow: () => AppWindow | null) {
     this.getMainWindow = getMainWindow;
   }
 

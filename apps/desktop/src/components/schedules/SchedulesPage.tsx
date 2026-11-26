@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageSquare, Play, Plus } from "lucide-react";
 import type { ScheduleInfo, ScheduleInput } from "@qone/protocol";
 import { useStore } from "../../store";
 import { cn } from "../../lib/utils";
@@ -9,8 +8,12 @@ import { useLocale } from "../../localization";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import { sendScheduleCommand, useScheduleStore } from "../../lib/schedule-state";
 import { MorphingSpinner } from "../assistant-ui/morphing-spinner";
+import { TooltipProvider } from "../ui/tooltip";
+import { CodexIcon, CodexPlusIcon } from "../ui/CodexIcon";
+import chatIcon from "../../assets/codex-icons/chat-bubble-light-16.svg";
+import { ScheduleCard } from "./ScheduleCard";
 import { ScheduleDialog } from "./ScheduleDialog";
-import { describeNext, describeRule, describeStatus, formatMoment, scheduleInput } from "./schedule-format";
+import { formatMoment, scheduleInput } from "./schedule-format";
 import "./schedules.css";
 
 export function SchedulesPage() {
@@ -38,39 +41,34 @@ export function SchedulesPage() {
   return <div className="schedules-page">
     <header className="schedules-header">
       <div><h1>{t("schedules.title")}</h1><p>{t("schedules.description")}</p></div>
-      <button type="button" className="servers-button is-primary" disabled={!hasProject || !connected} onClick={() => setEditing({})}><Plus size={14} />{t("schedules.new")}</button>
+      <button type="button" className="servers-button is-primary" disabled={!hasProject || !connected} onClick={() => setEditing({})}><CodexPlusIcon className="size-3.5" />{t("schedules.new")}</button>
     </header>
     {error && !editing && <p className="servers-error">{error}</p>}
     {loaded && !schedules.length && <div className="servers-empty-state">
       <strong>{t("schedules.empty")}</strong>
       <p>{t(hasProject ? "schedules.emptyHint" : "schedules.noProject")}</p>
     </div>}
-    <motion.ul layout className="schedule-list">
-      <AnimatePresence initial={false}>
-        {schedules.map((schedule) => {
-          const running = schedule.lastStatus === "running";
-          const failed = !running && (schedule.lastStatus === "failed" || schedule.lastStatus === "interrupted" || (!schedule.lastStatus && Boolean(schedule.lastError)));
-          const project = workspaces.length > 1 ? workspaces.find((workspace) => workspace.id === schedule.workspaceId)?.name : undefined;
-          return <motion.li key={schedule.id} layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: .98 }} transition={{ duration: .18 }}
-            className={cn("schedule-row", !schedule.enabled && "is-paused")}>
-            <button type="button" className="schedule-row-main" onClick={() => setEditing({ schedule })}>
-              <strong>{schedule.title}</strong>
-              <span className="schedule-row-rule">{describeRule(schedule.rule, t, locale)}<i aria-hidden="true">·</i>{describeNext(schedule, t, locale)}{project && <><i aria-hidden="true">·</i>{project}</>}</span>
-              <span className={cn("schedule-row-status", failed && "is-failed", running && "is-running")}>
-                {running && <MorphingSpinner className="size-3" />}{describeStatus(schedule, t, locale)}
-              </span>
-            </button>
-            <div className="schedule-row-actions">
-              {schedule.sessionId && <button type="button" className="servers-icon-button" title={t("schedules.openChat")} aria-label={t("schedules.openChat")} onClick={() => openChat(schedule.sessionId!)}><MessageSquare size={15} /></button>}
-              <button type="button" className="servers-icon-button" title={t("schedules.runNow")} aria-label={t("schedules.runNow")} disabled={running || !connected} onClick={() => runNow(schedule)}><Play size={15} /></button>
-              <button type="button" role="switch" aria-checked={schedule.enabled} aria-label={t(schedule.enabled ? "schedules.disable" : "schedules.enable")}
-                className={cn("settings-switch", schedule.enabled && "is-on")} disabled={!connected}
-                onClick={() => void save({ ...scheduleInput(schedule), enabled: !schedule.enabled })}><span /></button>
-            </div>
-          </motion.li>;
-        })}
-      </AnimatePresence>
-    </motion.ul>
+    {schedules.length > 0 && <TooltipProvider delayDuration={300}>
+      <motion.ul layout className="schedule-board">
+        <AnimatePresence initial={false}>
+          {schedules.map((schedule) => {
+            const project = workspaces.length > 1 ? workspaces.find((workspace) => workspace.id === schedule.workspaceId)?.name : undefined;
+            return (
+              <ScheduleCard
+                key={schedule.id}
+                schedule={schedule}
+                project={project}
+                connected={connected}
+                onEdit={(item) => setEditing({ schedule: item })}
+                onToggle={(item, enabled) => void save({ ...scheduleInput(item), enabled })}
+                onRunNow={runNow}
+                onOpenChat={openChat}
+              />
+            );
+          })}
+        </AnimatePresence>
+      </motion.ul>
+    </TooltipProvider>}
     {runs.length > 0 && <section className="schedule-history">
       <h2>{t("schedules.history")}</h2>
       <ul>
@@ -84,7 +82,7 @@ export function SchedulesPage() {
                 </span>
                 <strong>{title}</strong>
                 <time>{formatMoment(entry.startedAt, locale)}</time>
-                <MessageSquare size={14} aria-hidden="true" />
+                <CodexIcon src={chatIcon} className="size-3.5" />
               </button>
             </motion.li>;
           })}

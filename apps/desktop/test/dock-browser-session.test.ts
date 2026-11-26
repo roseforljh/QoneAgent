@@ -419,17 +419,28 @@ test("alreadyOpen managed session attaches without reopening, parks offscreen on
   ]);
 });
 
-test("an open modal hides the native layer and closing it restores the requested state", async () => {
-  // 原生视图压在 DOM 之上，模态框出现时必须让位
+function fakeDocument(modal: () => boolean) {
+  const style = new Map<string, string>();
+  const attributes = new Set<string>();
+  const root = { style: { setProperty: (name: string, value: string) => style.set(name, value), removeProperty: (name: string) => style.delete(name) } };
+  const documentElement = { toggleAttribute: (name: string, on: boolean) => (on ? attributes.add(name) : attributes.delete(name)) };
+  return { style, attributes, document: { body: {}, documentElement, getElementById: () => root, querySelector: () => (modal() ? {} : null) } };
+}
+
+test("an open modal sinks the live page below the UI and closing it brings the page back on top", async () => {
+  // 原生视图压在 DOM 之上；弹窗打开时它沉到主界面之下继续显示，而不是被隐藏成空白。
   let modal = false;
   let notify: (() => void) | undefined;
   const globals = globalThis as Record<string, unknown>;
   const previous = { document: globals.document, MutationObserver: globals.MutationObserver };
-  globals.document = { body: {}, querySelector: () => (modal ? {} : null) };
+  const fake = fakeDocument(() => modal);
+  globals.document = fake.document;
   globals.MutationObserver = class { constructor(callback: () => void) { notify = callback; } observe() {} disconnect() {} };
   const visibility: unknown[] = [];
+  const underlay: unknown[] = [];
   const session = createDockBrowserSession(async (command, args) => {
     if (command === "browser_visible") visibility.push(args?.visible);
+    if (command === "browser_underlay") underlay.push(args?.on);
   }, "browser-modal", "https://example.com", () => {});
   try {
     session.update(bounds, true);
@@ -437,12 +448,21 @@ test("an open modal hides the native layer and closing it restores the requested
     modal = true;
     notify?.();
     await tick();
+    expect(underlay).toEqual([true]);
+    // 页面区域在 #root 的遮罩上挖成透明洞，透出下层的实时网页。
+    expect(fake.attributes.has("data-native-underlay")).toBe(true);
+    expect(fake.style.get("mask-position")).toBe(`0 0,${bounds.x}px ${bounds.y}px`);
+    expect(fake.style.get("mask-size")).toBe(`100% 100%,${bounds.w}px ${bounds.h}px`);
     session.update({ ...bounds, x: 600 }, true);
     await tick();
+    expect(fake.style.get("mask-position")).toBe(`0 0,600px ${bounds.y}px`);
     modal = false;
     notify?.();
     await tick();
-    expect(visibility).toEqual([true, false, true]);
+    expect(underlay).toEqual([true, false]);
+    expect(visibility).toEqual([true]);
+    expect(fake.attributes.has("data-native-underlay")).toBe(false);
+    expect(fake.style.size).toBe(0);
   } finally {
     session.dispose();
     await tick();
@@ -451,25 +471,46 @@ test("an open modal hides the native layer and closing it restores the requested
   }
 });
 
-test("explicit overlay locks hide native browser without DOM probing and support nested dialogs", async () => {
+test("nested overlay locks keep the page under the UI until the outer dialog closes", async () => {
   const visibility: unknown[] = [];
+  const underlay: unknown[] = [];
   const session = createDockBrowserSession(async (command, args) => {
     if (command === "browser_visible") visibility.push(args?.visible);
+    if (command === "browser_underlay") underlay.push(args?.on);
   }, "browser-explicit-lock", "https://example.com", () => {});
   try {
     session.update(bounds, true);
     await tick();
     const releaseOuter = acquireNativeOverlayLock();
-    await tick();
     const releaseInner = acquireNativeOverlayLock();
-    await tick();
     releaseInner();
     await tick();
-    // 外层对话框尚未关闭，仍保持隐藏
-    expect(visibility).toEqual([true, false]);
+    expect(underlay).toEqual([true]);
     releaseOuter();
     await tick();
-    expect(visibility).toEqual([true, false, true]);
+    expect(underlay).toEqual([true, false]);
+    expect(visibility).toEqual([true]);
+  } finally {
+    session.dispose();
+    await tick();
+  }
+});
+
+test("a hidden view leaves its page snapshot in place until the native view returns", async () => {
+  const snapshots: Array<string | undefined> = [];
+  const session = createDockBrowserSession(async (command, args) => {
+    if (command === "browser_visible" && args?.visible === false) return "data:image/jpeg;base64,AAAA";
+    return undefined;
+  }, "browser-snapshot", "https://example.com", () => {}, undefined, undefined, { onSnapshot: (url) => snapshots.push(url) });
+  try {
+    session.update(bounds, true);
+    await tick();
+    session.update(bounds, false);
+    await tick();
+    expect(snapshots.at(-1)).toBe("data:image/jpeg;base64,AAAA");
+    session.update(bounds, true);
+    await tick();
+    expect(snapshots.at(-1)).toBeUndefined();
   } finally {
     session.dispose();
     await tick();

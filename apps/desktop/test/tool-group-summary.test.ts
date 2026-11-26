@@ -3,21 +3,21 @@ import { toolGroupSummary } from "../src/components/assistant-ui/tool-group-summ
 import { commandForTool, toolActionSummary, toolFullTarget, toolOperationLabels, toolPreparationLabel, toolTarget } from "../src/components/assistant-ui/tool-action-summary";
 import { toolActivityCategory } from "../src/components/assistant-ui/tool-activity-category";
 
-test("completed groups describe every operation in first-occurrence order", () => {
+test("completed groups show only the latest operation without comma-joined lists", () => {
   expect(toolGroupSummary([{ verb: "读取" }, { verb: "搜索" }, { verb: "读取" }], "zh-CN"))
-    .toBe("读取 2 项 · 搜索 1 项");
-  expect(toolGroupSummary([{ verb: "Read" }, { verb: "Read" }], "en")).toBe("Read ×2");
-  expect(toolGroupSummary([{ verb: "custom_tool" }], "en")).toBe("custom_tool ×1");
+    .toBe("读取");
+  expect(toolGroupSummary([{ verb: "Read" }, { verb: "Read" }], "en")).toBe("Read");
+  expect(toolGroupSummary([{ verb: "custom_tool" }], "en")).toBe("custom_tool");
 });
 
-test("toolGroupSummary displays all files completely instead of only one file", () => {
+test("toolGroupSummary shows only the latest file instead of listing all files", () => {
   const stepsZh = [
     { verb: "读取", target: "composer.tsx" },
     { verb: "读取", target: "assistant-context.tsx" },
     { verb: "读取", target: "Thread.tsx" },
   ];
   expect(toolGroupSummary(stepsZh, "zh-CN"))
-    .toBe("读取 3 项 (composer.tsx、assistant-context.tsx、Thread.tsx)");
+    .toBe("读取 Thread.tsx");
 
   const stepsEn = [
     { verb: "Read", target: "composer.tsx" },
@@ -25,39 +25,43 @@ test("toolGroupSummary displays all files completely instead of only one file", 
     { verb: "Read", target: "Thread.tsx" },
   ];
   expect(toolGroupSummary(stepsEn, "en"))
-    .toBe("Read ×3 (composer.tsx, assistant-context.tsx, Thread.tsx)");
+    .toBe("Read Thread.tsx");
 });
 
-test("toolGroupSummary describes mixed search and multiple file reads completely", () => {
+test("toolGroupSummary shows the latest step for mixed search and file reads", () => {
   const steps = [
     { verb: "查找", target: "desktop" },
     { verb: "查找", target: "src" },
     { verb: "搜索", target: "executionFinishing in src" },
     { verb: "读取", target: "composer.tsx" },
     { verb: "读取", target: "assistant-context.tsx" },
-    { verb: "搜索", target: "executionFinishing in src" }, // duplicate target
+    { verb: "搜索", target: "executionFinishing in src" },
     { verb: "读取", target: "Thread.tsx" },
   ];
   expect(toolGroupSummary(steps, "zh-CN"))
-    .toBe("查找 2 项 (desktop、src) · 搜索 2 项 (executionFinishing in src) · 读取 3 项 (composer.tsx、assistant-context.tsx、Thread.tsx)");
+    .toBe("读取 Thread.tsx");
 });
 
-test("Codex style group summary counts changed files once and keeps targets natural", () => {
+test("group summary shows the latest concrete action concisely", () => {
   const steps = [
     { verb: "编辑", target: "App.tsx", fullTarget: "apps/desktop/src/App.tsx", category: "file-change" as const },
     { verb: "编辑", target: "App.tsx", fullTarget: "apps/desktop/src/App.tsx", category: "file-change" as const },
     { verb: "运行", target: "bun run --cwd apps/desktop tsc --noEmit", category: "command" as const },
   ];
-  expect(toolGroupSummary(steps, "zh-CN")).toBe("修改了 App.tsx，运行了命令");
-  expect(toolGroupSummary(steps, "en")).toBe("Edited App.tsx and ran a command");
-  expect(toolGroupSummary(steps.slice(2), "en")).toBe("Ran a command");
+  expect(toolGroupSummary(steps, "zh-CN")).toBe("运行了 bun run --cwd apps/desktop tsc --noEmit");
+  expect(toolGroupSummary(steps, "en")).toBe("Ran bun run --cwd apps/desktop tsc --noEmit");
+  expect(toolGroupSummary([{ verb: "运行", category: "command" as const }], "en")).toBe("Ran a command");
   expect(toolGroupSummary([
     { verb: "补丁", category: "file-change", filePaths: ["src/App.tsx", "src/Thread.tsx"] },
     { verb: "编辑", category: "file-change", filePaths: ["src/App.tsx"] },
-  ], "en")).toBe("Edited App.tsx and Thread.tsx");
+  ], "en")).toBe("Edited App.tsx");
   expect(toolGroupSummary([
     { verb: "编辑", category: "file-change", filePaths: ["src/A.tsx", "src/B.tsx", "src/C.tsx"] },
   ], "zh-CN")).toBe("修改了 3 个文件");
+  expect(toolGroupSummary([
+    { verb: "编辑", target: "main.ts", category: "file-change" as const },
+    { toolName: "read", verb: "读取", target: "main.ts", category: "exploration" as const },
+  ], "zh-CN")).toBe("读取了 main.ts");
 });
 
 test("structured file changes from custom tools are classified as edits", () => {
@@ -65,17 +69,17 @@ test("structured file changes from custom tools are classified as edits", () => 
   expect(toolActivityCategory("bash", { content: [{ type: "text", text: "updated a file" }] })).toBe("command");
 });
 
-test("failed actions are not described as completed work", () => {
+test("failed latest action is reported directly without combining earlier actions", () => {
   const steps = [
     { verb: "编辑", category: "file-change" as const, filePaths: ["src/App.tsx"] },
     { verb: "运行", category: "command" as const, failed: true },
   ];
-  expect(toolGroupSummary(steps, "zh-CN")).toBe("修改了 App.tsx，1 步出错");
-  expect(toolGroupSummary(steps, "en")).toBe("Edited App.tsx and 1 step failed");
-  expect(toolGroupSummary(steps.slice(1), "zh-CN")).toBe("1 步出错");
+  expect(toolGroupSummary(steps, "zh-CN")).toBe("运行出错");
+  expect(toolGroupSummary(steps, "en")).toBe("Command failed");
+  expect(toolGroupSummary(steps.slice(1), "zh-CN")).toBe("运行出错");
 });
 
-test("integration calls use the integration name without boilerplate suffix", () => {
+test("integration calls show the latest action without boilerplate lists", () => {
   const context7 = { id: "mcp-context7", name: "Context7", logo: "context7.svg" };
   const playwright = { id: "mcp-playwright", name: "Playwright", logo: "playwright.svg" };
   expect(toolGroupSummary([
@@ -83,16 +87,16 @@ test("integration calls use the integration name without boilerplate suffix", ()
     { verb: "调用", category: "integration", integration: context7 },
     { verb: "调用", category: "integration", integration: playwright },
     { verb: "运行", category: "command" },
-  ], "zh-CN")).toBe("用了 Context7、Playwright，运行了命令");
+  ], "zh-CN")).toBe("运行了命令");
   expect(toolGroupSummary([
     { verb: "Call", category: "integration", integration: context7 },
     { verb: "Call", category: "integration", integration: playwright },
-  ], "en")).toBe("Used Context7 and Playwright");
+  ], "en")).toBe("Used Playwright");
   expect(toolGroupSummary([
     { verb: "Call", category: "integration", integration: context7 },
     { verb: "Run", category: "command" },
     { verb: "Read", category: "exploration" },
-  ], "en")).toBe("Used Context7, read a file, and ran a command");
+  ], "en")).toBe("Read a file");
 });
 
 test("toolTarget preserves search pattern instead of discarding it for directory name", () => {
@@ -174,7 +178,7 @@ test("web sources do not claim to be installed integrations", () => {
   expect(toolGroupSummary([
     { verb: "Web", category: "integration", integration: { ...web, name: "Web" } },
     { verb: "Context7", category: "integration", integration: { id: "context7", name: "Context7", logo: "context7.svg" } },
-  ], "en")).toBe("Used Web and Context7");
+  ], "en")).toBe("Used Context7");
 });
 
 test("custom tool names do not inherit a search schema from a substring", () => {
@@ -190,7 +194,7 @@ test("web searches and page reads retain their own semantic actions", () => {
     { verb: "Search the web", category: "web-search" },
     { verb: "Search the web", category: "web-search" },
     { verb: "Read", category: "exploration" },
-  ], "en")).toBe("Read a file and searched the web");
+  ], "en")).toBe("Read a file");
 });
 
 test("internal auxiliary tools do not pollute group titles with generic tool invocation", () => {

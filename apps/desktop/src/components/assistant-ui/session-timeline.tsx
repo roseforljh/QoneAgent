@@ -14,7 +14,7 @@ import { detectToolPreview } from "./tool-preview";
 import { toolActionSummary, toolFullTarget, toolOperationLabels, toolPreparationLabel, toolTarget } from "./tool-action-summary";
 import { detectToolPresentation, toolDiffStats, toolPresentationSummary } from "./tool-presentation";
 import { useLocale, type Locale } from "../../localization";
-import { toolGroupSummary } from "./tool-group-summary";
+import { latestSummaryStep, toolGroupSummary } from "./tool-group-summary";
 import type { ToolCall as StoreToolCall } from "../../store";
 import { toolActivityCategory } from "./tool-activity-category";
 import { ACTIVITY_TITLE_TOOL, toolFileChanges } from "@qone/protocol";
@@ -286,9 +286,7 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
   const activePart = activeIndex >= 0 ? executedToolParts[activeIndex] : undefined;
   const activeStep = activeIndex >= 0 ? steps[activeIndex] : undefined;
   const activeCall = activePart ? liveCallsById.get(activePart.toolCallId) : undefined;
-  const lastIndex = steps.length - 1;
-  const lastStep = lastIndex >= 0 ? steps[lastIndex] : undefined;
-  const summaryStep = steps.find((step) => step.integration) ?? lastStep;
+  const summaryStep = latestSummaryStep(steps);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {

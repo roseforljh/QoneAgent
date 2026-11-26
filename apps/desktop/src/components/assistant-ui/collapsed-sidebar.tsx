@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
 import { useLocale } from "../../localization";
 import { SIDEBAR_VISIBILITY_TRANSITION } from "../../lib/pane-motion";
+import { loadSchedulesPage, loadTeamPage } from "../../lib/page-transition";
 import { AnimatedSidebarIcon } from "../ui/AnimatedSidebarIcon";
 import { CodexIcon } from "../ui/CodexIcon";
 import sidebarIcon from "../../assets/codex-icons/sidebar-light-16.svg";
@@ -31,10 +32,24 @@ export function CollapsedSidebar({ collapsed, onOpenSidebar, onOpenSettings }: {
       <nav className="flex flex-col items-center gap-0.5">
         <ThreadListNew className="q-sidebar-rail-action" labelClassName="sr-only"
           title={t("sidebar.newChat")} aria-label={t("sidebar.newChat")} />
-        <Link to="/browser" className="q-sidebar-rail-action" title={t("browser.title")} aria-label={t("browser.title")}>
-          <AnimatedSidebarIcon kind="browser" />
+        <Link
+          to="/teams"
+          className="q-sidebar-rail-action"
+          title={t("team.title")}
+          aria-label={t("team.title")}
+          onMouseEnter={() => { void loadTeamPage(); }}
+          onFocus={() => { void loadTeamPage(); }}
+        >
+          <AnimatedSidebarIcon kind="team" />
         </Link>
-        <Link to="/schedules" className="q-sidebar-rail-action" title={t("schedules.title")} aria-label={t("schedules.title")}>
+        <Link
+          to="/schedules"
+          className="q-sidebar-rail-action"
+          title={t("schedules.title")}
+          aria-label={t("schedules.title")}
+          onMouseEnter={() => { void loadSchedulesPage(); }}
+          onFocus={() => { void loadSchedulesPage(); }}
+        >
           <AnimatedSidebarIcon kind="schedule" />
         </Link>
         {collapsed && <SidebarProjectsPopover />}

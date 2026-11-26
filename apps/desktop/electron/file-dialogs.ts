@@ -1,4 +1,5 @@
-import { dialog, type BrowserWindow } from "electron";
+import type { AppWindow } from "./app-window";
+import { dialog } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -20,7 +21,7 @@ function getAttachmentInfo(targetPath: string): AttachmentFileInfo {
 }
 
 export async function pickWorkspace(
-  mainWindow: BrowserWindow,
+  mainWindow: AppWindow,
   title: string
 ): Promise<string | null> {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -36,7 +37,7 @@ export function inspectDroppedFile(targetPath: string): AttachmentFileInfo {
 }
 
 export async function pickAttachmentFiles(
-  mainWindow: BrowserWindow,
+  mainWindow: AppWindow,
   title: string
 ): Promise<AttachmentFileInfo[]> {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -48,7 +49,7 @@ export async function pickAttachmentFiles(
 }
 
 export async function pickAttachmentFolder(
-  mainWindow: BrowserWindow,
+  mainWindow: AppWindow,
   title: string
 ): Promise<AttachmentFileInfo | null> {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -120,7 +121,7 @@ export function readAuthorizedFile(filePath: string): Promise<Buffer> {
 }
 
 export async function saveImageAs(
-  mainWindow: BrowserWindow,
+  mainWindow: AppWindow,
   filename: string,
   source: { data?: string; url?: string },
   title: string

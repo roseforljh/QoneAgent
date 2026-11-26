@@ -3,6 +3,7 @@ import { localizeError } from "../../lib/error-localization";
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useIsPresent } from "motion/react";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -61,7 +62,9 @@ export function DockBrowserView({ browserId, agentManaged = false, active, initi
   const [currentPreviewHtml, setCurrentPreviewHtml] = useState(previewHtml);
   const [externalOpenError, setExternalOpenError] = useState<string>();
   const [failed, setFailed] = useState<string>();
-  activeRef.current = active && !failed;
+  const [snapshot, setSnapshot] = useState<string>();
+  const routePresent = useIsPresent();
+  activeRef.current = active && routePresent && !failed;
   const sessionRef = useRef<ReturnType<typeof createDockBrowserSession> | undefined>(undefined);
 
   useEffect(() => {
@@ -77,6 +80,7 @@ export function DockBrowserView({ browserId, agentManaged = false, active, initi
     setCurrentPreviewHtml(previewHtml);
     setExternalOpenError(undefined);
     setFailed(undefined);
+    setSnapshot(undefined);
     const alreadyOpen = agentManaged && isManagedBrowserOpen(browserId);
     const detachHost = agentManaged ? attachManagedBrowserHost(browserId) : undefined;
     const session = createDockBrowserSession(
@@ -86,13 +90,16 @@ export function DockBrowserView({ browserId, agentManaged = false, active, initi
       (error) => setFailed(localizeError(error)),
       previewHtml,
       undefined,
-      agentManaged
-        ? {
-            alreadyOpen,
-            parkBounds: BACKGROUND_BROWSER_BOUNDS,
-            shouldCloseOnDispose: () => !isManagedBrowserBusy(browserId),
-          }
-        : undefined,
+      {
+        onSnapshot: setSnapshot,
+        ...(agentManaged
+          ? {
+              alreadyOpen,
+              parkBounds: BACKGROUND_BROWSER_BOUNDS,
+              shouldCloseOnDispose: () => !isManagedBrowserBusy(browserId),
+            }
+          : {}),
+      },
     );
     sessionRef.current = session;
     const sync = () => {
@@ -156,8 +163,8 @@ export function DockBrowserView({ browserId, agentManaged = false, active, initi
     const host = hostRef.current;
     if (!host) return;
     const bounds = clipBrowserBounds(host.getBoundingClientRect(), window.innerWidth, window.innerHeight);
-    sessionRef.current?.update(bounds, active && !failed);
-  }, [active, failed]);
+    sessionRef.current?.update(bounds, active && routePresent && !failed);
+  }, [active, routePresent, failed]);
 
   const go = () => {
     const url = toUrl(address);
@@ -222,6 +229,8 @@ export function DockBrowserView({ browserId, agentManaged = false, active, initi
       {externalOpenError && <p role="alert" title={externalOpenError} className="shrink-0 truncate px-3 py-1 text-xs text-destructive">{t("dock.browserOpenExternalFailed")}: {externalOpenError}</p>}
       {/* ms-1.5 keeps the native webview clear of the panel resize separator */}
       <div ref={hostRef} className="relative ms-1.5 min-h-0 flex-1">
+        {/* 原生视图为弹窗让位时，用隐藏前的截图占位，避免露出空白面板 */}
+        {snapshot && !failed && <img src={snapshot} alt="" draggable={false} className="pointer-events-none absolute inset-0 size-full select-none object-cover object-left-top" />}
         {failed && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
             <GlobeIcon className="size-5 text-foreground/35" />

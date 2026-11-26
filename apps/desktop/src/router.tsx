@@ -5,6 +5,7 @@ const rootRoute = createRootRoute();
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: App });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: App });
 const browserRoute = createRoute({ getParentRoute: () => rootRoute, path: "/browser", component: App });
+const teamsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/teams", component: App });
 const skillsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/skills", component: App });
 const schedulesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/schedules", component: App });
 const permissionsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/permissions", component: App });
@@ -15,6 +16,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   settingsRoute,
   browserRoute,
+  teamsRoute,
   skillsRoute,
   schedulesRoute,
   permissionsRoute,

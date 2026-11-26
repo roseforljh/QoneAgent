@@ -1,4 +1,5 @@
-import { ipcMain, shell, type BrowserWindow } from "electron";
+import type { AppWindow } from "./app-window";
+import { ipcMain, shell } from "electron";
 import { SidecarManager } from "./sidecar";
 import { TerminalManager } from "./terminal-manager";
 import { BrowserDockManager } from "./browser-dock-manager";
@@ -9,7 +10,7 @@ import { administratorLaunchEnabled, setAdministratorLaunchEnabled } from "./win
 import { updateNativeCopy } from "./native-menus";
 
 export function registerIpcHandlers(
-  getMainWindow: () => BrowserWindow | null,
+  getMainWindow: () => AppWindow | null,
   sidecar: SidecarManager,
   terminal: TerminalManager,
   browserDock: BrowserDockManager,
@@ -133,6 +134,9 @@ export function registerIpcHandlers(
       }
       case "browser_visible": {
         return browserDock.setVisible(args.browserId, args.visible);
+      }
+      case "browser_underlay": {
+        return browserDock.setUnderlay(Boolean(args.on));
       }
       case "browser_eval": {
         return browserDock.eval(args.browserId, args.script);

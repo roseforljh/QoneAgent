@@ -29,7 +29,7 @@ test("completed timeline uses a category summary even when timing data is presen
     })) });
     const html = renderToStaticMarkup(<Fixture />);
     expect(html).toContain('data-slot="tool-timeline"');
-    expect(html).toMatch(/查看了 source\.ts|Checked source\.ts/);
+    expect(html).toMatch(/搜索了 source\.ts|Searched source\.ts/);
     expect(html).not.toMatch(/读取 1 项|Read ×1|搜索 1 项|Search ×1/);
     expect(html).not.toMatch(/耗时|Done in/);
     expect(html).not.toMatch(/data-slot="tool-call"[\s\S]*?data-slot="codex-icon"/);
@@ -52,9 +52,9 @@ function PartlyFailedFixture() {
   }} /></AssistantRuntimeProvider>;
 }
 
-test("failed command changes the group title without erasing successful edits", () => {
+test("failed command shows the latest failed action without comma-joining earlier edits", () => {
   const html = renderToStaticMarkup(<PartlyFailedFixture />);
-  expect(html).toMatch(/修改了 App\.tsx，1 步出错|Edited App\.tsx and 1 step failed/);
+  expect(html).toMatch(/运行失败 \.\/gradlew test|Run failed \.\/gradlew test/);
   expect(html).not.toMatch(/修改了 App\.tsx，运行了命令|Edited App\.tsx and ran a command/);
 });
 

@@ -1,4 +1,5 @@
-import { WebContentsView, shell, type BrowserWindow, type Session, type WebContents } from "electron";
+import type { AppWindow } from "./app-window";
+import { WebContentsView, shell, type Session, type WebContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { getRuntimeDir } from "./data-paths";
@@ -18,6 +19,8 @@ interface BrowserSession {
   minWidth?: number;
   measuring?: boolean;
   remeasure?: boolean;
+  /** 每次布局调用递增；等待截图的旧调用据此认出自已过时。 */
+  layoutSeq: number;
 }
 
 // 返回页面横向溢出时的内容宽度（CSS px），未溢出或页面本身裁掉横向溢出时返回 0。
@@ -31,15 +34,21 @@ const MEASURE_OVERFLOW = `(() => {
   return width > root.clientWidth + 1 ? width : 0;
 })()`;
 
+function isOnScreen({ x, y, width, height }: { x: number; y: number; width: number; height: number }): boolean {
+  return width > 0 && height > 0 && x + width > 0 && y + height > 0;
+}
+
 export class BrowserDockManager {
   private sessions = new Map<string, BrowserSession>();
   /** Preview files this manager wrote; app exit removes exactly these. */
   private previewFiles = new Set<string>();
-  private getMainWindow: () => BrowserWindow | null;
+  private getMainWindow: () => AppWindow | null;
   private cdpPort: (() => Promise<number>) | null;
   private guardedSessions = new WeakSet<Session>();
+  /** 弹窗打开期间内置浏览器位于主界面之下。 */
+  private underlay = false;
 
-  constructor(getMainWindow: () => BrowserWindow | null, cdpPort: (() => Promise<number>) | null, private readonly dockCdp?: DockCdp) {
+  constructor(getMainWindow: () => AppWindow | null, cdpPort: (() => Promise<number>) | null, private readonly dockCdp?: DockCdp) {
     this.getMainWindow = getMainWindow;
     this.cdpPort = cdpPort;
   }
@@ -73,10 +82,10 @@ export class BrowserDockManager {
     });
     this.guardExternalProtocols(view.webContents.session);
 
-    const session: BrowserSession = { id: browserId, view, url };
+    const session: BrowserSession = { id: browserId, view, url, layoutSeq: 0 };
     this.sessions.set(browserId, session);
 
-    mainWindow.contentView.addChildView(view);
+    this.place(mainWindow, view);
     view.setBounds({
       x: Math.round(x),
       y: Math.round(y),
@@ -166,18 +175,36 @@ export class BrowserDockManager {
     shell.openPath(tmpFile).catch(() => {});
   }
 
-  public bounds(browserId: string, x: number, y: number, w: number, h: number): void {
+  /** Returns a snapshot of the page when this call parks an on-screen view off-screen. */
+  public async bounds(browserId: string, x: number, y: number, w: number, h: number): Promise<string | undefined> {
     const session = this.sessions.get(browserId);
     if (session) {
-      session.view.setBounds({
-        x: Math.round(x),
-        y: Math.round(y),
-        width: Math.max(0, Math.round(w)),
-        height: Math.max(0, Math.round(h)),
-      });
+      const next = { x: Math.round(x), y: Math.round(y), width: Math.max(0, Math.round(w)), height: Math.max(0, Math.round(h)) };
+      const seq = ++session.layoutSeq;
+      const snapshot = isOnScreen(next) ? undefined : await this.snapshot(session);
+      // 截图期间收到更新的布局调用时，本次已过时，不能再把视图移走。
+      if (this.sessions.get(browserId) !== session || seq !== session.layoutSeq) return undefined;
+      session.view.setBounds(next);
       this.syncAudio(session);
       this.applyZoom(session);
       void this.fitWidth(session);
+      return snapshot;
+    }
+    return undefined;
+  }
+
+  /**
+   * 原生视图压在 DOM 之上，弹窗出现时只能隐藏；隐藏前截一张图交给渲染层垫在原位，
+   * 弹窗背后仍是网页画面而不是空白面板。
+   */
+  private async snapshot(session: BrowserSession): Promise<string | undefined> {
+    const contents = session.view.webContents;
+    if (contents.isDestroyed() || session.hidden || !isOnScreen(session.view.getBounds())) return undefined;
+    try {
+      const image = await contents.capturePage();
+      return image.isEmpty() ? undefined : `data:image/jpeg;base64,${image.toJPEG(85).toString("base64")}`;
+    } catch {
+      return undefined;
     }
   }
 
@@ -188,8 +215,7 @@ export class BrowserDockManager {
   private syncAudio(session: BrowserSession): void {
     const contents = session.view.webContents;
     if (contents.isDestroyed()) return;
-    const { x, y, width, height } = session.view.getBounds();
-    contents.setAudioMuted(Boolean(session.hidden) || width <= 0 || height <= 0 || x + width <= 0 || y + height <= 0);
+    contents.setAudioMuted(Boolean(session.hidden) || !isOnScreen(session.view.getBounds()));
   }
 
   /**
@@ -243,13 +269,46 @@ export class BrowserDockManager {
     return false;
   }
 
-  public setVisible(browserId: string, visible: boolean): void {
-    const session = this.sessions.get(browserId);
-    if (session) {
-      session.view.setVisible(visible);
-      session.hidden = !visible;
-      this.syncAudio(session);
+  /** Returns a snapshot of the page when this call hides a shown view. */
+  /**
+   * 弹窗打开时把内置浏览器沉到主界面之下并让主界面透明：渲染层在网页区域挖出透明洞，
+   * 弹窗与半透明遮罩盖在实时网页上；关闭后网页回到顶层、主界面恢复不透明。
+   */
+  public setUnderlay(on: boolean): void {
+    if (this.underlay === on) return;
+    this.underlay = on;
+    const mainWindow = this.getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (on) mainWindow.setHubTransparent(true);
+    for (const session of this.sessions.values()) this.place(mainWindow, session.view);
+    if (!on) mainWindow.setHubTransparent(false);
+  }
+
+  private place(mainWindow: AppWindow, view: WebContentsView): void {
+    const root = mainWindow.contentView;
+    if (!this.underlay) {
+      // 已在子视图里时 addChildView 会把它移到最顶层。
+      root.addChildView(view);
+      return;
     }
+    root.addChildView(view, 0);
+    // 文档只保证已有子视图会被移到顶层，索引被忽略时先摘下再插入。
+    if (root.children.indexOf(view) !== 0) {
+      root.removeChildView(view);
+      root.addChildView(view, 0);
+    }
+  }
+
+  public async setVisible(browserId: string, visible: boolean): Promise<string | undefined> {
+    const session = this.sessions.get(browserId);
+    if (!session) return undefined;
+    const seq = ++session.layoutSeq;
+    const snapshot = visible ? undefined : await this.snapshot(session);
+    if (this.sessions.get(browserId) !== session || seq !== session.layoutSeq) return undefined;
+    session.view.setVisible(visible);
+    session.hidden = !visible;
+    this.syncAudio(session);
+    return snapshot;
   }
 
   public async eval(browserId: string, script: string): Promise<void> {

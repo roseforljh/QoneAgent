@@ -75,6 +75,7 @@ import {
   Loader2Icon,
   TargetIcon,
 } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FC, type RefObject } from "react";
 
 export const Thread: FC<{ children?: ReactNode }> = ({ children }) => {
@@ -292,16 +293,22 @@ const SessionCreatingState: FC = () => {
 
 const EmptyState: FC<{ canChat: boolean; creatingSession: boolean }> = ({ canChat, creatingSession }) => {
   const { t } = useLocale();
+  const reduceMotion = useReducedMotion();
   if (creatingSession) return <SessionCreatingState />;
   return (
-    <div className="flex grow flex-col items-center justify-center px-4 pb-[16vh]">
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.992 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="flex grow flex-col items-center justify-center px-4 pb-[16vh]"
+    >
       <div className="mx-auto flex w-full q-composer-content flex-col items-stretch gap-5">
         {canChat ? <>
           <p className="text-center text-xl leading-7 font-normal text-foreground">{t("chat.welcome")}</p>
           <Composer placeholder={t("chat.placeholder")} />
         </> : <ProjectImportPrompt />}
       </div>
-    </div>
+    </motion.div>
   );
 };
 

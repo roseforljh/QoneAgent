@@ -173,7 +173,7 @@ test("a page that never finishes loading reads as not-ready instead of hanging t
   }
 });
 
-test("a browser the user cannot see stays silent and gets its sound back when shown", () => {
+test("a browser the user cannot see stays silent and gets its sound back when shown", async () => {
   const win = windowStub();
   const dock = new BrowserDockManager(() => win as never, async () => 9222);
   // Background bridge pages open offscreen and must never be audible.
@@ -184,13 +184,47 @@ test("a browser the user cannot see stays silent and gets its sound back when sh
   const tab = [...win.children][1] as FitView & { muted: boolean };
   expect(tab.muted).toBe(false);
   // Switching conversations parks the AI's browser offscreen; it keeps playing but must not be heard.
-  dock.bounds("tab", -32000, -32000, 1280, 720);
+  await dock.bounds("tab", -32000, -32000, 1280, 720);
   expect(tab.muted).toBe(true);
-  dock.bounds("tab", 0, 0, 600, 800);
+  await dock.bounds("tab", 0, 0, 600, 800);
   expect(tab.muted).toBe(false);
-  dock.setVisible("tab", false);
+  await dock.setVisible("tab", false);
   expect(tab.muted).toBe(true);
-  dock.setVisible("tab", true);
+  await dock.setVisible("tab", true);
   expect(tab.muted).toBe(false);
+  dock.closeAll();
+});
+
+test("dialogs sink dock views below a transparent UI and lift them back on close", () => {
+  const children: unknown[] = [];
+  const hub = { id: "hub" };
+  children.push(hub);
+  const transparency: boolean[] = [];
+  const win = {
+    isDestroyed: () => false,
+    setHubTransparent: (on: boolean) => transparency.push(on),
+    contentView: {
+      children,
+      addChildView: (view: unknown, index?: number) => {
+        const at = children.indexOf(view);
+        if (at >= 0) children.splice(at, 1);
+        children.splice(index ?? children.length, 0, view);
+      },
+      removeChildView: (view: unknown) => { const at = children.indexOf(view); if (at >= 0) children.splice(at, 1); },
+    },
+    webContents: { send: () => {} },
+  };
+  const dock = new BrowserDockManager(() => win as never, async () => 9222);
+  void dock.open("tab", "https://example.com", 0, 0, 600, 800);
+  const tab = children[1];
+  expect(children).toEqual([hub, tab]);
+  dock.setUnderlay(true);
+  expect(children).toEqual([tab, hub]);
+  // A view opened while a dialog is up starts below the UI too.
+  void dock.open("late", "https://example.com", 0, 0, 600, 800);
+  expect(children.indexOf(hub)).toBe(2);
+  dock.setUnderlay(false);
+  expect(children[0]).toBe(hub);
+  expect(transparency).toEqual([true, false]);
   dock.closeAll();
 });

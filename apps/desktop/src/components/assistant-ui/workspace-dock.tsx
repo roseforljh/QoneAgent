@@ -31,6 +31,7 @@ import { FadeScroll, mono } from "./elements/surfaces";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
 import { onCloseAgentBrowserInDock, onOpenBrowserInDock, type BrowserDockRequest } from "../../lib/browser-dock";
+import { acquireNativeOverlayLock } from "../../lib/native-underlay";
 import { notifyManagedBrowserClosed } from "../../store/app-bridge";
 import { ServerOperationsPanel } from "./server-operations-panel";
 import { CodexServerIcon } from "./execution-icons";
@@ -122,6 +123,8 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
     for (const tab of openTabsRef.current) if (tab.view === "terminal") closeDockTerminalResource(tab.id);
   }, []);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // 新建窗口菜单盖在右侧栏上，和弹窗一样让内置浏览器沉到主界面之下。
+  useEffect(() => (scopeActive && launcherOpen ? acquireNativeOverlayLock() : undefined), [scopeActive, launcherOpen]);
   useSelectedTextSideChat(sessionId, openTabs, activeTabId, (id) => { setActiveTabId(id); setLauncherOpen(false); setCollapsed(false); });
   useEffect(() => {
     const sessions = Object.values(sideChats).filter((session) => session.sideChat?.parentSessionId === sessionId);
@@ -649,7 +652,7 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
                 <div key={tab.id} className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", active ? "flex flex-col" : "hidden")}>
                   {needsWorkspace && !tabWorkspaceId ? <p className="px-3 py-4 text-sm text-foreground/45">{t("dock.noWorkspace")}</p> : null}
                   {tab.view === "terminal" && (tab.serverId || tabWorkspaceId) && <TerminalView tabId={tab.id} workspaceId={tabWorkspaceId} serverId={tab.serverId} active={active} apiRef={getTerminalApiRef(tab.id)} onStatus={onTerminalStatus} />}
-                  {tab.view === "browser" && <DockBrowserView browserId={tab.browserTarget?.browserId ?? tab.id} agentManaged={Boolean(tab.browserTarget?.agentManaged)} active={active && !launcherOpen && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} onClose={() => void closeTab(tab.id)} />}
+                  {tab.view === "browser" && <DockBrowserView browserId={tab.browserTarget?.browserId ?? tab.id} agentManaged={Boolean(tab.browserTarget?.agentManaged)} active={active && !dragging} initialUrl={tab.browserTarget?.url ?? "https://www.bing.com"} previewHtml={tab.browserTarget?.html} previewId={tab.browserTarget?.requestId} onClose={() => void closeTab(tab.id)} />}
                   {tab.view === "files" && tabWorkspaceId && <FilesView tabId={tab.id} workspaceId={tabWorkspaceId} refreshNonce={tab.refreshNonce ?? 0} fileTarget={tab.fileTarget} active={active} />}
                   {tab.view === "file" && tab.fileTarget && (tab.fileTarget.attachment
                     ? <InlineFileReader target={tab.fileTarget} active={active} refreshNonce={tab.refreshNonce ?? 0} />

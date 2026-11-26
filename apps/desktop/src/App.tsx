@@ -51,6 +51,8 @@ import { sortSidebarSessions, useSidebarPreferences } from "./lib/sidebar-prefer
 import qonePenguinUrl from "./assets/qone-penguin.png";
 import { ChatSearchDialog } from "./components/assistant-ui/chat-search-dialog";
 import { AppChrome } from "./components/app-chrome/AppChrome";
+import { PageTransitionStage } from "./components/app-chrome/PageTransitionStage";
+import { loadBrowserPage, loadSchedulesPage, loadTeamPage, pageTransitionKey } from "./lib/page-transition";
 import { ResizableSidebar } from "./components/assistant-ui/resizable-sidebar";
 import { CollapsedSidebar } from "./components/assistant-ui/collapsed-sidebar";
 import { setThemeSetting, useAppearance } from "./lib/appearance";
@@ -60,8 +62,9 @@ type PendingRun = { text: string; attachments: MessageAttachmentInfo[]; goal?: b
 
 const Thread = lazy(async () => ({ default: (await import("./components/assistant-ui/Thread")).Thread }));
 const SettingsDialog = lazy(async () => ({ default: (await import("./components/settings/SettingsDialog")).SettingsDialog }));
-const BrowserPage = lazy(async () => ({ default: (await import("./components/browser/BrowserPage")).BrowserPage }));
-const SchedulesPage = lazy(async () => ({ default: (await import("./components/schedules/SchedulesPage")).SchedulesPage }));
+const BrowserPage = lazy(async () => ({ default: (await loadBrowserPage()).BrowserPage }));
+const TeamPage = lazy(async () => ({ default: (await loadTeamPage()).TeamPage }));
+const SchedulesPage = lazy(async () => ({ default: (await loadSchedulesPage()).SchedulesPage }));
 
 function ThemeButton() {
   const { t } = useLocale();
@@ -424,21 +427,25 @@ function ChatPageContent({ initialSettingsOpen = false, pendingRun }: { initialS
                 labelClassName="overflow-hidden whitespace-nowrap"
               />
               <Link
-                to="/browser"
-                aria-label={t("browser.title")}
+                to="/teams"
+                aria-label={t("team.title")}
                 data-slot="q-sidebar-app-link"
+                onMouseEnter={() => { void loadTeamPage(); }}
+                onFocus={() => { void loadTeamPage(); }}
                 className={cn(
                   "group hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
                   "w-full",
                 )}
               >
-                <AnimatedSidebarIcon kind="browser" />
-                <span className="overflow-hidden whitespace-nowrap">{t("browser.title")}</span>
+                <AnimatedSidebarIcon kind="team" />
+                <span className="overflow-hidden whitespace-nowrap">{t("team.title")}</span>
               </Link>
               <Link
                 to="/schedules"
                 aria-label={t("schedules.title")}
                 data-slot="q-sidebar-app-link"
+                onMouseEnter={() => { void loadSchedulesPage(); }}
+                onFocus={() => { void loadSchedulesPage(); }}
                 className="group hover:bg-muted text-foreground/95 hover:text-foreground flex h-[30px] w-full items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors"
               >
                 <AnimatedSidebarIcon kind="schedule" />
@@ -558,14 +565,20 @@ export default function App() {
     if (workspaceMatch) { const routeWorkspaceId = decodeURIComponent(workspaceMatch[1]); if (workspaces.some((workspace) => workspace.id === routeWorkspaceId) && currentWorkspaceId !== routeWorkspaceId) selectWorkspace(routeWorkspaceId); }
   }, [pathname, sessions, workspaces, currentSessionId, currentWorkspaceId, selectSession, selectWorkspace]);
 
+  const pageKey = pageTransitionKey(pathname);
+
   return <AppChrome path={pathname}>
-    {pathname === "/browser"
-      ? <Suspense fallback={<ConversationLoadingSkeleton />}><BrowserPage /></Suspense>
-      : pathname === "/schedules"
-      ? <PageLayout title={t("schedules.title")}><Suspense fallback={null}><SchedulesPage /></Suspense></PageLayout>
-      : ["/skills", "/permissions"].includes(pathname)
-      ? <ManagementPanel kind={pathname.slice(1) as "skills" | "permissions"} />
-      : <ChatPage initialSettingsOpen={pathname === "/settings"} />}
+    <PageTransitionStage pageKey={pageKey}>
+      {pageKey === "browser"
+        ? <Suspense fallback={<ConversationLoadingSkeleton />}><BrowserPage /></Suspense>
+        : pageKey === "teams"
+        ? <Suspense fallback={<ConversationLoadingSkeleton />}><TeamPage /></Suspense>
+        : pageKey === "schedules"
+        ? <PageLayout title={t("schedules.title")}><Suspense fallback={null}><SchedulesPage /></Suspense></PageLayout>
+        : pageKey === "skills" || pageKey === "permissions"
+        ? <ManagementPanel kind={pageKey} />
+        : <ChatPage initialSettingsOpen={pathname === "/settings"} />}
+    </PageTransitionStage>
     {/* Every page asks for confirmation through this one host. */}
     <ConfirmationDialogHost />
   </AppChrome>;

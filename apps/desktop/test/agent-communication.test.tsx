@@ -24,10 +24,24 @@ test("structured communication is rendered with sender and receiver instead of a
   const markup = render([converted as ThreadMessage]);
   expect(markup).toContain('data-agent-from="child"');
   expect(markup).toContain('data-agent-to="parent"');
+  expect(markup).toContain("q-thread-content");
   expect(markup).toContain("检查配置");
   expect(markup).toContain("主代理");
   expect(markup).toContain("结果已核验");
   expect(markup).not.toContain("q-user-message-bubble");
+});
+
+test("qone recovery notice renders as a quiet inline system line within thread width", () => {
+  const convert = createMessageConverter();
+  const recovery: AgentCommunicationInfo = { fromId: "qone", fromTitle: "Qone", toId: "s1", toTitle: "当前会话" };
+  const converted = convert({ id: "recover", role: "user", content: "回复过程中 Qone 重启了，已保留完成的步骤并继续执行。", communication: recovery }, {
+    imagePreviews: {}, toolCallsByRun: new Map(), imageWindows: new Map(), childImagesByRun: new Map(), running: false, imageModel: false,
+  });
+  const markup = render([converted as ThreadMessage]);
+  expect(markup).toContain("q-agent-communication-system");
+  expect(markup).toContain("q-thread-content");
+  expect(markup).toContain("回复过程中 Qone 重启了，已保留完成的步骤并继续执行。");
+  expect(markup).not.toContain("q-agent-communication-heading");
 });
 
 test("agent messages survive child transcript conversion without exposing expanded runtime prompts", () => {
