@@ -6,12 +6,14 @@ import { cn } from "../../lib/utils";
 import { FadeScroll } from "./elements/fade-scroll";
 
 export const GenerativeUISurface: FC<{ spec: unknown; embedded?: boolean; running?: boolean }> = ({ spec, embedded = false, running = false }) => (
-  <FadeScroll data-slot="generative-ui-block" data-aui="root" autoScrollToBottom={running} className={cn(
-    "max-h-[46dvh] overflow-auto border border-border/50 p-3",
+  <div data-slot="generative-ui-block" data-aui="root" className={cn(
+    "overflow-hidden border border-border/50",
     embedded ? "rounded-b-xl border-t-0" : "my-3 rounded-xl",
   )}>
-    {renderGenerativeUI(spec, styledGenerativeUILibrary)}
-  </FadeScroll>
+    <FadeScroll autoScrollToBottom={running} className="max-h-[46dvh] overflow-auto overscroll-auto p-3">
+      {renderGenerativeUI(spec, styledGenerativeUILibrary)}
+    </FadeScroll>
+  </div>
 );
 
 export const GenerativeUIBlock: FC<SyntaxHighlighterProps> = ({ code }) => {

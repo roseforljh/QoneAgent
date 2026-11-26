@@ -26,8 +26,6 @@ import type { WorkspaceFileInfo, WorkspaceGitEntry } from "@qone/protocol";
 import { useStore } from "../../store";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { attachmentFileIcon } from "../../lib/attachment-file-kind";
-import { DiffViewer } from "./elements/diff-viewer";
-import { WorkspaceFileContent } from "./workspace-file-content";
 import { DockBrowserView, DockMcpView, DockSkillsView } from "./dock-extra-views";
 import { FadeScroll, mono } from "./elements/surfaces";
 import { cn } from "../../lib/utils";
@@ -682,34 +680,36 @@ export function WorkspaceDock({ scopeKey, scopeActive, sessionId, workspaceId, o
             exit={{ opacity: 0, y: -4, scale: 0.98 }}
             role="menu"
             onPointerDown={(event) => event.stopPropagation()}
-            className="pointer-events-auto z-[1000] max-h-[min(280px,var(--radix-popover-content-available-height))] w-56 max-w-[var(--radix-popover-content-available-width)] overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-popover p-1.5 shadow-2xl"
+            className="pointer-events-auto z-[1000] flex max-h-[min(280px,var(--radix-popover-content-available-height))] w-56 max-w-[var(--radix-popover-content-available-width)] flex-col overflow-hidden rounded-xl border border-border/60 bg-popover shadow-2xl"
             style={{ transformOrigin: "var(--radix-popover-content-transform-origin)" }}
           >
-            <p className="px-2.5 pb-1.5 pt-1 text-xs font-medium text-foreground/40">{t("dock.openWindow")}</p>
-            {([
-              { view: "terminal", icon: SquareTerminalIcon, label: t("dock.terminal"), detail: t("dock.terminalDescription") },
-              { view: "browser", icon: GlobeIcon, label: t("dock.browser"), detail: t("dock.browserDescription") },
-              { view: "files", icon: FolderTreeIcon, label: t("dock.files"), detail: t("dock.filesDescription") },
-              { view: "git", icon: GitBranchIcon, label: t("dock.git"), detail: t("dock.gitDescription") },
-              { view: "mcp", icon: PlugIcon, label: t("dock.mcp"), detail: t("dock.mcpDescription") },
-              { view: "skills", icon: WandSparklesIcon, label: t("dock.skills"), detail: t("dock.skillsDescription") },
-              { view: "subagents", icon: BotMessageSquareIcon, label: t("nav.subagents"), detail: t("dock.subagentsDescription") },
-              { view: "servers", icon: CodexServerIcon, label: t("servers.title"), detail: t("servers.view.operations") },
-            ] as const).map(({ view: name, icon: Icon, label, detail }) => (
-              <button
-                key={name}
-                type="button"
-                role="menuitem"
-                onClick={() => openTab(name)}
-                className="pointer-events-auto flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-start transition-colors hover:bg-foreground/[0.07]"
-              >
-                <Icon className="size-4 shrink-0 text-foreground/55" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[12.5px] text-foreground/85">{label}</span>
-                  <span className="block truncate text-[10.5px] text-foreground/40">{detail}</span>
-                </span>
-              </button>
-            ))}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5">
+              <p className="px-2.5 pb-1.5 pt-1 text-xs font-medium text-foreground/40">{t("dock.openWindow")}</p>
+              {([
+                { view: "terminal", icon: SquareTerminalIcon, label: t("dock.terminal"), detail: t("dock.terminalDescription") },
+                { view: "browser", icon: GlobeIcon, label: t("dock.browser"), detail: t("dock.browserDescription") },
+                { view: "files", icon: FolderTreeIcon, label: t("dock.files"), detail: t("dock.filesDescription") },
+                { view: "git", icon: GitBranchIcon, label: t("dock.git"), detail: t("dock.gitDescription") },
+                { view: "mcp", icon: PlugIcon, label: t("dock.mcp"), detail: t("dock.mcpDescription") },
+                { view: "skills", icon: WandSparklesIcon, label: t("dock.skills"), detail: t("dock.skillsDescription") },
+                { view: "subagents", icon: BotMessageSquareIcon, label: t("nav.subagents"), detail: t("dock.subagentsDescription") },
+                { view: "servers", icon: CodexServerIcon, label: t("servers.title"), detail: t("servers.view.operations") },
+              ] as const).map(({ view: name, icon: Icon, label, detail }) => (
+                <button
+                  key={name}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => openTab(name)}
+                  className="pointer-events-auto flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-start transition-colors hover:bg-foreground/[0.07]"
+                >
+                  <Icon className="size-4 shrink-0 text-foreground/55" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[12.5px] text-foreground/85">{label}</span>
+                    <span className="block truncate text-[10.5px] text-foreground/40">{detail}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
           </motion.div>
         </Popover.Content>
       </Popover.Portal>

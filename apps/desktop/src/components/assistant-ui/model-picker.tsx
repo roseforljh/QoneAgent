@@ -16,13 +16,25 @@ import { ThinkingWave } from "./run-options-popover";
 import { Skeleton } from "../ui/skeleton";
 import "./model-picker.css";
 
-export const ModelPicker: FC = () => {
+/** Drives the picker from the caller instead of the conversation, e.g. a scheduled task's own model. */
+export interface ModelPickerControl {
+  modelId?: string;
+  thinkingByModel?: Record<string, ThinkingLevel>;
+  setModel(id: string): void;
+  setThinking(id: string, level: ThinkingLevel): void;
+}
+
+export const ModelPicker: FC<{ control?: ModelPickerControl }> = ({ control }) => {
   const modelConfigs = useConversationStore((s) => s.modelConfigs);
   const modelConfigsLoaded = useConversationStore((s) => s.modelConfigsLoaded);
-  const selectedModelId = useConversationStore((s) => s.selectedModelId);
-  const setSelectedModel = useConversationStore((s) => s.setSelectedModel);
-  const runOptions = useConversationStore((s) => s.currentSessionId ? s.runOptionsBySession[s.currentSessionId] : s.draftRunOptions);
-  const setThinking = useConversationStore((s) => s.setRunThinking);
+  const sessionModelId = useConversationStore((s) => s.selectedModelId);
+  const setSessionModel = useConversationStore((s) => s.setSelectedModel);
+  const sessionRunOptions = useConversationStore((s) => s.currentSessionId ? s.runOptionsBySession[s.currentSessionId] : s.draftRunOptions);
+  const setSessionThinking = useConversationStore((s) => s.setRunThinking);
+  const selectedModelId = control ? control.modelId : sessionModelId;
+  const setSelectedModel = control ? control.setModel : setSessionModel;
+  const runOptions = control ? { thinkingByModel: control.thinkingByModel } : sessionRunOptions;
+  const setThinking = control ? control.setThinking : setSessionThinking;
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"simple" | "advanced">("simple");

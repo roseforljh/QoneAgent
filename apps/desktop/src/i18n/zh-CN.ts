@@ -966,6 +966,7 @@ export const zh = {
   "chat.queueEdit": "编辑",
   "chat.queueMore": "排队消息操作",
   "chat.queueEditDraftBlocked": "输入框里还有未发送的内容，请先发送或清空后再编辑待发送消息",
+  "chat.editMessageDraftBlocked": "输入框里还有未发送的内容，请先发送或清空后再编辑消息",
   "chat.conversationMapLabel": "会话消息导航",
   "chat.conversationMapJump": "跳转到第 {position} 条用户消息",
   "chat.conversationMapJumpBookmarked": "跳转到第 {position} 条用户消息，已加书签",

@@ -10,7 +10,6 @@ import annotationIcon from "../../assets/codex-icons/text-bubble-light-16.svg";
 import { File } from "./elements/file";
 import { UserImageThumbnail } from "./elements/user-image-thumbnail";
 import { UserMessageActions } from "./message-actions";
-import { UserMessageEditComposer } from "./user-message-edit";
 import { MarkdownText } from "./markdown-text";
 import { MarkdownLink } from "./markdown-link";
 import { InlineQuoteChip } from "./composer-quote";
@@ -113,33 +112,27 @@ function UserMessageAnnotation() {
 }
 
 export const UserMessage = memo(function UserMessage() {
-  const editing = useAuiState((state) => state.message.composer.isEditing);
   const communication = useAgentCommunication();
   if (communication) return <AgentCommunication communication={communication} />;
   return (
     <MessagePrimitive.Root className="q-message-root q-message-user q-user-message-group relative mx-auto flex w-full q-thread-content flex-col items-end gap-1">
-      {editing ? <UserMessageEditComposer /> : <>
-        <UserMessageAnnotation />
-        <UserMessageAttachments />
-        <UserMessageText />
-        <div className="q-user-message-action-slot"><UserMessageActions /></div>
-      </>}
+      <UserMessageAnnotation />
+      <UserMessageAttachments />
+      <UserMessageText />
+      <div className="q-user-message-action-slot"><UserMessageActions /></div>
     </MessagePrimitive.Root>
   );
 });
 
 export function UserMessageContent() {
-  const editing = useAuiState((state) => state.message.composer.isEditing);
   const communication = useAgentCommunication();
   if (communication) return <AgentCommunication communication={communication} />;
   return (
     // The top-anchor measures this root; keep the attachment and bubble in it.
     <MessagePrimitive.Root className="q-message-root q-message-user relative flex w-full flex-col items-end gap-1 self-end">
-      {editing ? <UserMessageEditComposer /> : <>
-        <UserMessageAnnotation />
-        <UserMessageAttachments />
-        <UserMessageText paired />
-      </>}
+      <UserMessageAnnotation />
+      <UserMessageAttachments />
+      <UserMessageText paired />
     </MessagePrimitive.Root>
   );
 }

@@ -26,8 +26,9 @@ const HISTORY_LIMIT = 30;
 const runStatus = (status: string): ScheduleRunStatus => ACTIVE.has(status) ? "running" : status as ScheduleRunStatus;
 
 /**
- * Runs saved prompts on a clock. Each task owns one conversation; every run is
- * appended to it, so results stay in one place and the sidebar does not fill
+ * Runs saved prompts on a clock. Each task appends every run to one
+ * conversation: the one it is bound to, or its own created on the first run, so
+ * results stay in one place and the sidebar does not fill
  * up. A due task whose conversation is still busy stays due and starts on a
  * later tick. Missed runs while Qone was closed fire once on the next start.
  */
@@ -95,14 +96,13 @@ export class ScheduleService {
     }
     const { id: requestedId, ...fields } = cmd.schedule;
     if (!this.deps.workspaces.get(fields.workspaceId)) throw runtimeError("schedule.workspace_missing");
+    if (fields.sessionId && this.deps.sessions.get(fields.sessionId)?.workspaceId !== fields.workspaceId) throw runtimeError("schedule.session_missing");
     const list = this.list();
     const existing = requestedId ? list.find((item) => item.id === requestedId) : undefined;
     if (requestedId && !existing) throw runtimeError("schedule.not_found");
     const now = Date.now();
     const saved: ScheduleInfo = {
       id: existing?.id ?? crypto.randomUUID(),
-      // Moving a task to another project starts a conversation there.
-      sessionId: existing?.workspaceId === fields.workspaceId ? existing.sessionId : undefined,
       lastRunAt: existing?.lastRunAt,
       lastRunId: existing?.lastRunId,
       createdAt: existing?.createdAt ?? now,

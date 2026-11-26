@@ -31,7 +31,7 @@ import { runtimeEvents } from "./lib/runtime-event-payload";
 import { douyinRequests, releaseAllAppOpenCliRequests, releaseAppOpenCliRequest, serveDouyinBridgeRequest, serveAppOpenCliRequest } from "./store/app-bridge";
 import { restoreProviderProfilesFromModelConfigs } from "./lib/model-picker-data";
 import { settleModelConfigSave } from "./lib/model-config-save";
-import { handleFeatureEvent } from "./store/feature-events";
+import { handleFeatureEvent, resetFeatureRequests } from "./store/feature-events";
 function subagentChange(state: AgentState, subagents: AgentState["subagents"], trackActivity: boolean): Partial<AgentState> {
   return subagents === state.subagents ? state : { subagents, ...(trackActivity ? subagentActivity(state, subagents) : {}) };
 }
@@ -80,8 +80,7 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
       disconnectClaudeSync();
       disconnectFilePreviews();
       for (const request of metadataRequests.values()) request.reject(new Error(t("error.runtimeExited")));
-      resetMemoryRequests();
-      resetExecutionStatsRequests();
+      resetMemoryRequests(); resetExecutionStatsRequests(); resetFeatureRequests();
       useStore.setState((st) => {
         const userMessage = lastUserTurn(st.messages);
         return {

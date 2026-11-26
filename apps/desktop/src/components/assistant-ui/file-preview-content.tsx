@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { FilePreviewInfo } from "@qone/protocol";
 import type { DockFileTarget } from "../../lib/dock-state";
 import { useLocalFilePreview } from "../../lib/local-file-preview";
@@ -12,7 +12,7 @@ import { WorkspaceFileContent } from "./workspace-file-content";
 import { MarkdownDocument } from "./markdown-document";
 import { OfficePreview } from "./office-preview";
 
-export function FilePreviewContent({ file, source, target, active, revision, relativePath, resourceUrl }: {
+export const FilePreviewContent = memo(function FilePreviewContent({ file, source, target, active, revision, relativePath, resourceUrl }: {
   file: FilePreviewInfo; source: boolean; target: DockFileTarget; active: boolean; revision: string; relativePath?: string; resourceUrl?: string;
 }) {
   const { t } = useLocale();
@@ -45,4 +45,4 @@ export function FilePreviewContent({ file, source, target, active, revision, rel
     {file.kind === "video" && <video ref={videoRef} src={preview.url} controls playsInline preload="metadata" className="max-h-full max-w-full" onError={fail} />}
     {file.kind === "audio" && <audio ref={audioRef} src={preview.url} controls preload="metadata" className="w-full max-w-lg" onError={fail} />}
   </div>;
-}
+});

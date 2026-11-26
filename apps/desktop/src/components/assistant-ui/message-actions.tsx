@@ -1,4 +1,9 @@
-import { ActionBarPrimitive, useAuiState } from "@assistant-ui/react";
+import type { MouseEvent } from "react";
+import { ActionBarPrimitive, useAui, useAuiState } from "@assistant-ui/react";
+import { useConversationStore } from "../../lib/conversation-context";
+import { getDraftComposer } from "../../lib/composer-draft-runtime";
+import { returnUserMessageToComposer } from "../../lib/user-message-edit";
+import { useStore } from "../../store";
 import { useLocale } from "../../localization";
 import { CodexIcon } from "../ui/CodexIcon";
 import { TooltipIconButton } from "./tooltip-icon-button";
@@ -25,9 +30,11 @@ function MessageCopyAction() {
 }
 
 export function UserMessageActions() {
+  const aui = useAui();
   const { t } = useLocale();
+  const sessionId = useConversationStore((state) => state.currentSessionId);
+  const compacting = useConversationStore((state) => Boolean(state.currentSessionId && state.compactionStatuses[state.currentSessionId]));
   const messageId = useAuiState((state) => state.message.id);
-  const editing = useAuiState((state) => state.message.composer.isEditing);
   // An agent-to-agent message is stored as a user turn but is not the person's
   // prompt: it must not receive edit/retry, and it must not shadow the real
   // last user turn that those actions target.
@@ -45,16 +52,45 @@ export function UserMessageActions() {
   const hasText = useAuiState((state) => state.message.parts.some(
     (part) => part.type === "text" && part.text.trim().length > 0,
   ));
-  if (!hasText || editing || agentCommunication) return null;
-  const canEdit = !running && isLastUserMessage && editCapability;
+  const hasAttachments = useAuiState((state) => state.message.parts.some(
+    (part) => part.type === "file" || part.type === "image",
+  ));
+  const canEdit = !running && !compacting && isLastUserMessage && editCapability && (hasText || hasAttachments);
+  if ((!hasText && !canEdit) || agentCommunication) return null;
+
+  const handleEdit = (event: MouseEvent<HTMLButtonElement>) => {
+    if (!sessionId) return;
+    const thread = aui.thread().__internal_getRuntime?.();
+    if (!thread) return;
+    const threadEl = event.currentTarget.closest<HTMLElement>(".aui-thread-root");
+    void returnUserMessageToComposer({
+      sessionId,
+      messageId,
+      composer: getDraftComposer({ thread }),
+      isActive: () => useStore.getState().currentSessionId === sessionId || Boolean(useStore.getState().sideChats[sessionId]),
+      focusComposer: () => {
+        requestAnimationFrame(() => {
+          if (!threadEl?.isConnected) return;
+          threadEl.querySelector<HTMLElement>(".aui-lexical-input")?.focus();
+        });
+      },
+      goalLabel: t("composer.toolGoal"),
+    });
+  };
+
   return (
     <ActionBarPrimitive.Root autohide="never" className="q-message-actions q-user-message-actions">
-      <MessageCopyAction />
-      {canEdit && <ActionBarPrimitive.Edit asChild>
-          <TooltipIconButton tooltip={t("chat.editMessage")} side="top" className="q-message-action-button">
-            <CodexIcon src={editIcon} className="q-message-action-icon" />
-          </TooltipIconButton>
-        </ActionBarPrimitive.Edit>}
+      {hasText && <MessageCopyAction />}
+      {canEdit && (
+        <TooltipIconButton
+          tooltip={t("chat.editMessage")}
+          side="top"
+          className="q-message-action-button"
+          onClick={handleEdit}
+        >
+          <CodexIcon src={editIcon} className="q-message-action-icon" />
+        </TooltipIconButton>
+      )}
     </ActionBarPrimitive.Root>
   );
 }

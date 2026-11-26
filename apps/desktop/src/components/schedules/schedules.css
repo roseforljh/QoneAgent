@@ -36,7 +36,17 @@
 .schedule-prompt { min-height: 96px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: var(--background); color: var(--foreground); font: inherit; font-size: 13px; line-height: 1.55; resize: vertical; transition: border-color .15s ease, box-shadow .15s ease; }
 .schedule-prompt:focus { border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent); }
 .schedule-time { align-self: flex-start; }
-.schedule-time input { min-width: 140px; color-scheme: light dark; }
+.schedule-time.qone-select { width: 140px; }
+.schedule-time-field { padding: 0 4px 0 10px; cursor: text; }
+.schedule-time-field:focus-within { border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent); }
+.schedule-time-field input, .schedule-time-field input:focus-visible { min-width: 0; flex: 1; height: 100%; padding: 0; border: 0 !important; outline: 0 !important; box-shadow: none !important; background: transparent; color: var(--foreground); font: inherit; font-variant-numeric: tabular-nums; }
+.schedule-time-field button { display: grid; width: 24px; height: 24px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+.schedule-time-field button:hover { background: var(--q-hover); }
+.schedule-time-menu { flex-direction: row; gap: 4px; width: 140px; min-width: 0; height: 220px; overflow: hidden; }
+.schedule-time-column { display: flex; flex: 1; flex-direction: column; gap: 2px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.schedule-time-column::-webkit-scrollbar { display: none; }
+.schedule-time-column .qone-select-option { justify-content: center; min-height: 30px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.schedule-time input[type="datetime-local"] { min-width: 140px; color-scheme: light dark; }
 .schedule-days { display: flex; flex-wrap: wrap; gap: 6px; }
 .schedule-days button { height: 28px; min-width: 44px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--q-surface); color: var(--muted-foreground); font-size: 12px; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease, transform .1s ease; }
 .schedule-days button:active { transform: translateY(1px); }

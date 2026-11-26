@@ -1,8 +1,42 @@
 import { translateCurrent as t } from "../localization";
-import type { AppendMessage } from "@assistant-ui/react";
+import type { AppendMessage, CompleteAttachment } from "@assistant-ui/react";
 import type { MessageAttachmentInfo } from "@qone/protocol";
-import { INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo, type NativeAttachmentFile } from "./native-attachment-file";
+import { createNativeAttachmentFile, INLINE_ATTACHMENT_LIMIT_BYTES, isAudioVideo, type NativeAttachmentFile } from "./native-attachment-file";
 import { localAttachmentTypeFromMetadata, localPathFromFileMetadata } from "./message-file-preview";
+
+export function fileFromDataUrl(name: string, mimeType: string, data: string): File | undefined {
+  const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(data);
+  if (!match || typeof atob !== "function" || typeof File !== "function") return undefined;
+  try {
+    const binary = atob(match[1]!);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return new File([bytes], name, { type: mimeType });
+  } catch {
+    return undefined;
+  }
+}
+
+/** 将协议附件还原为输入框可编辑、可预览、可直接重发的 CompleteAttachment。 */
+export function attachmentsFromMessageInfo(attachments?: readonly MessageAttachmentInfo[]): CompleteAttachment[] {
+  return (attachments ?? []).map((attachment) => {
+    const file = attachment.localPath
+      ? createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0, attachment.type === "folder")
+      : attachment.data
+        ? fileFromDataUrl(attachment.name, attachment.mimeType, attachment.data)
+        : undefined;
+    return {
+      id: crypto.randomUUID(),
+      type: attachment.type === "folder" ? "file" : attachment.type,
+      name: attachment.name,
+      contentType: attachment.mimeType,
+      file,
+      status: { type: "complete" as const },
+      content: attachment.type === "image"
+        ? [{ type: "image" as const, image: attachment.data, filename: attachment.name }]
+        : [{ type: "file" as const, data: attachment.data, filename: attachment.name, mimeType: attachment.mimeType }],
+    };
+  });
+}
 
 const MAX_DATA_LENGTH = 70_000_000;
 const MAX_TOTAL_DATA_LENGTH = 140_000_000;

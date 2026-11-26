@@ -1,13 +1,20 @@
 import { useLocale } from "../../../localization";
 "use client";
 
-import { type ComponentProps, type CSSProperties, useMemo } from "react";
+import { type ComponentProps, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
 import { cva, type VariantProps } from "class-variance-authority";
 import { createTwoFilesPatch } from "diff";
 import parseDiff from "parse-diff";
-import { useShikiHighlighter } from "react-shiki";
 
+import {
+  DEFAULT_HIGHLIGHT_THEMES,
+  getCachedHighlight,
+  isPlainHighlightLanguage,
+  renderHighlightLine,
+  requestHighlight,
+  type HighlightLine,
+} from "../../../lib/shiki-highlight";
 import { cn } from "../../../lib/utils";
 
 type DiffLineType = "add" | "del" | "normal" | "skip";
@@ -287,12 +294,14 @@ interface DiffViewerLineProps extends ComponentProps<"div"> {
   line: ParsedLine;
   showLineNumbers?: boolean;
   language?: string;
+  tokens?: HighlightLine;
 }
 
 function DiffViewerLine({
   line,
   showLineNumbers = true,
-  language,
+  language: _language,
+  tokens,
   className,
   ...props
 }: DiffViewerLineProps) {
@@ -332,35 +341,26 @@ function DiffViewerLine({
         data-slot="diff-viewer-content"
         className="flex-1 pe-3.5 break-all whitespace-pre-wrap"
       >
-        {line.type === "skip" ? "" : <HighlightedDiffText code={line.content} language={language} />}
+        {line.type === "skip" ? "" : renderHighlightLine(tokens, line.content)}
       </span>
     </div>
   );
-}
-
-function HighlightedDiffText({ code, language }: { code: string; language: string | undefined }) {
-  const tokens = useShikiHighlighter(
-    code || " ",
-    language ?? "text",
-    { dark: "github-dark-default", light: "github-light-default" },
-    { defaultColor: "light-dark()", engine: "javascript", outputFormat: "tokens" },
-  );
-  if (!tokens) return code;
-  return tokens.tokens.flatMap((line, lineIndex) => line.map((token, tokenIndex) => (
-    <span key={`${lineIndex}:${tokenIndex}`} style={token.htmlStyle as CSSProperties}>{token.content}</span>
-  )));
 }
 
 interface DiffViewerSplitLineProps extends ComponentProps<"div"> {
   pair: SplitLinePair;
   showLineNumbers?: boolean;
   language?: string;
+  leftTokens?: HighlightLine;
+  rightTokens?: HighlightLine;
 }
 
 function DiffViewerSplitLine({
   pair,
   showLineNumbers = true,
-  language,
+  language: _language,
+  leftTokens,
+  rightTokens,
   className,
   ...props
 }: DiffViewerSplitLineProps) {
@@ -394,7 +394,7 @@ function DiffViewerSplitLine({
           {left ? (left.type === "skip" ? "…" : left.type === "del" ? "-" : " ") : ""}
         </span>
         <span className="flex-1 pe-3.5 break-all whitespace-pre-wrap">
-          {left && left.type !== "skip" ? <HighlightedDiffText code={left.content} language={language} /> : ""}
+          {left && left.type !== "skip" ? renderHighlightLine(leftTokens, left.content) : ""}
         </span>
       </div>
       <div
@@ -419,12 +419,158 @@ function DiffViewerSplitLine({
           {right ? (right.type === "skip" ? "…" : right.type === "add" ? "+" : " ") : ""}
         </span>
         <span className="flex-1 pe-3.5 break-all whitespace-pre-wrap">
-          {right && right.type !== "skip" ? <HighlightedDiffText code={right.content} language={language} /> : ""}
+          {right && right.type !== "skip" ? renderHighlightLine(rightTokens, right.content) : ""}
         </span>
       </div>
     </div>
   );
 }
+
+const DIFF_CHUNK_SIZE = 50;
+
+/** 按文件整体在 Shiki Worker 中分块高亮，避免为每一行单独注册 hook 导致 N 倍阻塞 */
+function useDiffFileTokens(lines: readonly ParsedLine[], language: string | undefined): ReadonlyMap<ParsedLine, HighlightLine> | undefined {
+  const lang = language ?? "text";
+  const rawLines = useMemo(() => lines.map((line) => (line.type === "skip" ? "" : line.content)), [lines]);
+  const joinedCode = useMemo(() => (isPlainHighlightLanguage(lang) ? "" : rawLines.join("\n")), [lang, rawLines]);
+  const cached = useMemo(
+    () => (joinedCode ? getCachedHighlight(joinedCode, lang, DEFAULT_HIGHLIGHT_THEMES) : undefined),
+    [joinedCode, lang],
+  );
+  const key = `${lang}\0${joinedCode}`;
+  const bufferRef = useRef<{ key: string; lines: (HighlightLine | undefined)[] }>({
+    key,
+    lines: cached ? [...cached] : [],
+  });
+  if (bufferRef.current.key !== key) {
+    bufferRef.current = { key, lines: cached ? [...cached] : [] };
+  }
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    if (cached || !joinedCode || isPlainHighlightLanguage(lang)) return;
+    const buffer = bufferRef.current;
+    return requestHighlight({
+      code: joinedCode,
+      lines: rawLines,
+      language: lang,
+      themes: DEFAULT_HIGHLIGHT_THEMES,
+      onChunk: (startLine, chunkLines) => {
+        if (bufferRef.current !== buffer) return;
+        for (let i = 0; i < chunkLines.length; i++) {
+          buffer.lines[startLine + i] = chunkLines[i];
+        }
+        setVersion((v) => v + 1);
+      },
+    });
+  }, [cached, joinedCode, lang, rawLines]);
+
+  return useMemo(() => {
+    const source = cached ?? bufferRef.current.lines;
+    if (!source.length) return undefined;
+    const map = new Map<ParsedLine, HighlightLine>();
+    for (let i = 0; i < lines.length; i++) {
+      const tokenLine = source[i];
+      if (tokenLine) map.set(lines[i]!, tokenLine);
+    }
+    return map;
+    // version 用于触发分块到达后的 Map 重建
+  }, [cached, lines, version]);
+}
+
+const DiffViewerFileSection = memo(function DiffViewerFileSection({
+  file,
+  splitPairs,
+  viewMode,
+  showHeader,
+  showIcon,
+  showStats,
+  showLineNumbers,
+  language,
+}: {
+  file: ParsedFile;
+  splitPairs: SplitLinePair[];
+  viewMode: "split" | "unified";
+  showHeader: boolean;
+  showIcon: boolean;
+  showStats: boolean;
+  showLineNumbers: boolean;
+  language?: string;
+}) {
+  const tokenMap = useDiffFileTokens(file.lines, language);
+  const items = viewMode === "split" ? splitPairs : file.lines;
+  const chunked = items.length > 80;
+
+  return (
+    <div
+      data-slot="diff-viewer-file"
+      className="border-foreground/10 [contain-intrinsic-size:auto_240px] [content-visibility:auto] not-first:border-t"
+    >
+      {showHeader && <DiffViewerHeader
+        oldName={file.oldName}
+        newName={file.newName}
+        additions={file.additions}
+        deletions={file.deletions}
+        showIcon={showIcon}
+        showStats={showStats}
+      />}
+      <div data-slot="diff-viewer-content" className="overflow-x-auto py-2">
+        {!chunked
+          ? (viewMode === "split"
+              ? splitPairs.map((pair, pairIndex) => (
+                  <DiffViewerSplitLine
+                    key={pairIndex}
+                    pair={pair}
+                    showLineNumbers={showLineNumbers}
+                    language={language}
+                    leftTokens={pair.left ? tokenMap?.get(pair.left) : undefined}
+                    rightTokens={pair.right ? tokenMap?.get(pair.right) : undefined}
+                  />
+                ))
+              : file.lines.map((line, lineIndex) => (
+                  <DiffViewerLine
+                    key={lineIndex}
+                    line={line}
+                    showLineNumbers={showLineNumbers}
+                    language={language}
+                    tokens={tokenMap?.get(line)}
+                  />
+                )))
+          : Array.from({ length: Math.ceil(items.length / DIFF_CHUNK_SIZE) }, (_, chunkIndex) => {
+              const start = chunkIndex * DIFF_CHUNK_SIZE;
+              const end = Math.min(items.length, start + DIFF_CHUNK_SIZE);
+              return (
+                <div
+                  key={chunkIndex}
+                  className="[contain-intrinsic-size:auto_1000px] [content-visibility:auto]"
+                >
+                  {viewMode === "split"
+                    ? splitPairs.slice(start, end).map((pair, offset) => (
+                        <DiffViewerSplitLine
+                          key={start + offset}
+                          pair={pair}
+                          showLineNumbers={showLineNumbers}
+                          language={language}
+                          leftTokens={pair.left ? tokenMap?.get(pair.left) : undefined}
+                          rightTokens={pair.right ? tokenMap?.get(pair.right) : undefined}
+                        />
+                      ))
+                    : file.lines.slice(start, end).map((line, offset) => (
+                        <DiffViewerLine
+                          key={start + offset}
+                          line={line}
+                          showLineNumbers={showLineNumbers}
+                          language={language}
+                          tokens={tokenMap?.get(line)}
+                        />
+                      ))}
+                </div>
+              );
+            })}
+      </div>
+    </div>
+  );
+});
 
 export type DiffViewerProps = Partial<SyntaxHighlighterProps> &
   VariantProps<typeof diffViewerVariants> & {
@@ -510,39 +656,17 @@ function DiffViewer({
       className={cn(diffViewerVariants({ variant, size }), className)}
     >
       {parsedFiles.map((file, fileIndex) => (
-        <div
+        <DiffViewerFileSection
           key={fileIndex}
-          data-slot="diff-viewer-file"
-          className="border-foreground/10 [contain-intrinsic-size:auto_240px] [content-visibility:auto] not-first:border-t"
-        >
-          {showHeader && <DiffViewerHeader
-            oldName={file.oldName}
-            newName={file.newName}
-            additions={file.additions}
-            deletions={file.deletions}
-            showIcon={showIcon}
-            showStats={showStats}
-          />}
-          <div data-slot="diff-viewer-content" className="overflow-x-auto py-2">
-            {viewMode === "split"
-              ? (splitLinePairs[fileIndex] ?? []).map((pair, pairIndex) => (
-                  <DiffViewerSplitLine
-                    key={pairIndex}
-                    pair={pair}
-                    showLineNumbers={showLineNumbers}
-                    language={language}
-                  />
-                ))
-              : file.lines.map((line, lineIndex) => (
-                  <DiffViewerLine
-                    key={lineIndex}
-                    line={line}
-                    showLineNumbers={showLineNumbers}
-                    language={language}
-                  />
-                ))}
-          </div>
-        </div>
+          file={file}
+          splitPairs={splitLinePairs[fileIndex] ?? []}
+          viewMode={viewMode}
+          showHeader={showHeader}
+          showIcon={showIcon}
+          showStats={showStats}
+          showLineNumbers={showLineNumbers}
+          language={language}
+        />
       ))}
     </div>
   );

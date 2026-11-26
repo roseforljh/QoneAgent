@@ -7,6 +7,7 @@ import { readFilePreview } from "./file-preview.js";
 import { subagentInfo } from "./subagent-runner.js";
 import { generatedSessionTitle, provisionalSessionTitle } from "./session-title.js";
 import { artifactInfo } from "./file-delivery.js";
+import { sessionHasActiveRun, truncateSessionFromMessage } from "./runtime-commands.js";
 import type { runtimeCommandServices } from "./index.js";
 
 export async function handleSessionCommand(cmd: RuntimeCommand, services: ReturnType<typeof runtimeCommandServices>): Promise<boolean> {
@@ -50,6 +51,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
           "subagents.v1",
           "subagent.notifications",
           "session.snapshot",
+          "session.truncate",
         ],
       });
       // A reloaded window gets the questions MCP servers are still waiting on.
@@ -179,6 +181,46 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
           services.log.warn("failed to remove deleted session resources", { sessionId: cmd.sessionId, error: String(error) }));
       }
       services.send({ type: "pong", requestId: cmd.requestId });
+      return true;
+    }
+
+    case "session.truncate": {
+      if (sessionHasActiveRun(services, cmd.sessionId)) {
+        services.send({ type: "error", requestId: cmd.requestId, message: "session already has an active run" });
+        return true;
+      }
+      services.startingRunSessions.add(cmd.sessionId);
+      try {
+        const { index, removed, kept } = await truncateSessionFromMessage(services, cmd.sessionId, cmd.messageId);
+        if (index === 0) services.titleControllers.get(cmd.sessionId)?.abort();
+        const goal = services.goalRepo.getBySession(cmd.sessionId);
+        const clearedGoal = goal && removed.some((message) => message.goalId === goal.id)
+          && !kept.some((message) => message.goalId === goal.id)
+          ? goal : undefined;
+        if (clearedGoal) {
+          const timer = services.goalContinuationTimers.get(cmd.sessionId);
+          if (timer) { clearTimeout(timer); services.goalContinuationTimers.delete(cmd.sessionId); }
+          services.goalRepo.deleteForSession(cmd.sessionId);
+        }
+        const events: RuntimeEvent[] = [];
+        const batchServices = { ...services, send: (event: RuntimeEvent) => { events.push(event); } };
+        services.sendMessages(cmd.sessionId, undefined, batchServices.send);
+        if (clearedGoal) events.push({ type: "goal.cleared", sessionId: cmd.sessionId, goalId: clearedGoal.id });
+        const refreshes: RuntimeCommand[] = [
+          { type: "session.runs", requestId: cmd.requestId, sessionId: cmd.sessionId },
+          { type: "session.toolCalls", requestId: cmd.requestId, sessionId: cmd.sessionId },
+          { type: "session.subagents", requestId: cmd.requestId, sessionId: cmd.sessionId },
+          { type: "session.subagentNotifications", requestId: cmd.requestId, sessionId: cmd.sessionId },
+          { type: "artifact.list", requestId: cmd.requestId, sessionId: cmd.sessionId },
+        ];
+        await Promise.all(refreshes.map((request) => handleSessionCommand(request, batchServices)));
+        events.push({ type: "pong", requestId: cmd.requestId });
+        services.sendBatch(events);
+      } catch (error) {
+        services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
+      } finally {
+        services.startingRunSessions.delete(cmd.sessionId);
+      }
       return true;
     }
 

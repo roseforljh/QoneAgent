@@ -67,38 +67,6 @@
   display: none;
 }
 
-@property --q-queue-top-fade {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-
-@property --q-queue-bottom-fade {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-
-/* The timeline is inactive without overflow, leaving short queues unmasked. */
-@supports (animation-timeline: scroll(self y)) {
-  .q-composer-queue {
-    mask-image: linear-gradient(to bottom, transparent, black var(--q-queue-top-fade) calc(100% - var(--q-queue-bottom-fade)), transparent);
-    animation: q-queue-edge-fade linear both;
-    animation-timeline: scroll(self y);
-  }
-}
-
-@keyframes q-queue-edge-fade {
-  0%, 1% {
-    --q-queue-top-fade: 0px;
-    --q-queue-bottom-fade: 1rem;
-  }
-  99%, 100% {
-    --q-queue-top-fade: 1rem;
-    --q-queue-bottom-fade: 0px;
-  }
-}
-
 .q-composer-queue-actions > button {
   flex: none;
 }

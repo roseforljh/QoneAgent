@@ -15,7 +15,8 @@ import "./composer-tools.css";
 type ToolIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 export type ComposerTool = { id: ComposerToolId | "compact" | "servers"; label: string; description: string; icon: ToolIcon };
 
-export const composerSuggestionsClass = "q-composer-suggestions flex flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border/60 bg-background p-1 text-sm dark:bg-popover";
+export const composerSuggestionsClass = "q-composer-suggestions flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-background text-sm dark:bg-popover";
+export const composerSuggestionsListClass = "q-composer-suggestions-list flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-1";
 
 export function useComposerTools(): ComposerTool[] {
   const { t } = useLocale();
@@ -109,10 +110,12 @@ export const ComposerToolsPopover: FC<{
     <Menu.Portal>
       <Menu.Positioner anchor={anchor} side="top" sideOffset={8} className="z-50 w-(--anchor-width)">
         <Menu.Popup aria-label={label} className={`${composerSuggestionsClass} max-h-[min(15rem,50dvh,var(--available-height))]`}>
-          {tools.map((tool) => <Menu.Item key={tool.id} label={tool.label} nativeButton
-            render={<ComposerMenuItem className="q-composer-tool-option" />} onClick={() => onToolSelect(tool)}>
-            <ComposerToolRow tool={tool} />
-          </Menu.Item>)}
+          <div className={composerSuggestionsListClass}>
+            {tools.map((tool) => <Menu.Item key={tool.id} label={tool.label} nativeButton
+              render={<ComposerMenuItem className="q-composer-tool-option" />} onClick={() => onToolSelect(tool)}>
+              <ComposerToolRow tool={tool} />
+            </Menu.Item>)}
+          </div>
         </Menu.Popup>
       </Menu.Positioner>
     </Menu.Portal>

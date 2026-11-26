@@ -1,5 +1,5 @@
 import { localizeError } from "../../lib/error-localization";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { openPath } from "../../lib/desktop-bridge";
 import { useStore } from "../../store";
 import { useLocale } from "../../localization";
@@ -16,7 +16,7 @@ import codeIcon from "../../assets/codex-icons/code-light-20.svg";
 import documentIcon from "../../assets/codex-icons/document-text-light-24.svg";
 import externalIcon from "../../assets/codex-icons/arrow-up-right-md-light-20.svg";
 
-export default function FileReader({ tabId, workspaceId, sessionId, target, active, refreshNonce }: {
+const FileReader = memo(function FileReader({ tabId, workspaceId, sessionId, target, active, refreshNonce }: {
   tabId: string; workspaceId?: string; sessionId?: string; target: DockFileTarget; active: boolean; refreshNonce: number;
 }) {
   const { t, locale } = useLocale();
@@ -73,4 +73,6 @@ export default function FileReader({ tabId, workspaceId, sessionId, target, acti
       {file?.kind === "binary" && <button type="button" onClick={() => void openExternal()} className="mx-auto mb-8 rounded-lg border border-border px-4 py-2 text-sm text-foreground transition-colors hover:bg-muted">{t("dock.fileOpenExternal")}</button>}
     </section>
   </FileReferenceContext.Provider>;
-}
+});
+
+export default FileReader;

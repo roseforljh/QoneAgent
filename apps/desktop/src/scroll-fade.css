@@ -1,0 +1,287 @@
+/* 全局统一滚动边缘渐隐系统：基于原生 CSS Scroll-Driven Animations，零 JS 监听、零重排。
+   支持自动覆盖纵向、横向与双向滚动容器，并通过 data-scroll-fade="none" 显式豁免。 */
+
+@property --q-scroll-fade-top {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --q-scroll-fade-bottom {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --q-scroll-fade-left {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --q-scroll-fade-right {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --q-scroll-fade-size {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 28px;
+}
+
+/* 未溢出时 scroll() 时间线不激活，自定义属性保持 initial-value: 0px，容器无遮罩。 */
+@keyframes q-scroll-fade-y {
+  0% {
+    --q-scroll-fade-top: 0px;
+    --q-scroll-fade-bottom: var(--q-scroll-fade-size, 28px);
+  }
+  1%, 99% {
+    --q-scroll-fade-top: var(--q-scroll-fade-size, 28px);
+    --q-scroll-fade-bottom: var(--q-scroll-fade-size, 28px);
+  }
+  100% {
+    --q-scroll-fade-top: var(--q-scroll-fade-size, 28px);
+    --q-scroll-fade-bottom: 0px;
+  }
+}
+
+@keyframes q-scroll-fade-y-bottom {
+  0%, 99% {
+    --q-scroll-fade-top: 0px;
+    --q-scroll-fade-bottom: var(--q-scroll-fade-size, 28px);
+  }
+  100% {
+    --q-scroll-fade-top: 0px;
+    --q-scroll-fade-bottom: 0px;
+  }
+}
+
+@keyframes q-scroll-fade-x {
+  0% {
+    --q-scroll-fade-left: 0px;
+    --q-scroll-fade-right: var(--q-scroll-fade-size, 28px);
+  }
+  1%, 99% {
+    --q-scroll-fade-left: var(--q-scroll-fade-size, 28px);
+    --q-scroll-fade-right: var(--q-scroll-fade-size, 28px);
+  }
+  100% {
+    --q-scroll-fade-left: var(--q-scroll-fade-size, 28px);
+    --q-scroll-fade-right: 0px;
+  }
+}
+
+@supports (animation-timeline: scroll(self y)) {
+  /* 纵向滚动渐隐：自动覆盖常规纵向滚动类及左右侧栏、弹层、设置页列表容器 */
+  :is(
+    .q-scroll-fade-y,
+    .overflow-y-auto,
+    .overflow-y-scroll,
+    .q-subagent-panel-scroll,
+    .q-project-popover-list,
+    .q-background-tasks-list,
+    .q-model-picker-list,
+    .q-chat-search-results,
+    .settings-dialog-nav,
+    .settings-skill-package-members,
+    .nested-dialog-body,
+    .elicitation-body,
+    .memory-note-card > p,
+    .q-composer-queue,
+    .qone-select-list,
+    .aui-composer-input
+  ):not(
+    [data-scroll-fade="none"],
+    .aui-viewport,
+    [data-slot="dialog-content"],
+    .q-composer-suggestions,
+    .q-sidebar-menu,
+    .q-model-picker-card,
+    .q-run-options-card,
+    .q-confirm-dialog,
+    .q-composer-quote-preview,
+    .q-message-annotation-preview,
+    .q-composer-link-options,
+    .q-conversation-list,
+    .xterm-viewport
+  ) {
+    mask-image: linear-gradient(
+      to bottom,
+      #0000,
+      #0000000b calc(var(--q-scroll-fade-top) * .125),
+      #00000028 calc(var(--q-scroll-fade-top) * .25),
+      #00000051 calc(var(--q-scroll-fade-top) * .375),
+      #00000080 calc(var(--q-scroll-fade-top) * .5),
+      #000000ae calc(var(--q-scroll-fade-top) * .625),
+      #000000d7 calc(var(--q-scroll-fade-top) * .75),
+      #000000f4 calc(var(--q-scroll-fade-top) * .875),
+      #000 var(--q-scroll-fade-top) calc(100% - var(--q-scroll-fade-bottom)),
+      #000000f4 calc(100% - var(--q-scroll-fade-bottom) * .875),
+      #000000d7 calc(100% - var(--q-scroll-fade-bottom) * .75),
+      #000000ae calc(100% - var(--q-scroll-fade-bottom) * .625),
+      #00000080 calc(100% - var(--q-scroll-fade-bottom) * .5),
+      #00000051 calc(100% - var(--q-scroll-fade-bottom) * .375),
+      #00000028 calc(100% - var(--q-scroll-fade-bottom) * .25),
+      #0000000b calc(100% - var(--q-scroll-fade-bottom) * .125),
+      #0000
+    );
+    animation-name: q-scroll-fade-y;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: scroll(self y);
+  }
+
+  /* 横向滚动渐隐：覆盖标签栏、表格、公式、差异视图等横向滚动容器 */
+  :is(
+    .q-scroll-fade-x,
+    .overflow-x-auto,
+    .overflow-x-scroll
+  ):not(
+    [data-scroll-fade="none"],
+    .aui-md-pre,
+    .aui-shiki-base pre,
+    .aui-mermaid-diagram
+  ) {
+    mask-image: linear-gradient(
+      to right,
+      #0000,
+      #0000000b calc(var(--q-scroll-fade-left) * .125),
+      #00000028 calc(var(--q-scroll-fade-left) * .25),
+      #00000051 calc(var(--q-scroll-fade-left) * .375),
+      #00000080 calc(var(--q-scroll-fade-left) * .5),
+      #000000ae calc(var(--q-scroll-fade-left) * .625),
+      #000000d7 calc(var(--q-scroll-fade-left) * .75),
+      #000000f4 calc(var(--q-scroll-fade-left) * .875),
+      #000 var(--q-scroll-fade-left) calc(100% - var(--q-scroll-fade-right)),
+      #000000f4 calc(100% - var(--q-scroll-fade-right) * .875),
+      #000000d7 calc(100% - var(--q-scroll-fade-right) * .75),
+      #000000ae calc(100% - var(--q-scroll-fade-right) * .625),
+      #00000080 calc(100% - var(--q-scroll-fade-right) * .5),
+      #00000051 calc(100% - var(--q-scroll-fade-right) * .375),
+      #00000028 calc(100% - var(--q-scroll-fade-right) * .25),
+      #0000000b calc(100% - var(--q-scroll-fade-right) * .125),
+      #0000
+    );
+    animation-name: q-scroll-fade-x;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: scroll(self x);
+  }
+
+  /* 双向滚动渐隐：未溢出的轴时间线不激活，仅对实际溢出的方向施加渐隐 */
+  :is(
+    .q-scroll-fade-both,
+    .overflow-auto,
+    .overflow-scroll,
+    :is(.overflow-x-auto, .overflow-x-scroll):is(.overflow-y-auto, .overflow-y-scroll),
+    .settings-dialog-content,
+    .settings-sync-list,
+    .skill-cloud-list,
+    .tool-call-list,
+    .page-shell,
+    .q-background-job-command,
+    .q-background-job-output-scroll,
+    .q-server-parameters pre
+  ):not(
+    [data-scroll-fade="none"],
+    .aui-md-pre,
+    .aui-shiki-base pre,
+    .settings-subdialog,
+    .xterm-viewport
+  ) {
+    mask-image:
+      linear-gradient(
+        to bottom,
+        #0000,
+        #0000000b calc(var(--q-scroll-fade-top) * .125),
+        #00000028 calc(var(--q-scroll-fade-top) * .25),
+        #00000051 calc(var(--q-scroll-fade-top) * .375),
+        #00000080 calc(var(--q-scroll-fade-top) * .5),
+        #000000ae calc(var(--q-scroll-fade-top) * .625),
+        #000000d7 calc(var(--q-scroll-fade-top) * .75),
+        #000000f4 calc(var(--q-scroll-fade-top) * .875),
+        #000 var(--q-scroll-fade-top) calc(100% - var(--q-scroll-fade-bottom)),
+        #000000f4 calc(100% - var(--q-scroll-fade-bottom) * .875),
+        #000000d7 calc(100% - var(--q-scroll-fade-bottom) * .75),
+        #000000ae calc(100% - var(--q-scroll-fade-bottom) * .625),
+        #00000080 calc(100% - var(--q-scroll-fade-bottom) * .5),
+        #00000051 calc(100% - var(--q-scroll-fade-bottom) * .375),
+        #00000028 calc(100% - var(--q-scroll-fade-bottom) * .25),
+        #0000000b calc(100% - var(--q-scroll-fade-bottom) * .125),
+        #0000
+      ),
+      linear-gradient(
+        to right,
+        #0000,
+        #0000000b calc(var(--q-scroll-fade-left) * .125),
+        #00000028 calc(var(--q-scroll-fade-left) * .25),
+        #00000051 calc(var(--q-scroll-fade-left) * .375),
+        #00000080 calc(var(--q-scroll-fade-left) * .5),
+        #000000ae calc(var(--q-scroll-fade-left) * .625),
+        #000000d7 calc(var(--q-scroll-fade-left) * .75),
+        #000000f4 calc(var(--q-scroll-fade-left) * .875),
+        #000 var(--q-scroll-fade-left) calc(100% - var(--q-scroll-fade-right)),
+        #000000f4 calc(100% - var(--q-scroll-fade-right) * .875),
+        #000000d7 calc(100% - var(--q-scroll-fade-right) * .75),
+        #000000ae calc(100% - var(--q-scroll-fade-right) * .625),
+        #00000080 calc(100% - var(--q-scroll-fade-right) * .5),
+        #00000051 calc(100% - var(--q-scroll-fade-right) * .375),
+        #00000028 calc(100% - var(--q-scroll-fade-right) * .25),
+        #0000000b calc(100% - var(--q-scroll-fade-right) * .125),
+        #0000
+      );
+    mask-composite: intersect;
+    animation-name: q-scroll-fade-y, q-scroll-fade-x;
+    animation-timing-function: linear, linear;
+    animation-fill-mode: both, both;
+    animation-timeline: scroll(self y), scroll(self x);
+  }
+
+  /* 紧凑型列表、弹层与标签栏使用较小的渐隐距离，避免遮挡首尾条目 */
+  :is(
+    .q-composer-queue,
+    .aui-composer-input,
+    .q-project-popover-list,
+    .q-background-tasks-list,
+    .q-model-picker-list,
+    .qone-select-list,
+    .q-workspace-dock-tabs,
+    .memory-note-card > p,
+    .q-background-job-command,
+    .q-composer-suggestions-list
+  ) {
+    --q-scroll-fade-size: 18px;
+  }
+
+  /* 存在吸顶头部的容器关闭顶部蒙版，避免吸顶标题被淡出；底部仍保持渐隐 */
+  .settings-dialog-content:has(.settings-page-header) {
+    animation-name: q-scroll-fade-y-bottom, q-scroll-fade-x;
+    animation-timing-function: linear, linear;
+    animation-fill-mode: both, both;
+    animation-timeline: scroll(self y), scroll(self x);
+  }
+
+  [data-slot="run-changes-panel"]:has([aria-expanded="true"]) {
+    animation-name: q-scroll-fade-y-bottom;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: scroll(self y);
+  }
+}
+
+/* 设置页吸顶标题下方补一层渐变过渡，让滚入标题下的内容自然柔和淡出 */
+.settings-page-header::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: 14px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--q-surface), transparent);
+}
+
+[data-scroll-fade="none"] {
+  mask-image: none;
+}

@@ -1,3 +1,6 @@
+.q-workspace-file-content {
+  contain: layout style;
+}
 .q-workspace-file-content [data-file-selected="true"] {
   display: inline-block;
   min-width: 100%;

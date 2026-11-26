@@ -83,10 +83,12 @@ export const BackgroundJobPanel: FC<{ selectedId?: string; onSelect: (id?: strin
           <span>{statusText(selected, now, t, locale)}</span>
           {selected.status === "running" && <Button size="sm" variant="outline" className="ms-auto" onClick={() => stop(selected.id)}>{t("backgroundJob.stop")}</Button>}
         </div>
-        <pre ref={output} className="q-background-job-output" onScroll={(event) => {
-          const element = event.currentTarget;
-          stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
-        }}>{selected.output || t("backgroundJob.noOutput")}</pre>
+        <div className="q-background-job-output">
+          <pre ref={output} className="q-background-job-output-scroll" onScroll={(event) => {
+            const element = event.currentTarget;
+            stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+          }}>{selected.output || t("backgroundJob.noOutput")}</pre>
+        </div>
       </> : <p className="q-subagent-empty">{t("backgroundJob.lost")}</p>}
     </div> : <div className="q-subagent-panel-scroll">
       {jobs.length === 0 ? <p className="q-subagent-empty">{t("backgroundJob.empty")}</p> : jobs.map((job) => <button key={job.id} type="button" className="q-subagent-row" onClick={() => onSelect(job.id)}>

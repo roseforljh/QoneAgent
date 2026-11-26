@@ -118,6 +118,13 @@ test("a restart keeps a turn's finished tool steps and continues it; scheduled t
     const task = await history(taskSession, "task-history");
     expect(task.filter((message) => message.communication).map((message) => message.communication?.fromTitle)).toEqual(["定时任务 · Daily report", "定时任务 · Daily report"]);
     expect(task.filter((message) => message.role === "assistant").map((message) => message.content)).toEqual(["SCHEDULE_DONE", "SCHEDULE_DONE"]);
+    // Binding the task to an existing chat of the project fires it there.
+    await send({ type: "schedule.save", requestId: "bind", schedule: { id: saved.id, title: saved.title, prompt: saved.prompt, workspaceId: saved.workspaceId, rule: saved.rule, enabled: true, model: saved.model, permissionMode: saved.permissionMode, sessionId: session.id } });
+    await wait(() => events.some((event) => event.type === "schedule.list" && event.requestId === "bind"), "bind");
+    const beforeBound = completed().length;
+    await send({ type: "schedule.run", requestId: "run-bound", id: saved.id });
+    await wait(() => completed().length > beforeBound && events.some((event) => event.type === "schedule.list" && event.runs.some((run) => run.sessionId === session.id && run.status === "completed")), "run-bound");
+    expect((events.findLast((event) => event.type === "schedule.list") as { schedules: ScheduleInfo[] }).schedules[0]!.sessionId).toBe(session.id);
     expect(errors).toEqual([]);
   } finally {
     child.kill(); await child.exited; await output; await stderr;

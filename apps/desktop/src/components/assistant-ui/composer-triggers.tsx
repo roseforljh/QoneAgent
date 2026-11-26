@@ -10,7 +10,7 @@ import {
 } from "@assistant-ui/react";
 import { useLocale } from "../../localization";
 import { ComposerMenuItem } from "./elements/composer";
-import { ComposerSlashRow, ComposerToolRow, composerSuggestionsClass, type ComposerSlashEntry, type ComposerTool } from "./composer-tools";
+import { ComposerSlashRow, ComposerToolRow, composerSuggestionsClass, composerSuggestionsListClass, type ComposerSlashEntry, type ComposerTool } from "./composer-tools";
 import type { ComposerCommand } from "../../lib/composer-tool-editor";
 import { bindTopPopupHeight } from "../../lib/popup-height";
 import { ChevronRight, PlugZapIcon } from "lucide-react";
@@ -109,46 +109,50 @@ export const ComposerTriggers: FC<{
           else setTimeout(() => onToolSelect(tool), 0);
         }}
       />
-      <ComposerPrimitive.Unstable_TriggerPopoverItems className="flex flex-col">
-        {(items) => items.map((item) => {
-          const tool = tools.find((entry) => entry.id === item.id);
-          return tool && <ComposerPrimitive.Unstable_TriggerPopoverItem key={item.id} item={item} asChild>
-            <ComposerMenuItem className="q-composer-tool-option" onMouseDown={(event) => event.preventDefault()}>
-              <ComposerToolRow tool={tool} />
-            </ComposerMenuItem>
-          </ComposerPrimitive.Unstable_TriggerPopoverItem>;
-        })}
-      </ComposerPrimitive.Unstable_TriggerPopoverItems>
+      <div className={composerSuggestionsListClass}>
+        <ComposerPrimitive.Unstable_TriggerPopoverItems className="flex flex-col">
+          {(items) => items.map((item) => {
+            const tool = tools.find((entry) => entry.id === item.id);
+            return tool && <ComposerPrimitive.Unstable_TriggerPopoverItem key={item.id} item={item} asChild>
+              <ComposerMenuItem className="q-composer-tool-option" onMouseDown={(event) => event.preventDefault()}>
+                <ComposerToolRow tool={tool} />
+              </ComposerMenuItem>
+            </ComposerPrimitive.Unstable_TriggerPopoverItem>;
+          })}
+        </ComposerPrimitive.Unstable_TriggerPopoverItems>
+      </div>
     </ComposerPrimitive.Unstable_TriggerPopover>
 
     {slashEntries.length > 0 && <ComposerPrimitive.Unstable_TriggerPopover ref={bindTopPopupHeight} char="/" adapter={suspended ? undefined : slashAdapter} className={`${popoverClass} max-h-[min(24rem,50dvh,var(--q-popup-available-height,100dvh))]`} aria-label={t("composer.slashCommands")}>
       <TriggerPopoverState onStateChange={onSlashStateChange} />
       <ComposerPrimitive.Unstable_TriggerPopover.Action {...slash.action} />
-      <ComposerSlashNavigation groups={skillGroups} entries={slashEntries} />
-      <ComposerPrimitive.Unstable_TriggerPopoverCategories>
-        {(categories) => categories.map((category) => {
-          const group = skillGroups.find((item) => item.id === category.id);
-          const entry = slashEntries.find((item) => item.id === category.id);
-          return <ComposerPrimitive.Unstable_TriggerPopoverCategoryItem key={category.id} categoryId={category.id} asChild>
-            <ComposerMenuItem className="q-composer-tool-option" onMouseDown={(event) => event.preventDefault()}>
-              {group?.packaged ? <>
-                <SkillIcon skill={skillGroupRepresentative(group)} className="q-composer-tool-icon size-4 shrink-0" />
-                <span className="q-composer-tool-copy"><strong>{category.label}</strong><small>{t("skills.package.count", { count: group.skills.length })}</small></span><ChevronRight size={14} />
-              </> : entry && <ComposerSlashRow entry={entry} />}
-            </ComposerMenuItem>
-          </ComposerPrimitive.Unstable_TriggerPopoverCategoryItem>;
-        })}
-      </ComposerPrimitive.Unstable_TriggerPopoverCategories>
-      <ComposerPrimitive.Unstable_TriggerPopoverItems>
-        {(items) => items.map((item) => {
-          const entry = slashEntries.find((candidate) => candidate.id === item.id);
-          return entry && <ComposerPrimitive.Unstable_TriggerPopoverItem key={item.id} item={item} asChild>
-            <ComposerMenuItem className="q-composer-tool-option">
-              <ComposerSlashRow entry={entry} />
-            </ComposerMenuItem>
-          </ComposerPrimitive.Unstable_TriggerPopoverItem>;
-        })}
-      </ComposerPrimitive.Unstable_TriggerPopoverItems>
+      <div className={composerSuggestionsListClass}>
+        <ComposerSlashNavigation groups={skillGroups} entries={slashEntries} />
+        <ComposerPrimitive.Unstable_TriggerPopoverCategories>
+          {(categories) => categories.map((category) => {
+            const group = skillGroups.find((item) => item.id === category.id);
+            const entry = slashEntries.find((item) => item.id === category.id);
+            return <ComposerPrimitive.Unstable_TriggerPopoverCategoryItem key={category.id} categoryId={category.id} asChild>
+              <ComposerMenuItem className="q-composer-tool-option" onMouseDown={(event) => event.preventDefault()}>
+                {group?.packaged ? <>
+                  <SkillIcon skill={skillGroupRepresentative(group)} className="q-composer-tool-icon size-4 shrink-0" />
+                  <span className="q-composer-tool-copy"><strong>{category.label}</strong><small>{t("skills.package.count", { count: group.skills.length })}</small></span><ChevronRight size={14} />
+                </> : entry && <ComposerSlashRow entry={entry} />}
+              </ComposerMenuItem>
+            </ComposerPrimitive.Unstable_TriggerPopoverCategoryItem>;
+          })}
+        </ComposerPrimitive.Unstable_TriggerPopoverCategories>
+        <ComposerPrimitive.Unstable_TriggerPopoverItems>
+          {(items) => items.map((item) => {
+            const entry = slashEntries.find((candidate) => candidate.id === item.id);
+            return entry && <ComposerPrimitive.Unstable_TriggerPopoverItem key={item.id} item={item} asChild>
+              <ComposerMenuItem className="q-composer-tool-option">
+                <ComposerSlashRow entry={entry} />
+              </ComposerMenuItem>
+            </ComposerPrimitive.Unstable_TriggerPopoverItem>;
+          })}
+        </ComposerPrimitive.Unstable_TriggerPopoverItems>
+      </div>
     </ComposerPrimitive.Unstable_TriggerPopover>}
   </>;
 };

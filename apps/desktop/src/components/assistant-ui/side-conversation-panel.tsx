@@ -8,7 +8,9 @@ import { PendingApprovals } from "./pending-approvals";
 function SideConversationThread({ sessionId }: { sessionId: string }) {
   const runtime = useSideConversationRuntime(sessionId);
   return <AssistantRuntimeProvider runtime={runtime}>
-    <Thread><PendingApprovals /></Thread>
+    <div className="q-chat-content relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <Thread><PendingApprovals /></Thread>
+    </div>
   </AssistantRuntimeProvider>;
 }
 

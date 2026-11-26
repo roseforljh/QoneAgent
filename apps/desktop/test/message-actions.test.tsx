@@ -128,3 +128,10 @@ test("blank user text does not expose an empty copy action", () => {
   expect(html).not.toContain("q-user-message-actions");
   expect(html).not.toMatch(/aria-label="(?:复制|Copy)"/);
 });
+
+test("attachment-only last user message exposes edit without an empty copy action", () => {
+  const html = renderThread({ paired: false, text: "", withAttachment: true, editEnabled: true });
+  expect(html).toContain("q-user-message-actions");
+  expect(html).toMatch(/aria-label="(?:编辑消息|Edit message)"/);
+  expect(html).not.toMatch(/aria-label="(?:复制|Copy)"/);
+});

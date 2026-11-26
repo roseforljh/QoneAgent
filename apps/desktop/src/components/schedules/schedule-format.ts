@@ -42,8 +42,8 @@ export function describeNext(schedule: ScheduleInfo, t: Translate, locale: Local
 }
 
 export function scheduleInput(schedule: ScheduleInfo): ScheduleInput {
-  const { id, title, prompt, workspaceId, rule, enabled, model, permissionMode, thinking } = schedule;
-  return { id, title, prompt, workspaceId, rule, enabled, model, permissionMode, thinking };
+  const { id, title, prompt, workspaceId, sessionId, rule, enabled, model, permissionMode, thinking } = schedule;
+  return { id, title, prompt, workspaceId, sessionId, rule, enabled, model, permissionMode, thinking };
 }
 
 /** `<input type="datetime-local">` speaks local time without a zone. */

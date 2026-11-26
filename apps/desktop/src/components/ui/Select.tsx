@@ -108,31 +108,33 @@ export function QoneSelect({
             triggerRef.current?.focus();
           }}
         >
-          {options.map((option) => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={option.value === value}
-              aria-disabled={option.disabled}
-              className={cn("qone-select-option", option.value === value && "is-selected", option.disabled && "is-disabled")}
-              key={option.value}
-              disabled={option.disabled}
-              onClick={() => choose(option)}
-            >
-              <span>
-                <strong>{option.label}</strong>
-                {option.description && <small>{option.description}</small>}
-              </span>
-              {option.suffix != null ? (
-                <div className="flex shrink-0 items-center gap-2">
-                  {option.suffix}
-                  <span className="flex w-4 shrink-0 items-center" aria-hidden="true">
-                    {option.value === value && <Check size={16} />}
-                  </span>
-                </div>
-              ) : option.value === value && <Check size={16} aria-hidden="true" />}
-            </button>
-          ))}
+          <div className="qone-select-list" role="presentation">
+            {options.map((option) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={option.value === value}
+                aria-disabled={option.disabled}
+                className={cn("qone-select-option", option.value === value && "is-selected", option.disabled && "is-disabled")}
+                key={option.value}
+                disabled={option.disabled}
+                onClick={() => choose(option)}
+              >
+                <span>
+                  <strong>{option.label}</strong>
+                  {option.description && <small>{option.description}</small>}
+                </span>
+                {option.suffix != null ? (
+                  <div className="flex shrink-0 items-center gap-2">
+                    {option.suffix}
+                    <span className="flex w-4 shrink-0 items-center" aria-hidden="true">
+                      {option.value === value && <Check size={16} />}
+                    </span>
+                  </div>
+                ) : option.value === value && <Check size={16} aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
         </Popover.Content>
       </div>
     </Popover.Root>

@@ -7,9 +7,10 @@ import {
 } from "@assistant-ui/react";
 import type { MessageAttachmentInfo, QueueItemInfo } from "@qone/protocol";
 import { sameUserInput } from "@qone/protocol";
-import { serializeMessageAttachments } from "./message-attachments";
-import { createNativeAttachmentFile } from "./native-attachment-file";
+import { attachmentsFromMessageInfo, fileFromDataUrl, serializeMessageAttachments } from "./message-attachments";
 import { messageQuote, withMessageQuote } from "./message-quote";
+
+export { fileFromDataUrl };
 
 type QueueCallbacks = {
   sessionId: string;
@@ -81,18 +82,6 @@ const textOf = (message: AppendMessage) => message.content
   .join("")
   .trim();
 
-export const fileFromDataUrl = (name: string, mimeType: string, data: string): File | undefined => {
-  const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/i.exec(data);
-  if (!match || typeof atob !== "function" || typeof File !== "function") return undefined;
-  try {
-    const binary = atob(match[1]);
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    return new File([bytes], name, { type: mimeType });
-  } catch {
-    return undefined;
-  }
-};
-
 const toMessage = (item: QueueItemInfo): AppendMessage => ({
   role: "user",
   parentId: null,
@@ -101,24 +90,7 @@ const toMessage = (item: QueueItemInfo): AppendMessage => ({
   createdAt: new Date(item.createdAt),
   metadata: { custom: { ...(item.quote ? { quote: item.quote } : {}), serverIds: item.serverIds ?? [] } },
   content: item.text ? [{ type: "text", text: item.text }] : [],
-  attachments: (item.attachments ?? []).map((attachment) => {
-    const file = attachment.localPath
-      ? createNativeAttachmentFile(attachment.name, attachment.mimeType, attachment.localPath, 0, attachment.type === "folder")
-      : attachment.type === "file"
-        ? fileFromDataUrl(attachment.name, attachment.mimeType, attachment.data)
-        : undefined;
-    return {
-      id: crypto.randomUUID(),
-      type: attachment.type === "folder" ? "file" : attachment.type,
-      name: attachment.name,
-      contentType: attachment.mimeType,
-      file,
-      status: { type: "complete" as const },
-      content: attachment.type === "image"
-        ? [{ type: "image" as const, image: attachment.data, filename: attachment.name }]
-        : [{ type: "file" as const, data: attachment.data, filename: attachment.name, mimeType: attachment.mimeType }],
-    };
-  }),
+  attachments: attachmentsFromMessageInfo(item.attachments),
 });
 
 export function createQoneMessageQueue(callbacks: QueueCallbacks): QueueBundle {

@@ -967,6 +967,7 @@ export const en: Messages = {
   "chat.queueEdit": "Edit",
   "chat.queueMore": "Queued message actions",
   "chat.queueEditDraftBlocked": "Send or clear the current draft before editing a queued message",
+  "chat.editMessageDraftBlocked": "Send or clear the current draft before editing a message",
   "chat.conversationMapLabel": "User messages",
   "chat.conversationMapJump": "Jump to user message {position}",
   "chat.conversationMapJumpBookmarked": "Jump to user message {position}, bookmarked",

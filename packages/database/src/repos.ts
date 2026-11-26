@@ -181,6 +181,7 @@ export class MessageRepo {
         content: messages.content,
         communication: messages.communication,
         attachments: messages.attachments,
+        goalId: messages.goalId,
         hasRawMessage: sql<number>`CASE WHEN ${messages.rawMessage} IS NOT NULL THEN 1 ELSE 0 END`,
         createdAt: messages.createdAt,
         updatedAt: messages.updatedAt,

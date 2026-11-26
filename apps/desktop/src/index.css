@@ -4,6 +4,7 @@
 @import "./theme-accents.css";
 @import "./components/ui/select.css";
 @import "./secondary-pages.css";
+@import "./scroll-fade.css";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -461,18 +462,18 @@ body { background: var(--background); color: var(--foreground); font-size: var(-
 /* Keep normal scroll surfaces quiet until the pointer enters or drags them. */
 :is(
   .overflow-auto, .overflow-scroll, .overflow-x-auto, .overflow-y-auto, .overflow-x-scroll, .overflow-y-scroll,
-  .aui-viewport, .xterm-viewport, .q-message-user-attachments, .page-shell, .tool-call-list, .qone-select-menu,
+  .aui-viewport, .xterm-viewport, .q-message-user-attachments, .page-shell, .tool-call-list, .qone-select-menu, .qone-select-list,
   .settings-dialog-nav, .settings-dialog-content, .settings-dropdown, .settings-subdialog,
   .settings-sync-list, .q-chat-search-results, .q-model-picker-list, .q-run-options-card,
-  .q-subagent-panel-scroll, .q-composer-queue, .q-sidebar-menu, .skill-cloud-list,
+  .q-subagent-panel-scroll, .q-background-job-output-scroll, .q-composer-queue, .q-sidebar-menu, .skill-cloud-list,
   [data-aui="carousel"], [data-aui="markdown"] pre, .aui-md pre
 ) { scrollbar-color: var(--q-scrollbar-surface-color) transparent; }
 :is(
   .overflow-auto, .overflow-scroll, .overflow-x-auto, .overflow-y-auto, .overflow-x-scroll, .overflow-y-scroll,
-  .aui-viewport, .xterm-viewport, .q-message-user-attachments, .page-shell, .tool-call-list, .qone-select-menu,
+  .aui-viewport, .xterm-viewport, .q-message-user-attachments, .page-shell, .tool-call-list, .qone-select-menu, .qone-select-list,
   .settings-dialog-nav, .settings-dialog-content, .settings-dropdown, .settings-subdialog,
   .settings-sync-list, .q-chat-search-results, .q-model-picker-list, .q-run-options-card,
-  .q-subagent-panel-scroll, .q-composer-queue, .q-sidebar-menu, .skill-cloud-list,
+  .q-subagent-panel-scroll, .q-background-job-output-scroll, .q-composer-queue, .q-sidebar-menu, .skill-cloud-list,
   [data-aui="carousel"], [data-aui="markdown"] pre, .aui-md pre
 ):is(:hover, :active) { scrollbar-color: var(--q-scrollbar-surface-hover-color) transparent; }
 /* Interactive controls use a subtle brightness change for keyboard focus.
@@ -623,7 +624,7 @@ a { text-decoration: none; }
 .settings-select-wrap { position: relative; z-index: 1; }
 .settings-select-wrap.is-open { z-index: 30; }
 .settings-accent-dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%; }
-.settings-dropdown { isolation: isolate; width: 194px; padding: 4px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border: 1px solid var(--q-border); border-radius: 12px; background-color: var(--q-surface); opacity: 1; box-shadow: 0 8px 18px rgb(0 0 0 / 12%); }
+.settings-dropdown { isolation: isolate; width: 194px; padding: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--q-border); border-radius: 12px; background-color: var(--q-surface); opacity: 1; box-shadow: 0 8px 18px rgb(0 0 0 / 12%); }
 .settings-dropdown-option { display: flex; width: 100%; min-height: 41px; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border: 0; border-radius: 8px; background-color: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
 .settings-dropdown-option:hover, .settings-dropdown-option.is-selected { background-color: var(--q-hover); }
 .settings-dropdown-option > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }

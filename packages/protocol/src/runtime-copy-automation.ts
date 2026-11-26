@@ -3,6 +3,7 @@ export const runtimeCopyAutomation = {
   "schedule.sender": { "en": "Scheduled task · {title}", "zh-CN": "定时任务 · {title}" },
   "schedule.not_found": { "en": "This scheduled task no longer exists", "zh-CN": "这个定时任务已被删除" },
   "schedule.workspace_missing": { "en": "The project of this task was removed", "zh-CN": "这个任务所在的项目已被删除" },
+  "schedule.session_missing": { "en": "The bound conversation is not in this project", "zh-CN": "绑定的会话不在这个项目里" },
   "schedule.busy": { "en": "The task's conversation is still running; it will start when that run ends", "zh-CN": "任务会话还在运行，结束后会自动开始" },
   "recovery.sender": { "en": "Qone", "zh-CN": "Qone" },
   "recovery.notice": { "en": "Qone restarted during this reply. Finished steps were kept and the task continues.", "zh-CN": "回复过程中 Qone 重启了，已保留完成的步骤并继续执行。" },

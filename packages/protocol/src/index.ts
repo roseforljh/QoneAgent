@@ -112,6 +112,7 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "session.search"; requestId: string; query: string }
   | { type: "session.rename"; requestId: string; sessionId: string; title: string }
   | { type: "session.delete"; requestId: string; sessionId: string }
+  | { type: "session.truncate"; requestId: string; sessionId: string; messageId: string }
   | { type: "session.messages"; requestId: string; sessionId: string }
   | { type: "session.snapshot"; requestId: string; sessionId: string }
   | { type: "session.queue.list"; requestId: string; sessionId: string }
@@ -963,6 +964,7 @@ const commandSchemas: Record<string, z.ZodTypeAny> = {
   "session.search": z.object({ type: z.literal("session.search"), ...request, query: z.string().trim().min(1).max(200) }),
   "session.rename": z.object({ type: z.literal("session.rename"), ...request, sessionId: id, title: id }),
   "session.delete": z.object({ type: z.literal("session.delete"), ...request, sessionId: id }),
+  "session.truncate": z.object({ type: z.literal("session.truncate"), ...request, sessionId: id, messageId: id }),
   "session.messages": z.object({ type: z.literal("session.messages"), ...request, sessionId: id }),
   "session.snapshot": z.object({ type: z.literal("session.snapshot"), ...request, sessionId: id }),
   "session.queue.list": z.object({ type: z.literal("session.queue.list"), ...request, sessionId: id }),

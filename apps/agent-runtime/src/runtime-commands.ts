@@ -23,6 +23,40 @@ export function sessionHasActiveRun(services: ReturnType<typeof runtimeCommandSe
     || services.runRepo.listBySession(sessionId).some((run) => !services.subagentRunRepo.get(run.id) && ["created", "running", "waiting_approval", "paused"].includes(run.status));
 }
 
+/** 截断指定用户消息及其后的全部回合、子代理、产物与事件，并重置内存中的会话上下文。 */
+export async function truncateSessionFromMessage(
+  services: ReturnType<typeof runtimeCommandServices>,
+  sessionId: string,
+  messageId: string,
+) {
+  const history = services.messageRepo.listMetaBySession(sessionId);
+  const index = history.findIndex((message) => message.id === messageId && message.role === "user");
+  if (index < 0) throw new Error("user message not found in session");
+  const removed = history.slice(index);
+  const removedRunIds = new Set(removed.flatMap((message) => message.runId ? [message.runId] : []));
+  const childRuns = services.subagentRunRepo.listBySession(sessionId);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const child of childRuns) if (removedRunIds.has(child.parentRunId) && !removedRunIds.has(child.runId)) {
+      removedRunIds.add(child.runId);
+      changed = true;
+    }
+  }
+  await services.subagentController.dispose(sessionId, [...removedRunIds]);
+  // Pi 内部持有内存对话历史，截断后必须销毁实例以便按数据库历史重建。
+  await services.adapter.disposeSession(sessionId);
+  // 先落盘事件队列，避免延迟重试把已删除的记录重新写回数据库。
+  services.flushEvents({ required: true });
+  services.messageRepo.truncateFrom(sessionId, messageId);
+  for (const child of childRuns) if (removedRunIds.has(child.runId)) {
+    services.subagentPublisher.forget(child.runId);
+    if (child.executionSessionId) services.subagentNotificationCoordinator?.dispose(child.executionSessionId);
+  }
+  await services.generatedArtifacts.removeRuns(sessionId, [...removedRunIds]);
+  services.eventJournal.restore(services.eventRepo.list());
+  return { index, kept: history.slice(0, index), removed };
+}
+
 export async function handleRuntimeCommand(cmd: RuntimeCommand, services: ReturnType<typeof runtimeCommandServices>): Promise<boolean> {
   switch (cmd.type) {
 
@@ -601,30 +635,7 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       if (cmd.replaceFromMessageId) {
         services.startingRunSessions.add(cmd.sessionId);
         try {
-          const history = services.messageRepo.listMetaBySession(cmd.sessionId);
-          const index = history.findIndex(message => message.id === cmd.replaceFromMessageId && message.role === "user");
-          if (index < 0) throw new Error("user message not found in session");
-          const removedRunIds = new Set(history.slice(index).flatMap(message => message.runId ? [message.runId] : []));
-          const childRuns = services.subagentRunRepo.listBySession(cmd.sessionId);
-          for (let changed = true; changed;) {
-            changed = false;
-            for (const child of childRuns) if (removedRunIds.has(child.parentRunId) && !removedRunIds.has(child.runId)) {
-              removedRunIds.add(child.runId);
-              changed = true;
-            }
-          }
-          await services.subagentController.dispose(cmd.sessionId, [...removedRunIds]);
-          // Pi keeps an in-memory conversation; it must be rebuilt from the trimmed DB history.
-          await services.adapter.disposeSession(cmd.sessionId);
-          // Do not truncate until the retry queue can no longer restore deleted rows.
-          services.flushEvents({ required: true });
-          services.messageRepo.truncateFrom(cmd.sessionId, cmd.replaceFromMessageId);
-          for (const child of childRuns) if (removedRunIds.has(child.runId)) {
-            services.subagentPublisher.forget(child.runId);
-            if (child.executionSessionId) services.subagentNotificationCoordinator?.dispose(child.executionSessionId);
-          }
-          await services.generatedArtifacts.removeRuns(cmd.sessionId, [...removedRunIds]);
-          services.eventJournal.restore(services.eventRepo.list());
+          await truncateSessionFromMessage(services, cmd.sessionId, cmd.replaceFromMessageId);
         } catch (error) {
           services.send({ type: "error", requestId: cmd.requestId, ...runtimeErrorInfo(error) });
           return true;

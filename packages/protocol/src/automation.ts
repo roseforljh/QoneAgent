@@ -25,6 +25,8 @@ export interface ScheduleInput {
   title: string;
   prompt: string;
   workspaceId: string;
+  /** Conversation every run is appended to; omitted means the task gets its own on the first run. */
+  sessionId?: string;
   rule: ScheduleRule;
   enabled: boolean;
   model?: string;
@@ -34,8 +36,6 @@ export interface ScheduleInput {
 
 export interface ScheduleInfo extends ScheduleInput {
   id: string;
-  /** Conversation every run of this task is appended to. */
-  sessionId?: string;
   nextRunAt?: number;
   lastRunAt?: number;
   lastRunId?: string;
@@ -107,6 +107,7 @@ const schedule = z.object({
   title: z.string().trim().min(1).max(80),
   prompt: z.string().trim().min(1).max(32_000),
   workspaceId: id,
+  sessionId: id.optional(),
   rule,
   enabled: z.boolean(),
   model: z.string().max(512).optional(),
