@@ -696,8 +696,8 @@ a { text-decoration: none; }
 .settings-provider-card.is-selected .settings-provider-radio { border-color: var(--foreground); background: radial-gradient(circle, var(--foreground) 0 4px, transparent 4.5px); }
 .settings-provider-select:hover .settings-provider-radio { border-color: var(--foreground); }
 .settings-provider-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.settings-subdialog-layer { position: absolute; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; border-radius: inherit; background: rgb(0 0 0 / 48%); }
-.settings-subdialog { position: relative; width: min(500px, 100%); max-height: 100%; overflow: auto; scrollbar-gutter: stable; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--q-surface); box-shadow: 0 18px 44px rgb(0 0 0 / 35%); }
+.settings-subdialog-layer { position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(0 0 0 / 54%); }
+.settings-subdialog { position: relative; width: min(500px, 100%); max-height: calc(100dvh - 48px); overflow: auto; scrollbar-gutter: stable; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--q-surface); box-shadow: 0 18px 44px rgb(0 0 0 / 35%); }
 .provider-dialog, .model-editor-dialog { width: min(610px, 100%); }
 .settings-subdialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .settings-subdialog-header > div { display: flex; flex-direction: column; gap: 6px; }

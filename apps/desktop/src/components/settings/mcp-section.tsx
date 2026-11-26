@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { LoaderCircle, Plus, Search, X } from "lucide-react";
 import { mcpAvailable, mcpServerIdentity, mcpValueSecretKeys, type McpServerInfo } from "@qone/protocol";
 import { ClaudeCodeSyncButton } from "./ClaudeCodeSyncButton";
@@ -15,7 +16,15 @@ import { SectionHeader, SettingsPageHeader } from "./settings-chrome";
 import { EMAIL_PRESETS, KEY_PRESETS, MCP_PRESETS, configuredGithubClientId, mcpLogo, presetServer } from "./mcp-presets";
 import { useMcpIcons } from "../../lib/mcp-icons";
 import { McpQuickAdd } from "./mcp-quick-add";
-import type { ParsedMcp } from "../../lib/mcp-command";
+import { defaultMcpName, type ParsedMcp } from "../../lib/mcp-command";
+
+function deriveUrlName(rawUrl: string): string {
+  try {
+    return defaultMcpName({ url: rawUrl });
+  } catch {
+    return rawUrl.replace(/^https?:\/\//i, "").split(/[/?#]/, 1)[0] || "mcp";
+  }
+}
 
 export function McpSection() {
   const { t } = useLocale();
@@ -26,18 +35,17 @@ export function McpSection() {
   const connectingIds = useStore((state) => state.mcpConnectingIds);
   const oauthAuthorization = useStore((state) => state.oauthAuthorization);
   const githubDeviceAuthorization = useStore((state) => state.githubDeviceAuthorization);
+  const [mode, setMode] = useState<"url" | "stdio">("url");
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [url, setUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const [args, setArgs] = useState("");
-  const [tokenEnv, setTokenEnv] = useState("");
   const [envText, setEnvText] = useState("");
   const [prefillId, setPrefillId] = useState<string>();
   const [editing, setEditing] = useState<McpServerInfo>();
-  const [oauthAuthorizationUrl, setOauthAuthorizationUrl] = useState("");
-  const [oauthTokenUrl, setOauthTokenUrl] = useState("");
-  const [oauthClientId, setOauthClientId] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [addSaving, setAddSaving] = useState(false);
   const [pendingOn, setPendingOn] = useState<ReadonlySet<string>>(new Set());
   // 卡片操作对话框：点卡片（开关以外区域）弹出，按钮按服务类型区分。
   const presetName = (preset: { name: string; nameKey?: MessageKey }) => preset.nameKey ? t(preset.nameKey) : preset.name;
@@ -124,28 +132,26 @@ export function McpSection() {
   const openAdd = (preset?: { id: string; name: string; prefill: { command: string; args: string; env: string } }) => {
     setEditing(undefined);
     setPrefillId(preset?.id);
+    setMode(preset ? "stdio" : "url");
     setName(preset?.name ?? "");
     setCommand(preset?.prefill.command ?? "");
     setUrl("");
+    setApiKey("");
     setArgs(preset?.prefill.args ?? "");
-    setTokenEnv("");
     setEnvText(preset?.prefill.env ?? "");
-    setOauthAuthorizationUrl(""); setOauthTokenUrl(""); setOauthClientId("");
     setAddOpen(true);
   };
 
   const openEdit = (server: (typeof servers)[number]) => {
     setEditing(server);
     setPrefillId(server.id);
+    setMode(server.command && !server.url ? "stdio" : "url");
     setName(server.name);
     setCommand(server.command ?? "");
     setUrl(server.url ?? "");
+    setApiKey("");
     setArgs((server.args ?? []).join(" "));
-    setTokenEnv(server.tokenEnv ?? "");
     setEnvText(Object.entries(server.env ?? {}).map(([key, value]) => `${key}=${value}`).join("\n"));
-    setOauthAuthorizationUrl(server.oauth?.authorizationUrl ?? "");
-    setOauthTokenUrl(server.oauth?.tokenUrl ?? "");
-    setOauthClientId(server.oauth?.clientId ?? "");
     setAddOpen(true);
   };
 
@@ -337,22 +343,59 @@ export function McpSection() {
     setActionCard({ server, name: server.name, icon: serverIcon(server), status: connecting ? t("mcp.connectingStatus") : mcpAvailable(server) ? t(server.connected ? "mcp.connectedStatus" : "mcp.standbyStatus") : t("mcp.disconnectedStatus"), statusError: !server.disabled && !connecting && !mcpAvailable(server), actions });
   };
 
-  const connect = () => {
-    if (!name.trim() || (!command.trim() && !url.trim())) return;
-    if (command.trim() && url.trim()) return;
-    const id = name.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-|-$/g, "") || `mcp-${Date.now()}`;
-    void connectAsUser({
-      ...(editing ? { transport: editing.transport, headers: editing.headers, authMode: editing.authMode, oauthClientId: editing.oauthClientId } : {}),
-      id: prefillId ?? id,
-      name: name.trim(),
-      command: command.trim() || undefined,
-      url: url.trim() || undefined,
-      tokenEnv: tokenEnv.trim() || undefined,
-      args: editing && args === (editing.args ?? []).join(" ") ? editing.args : args.trim() ? args.trim().split(/\s+/) : [],
-      env: envText.trim() ? Object.fromEntries(envText.split("\n").map((line) => line.trim()).filter((line) => line && line.includes("=")).map((line) => { const i = line.indexOf("="); return [line.slice(0, i).trim(), line.slice(i + 1).trim()]; })) : undefined,
-      oauth: oauthAuthorizationUrl.trim() && oauthTokenUrl.trim() && oauthClientId.trim() ? { authorizationUrl: oauthAuthorizationUrl.trim(), tokenUrl: oauthTokenUrl.trim(), clientId: oauthClientId.trim(), tokenSecretKey: editing?.oauth?.tokenSecretKey ?? `mcp.oauth:${prefillId ?? id}` } : undefined,
-    });
-    setName(""); setCommand(""); setUrl(""); setArgs(""); setTokenEnv(""); setEnvText(""); setPrefillId(undefined); setOauthAuthorizationUrl(""); setOauthTokenUrl(""); setOauthClientId("");
+  const canSubmitManual = mode === "url" ? Boolean(url.trim()) : Boolean(name.trim() && command.trim());
+
+  useEffect(() => {
+    if (!addOpen && !githubLoginOpen && !keyDialog && !actionCard) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      if (addOpen && !addSaving) setAddOpen(false);
+      else if (githubLoginOpen && !githubSaving) setGithubLoginOpen(false);
+      else if (keyDialog && !keySaving) setKeyDialog(null);
+      else if (actionCard) setActionCard(null);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [addOpen, addSaving, githubLoginOpen, githubSaving, keyDialog, keySaving, actionCard]);
+
+  const connect = async () => {
+    if (!canSubmitManual || addSaving) return;
+    const resolvedName = mode === "url" ? (name.trim() || deriveUrlName(url.trim())) : name.trim();
+    const slug = resolvedName.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-|-$/g, "") || `mcp-${Date.now()}`;
+    const id = prefillId ?? slug;
+    setAddSaving(true);
+    try {
+      let headers = editing?.headers;
+      if (mode === "url" && apiKey.trim()) {
+        const trimmedKey = apiKey.trim();
+        const headerValue = /^Bearer\s+/i.test(trimmedKey) ? trimmedKey : `Bearer ${trimmedKey}`;
+        const secretKey = `mcp.env:${id}/header-authorization`;
+        await storeSecret(secretKey, headerValue);
+        headers = { ...editing?.headers, Authorization: `$${secretKey}` };
+      }
+      const env = mode === "stdio" && envText.trim()
+        ? Object.fromEntries(envText.split("\n").map((line) => line.trim()).filter((line) => line && line.includes("=")).map((line) => { const i = line.indexOf("="); return [line.slice(0, i).trim(), line.slice(i + 1).trim()]; }))
+        : undefined;
+      await connectAsUser({
+        ...(editing ? { transport: editing.transport, authMode: editing.authMode, oauthClientId: editing.oauthClientId, oauth: editing.oauth, tokenEnv: editing.tokenEnv } : {}),
+        id,
+        name: resolvedName,
+        ...(mode === "url"
+          ? { url: url.trim(), ...(headers ? { headers } : {}) }
+          : {
+              command: command.trim(),
+              args: editing && args === (editing.args ?? []).join(" ") ? editing.args : args.trim() ? args.trim().split(/\s+/) : [],
+              ...(env ? { env } : {}),
+            }),
+      });
+      setAddOpen(false);
+      setName(""); setCommand(""); setUrl(""); setApiKey(""); setArgs(""); setEnvText(""); setPrefillId(undefined); setEditing(undefined);
+    } catch (error) {
+      useStore.setState({ lastError: localizeError(error) });
+    } finally {
+      setAddSaving(false);
+    }
   };
 
   return (
@@ -436,39 +479,63 @@ export function McpSection() {
           </button>
         </div>;
       })}</div>}
-      {addOpen && (
-        <div className="settings-subdialog-layer">
-          <div className="settings-subdialog" role="dialog" aria-modal="true" aria-label={t("mcp.addService")}>
-            <div className="settings-subdialog-header"><div><span>MCP</span><h3>{t("mcp.addService")}</h3></div><button type="button" className="settings-dialog-close" onClick={() => setAddOpen(false)} aria-label={t("common.close")}><X size={17} /></button></div>
-            <div className="settings-form-grid"><label className="is-wide">{t("mcp.name")}<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={t("mcp.namePlaceholder")} /></label><label>{t("mcp.command")}<input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="npx" /></label><label>{t("mcp.arguments")}<input value={args} onChange={(event) => setArgs(event.target.value)} placeholder={t("mcp.argumentsPlaceholder")} /></label><label className="is-wide">{t("mcp.httpUrl")}<input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://…" /></label><label>{t("mcp.tokenEnv")}<input value={tokenEnv} onChange={(event) => setTokenEnv(event.target.value)} placeholder={t("mcp.optional")} /></label><label className="is-wide">{t("mcp.envVars")}<textarea rows={4} value={envText} onChange={(event) => setEnvText(event.target.value)} placeholder={t("mcp.envVarsPlaceholder")} /></label></div>
-            <div className="settings-form-grid"><label>{t("mcp.oauthAuthorization")}<input value={oauthAuthorizationUrl} onChange={(event) => setOauthAuthorizationUrl(event.target.value)} placeholder={t("mcp.optional")} /></label><label>{t("mcp.oauthToken")}<input value={oauthTokenUrl} onChange={(event) => setOauthTokenUrl(event.target.value)} placeholder={t("mcp.optional")} /></label><label>{t("mcp.oauthClient")}<input value={oauthClientId} onChange={(event) => setOauthClientId(event.target.value)} placeholder={t("mcp.optional")} /></label></div>
-            <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" onClick={() => setAddOpen(false)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!name.trim() || (!command.trim() && !url.trim()) || Boolean(command.trim() && url.trim())} onClick={() => { connect(); setAddOpen(false); }}><Plus size={15} />{t("mcp.connect")}</button></div>
+      {addOpen && createPortal(
+        <div className="settings-subdialog-layer" onClick={(event) => { if (!addSaving && event.target === event.currentTarget) setAddOpen(false); }}>
+          <div className="settings-subdialog" role="dialog" aria-modal="true" aria-label={editing ? t("mcp.editService") : t("mcp.addService")}>
+            <div className="settings-subdialog-header"><div><span>MCP</span><h3>{editing ? t("mcp.editService") : t("mcp.addService")}</h3></div><button type="button" className="settings-dialog-close" disabled={addSaving} onClick={() => setAddOpen(false)} aria-label={t("common.close")}><X size={17} /></button></div>
+            {(!prefillId || editing) && (
+              <div className="settings-theme-switch" role="tablist" style={{ marginBottom: 14 }}>
+                <button type="button" role="tab" aria-selected={mode === "url"} className={cn(mode === "url" && "is-selected")} onClick={() => setMode("url")}>{t("mcp.modeRemote")}</button>
+                <button type="button" role="tab" aria-selected={mode === "stdio"} className={cn(mode === "stdio" && "is-selected")} onClick={() => setMode("stdio")}>{t("mcp.modeCommand")}</button>
+              </div>
+            )}
+            {mode === "url" ? (
+              <div className="settings-form-grid">
+                <label className="is-wide">{t("mcp.url")}<input autoFocus spellCheck={false} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://…" /></label>
+                <label className="is-wide">{t("mcp.apiKey")}<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={editing?.headers && Object.keys(editing.headers).some((key) => key.toLowerCase() === "authorization") ? t("mcp.apiKeyKeep") : t("mcp.optional")} /></label>
+                <label className="is-wide">{t("mcp.name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("mcp.nameAutoPlaceholder")} /></label>
+              </div>
+            ) : (
+              <div className="settings-form-grid">
+                <label className="is-wide">{t("mcp.name")}<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={t("mcp.namePlaceholder")} /></label>
+                <label>{t("mcp.command")}<input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="npx" /></label>
+                <label>{t("mcp.arguments")}<input value={args} onChange={(event) => setArgs(event.target.value)} placeholder={t("mcp.argumentsPlaceholder")} /></label>
+                <label className="is-wide">{t("mcp.envVars")}<textarea rows={4} value={envText} onChange={(event) => setEnvText(event.target.value)} placeholder={t("mcp.envVarsPlaceholder")} /></label>
+              </div>
+            )}
+            <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" disabled={addSaving} onClick={() => setAddOpen(false)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={!canSubmitManual || addSaving} onClick={() => void connect()}>{addSaving ? <LoaderCircle size={15} className="settings-spin" /> : <Plus size={15} />}{t("mcp.connect")}</button></div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-      {githubLoginOpen && <div className="settings-subdialog-layer"><div className="settings-subdialog" role="dialog" aria-modal="true" aria-label={t("mcp.githubLoginTitle")}>
-        <div className="settings-subdialog-header"><div><span>GitHub MCP</span><h3>{t("mcp.githubLoginTitle")}</h3></div><button type="button" className="settings-dialog-close" onClick={() => setGithubLoginOpen(false)} aria-label={t("common.close")}><X size={17} /></button></div>
-        <p>{configuredGithubClientId ? t("mcp.githubOAuthConfigured") : t("mcp.githubLoginHelp")}</p>
-        {!configuredGithubClientId && <div className="settings-form-grid"><label className="is-wide">{t("mcp.githubClientId")}<input value={githubClientId} onChange={(event) => setGithubClientId(event.target.value)} placeholder={t("mcp.required")} /></label></div>}
-        <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" disabled={githubSaving} onClick={() => setGithubLoginOpen(false)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={githubSaving || !githubClientId.trim()} onClick={() => void connectGitHub()}>{githubSaving && <LoaderCircle size={15} className="settings-spin" />}{t("mcp.githubSignIn")}</button></div>
-      </div></div>}
-      {keyDialog && (
+      {githubLoginOpen && createPortal(
+        <div className="settings-subdialog-layer" onClick={(event) => { if (!githubSaving && event.target === event.currentTarget) setGithubLoginOpen(false); }}><div className="settings-subdialog" role="dialog" aria-modal="true" aria-label={t("mcp.githubLoginTitle")}>
+          <div className="settings-subdialog-header"><div><span>GitHub MCP</span><h3>{t("mcp.githubLoginTitle")}</h3></div><button type="button" className="settings-dialog-close" disabled={githubSaving} onClick={() => setGithubLoginOpen(false)} aria-label={t("common.close")}><X size={17} /></button></div>
+          <p>{configuredGithubClientId ? t("mcp.githubOAuthConfigured") : t("mcp.githubLoginHelp")}</p>
+          {!configuredGithubClientId && <div className="settings-form-grid"><label className="is-wide">{t("mcp.githubClientId")}<input value={githubClientId} onChange={(event) => setGithubClientId(event.target.value)} placeholder={t("mcp.required")} /></label></div>}
+          <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" disabled={githubSaving} onClick={() => setGithubLoginOpen(false)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={githubSaving || !githubClientId.trim()} onClick={() => void connectGitHub()}>{githubSaving && <LoaderCircle size={15} className="settings-spin" />}{t("mcp.githubSignIn")}</button></div>
+        </div></div>,
+        document.body,
+      )}
+      {keyDialog && createPortal(
         <div className="settings-subdialog-layer" onClick={(event) => { if (!keySaving && event.target === event.currentTarget) setKeyDialog(null); }}>
           <div className="settings-subdialog settings-mcp-action-dialog" role="dialog" aria-modal="true" aria-label={presetName(keyDialog.preset)}>
             <div className="settings-subdialog-header"><div><span>MCP</span><h3>{presetName(keyDialog.preset)}</h3></div><button type="button" className="settings-dialog-close" disabled={keySaving} onClick={() => setKeyDialog(null)} aria-label={t("common.close")}><X size={17} /></button></div>
             <div className="settings-form-grid">{keyDialog.fields.map((field, index) => <label key={field.key} className="is-wide">{field.key}<input type="password" autoComplete="off" autoFocus={index === 0} disabled={keySaving} value={field.value} onChange={(event) => setKeyDialog({ ...keyDialog, fields: keyDialog.fields.map((item, i) => i === index ? { ...item, value: event.target.value } : item) })} placeholder={t("mcp.pasteKey")} /></label>)}</div>
             <div className="settings-subdialog-footer"><button type="button" className="settings-secondary-action" disabled={keySaving} onClick={() => setKeyDialog(null)}>{t("common.cancel")}</button><button type="button" className="settings-primary-action" disabled={keySaving || keyDialog.fields.some((field) => !field.value.trim())} onClick={() => void submitKeyDialog()}>{keySaving && <LoaderCircle size={15} className="settings-spin" />}{t("mcp.connect")}</button></div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-      {actionCard && (
+      {actionCard && createPortal(
         <div className="settings-subdialog-layer" onClick={(event) => { if (event.target === event.currentTarget) setActionCard(null); }}>
           <div className="settings-subdialog settings-mcp-action-dialog" role="dialog" aria-modal="true" aria-label={actionCard.name}>
             <div className="settings-subdialog-header"><div><span>MCP</span><h3>{actionCard.name}</h3></div><button type="button" className="settings-dialog-close" onClick={() => setActionCard(null)} aria-label={t("common.close")}><X size={17} /></button></div>
             <div className="settings-mcp-action-hero">{actionCard.icon}<div><strong>{actionCard.name}</strong><small className={cn("settings-mcp-status", actionCard.statusError && "is-error")} role="status"><span>{actionCard.status}</span></small></div></div>
             <div className="settings-mcp-actions">{actionCard.actions.map((action) => <button key={action.label} type="button" className={action.danger ? "settings-mcp-action-danger" : action.primary ? "settings-primary-action" : "settings-secondary-action"} onClick={() => void action.onClick()}>{action.label}</button>)}</div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

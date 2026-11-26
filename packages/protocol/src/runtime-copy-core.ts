@@ -372,6 +372,14 @@ export const runtimeCopyCore = {
     "en": "The skill name does not match the creation form",
     "zh-CN": "Skill 名称与创建表单不一致"
   },
+  "skills.skill_not_found": {
+    "en": "Skill {p0} was not found",
+    "zh-CN": "未找到 Skill {p0}"
+  },
+  "skills.only_installed_local_skills_can_be_edited": {
+    "en": "Only locally installed skills can be edited in Qone",
+    "zh-CN": "仅本地安装的 Skill 支持在 Qone 中编辑"
+  },
   "subagent-runner.complete_the_delegated_task_parent_context_is_provided_for": {
     "en": "Complete the delegated task; parent context is provided for reference only.",
     "zh-CN": "完成委派任务；父级上下文仅供参考。"

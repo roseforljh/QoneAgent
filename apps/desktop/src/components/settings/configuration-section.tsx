@@ -225,7 +225,7 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
     }
   };
 
-  return (
+  return createPortal(
     <div
       className="settings-subdialog-layer"
       onKeyDown={(event) => {
@@ -279,7 +279,8 @@ function ProviderConfigDialog({ open, initial, onClose, onSaved, onDeleted }: { 
           onRemove={(ids) => setModels((current) => current.filter((model) => !ids.includes(model.id)))}
         />
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createLocalSkill, createResourceLoader, installLocalSkill } from "../src/skills.js";
+import { createLocalSkill, createResourceLoader, installLocalSkill, readLocalSkill, updateLocalSkill } from "../src/skills.js";
 import { builtinSkillBundles } from "../src/builtin-skills/identity.js";
 
 const originalAppData = process.env.APPDATA;
@@ -79,4 +79,37 @@ test("imports a valid SKILL.md and rejects invalid or duplicate skills", async (
   expect(skill.name).toBe("imported-helper");
   await expect(installLocalSkill(content)).rejects.toThrow("已安装");
   await expect(installLocalSkill("# Missing frontmatter")).rejects.toThrow("格式无效");
+});
+
+test("reads, updates, and renames a locally installed skill while preserving extra files and frontmatter", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "qone-skill-edit-"));
+  roots.push(root);
+  process.env.QONE_DATA_DIR = path.join(root, "qone");
+
+  const imported = await installLocalSkill("---\nname: gitpush\ndescription: Push commits\ndisable-model-invocation: true\n---\n\nRun git push.\n");
+  const helperFile = path.join(path.dirname(imported.path), "notes.txt");
+  writeFileSync(helperFile, "keep me", "utf8");
+
+  const detail = await readLocalSkill("gitpush");
+  expect(detail.editable).toBe(true);
+  expect(detail.skill.description).toBe("Push commits");
+  expect(detail.instructions).toBe("Run git push.");
+
+  const updated = await updateLocalSkill("gitpush", "gitpush", "Push commits safely", "Check status before git push.");
+  expect(updated.id).toBe("gitpush");
+  expect(updated.description).toBe("Push commits safely");
+  expect(readFileSync(updated.path, "utf8")).toContain("disable-model-invocation: true");
+  expect(readFileSync(updated.path, "utf8")).toContain("Check status before git push.");
+  expect(readFileSync(helperFile, "utf8")).toBe("keep me");
+
+  const renamed = await updateLocalSkill("gitpush", "git-push", "Push commits cleanly", "Verify branch then push.");
+  expect(renamed.id).toBe("git-push");
+  expect(existsSync(path.dirname(imported.path))).toBe(false);
+  expect(readFileSync(renamed.path, "utf8")).toContain("Verify branch then push.");
+  expect(readFileSync(path.join(path.dirname(renamed.path), "notes.txt"), "utf8")).toBe("keep me");
+
+  await createLocalSkill("other-skill", "Other", "Other instructions.");
+  await expect(updateLocalSkill("git-push", "other-skill", "Dup", "Dup")).rejects.toThrow("已安装");
+  await expect(updateLocalSkill("git-push", "ponytail", "Reserved", "Reserved")).rejects.toThrow("内置技能");
+  await expect(updateLocalSkill("ponytail", "ponytail", "Reserved", "Reserved")).rejects.toThrow("内置技能");
 });

@@ -421,3 +421,58 @@ test("slash keyboard and pointer selection drill into a package before inserting
     host.remove();
   }
 });
+
+test("clicking a user-created skill opens the editor dialog, loads content, and saves updates", async () => {
+  const custom: SkillInfo = { id: "gitpush", name: "gitpush", description: "Push code", path: "C:/Qone/skills/installed/gitpush/SKILL.md" };
+  useStore.setState({ connected: true, skills: [custom] });
+  const host = dom.window.document.createElement("div");
+  dom.window.document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<SkillsSection />));
+    const beforeRead = sent.length;
+    const editButton = host.querySelector<HTMLButtonElement>(`[aria-label="${t("skills.edit.button", { name: "gitpush" })}"]`)!;
+    expect(editButton).not.toBeNull();
+    await act(async () => editButton.click());
+    const readCommand = sent.slice(beforeRead).find((item) => item.type === "skills.read");
+    expect(readCommand).toMatchObject({ type: "skills.read", skillId: "gitpush" });
+
+    await act(async () => emit({ type: "skills.content", requestId: readCommand!.requestId, skill: custom, instructions: "Run git push.", editable: true }));
+    const dialog = dom.window.document.querySelector('[role="dialog"]')!;
+    expect(dialog).not.toBeNull();
+    const textarea = dialog.querySelector("textarea")!;
+    expect(textarea.value).toBe("Run git push.");
+
+    const setInputValue = (el: HTMLInputElement | HTMLTextAreaElement, value: string) => {
+      const proto = el.tagName === "TEXTAREA" ? dom.window.HTMLTextAreaElement.prototype : dom.window.HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+      el.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    };
+    const [nameInput, descInput] = [...dialog.querySelectorAll("input")];
+    await act(async () => {
+      setInputValue(nameInput!, "git-push");
+      setInputValue(descInput!, "Push code safely");
+      setInputValue(textarea, "Check git status first.");
+    });
+
+    const beforeSave = sent.length;
+    const saveButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes(t("common.save")))!;
+    await act(async () => saveButton.click());
+    const updateCommand = sent.slice(beforeSave).find((item) => item.type === "skills.update");
+    expect(updateCommand).toMatchObject({
+      type: "skills.update",
+      skillId: "gitpush",
+      name: "git-push",
+      description: "Push code safely",
+      instructions: "Check git status first.",
+    });
+
+    const updatedSkill: SkillInfo = { id: "git-push", name: "git-push", description: "Push code safely", path: "C:/Qone/skills/installed/git-push/SKILL.md" };
+    await act(async () => emit({ type: "skills.updated", requestId: updateCommand!.requestId, skill: updatedSkill, previousSkillId: "gitpush" }));
+    expect(dom.window.document.querySelector('[role="dialog"]')).toBeNull();
+    expect(useStore.getState().skills).toEqual([updatedSkill]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});

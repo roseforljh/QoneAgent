@@ -176,7 +176,9 @@ export function registerIpcHandlers(
         return shell.openExternal(args.url);
       }
       case "shell_open_path": {
-        return shell.openPath(args.path);
+        const error = await shell.openPath(args.path);
+        if (error) throw new Error(error);
+        return;
       }
       case "shell_show_item_in_folder": {
         shell.showItemInFolder(args.path);

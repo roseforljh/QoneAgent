@@ -3,6 +3,7 @@ import { Switch } from "@base-ui/react/switch";
 import { openPath, openUrl } from "../../lib/desktop-bridge";
 import { ChevronRight, LoaderCircle } from "lucide-react";
 import { CodexIcon } from "../ui/CodexIcon";
+import pencilIcon from "../../assets/codex-icons/pencil-light-16.svg";
 import trashIcon from "../../assets/codex-icons/trash-light-16.svg";
 import { confirmDestructiveAction } from "../../lib/confirm-action";
 import type { SkillInfo } from "@qone/protocol";
@@ -13,7 +14,7 @@ import { cn } from "../../lib/utils";
 import { SkillIcon } from "../skills/SkillIcon";
 import "./skills.css";
 
-export function SkillCard({ skill, disabled = false }: { skill: SkillInfo; disabled?: boolean }) {
+export function SkillCard({ skill, disabled = false, onEdit }: { skill: SkillInfo; disabled?: boolean; onEdit?: (skill: SkillInfo) => void }) {
   const { t } = useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -55,7 +56,7 @@ export function SkillCard({ skill, disabled = false }: { skill: SkillInfo; disab
       <span className="settings-builtin-skill-actions">
         <Switch.Root checked={skill.enabled !== false} disabled={busy || disabled} aria-busy={busy} aria-label={t("skills.builtin.enabled", { name: skill.name })} className={cn("settings-switch", skill.enabled !== false && "is-on")} onCheckedChange={(enabled) => void change(enabled)}>{busy ? <LoaderCircle className="settings-spin" size={13} /> : <Switch.Thumb />}</Switch.Root>
       </span>
-    </article> : <article className="settings-skill-card settings-skill-package"><button type="button" className="settings-skill-package-main" onClick={() => void open()}><span className="settings-provider-icon"><SkillIcon skill={skill} className="size-4" /></span><div><strong>{skill.name}</strong><small>{skill.path}</small></div><ChevronRight size={15} /></button><button type="button" className="icon-button" disabled={busy || disabled} aria-label={t("skills.delete", { name: skill.name })} onClick={() => void remove()}>{busy ? <LoaderCircle className="settings-spin" size={15} /> : <CodexIcon src={trashIcon} className="size-4" />}</button></article>}
+    </article> : <article className="settings-skill-card settings-skill-package"><button type="button" className="settings-skill-package-main" onClick={() => onEdit ? onEdit(skill) : void open()}><span className="settings-provider-icon"><SkillIcon skill={skill} className="size-4" /></span><div><strong>{skill.name}</strong><small>{skill.path}</small></div><ChevronRight size={15} /></button>{onEdit && <button type="button" className="icon-button" disabled={busy || disabled} title={t("skills.edit.button", { name: skill.name })} aria-label={t("skills.edit.button", { name: skill.name })} onClick={() => onEdit(skill)}><CodexIcon src={pencilIcon} className="size-4" /></button>}<button type="button" className="icon-button" disabled={busy || disabled} aria-label={t("skills.delete", { name: skill.name })} onClick={() => void remove()}>{busy ? <LoaderCircle className="settings-spin" size={15} /> : <CodexIcon src={trashIcon} className="size-4" />}</button></article>}
     {error && <p className="settings-skill-error" role="alert">{error}</p>}
   </div>;
 }

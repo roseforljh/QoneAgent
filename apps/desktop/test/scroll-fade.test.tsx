@@ -38,6 +38,7 @@ test("index.css loads unified scroll-fade.css with vertical, horizontal, bidirec
   for (const block of propertyBlocks) {
     expect(block).not.toMatch(/initial-value\s*:\s*[^;]*(?:rem|em|vh|vw|%)/);
   }
+  expect(fadeCss).toContain("animation-timeline: scroll(nearest y);");
 });
 
 test("FadeScroll relies on global CSS scroll-fade instead of inline mask-image", () => {

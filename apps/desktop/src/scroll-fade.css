@@ -73,6 +73,15 @@
   }
 }
 
+@keyframes q-sticky-header-fade {
+  0% {
+    opacity: 0;
+  }
+  1%, 100% {
+    opacity: 1;
+  }
+}
+
 @supports (animation-timeline: scroll(self y)) {
   /* 纵向滚动渐隐：自动覆盖常规纵向滚动类及左右侧栏、弹层、设置页列表容器 */
   :is(
@@ -269,17 +278,26 @@
     animation-fill-mode: both;
     animation-timeline: scroll(self y);
   }
-}
-
-/* 设置页吸顶标题下方补一层渐变过渡，让滚入标题下的内容自然柔和淡出 */
-.settings-page-header::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  top: 100%;
-  height: 14px;
-  pointer-events: none;
-  background: linear-gradient(to bottom, var(--q-surface), transparent);
+  /* 设置页吸顶标题下方渐隐仅在实际向下滚动后显现，未滚动时不遮挡首项卡片 */
+  .settings-page-header::after {
+    content: "";
+    position: absolute;
+    inset-inline: -2px;
+    top: 100%;
+    height: 20px;
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      var(--q-surface),
+      color-mix(in srgb, var(--q-surface) 60%, transparent) 45%,
+      transparent
+    );
+    opacity: 0;
+    animation-name: q-sticky-header-fade;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: scroll(nearest y);
+  }
 }
 
 [data-scroll-fade="none"] {

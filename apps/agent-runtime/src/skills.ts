@@ -6,6 +6,7 @@ import {
   DefaultResourceLoader,
   createCodemodeExtension,
   createToolSearchExtension,
+  parseFrontmatter,
   type Skill,
   type ResourceLoader,
   type ExtensionFactory,
@@ -64,21 +65,47 @@ export async function installLocalSkill(content: string): Promise<SkillInfo> {
   return writeSkillContent(content);
 }
 
-export async function createLocalSkill(name: string, description: string, instructions: string): Promise<SkillInfo> {
+function isEditableLocalSkillPath(filePath: string, importedPaths: ReadonlySet<string>): boolean {
+  if (importedPaths.has(filePath)) return false;
+  const root = path.resolve(qoneSkillsDir());
+  const directory = path.dirname(path.resolve(filePath));
+  return path.dirname(directory) === root && path.basename(filePath) === "SKILL.md";
+}
+
+function formatSkillContent(
+  name: string,
+  description: string,
+  instructions: string,
+  existingFrontmatter?: Record<string, unknown>,
+): string {
+  const lines = [
+    "---",
+    `name: ${name}`,
+    `description: ${JSON.stringify(description.replace(/[\r\n]+/g, " "))}`,
+  ];
+  if (existingFrontmatter) {
+    for (const [key, value] of Object.entries(existingFrontmatter)) {
+      if (key === "name" || key === "description" || value === undefined) continue;
+      lines.push(`${key}: ${JSON.stringify(value)}`);
+    }
+  }
+  lines.push("---", "", instructions, "");
+  return lines.join("\n");
+}
+
+function normalizeSkillFormInput(name: string, description: string, instructions: string) {
   const normalizedName = name.trim().toLowerCase();
   const normalizedDescription = description.trim();
   const normalizedInstructions = instructions.trim();
   if (!SKILL_NAME.test(normalizedName)) throw runtimeError("skills.skill_names_may_only_contain_lowercase_letters_numbers_and", {});
   if (!normalizedDescription) throw runtimeError("skills.the_skill_description_cannot_be_empty", {});
   if (!normalizedInstructions) throw runtimeError("skills.the_skill_instructions_cannot_be_empty", {});
-  const content = `---\nname: ${normalizedName}\ndescription: ${JSON.stringify(normalizedDescription.replace(/[\r\n]+/g, " "))}\n---\n\n${normalizedInstructions}\n`;
-  return writeSkillContent(content, normalizedName);
+  return { name: normalizedName, description: normalizedDescription, instructions: normalizedInstructions };
 }
 
-async function writeSkillContent(content: string, expectedName?: string): Promise<SkillInfo> {
+async function validateStagedSkill(content: string, expectedName?: string): Promise<{ staging: string; skill: Skill }> {
   if (!content.trim() || Buffer.byteLength(content, "utf8") > MAX_SKILL_CONTENT_BYTES) throw runtimeError("skills.the_skill_file_is_empty_or_exceeds_2_mb", {});
   const agentDir = qoneAgentDir();
-  const skillsDir = qoneSkillsDir();
   const cacheDir = qoneSkillCacheDir();
   await mkdir(cacheDir, { recursive: true });
   const staging = await mkdtemp(path.join(cacheDir, ".skill-import-"));
@@ -99,6 +126,84 @@ async function writeSkillContent(content: string, expectedName?: string): Promis
     if (!SKILL_NAME.test(skill.name)) throw runtimeError("skills.skill_names_may_only_contain_lowercase_letters_numbers_and", {});
     if (expectedName && skill.name !== expectedName) throw runtimeError("skills.the_skill_name_does_not_match_the_creation_form", {});
     assertUserSkillName(skill.name);
+    return { staging, skill };
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export async function createLocalSkill(name: string, description: string, instructions: string): Promise<SkillInfo> {
+  const normalized = normalizeSkillFormInput(name, description, instructions);
+  const content = formatSkillContent(normalized.name, normalized.description, normalized.instructions);
+  return writeSkillContent(content, normalized.name);
+}
+
+export async function readLocalSkill(skillId: string): Promise<{ skill: SkillInfo; instructions: string; editable: boolean }> {
+  const importedPaths = new Set(syncedSkills().map((item) => item.path));
+  const { skills } = await createResourceLoader(process.cwd());
+  const skill = skills.find((item) => item.id === skillId);
+  if (!skill) throw runtimeError("skills.skill_not_found", { p0: skillId });
+  const raw = readFileSync(skill.path, "utf8");
+  const { body } = parseFrontmatter(raw);
+  const editable = !skill.builtin && isEditableLocalSkillPath(skill.path, importedPaths);
+  return { skill, instructions: body, editable };
+}
+
+export async function updateLocalSkill(
+  skillId: string,
+  name: string,
+  description: string,
+  instructions: string,
+): Promise<SkillInfo> {
+  assertUserSkillName(skillId);
+  const normalized = normalizeSkillFormInput(name, description, instructions);
+  assertUserSkillName(normalized.name);
+  const importedPaths = new Set(syncedSkills().map((item) => item.path));
+  const { skills } = await createResourceLoader(process.cwd());
+  const existing = skills.find((item) => item.id === skillId && !item.builtin);
+  if (!existing) throw runtimeError("skills.skill_not_found", { p0: skillId });
+  if (!isEditableLocalSkillPath(existing.path, importedPaths)) {
+    throw runtimeError("skills.only_installed_local_skills_can_be_edited", {});
+  }
+  const currentDirectory = path.dirname(path.resolve(existing.path));
+  const root = path.resolve(qoneSkillsDir());
+  const targetDirectory = path.join(root, normalized.name);
+  const renamed = normalized.name !== skillId;
+  if (renamed && existsSync(targetDirectory)) {
+    throw runtimeError("skill-catalog.skill_is_already_installed", { p0: normalized.name });
+  }
+  const existingFrontmatter = parseFrontmatter(readFileSync(existing.path, "utf8")).frontmatter;
+  const content = formatSkillContent(normalized.name, normalized.description, normalized.instructions, existingFrontmatter);
+  const { staging, skill: validated } = await validateStagedSkill(content, normalized.name);
+  await rm(staging, { recursive: true, force: true });
+
+  // 改名时先移动目录再原子写入 SKILL.md，失败时回滚目录，保证附加资源不丢失
+  if (renamed) await rename(currentDirectory, targetDirectory);
+  const finalDirectory = renamed ? targetDirectory : currentDirectory;
+  const targetFile = path.join(finalDirectory, "SKILL.md");
+  const tempFile = path.join(finalDirectory, `.SKILL.md.${crypto.randomUUID()}.tmp`);
+  try {
+    await writeFile(tempFile, content, "utf8");
+    await rename(tempFile, targetFile);
+  } catch (error) {
+    await rm(tempFile, { force: true }).catch(() => {});
+    if (renamed) await rename(targetDirectory, currentDirectory).catch(() => {});
+    throw error;
+  }
+  return {
+    id: validated.name,
+    name: validated.name,
+    description: validated.description,
+    path: targetFile,
+    ...installedSource(targetFile),
+  };
+}
+
+async function writeSkillContent(content: string, expectedName?: string): Promise<SkillInfo> {
+  const skillsDir = qoneSkillsDir();
+  const { staging, skill } = await validateStagedSkill(content, expectedName);
+  try {
     const destination = path.join(skillsDir, skill.name);
     if (existsSync(destination)) throw runtimeError("skill-catalog.skill_is_already_installed", { p0: skill.name });
     await mkdir(skillsDir, { recursive: true });

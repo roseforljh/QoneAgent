@@ -273,8 +273,8 @@ const metadataRequests = new Map<string, { resolve: (value: Extract<RuntimeEvent
 type CloudResponse = Extract<RuntimeEvent, { type: "skills.cloud.list" | "skills.cloud.installed" }>;
 type CloudCommand = Extract<RuntimeCommand, { type: "skills.cloud.list" | "skills.cloud.install" }>;
 type CloudInput = CloudCommand extends infer Command ? Command extends CloudCommand ? Omit<Command, "requestId"> : never : never;
-type SkillMutationResponse = Extract<RuntimeEvent, { type: "skills.deleted" | "skills.imported" | "skills.created" | "skills.builtin.changed" }>;
-type SkillMutationCommand = Extract<RuntimeCommand, { type: "skills.delete" | "skills.import" | "skills.create" | "skills.builtin.set-enabled" | "skills.builtin.update" }>;
+type SkillMutationResponse = Extract<RuntimeEvent, { type: "skills.deleted" | "skills.imported" | "skills.created" | "skills.content" | "skills.updated" | "skills.builtin.changed" }>;
+type SkillMutationCommand = Extract<RuntimeCommand, { type: "skills.delete" | "skills.import" | "skills.create" | "skills.read" | "skills.update" | "skills.builtin.set-enabled" | "skills.builtin.update" }>;
 type SkillMutationInput = SkillMutationCommand extends infer Command ? Command extends SkillMutationCommand ? Omit<Command, "requestId"> : never : never;
 const cloudRequests = new Map<string, { resolve: (response: CloudResponse) => void; reject: (error: Error) => void }>();
 const skillMutationRequests = new Map<string, { resolve: (response: SkillMutationResponse) => void; reject: (error: Error) => void }>();

@@ -739,6 +739,21 @@ export function initRuntimeBridge(dependencies: ReturnType<typeof import("./stor
         eventStore.setState((state) => ({ skills: [...state.skills.filter((skill) => skill.id !== msg.skill.id), msg.skill] }));
         skillMutationRequests.get(msg.requestId)?.resolve(msg);
         break;
+      case "skills.content":
+        skillMutationRequests.get(msg.requestId)?.resolve(msg);
+        break;
+      case "skills.updated": {
+        const replacedIds = new Set([msg.skill.id, ...(msg.previousSkillId ? [msg.previousSkillId] : [])]);
+        eventStore.setState((state) => {
+          const index = state.skills.findIndex((skill) => replacedIds.has(skill.id));
+          if (index === -1) return { skills: [...state.skills, msg.skill] };
+          const next = state.skills.filter((skill) => !replacedIds.has(skill.id));
+          next.splice(index, 0, msg.skill);
+          return { skills: next };
+        });
+        skillMutationRequests.get(msg.requestId)?.resolve(msg);
+        break;
+      }
       case "plugins.list":
         eventStore.setState({ plugins: msg.plugins });
         break;

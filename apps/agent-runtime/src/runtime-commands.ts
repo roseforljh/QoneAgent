@@ -7,7 +7,7 @@ import { repeatedUserMessageId, mcpCredentialKeys } from "@qone/protocol";
 import type { RuntimeCommand, PermissionDecision, MessageAttachmentInfo } from "@qone/protocol";
 import { thinkingLevelsForApi, parseMcpCommand, supportsMemorySummary } from "@qone/protocol";
 import path from "node:path";
-import { createLocalSkill, createResourceLoader, deleteLocalSkill, installLocalSkill } from "./skills.js";
+import { createLocalSkill, createResourceLoader, deleteLocalSkill, installLocalSkill, readLocalSkill, updateLocalSkill } from "./skills.js";
 import { installCloudSkill, listCloudSkills } from "./skill-catalog.js";
 import { setBuiltinSkillEnabled, updateBuiltinSkill } from "./builtin-skills/manager.js";
 import { containsSecretConfig } from "./secrets.js";
@@ -226,6 +226,19 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
       await services.adapter.refreshSkills();
       services.skillRepo.upsert(skill);
       services.send({ type: "skills.created", requestId: cmd.requestId, skill: skill });
+      return true;
+    }
+    case "skills.read": {
+      const detail = await readLocalSkill(cmd.skillId);
+      services.send({ type: "skills.content", requestId: cmd.requestId, ...detail });
+      return true;
+    }
+    case "skills.update": {
+      const skill = await updateLocalSkill(cmd.skillId, cmd.name, cmd.description, cmd.instructions);
+      if (cmd.skillId !== skill.id) services.skillRepo.delete(cmd.skillId);
+      await services.adapter.refreshSkills();
+      services.skillRepo.upsert(skill);
+      services.send({ type: "skills.updated", requestId: cmd.requestId, skill, previousSkillId: cmd.skillId });
       return true;
     }
 

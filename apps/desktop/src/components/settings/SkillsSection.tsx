@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import type { SkillInfo } from "@qone/protocol";
 import { CloudDownload, LoaderCircle, Plus, Search, Upload } from "lucide-react";
 import { localizeError } from "../../lib/error-localization";
 import { requestSkillMutation, useStore } from "../../store";
@@ -19,6 +20,7 @@ export function SkillsSection() {
   const [query, setQuery] = useState("");
   const [cloudOpen, setCloudOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingSkill, setEditingSkill] = useState<SkillInfo | null>(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -57,9 +59,10 @@ export function SkillsSection() {
         <div className="settings-section-toolbar settings-list-heading"><div><strong>{t("skills.installed")}</strong><span>{t("skills.count", { count: visibleSkills.length })}</span></div><div className="settings-skill-actions"><label className="settings-search"><Search size={13} /><input type="search" placeholder={t("common.search")} value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="settings-skill-action-buttons"><ClaudeCodeSyncButton target="skills" /><input ref={fileInputRef} className="settings-file-input" type="file" accept=".md,SKILL.md" onChange={(event) => void importSkill(event)} /><button type="button" className="settings-secondary-action" disabled={importing} onClick={() => { setImportError(""); fileInputRef.current?.click(); }}>{importing ? <LoaderCircle className="settings-spin" size={14} /> : <Upload size={14} />}{importing ? t("skills.importing") : t("skills.import")}</button><button type="button" className="settings-secondary-action" onClick={() => setCreateOpen(true)}><Plus size={14} />{t("skills.create.button")}</button><button type="button" className="settings-secondary-action" onClick={() => setCloudOpen(true)}><CloudDownload size={14} />{t("skills.cloud.button")}</button></div></div></div>
         {importError && <p className="settings-skill-error" role="alert"><strong>{t("skills.importError")}:</strong> {importError}</p>}
       </div>
-      <div className="settings-skill-list">{visibleSkills.length === 0 ? <p className="settings-empty">{t("skills.none")}</p> : visibleSkills.map((group) => group.packaged ? <SkillPackageCard key={group.id} group={group} /> : <SkillCard key={group.id} skill={group.skills[0]!} />)}</div>
+      <div className="settings-skill-list">{visibleSkills.length === 0 ? <p className="settings-empty">{t("skills.none")}</p> : visibleSkills.map((group) => group.packaged ? <SkillPackageCard key={group.id} group={group} /> : <SkillCard key={group.id} skill={group.skills[0]!} onEdit={setEditingSkill} />)}</div>
       {cloudOpen && <SkillCloudDialog onClose={() => setCloudOpen(false)} />}
       {createOpen && <SkillCreateDialog onClose={() => { setCreateOpen(false); reloadSkills(); }} />}
+      {editingSkill && <SkillCreateDialog skill={editingSkill} onClose={() => { setEditingSkill(null); reloadSkills(); }} />}
     </>
   );
 }

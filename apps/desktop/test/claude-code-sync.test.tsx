@@ -67,7 +67,7 @@ test("MCP standby stays enabled and opens its actions without connecting", async
     expect(card.classList.contains("is-error")).toBe(false);
     expect(findCard(connectedServer.name).querySelector(".settings-mcp-badge.is-connected")?.textContent).toBe(t("mcp.connectedStatus"));
     await act(async () => card.click());
-    expect(host.querySelector(".settings-mcp-action-dialog")).not.toBeNull();
+    expect(dom.window.document.querySelector(".settings-mcp-action-dialog")).not.toBeNull();
     expect(commands.slice(before).some(command => command.type === "mcp.connect")).toBe(false);
   });
 });
@@ -304,6 +304,51 @@ test("saved key and account presets reconnect unchanged; switching off keeps con
   useStore.setState({ mcpServers: [], mcpConnectingIds: [] });
   await mounted(<McpSection />, async host => {
     await act(async () => host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Firecrawl"]')!.click());
-    expect(host.querySelector('input[type="password"]')).not.toBeNull();
+    expect(dom.window.document.querySelector('input[type="password"]')).not.toBeNull();
+  });
+});
+
+test("manual MCP dialog portals above settings and connects with only URL and optional API key", async () => {
+  useStore.setState({ connected: true, mcpServers: [], mcpConnectingIds: [] });
+  await mounted(<McpSection />, async host => {
+    await act(async () => button(t("mcp.addService")).click());
+    await act(async () => button(t("mcp.quickAdd.manual")).click());
+    // 弹窗必须通过 portal 挂载在 document.body 下，避免被 settings-dialog-content 的 mask-image 裁剪
+    expect(host.querySelector(".settings-subdialog-layer")).toBeNull();
+    const dialog = dom.window.document.querySelector('[role="dialog"]')!;
+    expect(dialog).not.toBeNull();
+    const urlInput = dialog.querySelector<HTMLInputElement>('input[placeholder="https://…"]')!;
+    const keyInput = dialog.querySelector<HTMLInputElement>('input[type="password"]')!;
+    expect(urlInput).not.toBeNull();
+    expect(keyInput).not.toBeNull();
+    // 默认远程模式下不展示 OAuth / 命令 / 环境变量等冗余输入项
+    expect(dialog.querySelector("textarea")).toBeNull();
+
+    const type = (el: HTMLInputElement, value: string) => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    };
+    await act(async () => {
+      type(urlInput, "https://mcp.demo.dev/sse");
+      type(keyInput, "sk-secret-123");
+    });
+    const before = commands.length;
+    await act(async () => {
+      button(t("mcp.connect")).click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    const recent = commands.slice(before);
+    expect(recent.find((cmd) => cmd.type === "secret.set" && cmd.key === "mcp.env:demo/header-authorization" && cmd.value === "Bearer sk-secret-123")).toBeTruthy();
+    const connectCmd = recent.find((cmd) => cmd.type === "mcp.connect");
+    expect(connectCmd).toMatchObject({
+      config: {
+        id: "demo",
+        name: "demo",
+        url: "https://mcp.demo.dev/sse",
+        headers: { Authorization: "$mcp.env:demo/header-authorization" },
+      },
+    });
+    expect(JSON.stringify(connectCmd)).not.toContain("sk-secret-123");
+    expect(dom.window.document.querySelector(".settings-subdialog-layer")).toBeNull();
   });
 });

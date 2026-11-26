@@ -156,6 +156,8 @@ export type RuntimeCommand = { locale?: RuntimeLocale } & (
   | { type: "skills.delete"; requestId: string; skillId: string }
   | { type: "skills.import"; requestId: string; content: string }
   | { type: "skills.create"; requestId: string; name: string; description: string; instructions: string }
+  | { type: "skills.read"; requestId: string; skillId: string }
+  | { type: "skills.update"; requestId: string; skillId: string; name: string; description: string; instructions: string }
   | { type: "skills.builtin.set-enabled"; requestId: string; skillId: string; enabled: boolean }
   | { type: "skills.builtin.update"; requestId: string; skillId: string }
   | { type: "plugins.list"; requestId: string }
@@ -310,6 +312,8 @@ export type RuntimeEvent =
   | { type: "skills.deleted"; requestId: string; skillId: string }
   | { type: "skills.imported"; requestId: string; skill: SkillInfo }
   | { type: "skills.created"; requestId: string; skill: SkillInfo }
+  | { type: "skills.content"; requestId: string; skill: SkillInfo; instructions: string; editable: boolean }
+  | { type: "skills.updated"; requestId: string; skill: SkillInfo; previousSkillId?: string }
   | { type: "skills.builtin.changed"; requestId: string; skill: SkillInfo; updated?: boolean }
   | { type: "plugins.list"; plugins: PluginInfo[] }
   | { type: "browser.status"; requestId?: string; status: BrowserSyncStatus }

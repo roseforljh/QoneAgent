@@ -5,6 +5,7 @@ import { fetchProviderModelCatalog } from "../../lib/provider-model-catalog";
 import { saveModelConfig } from "../../lib/model-config-save";
 import { capabilities, defaultModelSettings, mergeFetchedModel, modelApiTypeForProvider, modelConfigForProvider, normalizeThinkingLevel, parseModelsResponse, thinkingLevelOptionsForApi, withProviderInputDefaults, type Capability, type ImageGenerationSettings, type ModelSettingField, type ModelSettings, type ProviderModel, type ProviderProfile, type ThinkingLevel } from "../../lib/model-settings";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { check } from "../../lib/desktop-bridge";
 import { QoneSelect } from "../ui/Select";
 import { Check, Globe2, LoaderCircle, Plus, Save, Trash2, X } from "lucide-react";
@@ -123,7 +124,7 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
     } finally { setSaving(false); }
   };
   const remove = async () => { if (model && await confirmDestructiveAction(t("model.deleteConfirm", { name: model.label }))) { onDeleted(model); onClose(); } };
-  return (
+  return createPortal(
     <div
       className="settings-subdialog-layer"
       onKeyDown={(event) => {
@@ -173,7 +174,8 @@ function ModelEditorDialog({ open, provider, model, onClose, onSaved, onDeleted 
           <button type="button" className="settings-primary-action" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle size={15} className="settings-spin" /> : <Save size={15} />}{t("model.saveParameters")}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
