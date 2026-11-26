@@ -16,7 +16,7 @@ export interface SelectOption {
 interface QoneSelectProps {
   value: string;
   options: SelectOption[];
-  onChange: (value: string) => void;
+  onChange: (value: string, trigger: HTMLButtonElement | null) => void;
   placeholder?: string;
   prefix?: ReactNode;
   ariaLabel?: string;
@@ -48,7 +48,7 @@ export function QoneSelect({
 
   const choose = (option: SelectOption) => {
     if (option.disabled) return;
-    onChange(option.value);
+    onChange(option.value, triggerRef.current);
     setOpen(false);
     triggerRef.current?.focus();
   };

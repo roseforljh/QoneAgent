@@ -63,16 +63,22 @@ test("invalid persisted values, old named settings and custom colors normalize s
 const originals = { window: Object.getOwnPropertyDescriptor(globalThis, "window"), document: Object.getOwnPropertyDescriptor(globalThis, "document") };
 const storage = new Map<string, string>();
 const style = new Map<string, string>();
-const root = { dataset: {} as Record<string, string>, style: { setProperty: (key: string, value: string) => style.set(key, value) } };
+const root = { dataset: {} as Record<string, string>, style: { setProperty: (key: string, value: string) => style.set(key, value), removeProperty: (key: string) => style.delete(key) } };
 const media = Object.assign(new EventTarget(), { matches: true });
+const reducedMotion = { matches: false };
 const taskWindow = Object.assign(new EventTarget(), {
+  innerWidth: 800,
+  innerHeight: 600,
   localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) },
-  matchMedia: () => media,
+  matchMedia: (query: string) => query === "(prefers-reduced-motion: reduce)" ? reducedMotion : media,
 });
+const taskDocument = { documentElement: root, startViewTransition: undefined as Document["startViewTransition"] | undefined };
+const themeTrigger = { getBoundingClientRect: () => ({ left: 180, top: 280, width: 40, height: 40 }) } as HTMLElement;
 beforeEach(() => {
-  storage.clear(); style.clear(); root.dataset = {}; media.matches = true;
+  storage.clear(); style.clear(); root.dataset = {}; media.matches = true; reducedMotion.matches = false;
+  taskDocument.startViewTransition = undefined;
   Object.defineProperty(globalThis, "window", { configurable: true, value: taskWindow });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: { documentElement: root } });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: taskDocument });
 });
 afterAll(() => {
   for (const key of ["window", "document"] as const) {
@@ -93,6 +99,67 @@ test("system mode survives runtime startup and follows changes until an explicit
   setThemeSetting("system");
   expect(root.dataset.theme).toBe("light");
   dispose();
+});
+
+test("theme reveal uses the trigger center, applies in the snapshot callback and clears after completion", async () => {
+  applyAppearance();
+  let update: (() => void) | undefined;
+  const { promise: finished, resolve } = Promise.withResolvers<void>();
+  taskDocument.startViewTransition = (callback) => {
+    update = callback as () => void;
+    return { ready: Promise.resolve(), finished } as ViewTransition;
+  };
+
+  setThemeSetting("light", themeTrigger);
+  expect(root.dataset.theme).toBe("dark");
+  expect(storage.has("qone-theme")).toBe(false);
+  expect(style.get("--q-theme-reveal-from")).toBe("circle(0% at 25% 50%)");
+  const radius = Number(style.get("--q-theme-reveal-to")?.match(/circle\(([\d.]+)% at 25% 50%\)/)?.[1]);
+  expect(radius * Math.hypot(800, 600) / Math.SQRT2 / 100).toBeCloseTo(Math.hypot(600, 300));
+  update!();
+  expect(root.dataset.theme).toBe("light");
+  expect(storage.get("qone-theme")).toBe("light");
+  resolve();
+  await finished;
+  expect(root.dataset.themeReveal).toBeUndefined();
+  expect(style.has("--q-theme-reveal-from")).toBe(false);
+  expect(style.has("--q-theme-reveal-to")).toBe(false);
+});
+
+test("a new theme choice during a reveal wins over the skipped update", async () => {
+  applyAppearance();
+  const { promise: updateCallbackDone, resolve: updated } = Promise.withResolvers<void>();
+  const { promise: ready, reject: skipped } = Promise.withResolvers<void>();
+  const { promise: finished, resolve: finish } = Promise.withResolvers<void>();
+  taskDocument.startViewTransition = (callback) => ({
+    ready, finished, updateCallbackDone,
+    skipTransition: () => {
+      skipped(new DOMException("Skipped", "AbortError"));
+      (callback as () => void)();
+      updated();
+      finish();
+    },
+  } as ViewTransition);
+  setThemeSetting("light", themeTrigger);
+  setThemeSetting("system", themeTrigger);
+  await finished;
+  expect(root.dataset.theme).toBe("dark");
+  expect(storage.get("qone-theme")).toBe("system");
+  expect(root.dataset.themeReveal).toBeUndefined();
+});
+
+test("theme settings apply immediately without animation support, with reduced motion or with no visual change", () => {
+  applyAppearance();
+  setThemeSetting("light", themeTrigger);
+  expect(root.dataset.theme).toBe("light");
+  taskDocument.startViewTransition = () => { throw new Error("Should not animate"); };
+  reducedMotion.matches = true;
+  setThemeSetting("dark", themeTrigger);
+  expect(root.dataset.theme).toBe("dark");
+  reducedMotion.matches = false;
+  setThemeSetting("system", themeTrigger);
+  expect(storage.get("qone-theme")).toBe("system");
+  expect(root.dataset.theme).toBe("dark");
 });
 
 test("per-mode settings persist without dropping language or the other mode", () => {

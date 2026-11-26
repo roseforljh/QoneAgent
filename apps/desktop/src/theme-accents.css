@@ -10,6 +10,20 @@
   --ring: #737373;
 }
 
+:root[data-theme-reveal]::view-transition-group(root),
+:root[data-theme-reveal]::view-transition-old(root),
+:root[data-theme-reveal]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+:root[data-theme-reveal]::view-transition-new(root) {
+  animation: q-theme-reveal 400ms ease-in-out both;
+}
+@keyframes q-theme-reveal {
+  from { clip-path: var(--q-theme-reveal-from); }
+  to { clip-path: var(--q-theme-reveal-to); }
+}
+
 .settings-accent-dot { background: var(--q-accent-color, var(--foreground)); }
 .settings-accent-menu .qone-select-option { min-height: 28px; padding: 3px 9px; line-height: 18px; }
 .settings-accent-menu .settings-accent-dot { flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--q-border); }

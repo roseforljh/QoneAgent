@@ -19,7 +19,7 @@ export function AppearanceOptions() {
   return <>
     <div className="settings-option-row">
       <strong>{t("general.appearance")}</strong>
-      <QoneSelect {...selector} ariaLabel={t("general.appearance")} value={appearance.theme} onChange={(value) => setThemeSetting(value as ThemeSetting)} options={[
+      <QoneSelect {...selector} ariaLabel={t("general.appearance")} value={appearance.theme} onChange={(value, trigger) => setThemeSetting(value as ThemeSetting, trigger)} options={[
         { value: "system", label: t("general.system") }, { value: "light", label: t("general.light") }, { value: "dark", label: t("general.dark") },
       ]} />
     </div>
