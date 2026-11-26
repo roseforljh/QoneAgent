@@ -245,7 +245,7 @@ test.each([false, true])("live reasoning samples only the latest text (stage: %s
     expect(trigger()?.title).toBe(stage ? stageTitle : undefined);
     reasoning = "我";
     await render();
-    expect(trigger()?.title).toMatch(stage ? /^检查启动流程$/u : /^(正在思考|Thinking)$/u);
+    expect(trigger()?.title).toMatch(stage ? /^检查启动流程$/u : /^(思考中…|Thinking…)$/u);
     reasoning += "先检查";
     await render();
     await tick(1000);

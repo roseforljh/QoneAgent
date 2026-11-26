@@ -14,8 +14,8 @@ function fixture() {
 test("the file keeps Claude Code's shape, never stores literal secrets and survives broken or deleted edits", () => {
   const settings = fixture();
   const repo = new McpServerRepo(settings);
-  repo.upsert({ id: "remote", name: "Remote", url: "https://r.dev/sse", transport: "sse", headers: { Authorization: "$mcp.env:remote/header-authorization", Plain: "secret" }, connected: true, connecting: true, toolCount: 3 });
-  expect(JSON.parse(readFileSync(settings.file, "utf8")).mcpServers.remote).toEqual({ name: "Remote", url: "https://r.dev/sse", type: "sse", headers: { Authorization: "$mcp.env:remote/header-authorization" } });
+  repo.upsert({ id: "remote", name: "Remote", url: "https://r.dev/sse", transport: "sse", headers: { Authorization: "$mcp.env:remote/header-authorization", "X-Api-Key": "secret", "X-Mode": "fast" }, connected: true, connecting: true, toolCount: 3 });
+  expect(JSON.parse(readFileSync(settings.file, "utf8")).mcpServers.remote).toEqual({ name: "Remote", url: "https://r.dev/sse", type: "sse", headers: { Authorization: "$mcp.env:remote/header-authorization", "X-Mode": "fast" } });
   expect(repo.list()[0]).toMatchObject({ id: "remote", transport: "sse" });
   const models = new ModelConfigRepo(settings);
   models.upsert({ id: "a", provider: "p", model: "a" }); models.upsert({ id: "b", provider: "p", model: "b" }); models.upsert({ id: "a", provider: "p", model: "a2" });

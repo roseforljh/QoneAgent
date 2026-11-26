@@ -49,12 +49,14 @@ function harness() {
 
 test("an agent adding an MCP service to settings.json connects it with its key moved to encrypted storage", async () => {
   const h = harness();
-  await h.edit(data => { data.mcpServers.exa = { name: "Exa", command: "npx", args: ["-y", "exa-mcp-server"], env: { EXA_API_KEY: "plain-key", MODE: "$mcp.env:exa/MODE" } }; });
+  await h.edit(data => { data.mcpServers.exa = { name: "Exa", command: "npx", args: ["-y", "exa-mcp-server"], env: { EXA_API_KEY: "plain-key", NODE_ENV: "production", MODE: "$mcp.env:exa/MODE" } }; });
   expect(h.connected).toHaveLength(1);
-  expect(h.connected[0]).toMatchObject({ id: "exa", command: "npx", env: { EXA_API_KEY: "$mcp.env:exa/EXA_API_KEY", MODE: "$mcp.env:exa/MODE" } });
+  expect(h.connected[0]).toMatchObject({ id: "exa", command: "npx", env: { EXA_API_KEY: "$mcp.env:exa/EXA_API_KEY", NODE_ENV: "production", MODE: "$mcp.env:exa/MODE" } });
   expect(h.runtimeSecrets.get("mcp.env:exa/EXA_API_KEY")).toBe("plain-key");
+  expect(h.runtimeSecrets.has("mcp.env:exa/NODE_ENV")).toBe(false);
   expect(h.events.find(event => event.type === "claude-code.credentials")).toMatchObject({ values: { "mcp.env:exa/EXA_API_KEY": "plain-key" } });
   expect(readFileSync(h.settings.file, "utf8")).not.toContain("plain-key");
+  expect(readFileSync(h.settings.file, "utf8")).toContain('"NODE_ENV": "production"');
   expect(h.services.permissionRepo.get("mcp:exa", "mcp.connect")).toBe("allow");
   expect(h.events.some(event => event.type === "mcp.list")).toBe(true);
 

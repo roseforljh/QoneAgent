@@ -7,9 +7,11 @@ import { Popover } from "radix-ui";
 import type { ProviderApiType } from "@qone/protocol";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
-import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, filterPickerModels, readCurrentProvider, getPickerModels, providerProfilesFromModelConfigs } from "../../lib/model-picker-data";
+import { ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY, MODEL_CONFIG_CHANGE_EVENT, filterPickerModels, readCurrentProvider, readPickerProviders, getPickerModels, providerProfilesFromModelConfigs, type PickerModel } from "../../lib/model-picker-data";
 import { defaultThinkingForModel, normalizeThinkingLevel, thinkingLevelOptionsForApi, type ThinkingLevel } from "../../lib/model-settings";
 import { ModelLogo } from "./model-logo";
+import { CodexArrowLeftIcon } from "./execution-icons";
+import { ProviderLogo } from "../settings/ProviderLogo";
 import { ThinkingWave } from "./run-options-popover";
 import { Skeleton } from "../ui/skeleton";
 import "./model-picker.css";
@@ -24,10 +26,11 @@ export const ModelPicker: FC = () => {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"simple" | "advanced">("simple");
+  const [list, setList] = useState<"models" | "providers">("models");
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [openTriggerWidth, setOpenTriggerWidth] = useState<number>();
-  const [providerSnapshot, setProviderSnapshot] = useState(() => readCurrentProvider());
+  const [providerData, setProviderData] = useState(() => ({ all: readPickerProviders(), current: readCurrentProvider() }));
   const [panelHeights, setPanelHeights] = useState<{ simple: number; advanced: number }>();
   const simpleRef = useRef<HTMLDivElement>(null);
   const advancedRef = useRef<HTMLDivElement>(null);
@@ -36,7 +39,7 @@ export const ModelPicker: FC = () => {
   const openLabelRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    const refresh = () => setProviderSnapshot(readCurrentProvider());
+    const refresh = () => setProviderData({ all: readPickerProviders(), current: readCurrentProvider() });
     window.addEventListener(MODEL_CONFIG_CHANGE_EVENT, refresh);
     const onStorage = (event: StorageEvent) => {
       if (!event.key || [ACTIVE_PROVIDER_STORAGE_KEY, PROVIDERS_STORAGE_KEY].includes(event.key)) refresh();
@@ -48,7 +51,14 @@ export const ModelPicker: FC = () => {
     };
   }, []);
 
-  const models = useMemo(() => getPickerModels(providerSnapshot ?? providerProfilesFromModelConfigs(modelConfigs)[0], modelConfigs), [providerSnapshot, modelConfigs]);
+  const providers = useMemo(() => providerData.all.length ? providerData.all : providerProfilesFromModelConfigs(modelConfigs), [providerData.all, modelConfigs]);
+  // Each conversation keeps its own model, so its provider follows that model, not the global default.
+  const sessionProviderId = modelConfigs.find((config) => config.id === selectedModelId)?.provider;
+  const provider = providers.find((item) => item.id === sessionProviderId) ?? providerData.current ?? providers[0];
+  const models = useMemo(() => getPickerModels(provider, modelConfigs), [provider, modelConfigs]);
+  const providerChoices = useMemo(() => providers
+    .map((item) => ({ provider: item, models: getPickerModels(item, modelConfigs) }))
+    .filter((choice) => choice.models.length > 0), [providers, modelConfigs]);
   const visibleModels = useMemo(() => filterPickerModels(models, search), [models, search]);
   const selected = models.find((model) => model.id === selectedModelId);
   const activeModel = selected ?? models[0];
@@ -91,7 +101,7 @@ export const ModelPicker: FC = () => {
     observer.observe(simple);
     observer.observe(advanced);
     return () => observer.disconnect();
-  }, [open, view, visibleModels.length, searchOpen, measurePanels]);
+  }, [open, view, list, visibleModels.length, searchOpen, measurePanels]);
 
   useEffect(() => {
     if (!open) return;
@@ -104,11 +114,23 @@ export const ModelPicker: FC = () => {
   }, [open, view, measurePanels]);
 
   const showModels = () => {
+    setList("models");
     setView("advanced");
     requestAnimationFrame(() => (advancedRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ?? advancedRef.current?.querySelector<HTMLButtonElement>('[role="option"]'))?.focus());
   };
+  const showProviders = () => {
+    setList("providers");
+    setView("advanced");
+    requestAnimationFrame(() => (advancedRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ?? advancedRef.current?.querySelector<HTMLButtonElement>('[role="option"]'))?.focus());
+  };
+  // Keep the same model when the new provider offers it; otherwise start from its first model.
+  const chooseProvider = (choices: PickerModel[]) => {
+    const next = choices.find((model) => model.modelName === activeModel?.modelName) ?? choices[0];
+    if (next) setSelectedModel(next.id);
+  };
   const preparePicker = () => {
-    setProviderSnapshot(readCurrentProvider());
+    setProviderData({ all: readPickerProviders(), current: readCurrentProvider() });
+    setList("models");
     setView(activeModel && thinkingOptions.length >= 2 ? "simple" : "advanced");
     setSearch("");
     setSearchOpen(false);
@@ -158,7 +180,9 @@ export const ModelPicker: FC = () => {
         <div className="q-model-picker-viewport" data-measured={Boolean(panelHeights)} style={panelHeights === undefined ? undefined : { height: panelHeights[view] }}>
           <div ref={simpleRef} className="q-model-picker-simple" aria-hidden={view !== "simple"} inert={view !== "simple"} data-active={view === "simple"}>
             <div className="q-model-picker-card-head">
-              <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={17} />
+              <button type="button" className="q-model-picker-provider-button" onClick={showProviders} aria-label={`${t("model.switchProvider")}：${provider?.name ?? ""}`} title={provider ? `${t("model.switchProvider")}：${provider.name}` : t("model.switchProvider")}>
+                <ModelLogo modelName={activeModel?.modelName ?? ""} label={activeModel?.label} size={17} />
+              </button>
               <button type="button" className="q-model-picker-model-button" onClick={showModels} aria-label={`${t("chat.selectModel")}：${displayLabel}`}>
                 <span className="q-model-picker-model-content">
                   <span className="q-model-picker-model-label"><span className="q-model-picker-model-name">{displayLabel}</span></span>
@@ -176,6 +200,22 @@ export const ModelPicker: FC = () => {
             }} />
           </div>
           <div ref={advancedRef} className="q-model-picker-advanced" aria-hidden={view !== "advanced"} inert={view !== "advanced"} data-active={view === "advanced"}>
+            {list === "providers" ? <>
+              <div className="q-model-picker-list-head"><button type="button" className="q-model-picker-back" onClick={() => setView("simple")}><CodexArrowLeftIcon size={14} />{t("model.back")}</button></div>
+              <div className="q-model-picker-list" role="listbox" aria-label={t("model.selectProvider")}>
+                {providerChoices.map((choice) => {
+                  const current = choice.provider.id === provider?.id;
+                  return <Popover.Close key={choice.provider.id} asChild>
+                    <button type="button" role="option" aria-selected={current} className={cn("q-model-picker-option", current && "is-selected")} onClick={() => chooseProvider(choice.models)}>
+                      <ProviderLogo name={choice.provider.name} baseUrl={choice.provider.baseUrl ?? ""} logoUrl={choice.provider.logoUrl} />
+                      <span className="q-model-picker-option-name">{choice.provider.name}</span>
+                      {current && <CheckIcon size={16} aria-hidden="true" />}
+                    </button>
+                  </Popover.Close>;
+                })}
+                {providerChoices.length === 0 && <p className="q-model-picker-empty">{t("chat.noModelsConfigured")}</p>}
+              </div>
+            </> : <>
             <div className="q-model-picker-list-head">
               {searchOpen ? <label className="q-model-picker-search">
                 <CodexIcon src={searchIcon} className="size-3.5" />
@@ -183,7 +223,7 @@ export const ModelPicker: FC = () => {
                 <button type="button" aria-label={t("chat.clearModelSearch")} onClick={() => { setSearch(""); setSearchOpen(false); }}><XIcon size={14} /></button>
               </label> : <><span>{t("chat.selectModel")}</span><button type="button" aria-label={t("chat.searchModels")} onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchRef.current?.focus()); }}><CodexIcon src={searchIcon} className="size-[15px]" /></button></>}
             </div>
-            <div className="q-model-picker-list" role="listbox" aria-label={t("chat.modelsInProvider", { provider: providerSnapshot?.name || t("chat.modelProvider") })}>
+            <div className="q-model-picker-list" role="listbox" aria-label={t("chat.modelsInProvider", { provider: provider?.name || t("chat.modelProvider") })}>
               {visibleModels.map((model) => <Popover.Close key={model.id} asChild>
                 <button type="button" role="option" aria-selected={model.id === activeModel?.id} className={cn("q-model-picker-option", model.id === activeModel?.id && "is-selected")} onClick={() => setSelectedModel(model.id)}>
                   <span className="q-model-picker-option-name">{model.label}</span>
@@ -196,6 +236,7 @@ export const ModelPicker: FC = () => {
             {models.length === 0 && <Popover.Close asChild>
               <button type="button" className="q-model-picker-settings" onClick={() => window.dispatchEvent(new Event("qone-open-settings"))}>{t("chat.openSettings")}</button>
             </Popover.Close>}
+            </>}
           </div>
         </div>
       </Popover.Content>

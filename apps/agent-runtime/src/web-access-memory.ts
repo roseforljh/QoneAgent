@@ -38,16 +38,31 @@ function textOf(value: unknown): string {
   catch { return String(value).slice(0, 4_000).toLowerCase(); }
 }
 
+function errorSnippet(result: unknown, details?: Record<string, unknown>): string {
+  for (const field of [details?.error, details?.reason, details?.message]) {
+    if (typeof field === "string" && field.trim()) return field.slice(0, 600).toLowerCase();
+  }
+  const content = result && typeof result === "object" ? (result as { content?: unknown }).content : undefined;
+  if (Array.isArray(content)) {
+    const firstText = content.find((item) => item && typeof item === "object" && (item as Record<string, unknown>).type === "text") as { text?: unknown } | undefined;
+    if (typeof firstText?.text === "string" && firstText.text.trim()) return firstText.text.slice(0, 600).toLowerCase();
+  }
+  return textOf(result).slice(0, 600);
+}
+
 function failureReason(result: unknown, details?: Record<string, unknown>): string {
-  const status = Number(details?.status);
+  const status = Number(details?.status ?? details?.statusCode);
   if (Number.isInteger(status) && status >= 400) return `HTTP ${status}`;
-  const text = textOf(result);
-  if (/timeout|timed out|超时/.test(text)) return "timeout";
-  if (/403|forbidden|反爬|blocked|anti.bot/.test(text)) return "blocked or HTTP 403";
-  if (/javascript|js render|no readable|无可读|动态渲染/.test(text)) return "JavaScript rendering";
-  if (/login|sign.in|authentication|登录|cookie/.test(text)) return "login required";
-  if (/robots|permission|forbidden|权限/.test(text)) return "access restricted";
-  if (/network|fetch failed|dns|连接|网络/.test(text)) return "network error";
+  const code = typeof details?.code === "string" ? details.code.toUpperCase() : "";
+  if (code === "ETIMEDOUT" || code === "ABORT_ERR") return "timeout";
+  if (["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"].includes(code)) return "network error";
+  const text = errorSnippet(result, details);
+  if (/\b(?:timeout|timed out|etimedout)\b|请求超时|连接超时|操作超时/.test(text)) return "timeout";
+  if (/\b(?:http\s*403|403\s+forbidden|forbidden|anti[- ]?bot|captcha|blocked)\b|反爬|人机验证/.test(text)) return "blocked or HTTP 403";
+  if (/\b(?:js render|javascript required|no readable content)\b|无可读内容|需要\s*js\s*渲染/.test(text)) return "JavaScript rendering";
+  if (/\b(?:http\s*401|unauthorized|login_required|login required|sign[- ]?in required)\b|需要登录/.test(text)) return "login required";
+  if (/\b(?:robots\.txt|access denied|permission denied)\b|无访问权限/.test(text)) return "access restricted";
+  if (/\b(?:econnrefused|econnreset|enotfound|fetch failed|dns error|network error)\b|网络错误|连接失败/.test(text)) return "network error";
   return "direct retrieval failed";
 }
 
@@ -74,7 +89,8 @@ function routeLabel(route: WebAccessRoute): string {
 
 function isDirectWebFetchTool(toolName: string): boolean {
   const leaf = toolName.startsWith("mcp:") ? toolName.split(":").slice(2).join(":") : toolName;
-  return /^(?:web_fetch|firecrawl_scrape|tavily_extract|fetch)$/i.test(leaf) || /(?:^|_)(?:web_fetch|scrape)(?:$|_)/i.test(leaf);
+  return /^(?:web_fetch|fetch_url|read_url|get_url|firecrawl_scrape|tavily_extract|fetch)$/i.test(leaf)
+    || /(?:^|_)(?:web_fetch|fetch_url|read_url|scrape|crawl|extract)(?:$|_)/i.test(leaf);
 }
 
 export class WebAccessMemory {

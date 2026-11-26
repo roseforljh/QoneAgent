@@ -65,8 +65,13 @@ const assetKey = (filePath: string) => {
   const resolved = path.resolve(filePath);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 };
+// 预览的 HTML 页面要加载同目录及子目录里的 css/js/图片，按目录授权。
+const authorizedAssetDirectories = new Set<string>();
 export function isAuthorizedAsset(filePath: string): boolean {
-  return authorizedAssets.has(assetKey(filePath));
+  const key = assetKey(filePath);
+  if (authorizedAssets.has(key)) return true;
+  for (const directory of authorizedAssetDirectories) if (key.startsWith(directory)) return true;
+  return false;
 }
 
 export function authorizeAttachmentPreview(filePath: string): void {
@@ -101,13 +106,23 @@ export function authorizeFilePreview(filePath: string, allowedRoot?: string): st
     }
   }
   authorizedAssets.add(assetKey(canonical));
+  if (/\.html?$/i.test(canonical)) {
+    const directory = assetKey(path.dirname(canonical));
+    authorizedAssetDirectories.add(directory.endsWith(path.sep) ? directory : directory + path.sep);
+  }
   return canonical;
+}
+
+/** 渲染进程不能跨源 fetch asset://，需要字节的预览（Office 文档）经此读取，授权范围与 asset:// 一致。 */
+export function readAuthorizedFile(filePath: string): Promise<Buffer> {
+  if (typeof filePath !== "string" || !isAuthorizedAsset(filePath)) throw new Error("native.filePreviewScope");
+  return fs.promises.readFile(filePath);
 }
 
 export async function saveImageAs(
   mainWindow: BrowserWindow,
   filename: string,
-  base64Data: string,
+  source: { data?: string; url?: string },
   title: string
 ): Promise<boolean> {
   const result = await dialog.showSaveDialog(mainWindow, {
@@ -115,7 +130,14 @@ export async function saveImageAs(
     defaultPath: filename || "image.png",
   });
   if (result.canceled || !result.filePath) return false;
-  const buffer = Buffer.from(base64Data, "base64");
+  let buffer: Buffer;
+  if (source.url) {
+    if (!["asset:", "http:", "https:"].includes(new URL(source.url).protocol)) throw new Error("native.imageEmpty");
+    // The window's session serves authorized asset:// files and fetches remote images without CORS.
+    const response = await mainWindow.webContents.session.fetch(source.url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    buffer = Buffer.from(await response.arrayBuffer());
+  } else buffer = Buffer.from(source.data ?? "", "base64");
   if (buffer.length === 0) {
     throw new Error("native.imageEmpty");
   }

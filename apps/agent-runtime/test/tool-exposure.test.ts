@@ -43,10 +43,15 @@ const makeTool = (execute: ToolDefinition["execute"]): ToolDefinition => ({
 });
 
 test("integrations defer their schemas and restore only tools used in history", () => {
-  const tool = makeTool(async () => ({ content: [], details: {} }));
-  const loadout = applyToolExposure([tool, { ...tool, name: "read" }], { name: "servers", description: "SSH servers" });
+  const tool = { ...makeTool(async () => ({ content: [], details: {} })), promptSnippet: "deferred snippet", promptGuidelines: ["deferred rule"] };
+  const direct = { ...makeTool(async () => ({ content: [], details: {} })), name: "read", promptSnippet: "direct snippet", promptGuidelines: ["direct rule"] };
+  const loadout = applyToolExposure([tool, direct], { name: "servers", description: "SSH servers" });
   expect(loadout.tools[0]!.exposure).toBe("deferred");
+  expect((loadout.tools[0] as { promptSnippet?: unknown }).promptSnippet).toBeUndefined();
+  expect((loadout.tools[0] as { promptGuidelines?: unknown }).promptGuidelines).toBeUndefined();
   expect(loadout.tools[1]!.exposure).toBeUndefined();
+  expect((loadout.tools[1] as { promptSnippet?: unknown }).promptSnippet).toBe("direct snippet");
+  expect((loadout.tools[1] as { promptGuidelines?: unknown }).promptGuidelines).toEqual(["direct rule"]);
   expect(loadout.catalog).toContain("- servers: SSH servers");
   expect(loadout.catalog).not.toContain("server_exec");
   const mcpTool = { ...tool, name: "mcp_fixture_read_record", qoneToolName: "mcp:fixture:read_record" };
@@ -93,11 +98,21 @@ test("defers built-in browser tools while keeping direct web search/fetch MCP to
     parameters: Type.Object({ url: Type.String() }),
     execute: dummy,
   };
-  const loadout = applyToolExposure([browserOpen, exaSearch, exaAgent, playwrightTool]);
+  const customWebSearch = {
+    name: "mcp_custom_search_web",
+    qoneToolName: "mcp:custom:search_web",
+    qoneMcpServerName: "SearXNG",
+    label: "Search web",
+    description: "Search web pages.",
+    parameters: Type.Object({ query: Type.String() }),
+    execute: dummy,
+  };
+  const loadout = applyToolExposure([browserOpen, exaSearch, exaAgent, playwrightTool, customWebSearch]);
   expect((loadout.tools[0] as { exposure?: string }).exposure).toBe("deferred");
   expect((loadout.tools[1] as { exposure?: string }).exposure).toBeUndefined();
   expect((loadout.tools[2] as { exposure?: string }).exposure).toBe("deferred");
   expect((loadout.tools[3] as { exposure?: string }).exposure).toBe("deferred");
+  expect((loadout.tools[4] as { exposure?: string }).exposure).toBeUndefined();
   expect(loadout.catalog).toContain("- browser:");
   expect(loadout.catalog).toContain("MCP server exa (claude-123), connected.");
   expect(loadout.catalog).toContain("External browser fallback MCP server playwright (claude-pw)");

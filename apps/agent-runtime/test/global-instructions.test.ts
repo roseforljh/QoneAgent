@@ -77,7 +77,7 @@ test("defaults ship in the runtime bundle without a source checkout or network",
     const bundled = await import("data:text/javascript;base64," + Buffer.from(code).toString("base64"));
     bundled.ensureGlobalInstructions();
     process.stdout.write(bundled.readGlobalInstructions());
-  `], { stdout: "pipe", stderr: "pipe" });
+  `], { stdout: "pipe", stderr: "pipe", env: { ...process.env, QONE_DATA_DIR: tempDir } });
   const [content, errors, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   expect(errors).toBe("");
   expect(exitCode).toBe(0);

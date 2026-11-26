@@ -1,8 +1,9 @@
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Dialog } from "radix-ui";
 import { X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useLocale } from "../../localization";
+import { acquireNativeOverlayLock } from "../../lib/dock-browser-session";
 import "./nested-dialog.css";
 
 /** Settings closes on Escape; a nested dialog must only close itself. */
@@ -11,6 +12,7 @@ export function NestedDialog({ open, onOpenChange, title, description, children,
 }) {
   const { t } = useLocale();
   const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => (open ? acquireNativeOverlayLock() : undefined), [open]);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>

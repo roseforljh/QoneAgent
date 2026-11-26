@@ -114,6 +114,8 @@ export function detectImageModel(input: ImageModelDetectionInput): ImageModelDet
   return { isImageModel: false };
 }
 
-export function supportsExtendedImageQuality(name: string): boolean {
-  return /^gpt-image-2\.5(?:-|$)/i.test(lastModelNamePart(name));
+export function supportsExtendedImageQuality(name: string, metadata?: Pick<ModelMetadata, "supportedParameters">): boolean {
+  if (metadata?.supportedParameters?.some((param) => param.toLowerCase() === "quality_extended")) return true;
+  const match = /^gpt-image-(\d+(?:\.\d+)?)(?:-|$)/i.exec(lastModelNamePart(name));
+  return Boolean(match && Number(match[1]) >= 2.5);
 }

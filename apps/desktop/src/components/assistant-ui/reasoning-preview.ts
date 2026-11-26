@@ -19,6 +19,20 @@ function plainText(node: Nodes): string {
   return "";
 }
 
+function normalizeInlineText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+/** 判断思考全文相比单行预览是否包含更多内容，仅展开后只有标题自身时无需折叠交互。 */
+export function hasExpandableReasoning(text: string, previewText: string): boolean {
+  const nonEmptyLines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (nonEmptyLines.length > 1) return true;
+  const full = normalizeInlineText(plainText(fromMarkdown(text.trim())));
+  const preview = normalizeInlineText(previewText);
+  if (!preview) return Boolean(full);
+  return full !== preview;
+}
+
 function hasContext(text: string): boolean {
   let hasWord = false;
   let hasMultiGraphemeWord = false;

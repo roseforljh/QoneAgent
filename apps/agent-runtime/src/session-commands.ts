@@ -6,7 +6,6 @@ import { listWorkspaceFiles, readWorkspaceFile, workspaceGit, workspaceDiff } fr
 import { readFilePreview } from "./file-preview.js";
 import { subagentInfo } from "./subagent-runner.js";
 import { generatedSessionTitle, provisionalSessionTitle } from "./session-title.js";
-import { syncPonytailProject } from "./builtin-skills/manager.js";
 import { artifactInfo } from "./file-delivery.js";
 import type { runtimeCommandServices } from "./index.js";
 
@@ -99,15 +98,21 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         return true;
       }
       services.send({ type: "session.renamed", session: services.toInfo(services.sessionRepo.rename(cmd.sessionId, provisional)) });
+      services.titleControllers.get(cmd.sessionId)?.abort();
       const controller = new AbortController();
       services.titleControllers.set(cmd.sessionId, controller);
       try {
-        const title = generatedSessionTitle(await services.adapter.generateTitle(cmd.prompt, cmd.model, controller.signal));
-        if (!controller.signal.aborted && title && services.sessionRepo.get(cmd.sessionId)?.title === provisional && title !== provisional) {
+        const raw = await services.adapter.generateTitle(cmd.prompt, cmd.model, controller.signal);
+        const title = generatedSessionTitle(raw);
+        if (!title) {
+          if (!controller.signal.aborted) {
+            services.log.warn("title generation returned unusable title", { sessionId: cmd.sessionId, model: cmd.model, raw: raw.slice(0, 200) });
+          }
+        } else if (!controller.signal.aborted && services.sessionRepo.get(cmd.sessionId)?.title === provisional && title !== provisional) {
           services.send({ type: "session.renamed", session: services.toInfo(services.sessionRepo.rename(cmd.sessionId, title)) });
         }
       } catch (error) {
-        if (!controller.signal.aborted) services.log.warn("title generation failed", { sessionId: cmd.sessionId, error: String(error) });
+        if (!controller.signal.aborted) services.log.warn("title generation failed", { sessionId: cmd.sessionId, model: cmd.model, error: String(error) });
       } finally {
         if (services.titleControllers.get(cmd.sessionId) === controller) services.titleControllers.delete(cmd.sessionId);
       }
@@ -130,6 +135,7 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
       return true;
 
     case "session.rename": {
+      services.titleControllers.get(cmd.sessionId)?.abort();
       try {
         services.send({ type: "session.renamed", session: services.toInfo(services.sessionRepo.rename(cmd.sessionId, cmd.title)) });
       } catch (error) {
@@ -374,7 +380,6 @@ export async function handleSessionCommand(cmd: RuntimeCommand, services: Return
         return true;
       }
       const workspace = services.workspaceRepo.upsert(cmd.name, workspacePath) as WorkspaceInfo;
-      await syncPonytailProject(workspacePath);
       services.projectResources.project(workspace);
       services.send({ type: "workspace.updated", workspace });
       return true;

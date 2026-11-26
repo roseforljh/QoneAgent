@@ -88,7 +88,8 @@ test("tool group shows the active command over narration and retains disclosure 
   expect(panel().textContent).toContain(narration);
   expect(panel().textContent).toContain("bun test");
   expect(panel().textContent!.indexOf("source.ts")).toBeLessThan(panel().textContent!.indexOf("bun test"));
-  expect(panel().querySelectorAll('[data-slot="tool-call"][data-state="closed"]')).toHaveLength(2);
+  expect(panel().querySelectorAll('[data-slot="file-read-activity"]')).toHaveLength(1);
+  expect(panel().querySelectorAll('[data-slot="tool-call"][data-state="closed"]')).toHaveLength(1);
   command = "bun test regression";
   await render();
   expect(trigger().getAttribute("aria-expanded")).toBe("true");
@@ -144,7 +145,7 @@ test("subagent creation becomes a one-click child link and follow-up calls keep 
 
     await act(async () => { useStore.setState({ subagents: [child] }); });
     expect(link()?.textContent).toContain(child.title);
-    expect(container.textContent).toMatch(/等待子代理结果|Waiting for subagent result/);
+    expect(container.textContent).toMatch(/等待回报|Waiting for report/);
     await act(async () => { link()!.click(); });
     expect(received).toEqual([{ runId: "child", sessionId: "session" }]);
 
@@ -169,7 +170,7 @@ test("subagent creation becomes a one-click child link and follow-up calls keep 
     // Once the structured target arguments arrive, a failed child remains navigable.
     await act(async () => { useStore.setState({ toolCalls: [{ toolCallId: "follow-up", toolName, runId: "later-parent", status: "failed", args: { runId: "child" } }] }); });
     expect(link()?.textContent).toContain(child.title);
-    expect(container.textContent).toMatch(/子代理失败|Subagent failed/);
+    expect(container.textContent).toMatch(/执行出错|Failed/);
     await act(async () => { link()!.click(); });
     expect(received).toHaveLength(3);
     expect(container.textContent).not.toContain("private failure output");

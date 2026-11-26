@@ -496,4 +496,27 @@ describe("model metadata resolver", () => {
     expect(modelListUrl("openai-compatible", "https://api.example.test/v1?tenant=demo")).toBe("https://api.example.test/v1/models?tenant=demo");
     expect(modelListUrl("claude", "https://api.anthropic.com")).toBe("https://api.anthropic.com/v1/models");
   });
+
+  test("infers prompt_cache_key and Anthropic cache_control format on OpenAI-compatible gateways when supported", async () => {
+    const resolver = new ModelMetadataResolver({ disableModelsDev: true });
+    const withCacheKey = await resolver.resolve({
+      provider: "gateway",
+      model: "gpt-5",
+      config: baseConfig("openai-compatible", {
+        baseUrl: "https://gateway.example.test/v1",
+        modelMetadata: { id: "gpt-5", supported_parameters: ["prompt_cache_key", "max_completion_tokens"] },
+      }),
+    });
+    expect(withCacheKey.compat?.promptCacheKeyMode).toBe("enabled");
+
+    const openRouterClaude = await resolver.resolve({
+      provider: "my-or",
+      model: "anthropic/claude-sonnet-4-6",
+      config: baseConfig("openai-compatible", {
+        baseUrl: "https://openrouter.ai/api/v1",
+        modelMetadata: { id: "anthropic/claude-sonnet-4-6" },
+      }),
+    });
+    expect(openRouterClaude.compat?.cacheControlFormat).toBe("anthropic");
+  });
 });

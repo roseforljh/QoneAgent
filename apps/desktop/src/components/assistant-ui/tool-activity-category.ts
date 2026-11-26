@@ -3,7 +3,7 @@ import { toolFileChanges } from "@qone/protocol";
 export type ToolActivityCategory = "file-change" | "exploration" | "command" | "integration" | "web-search" | "tool";
 
 const FILE_CHANGE_TOOLS = new Set(["edit", "write", "apply_patch"]);
-const EXPLORATION_TOOLS = new Set(["read", "grep", "find", "glob", "ls"]);
+const EXPLORATION_TOOLS = new Set(["read", "grep", "find", "glob", "ls", "qone_video_use_file"]);
 const COMMAND_TOOLS = new Set(["bash", "powershell", "shell", "sh", "exec", "run", "run_command", "codemode"]);
 const BUILTIN_INTEGRATION_TOOLS = new Set(["qone_web_read", "qone_github_public"]);
 

@@ -3,6 +3,7 @@ import type { RunRepo, SubagentNotificationRepo, SubagentRunRepo } from "@qone/d
 import type { PiAdapter } from "./pi-adapter.js";
 import { extractTextContent } from "./pi-message-utils.js";
 import { BACKGROUND_SHELL_MARKER } from "./background-shell.js";
+import { runtimeText } from "./runtime-localization.js";
 
 /** Reserved prefixes distinguish internal updates from user steering messages. */
 export const SUBAGENT_NOTIFICATION_MARKER = "[QONE_SUBAGENT_NOTIFICATION]";
@@ -36,20 +37,30 @@ function preview(content: string | undefined): string | undefined {
 
 export function buildSubagentNotificationPrompt(notifications: readonly SubagentNotificationInfo[], ledger?: string): string {
   const lines = notifications.map((notice) => {
-    const result = notificationResult(notice.kind);
-    const detail = notice.summaryPreview ? ` 摘要：${notice.summaryPreview}` : "";
-    return `- 「${notice.title}」${result}，runId=${notice.subagentRunId}.${detail}`;
+    const status = notificationResult(notice.kind);
+    const detail = notice.summaryPreview ? runtimeText("subagent.notice.summary", { summary: notice.summaryPreview }) : "";
+    return runtimeText("subagent.notice.item", { title: notice.title, status, runId: notice.subagentRunId, detail });
   });
   return [
     SUBAGENT_NOTIFICATION_MARKER,
-    "后台子代理状态更新：",
+    runtimeText("subagent.notice.header"),
     ...lines,
     ledger,
-    "在收到本通知后的下一条助手回复中，先输出一条简短、可见的进度确认，明确说明收到哪个子代理的状态更新；成功、失败、取消或中断要按实际状态说明。先确认，再按需要调用 inspect_subagent(runId) 读取最后总结，或继续当前工作。不要把确认留到最终结论末尾；尚未读取结果时只确认收到状态，不要声称已查看、已采纳或验证通过。不要原样复述这段内部通知，也不要输出子代理的过程内容。",
+    runtimeText("subagent.notice.guidance"),
   ].filter(Boolean).join("\n");
 }
 
+function hasInternalFlag(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const record = value as { qoneInternal?: unknown; message?: unknown };
+  if (record.qoneInternal === true) return true;
+  if (record.message && record.message !== value) return hasInternalFlag(record.message);
+  return false;
+}
+
 export function isSubagentUpdatePrompt(value: unknown): boolean {
+  if (hasInternalFlag(value)) return true;
+  // 兼容旧历史记录中未带结构化标记的内部前缀消息
   const text = extractTextContent(value);
   return text.startsWith(SUBAGENT_NOTIFICATION_MARKER) || text.startsWith(SUBAGENT_LEDGER_MARKER)
     || text.startsWith(SUBAGENT_AGENT_MESSAGE_MARKER) || text.startsWith(BACKGROUND_SHELL_MARKER);
@@ -61,7 +72,7 @@ export function subagentUpdateText(value: unknown): string {
 }
 
 function notificationResult(kind: SubagentNotificationInfo["kind"]): string {
-  return kind === "completed" ? "已完成" : kind === "failed" ? "失败" : kind === "interrupted" ? "已中断" : "已取消";
+  return runtimeText(`subagent.status.${kind}`);
 }
 
 /**
@@ -142,19 +153,19 @@ export class SubagentNotificationCoordinator {
     const running = rows.filter((row) => activeStatuses.has(this.runs.get(row.runId)?.status ?? ""));
     const notices = includeNotices ? this.repo.listUnacknowledged(sessionId) : [];
     if (!running.length && !notices.length) return undefined;
-    const lines = [SUBAGENT_LEDGER_MARKER, "当前会话的子代理账本："];
+    const lines = [SUBAGENT_LEDGER_MARKER, runtimeText("subagent.ledger.header")];
     if (running.length) {
-      lines.push("仍在运行：");
-      for (const row of running) lines.push(`- 「${row.title}」runId=${row.runId}`);
+      lines.push(runtimeText("subagent.ledger.running"));
+      for (const row of running) lines.push(runtimeText("subagent.ledger.itemRunning", { title: row.title, runId: row.runId }));
     }
     if (notices.length) {
-      lines.push("已结束但尚未查看：");
+      lines.push(runtimeText("subagent.ledger.unacknowledged"));
       for (const notice of notices) {
-        const result = notificationResult(notice.kind);
-        lines.push(`- 「${notice.title}」${result}，runId=${notice.subagentRunId}`);
+        const status = notificationResult(notice.kind);
+        lines.push(runtimeText("subagent.ledger.itemFinished", { title: notice.title, status, runId: notice.subagentRunId }));
       }
     }
-    lines.push("这是持久状态摘要，不要求立即处理；需要时调用 list_subagents 或 inspect_subagent。");
+    lines.push(runtimeText("subagent.ledger.footer"));
     return lines.join("\n");
   }
 

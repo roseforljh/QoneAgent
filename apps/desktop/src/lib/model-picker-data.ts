@@ -5,7 +5,7 @@ export const PROVIDERS_STORAGE_KEY = "qone-model-providers";
 export const ACTIVE_PROVIDER_STORAGE_KEY = "qone-active-provider";
 export const MODEL_CONFIG_CHANGE_EVENT = "qone-model-config-change";
 
-export type PickerProvider = { id: string; name: string; models: { id: string; label: string }[] };
+export type PickerProvider = { id: string; name: string; baseUrl?: string; logoUrl?: string; models: { id: string; label: string }[] };
 export type PickerModel = { id: string; modelName: string; label: string; detail: string };
 
 const providerApiTypes = new Set<ProviderApiType>(PROVIDER_API_TYPES);
@@ -75,17 +75,23 @@ export function filterPickerModels(models: PickerModel[], query: string): Picker
   );
 }
 
-export function readCurrentProvider(): PickerProvider | undefined {
+/** Every saved provider profile, in settings order. */
+export function readPickerProviders(): PickerProvider[] {
   try {
     const saved: unknown = JSON.parse(window.localStorage.getItem(PROVIDERS_STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(saved)) return;
-    const profiles = saved.filter((value): value is PickerProvider => value && typeof value.id === "string" && typeof value.name === "string");
-    const activeId = window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY);
-    const provider = profiles.find((item) => item.id === activeId) ?? profiles[0];
-    if (!provider) return;
-    const models = Array.isArray(provider.models) ? provider.models.filter((model) => model && typeof model.id === "string") : [];
-    return { ...provider, models: models.map((model) => ({ id: model.id, label: typeof model.label === "string" ? model.label : model.id })) };
-  } catch { return; }
+    if (!Array.isArray(saved)) return [];
+    return saved.filter((value): value is PickerProvider => value && typeof value.id === "string" && typeof value.name === "string").map((provider) => {
+      const models = Array.isArray(provider.models) ? provider.models.filter((model) => model && typeof model.id === "string") : [];
+      return { ...provider, models: models.map((model) => ({ id: model.id, label: typeof model.label === "string" ? model.label : model.id })) };
+    });
+  } catch { return []; }
+}
+
+/** The provider new conversations start with. */
+export function readCurrentProvider(): PickerProvider | undefined {
+  const profiles = readPickerProviders();
+  const activeId = window.localStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY);
+  return profiles.find((item) => item.id === activeId) ?? profiles[0];
 }
 
 /** File-backed runtime models are authoritative; origin storage keeps only picker names and selection. */

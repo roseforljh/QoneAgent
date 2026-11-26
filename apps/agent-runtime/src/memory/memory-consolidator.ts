@@ -143,7 +143,8 @@ export class MemoryConsolidator {
     if (!this.store.authorized(version)) return false;
     let data: { overview?: unknown; preferences?: unknown } | null;
     try { data = JSON.parse(output); } catch { throw runtimeError("memory.invalid_overview"); }
-    if (typeof data?.overview !== "string" || !data.overview.includes("## What's in memory") || !Array.isArray(data.preferences)) {
+    // 兼容多语言二级标题，避免模型翻译“## What's in memory”导致整次记忆整理被丢弃
+    if (typeof data?.overview !== "string" || !/^##\s+\S/m.test(data.overview.trim()) || !Array.isArray(data.preferences)) {
       throw runtimeError("memory.invalid_overview");
     }
     // Don't commit a snapshot based on evidence that changed during the request.

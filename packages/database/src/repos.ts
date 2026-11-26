@@ -747,7 +747,7 @@ export class ToolCallRepo {
     }).from(toolCalls).innerJoin(runs, eq(toolCalls.runId, runs.id)).where(eq(runs.sessionId, sessionId)).orderBy(toolCalls.startedAt).all();
   }
 
-  /** 仅查询网页访问记忆相关的工具记录，避免每轮对话反序列化整会话数十 MB 的其他工具输出。 */
+  /** 仅查询网页访问记忆相关的工具记录（含直连网页抓取 MCP 工具），避免跨轮重建时丢失 direct_web 记录。 */
   listWebAccessBySession(sessionId: string) {
     return this.db.select({
       toolName: toolCalls.toolName,
@@ -760,7 +760,7 @@ export class ToolCallRepo {
       .where(and(
         eq(runs.sessionId, sessionId),
         inArray(toolCalls.status, ["success", "failed"]),
-        sql`(${toolCalls.toolName} LIKE 'qone_douyin_%' OR ${toolCalls.toolName} IN ('qone_browser_open', 'qone_browser_extract', 'qone_browser_screenshot', 'qone_browser_click', 'qone_browser_get', 'qone_opencli_run'))`,
+        sql`(${toolCalls.toolName} LIKE 'qone_douyin_%' OR ${toolCalls.toolName} IN ('qone_browser_open', 'qone_browser_extract', 'qone_browser_screenshot', 'qone_browser_click', 'qone_browser_get', 'qone_opencli_run') OR (${toolCalls.toolName} LIKE 'mcp:%' AND ${toolCalls.arguments} LIKE '%http%'))`,
       ))
       .orderBy(toolCalls.startedAt).all();
   }

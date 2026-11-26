@@ -24,6 +24,7 @@ const FILE_MIME_BY_EXTENSION: Record<string, string> = {
   jpg: "image/jpeg",
   json: "application/json",
   md: "text/markdown",
+  ods: "application/vnd.oasis.opendocument.spreadsheet",
   pdf: "application/pdf",
   png: "image/png",
   ppt: "application/vnd.ms-powerpoint",

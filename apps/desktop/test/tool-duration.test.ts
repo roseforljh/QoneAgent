@@ -8,18 +8,18 @@ test("short command durations stay meaningful instead of showing zero seconds", 
   expect(toolActionSummary(part, step, {
     toolCallId: "call-1", runId: "run-1", toolName: "powershell", status: "success",
     startedAt: 1_000, completedAt: 1_001,
-  }, false, 2_000, "zh-CN")).toBe("命令已运行 <1秒");
+  }, false, 2_000, "zh-CN")).toBe("运行了 <1秒");
   expect(toolActionSummary(part, step, {
     toolCallId: "call-2", runId: "run-1", toolName: "powershell", status: "running",
     startedAt: 1_000,
-  }, true, 1_500, "en")).toBe("Running Get-ChildItem for <1s");
+  }, true, 1_500, "en")).toBe("Running Get-ChildItem · <1s");
 });
 
 test("normal command durations keep the existing whole-second display", () => {
   expect(toolActionSummary(part, step, {
     toolCallId: "call-3", runId: "run-1", toolName: "powershell", status: "success",
     startedAt: 1_000, completedAt: 3_200,
-  }, false, 4_000, "zh-CN")).toBe("命令已运行 2秒");
+  }, false, 4_000, "zh-CN")).toBe("运行了 2秒");
 });
 
 test("the active Chinese command title stays in present tense", () => {
@@ -32,5 +32,5 @@ test("a restored tool call uses the persisted runtime duration, not client times
   expect(toolActionSummary(part, step, {
     toolCallId: "call-restored", runId: "run-1", toolName: "powershell", status: "success",
     startedAt: 1_000, completedAt: 60_000, durationMs: 2_200,
-  }, false, 90_000, "zh-CN")).toBe("命令已运行 2秒");
+  }, false, 90_000, "zh-CN")).toBe("运行了 2秒");
 });

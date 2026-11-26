@@ -86,9 +86,13 @@ export function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise
   });
 }
 
-export function exec(client: Client, command: string, options: { cwd?: string; timeoutMs?: number; signal?: AbortSignal; onUpdate?: (result: ExecResult) => void } = {}): Promise<ExecResult> {
+export function exec(client: Client, command: string, options: { cwd?: string; timeoutMs?: number; signal?: AbortSignal; onUpdate?: (result: ExecResult) => void; env?: Record<string, string> } = {}): Promise<ExecResult> {
   // Guard the entire script, not only the first command in a list.
-  const script = options.cwd ? `cd ${shellPath(options.cwd)} || exit $?\n${command}` : command;
+  const body = options.cwd ? `cd ${shellPath(options.cwd)} || exit $?\n${command}` : command;
+  // Secrets arrive on stdin, never in the command line other users can see in ps.
+  const env = Object.entries(options.env ?? {});
+  const envLine = env.map(([name, value]) => `export ${name}="$(printf %s '${Buffer.from(value).toString("base64")}' | base64 -d)"`).join("; ");
+  const script = env.length ? `IFS= read -r __qone_env && eval "$__qone_env"; unset __qone_env\n${body}` : body;
   return new Promise((resolve, reject) => {
     options.signal?.throwIfAborted();
     let channel: ClientChannel | undefined, settled = false, timedOut = false, cancelled = false;
@@ -127,6 +131,7 @@ export function exec(client: Client, command: string, options: { cwd?: string; t
       if (settled || options.signal?.aborted) { if (stream) closeChannel(stream); return; }
       if (error) return finish(error);
       channel = stream;
+      if (envLine) stream.write(`${envLine}\n`);
       const append = (index: number, text: string) => {
         if (settled) return;
         const next = output[index]! + text;

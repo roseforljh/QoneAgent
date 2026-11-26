@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Globe, MessageCircleQuestion } from "lucide-react";
+import { Globe, KeyRound, MessageCircleQuestion } from "lucide-react";
 import type { McpElicitationContent, McpElicitationField, McpElicitationInfo } from "@qone/protocol";
 import { QoneSelect } from "../ui/Select";
 import { cn } from "../../lib/utils";
@@ -31,6 +31,7 @@ function initialValue(field: McpElicitationField): Value {
 }
 
 const inputType = (field: McpElicitationField) => field.type === "number" || field.type === "integer" ? "number"
+  : field.format === "password" ? "password"
   : field.format === "email" ? "email" : field.format === "uri" ? "url" : field.format === "date" ? "date" : field.format === "date-time" ? "datetime-local" : "text";
 
 // Same rules the MCP SDK checks before the answer leaves (ajv-formats, full mode).
@@ -104,14 +105,20 @@ export function ElicitationPanel() {
   const safeUrl = url && ["https:", "http:"].includes(url.protocol) ? url : null;
   const set = (name: string, value: Value) => setValues((current) => ({ ...current, [name]: value }));
   const problem = (name: string) => attempted ? result?.problems[name] : undefined;
+  const secret = request.secretTarget;
 
   return <section className="elicitation-panel" role="dialog" aria-labelledby={`elicitation-${request.id}`}>
     <header>
-      {request.mode === "url" ? <Globe size={15} aria-hidden="true" /> : <MessageCircleQuestion size={15} aria-hidden="true" />}
-      <strong id={`elicitation-${request.id}`}>{t(request.mode === "url" ? "elicitation.urlTitle" : "elicitation.title", { server: request.serverName })}</strong>
+      {secret ? <KeyRound size={15} aria-hidden="true" /> : request.mode === "url" ? <Globe size={15} aria-hidden="true" /> : <MessageCircleQuestion size={15} aria-hidden="true" />}
+      <strong id={`elicitation-${request.id}`}>{secret ? t("elicitation.secretTitle") : t(request.mode === "url" ? "elicitation.urlTitle" : "elicitation.title", { server: request.serverName })}</strong>
+      {secret && <span className="elicitation-secret-hint">{t("elicitation.secretHint")}</span>}
     </header>
     <div className="elicitation-body">
       {request.message && <p className="elicitation-message">{request.message}</p>}
+      {secret && <ul className="elicitation-secret-targets">
+        {secret.env && <li>{secret.server ? t("elicitation.secretServerEnv", { name: secret.env, server: secret.server }) : t("elicitation.secretEnv", { name: secret.env })}</li>}
+        {secret.file && <li title={secret.file}>{t("elicitation.secretFile", { file: secret.server ? `${secret.server}:${secret.file}` : secret.file })}</li>}
+      </ul>}
       {request.mode === "url" && safeUrl && <p className="servers-hint">{t("elicitation.urlHint", { host: safeUrl.host })}</p>}
       {request.mode === "form" && <form className="servers-form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
         {Object.entries(request.fields ?? {}).map(([name, field]) => {
@@ -134,7 +141,8 @@ export function ElicitationPanel() {
                   : options
                   ? <QoneSelect value={String(value)} onChange={(next) => set(name, next)} options={options} ariaLabel={field.title ?? name} className="servers-select" triggerClassName="servers-select-trigger" />
                   : <input type={inputType(field)} value={String(value)} onChange={(event) => set(name, event.target.value)} min={field.minimum} max={field.maximum}
-                      step={field.type === "integer" ? 1 : "any"} aria-invalid={Boolean(issue) || undefined} />}
+                      step={field.type === "integer" ? 1 : "any"} aria-invalid={Boolean(issue) || undefined}
+                      {...field.format === "password" ? { autoComplete: "off", spellCheck: false, autoFocus: true } : {}} />}
               </>}
             {issue ? <small className="elicitation-problem" role="alert">{t(issue.key, issue.values)}</small> : field.description && <small>{field.description}</small>}
           </div>;

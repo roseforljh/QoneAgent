@@ -3,6 +3,7 @@ import type { ToolActivityCategory } from "./tool-activity-category";
 import type { ToolIntegration } from "./tool-integration";
 
 export interface ToolGroupSummaryStep {
+  toolName?: string;
   verb: string;
   target?: string;
   chip?: string;
@@ -22,16 +23,25 @@ const CATEGORY_ORDER: readonly ToolActivityCategory[] = [
   "tool",
 ];
 
-const CATEGORY_LABELS = {
-  "file-change": ["chat.toolGroupFileChangeOne", "chat.toolGroupFileChangeMany"],
-  exploration: ["chat.toolGroupExplorationOne", "chat.toolGroupExplorationMany"],
-  command: ["chat.toolGroupCommandOne", "chat.toolGroupCommandMany"],
-  integration: ["chat.toolGroupToolOne", "chat.toolGroupToolMany"],
-  tool: ["chat.toolGroupToolOne", "chat.toolGroupToolMany"],
-  "web-search": ["chat.toolSearchedWeb", "chat.toolSearchedWeb"],
-} as const;
+const READ_TOOL_NAMES = new Set(["read", "qone_video_use_file"]);
 
-/** Summarize the work performed, not the duration of the last model message. */
+function basename(path: string): string {
+  const normalized = path.trim().replace(/[\\/]+$/, "");
+  return normalized.split(/[\\/]/).at(-1) || normalized;
+}
+
+function formatInlineList(items: readonly string[], locale: Locale): string {
+  return locale === "en"
+    ? new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(items)
+    : items.join("、");
+}
+
+function pushUnique(list: string[], value: string | undefined): void {
+  const trimmed = value?.trim();
+  if (trimmed && !list.includes(trimmed)) list.push(trimmed);
+}
+
+/** 汇总本组实际完成的动作，优先带上具体文件名与目标，避免空洞的硬编码播报。 */
 export function toolGroupSummary(
   steps: readonly ToolGroupSummaryStep[],
   locale: Locale,
@@ -40,10 +50,13 @@ export function toolGroupSummary(
   const categorized = steps.some((step) => step.category !== undefined);
   if (categorized) {
     const counts = new Map<ToolActivityCategory, number>();
-    const changedPaths = new Set<string>();
-    const integrationNames = new Set<string>();
-    let integrationsOnly = true;
+    const changedFiles: string[] = [];
+    const explorationTargets: string[] = [];
+    let explorationReadOnly = true;
+    const integrationNames: string[] = [];
+    let webSourceOnly = true;
     let failedCount = 0;
+
     for (const step of steps) {
       if (step.failed) {
         failedCount++;
@@ -51,49 +64,92 @@ export function toolGroupSummary(
       }
       const category = step.category ?? "tool";
       if (category === "integration") {
-        integrationNames.add(step.integration?.name ?? step.verb);
-        if (step.integration?.kind === "source") integrationsOnly = false;
+        const name = step.integration?.name ?? step.verb;
+        pushUnique(integrationNames, name);
+        if (step.integration?.id !== "web") webSourceOnly = false;
         continue;
       }
       if (category === "file-change") {
         if (step.filePaths?.length) {
-          step.filePaths.forEach((path) => changedPaths.add(path));
+          step.filePaths.forEach((path) => pushUnique(changedFiles, fullTargets ? path : basename(path)));
           continue;
         }
-        const path = step.fullTarget ?? step.target ?? step.chip;
+        const path = fullTargets ? (step.fullTarget ?? step.target ?? step.chip) : (step.target ?? step.chip ?? (step.fullTarget ? basename(step.fullTarget) : undefined));
         if (path) {
-          changedPaths.add(path);
+          pushUnique(changedFiles, path);
           continue;
         }
+      }
+      if (category === "exploration") {
+        if (step.toolName && !READ_TOOL_NAMES.has(step.toolName)) explorationReadOnly = false;
+        const target = (fullTargets ? step.fullTarget?.trim() : undefined) || step.target?.trim() || step.chip?.trim();
+        pushUnique(explorationTargets, target);
       }
       counts.set(category, (counts.get(category) ?? 0) + 1);
     }
-    counts.set("file-change", (counts.get("file-change") ?? 0) + changedPaths.size);
+
+    const fileChangeCount = Math.max(counts.get("file-change") ?? 0, changedFiles.length);
+    if (fileChangeCount > 0) counts.set("file-change", fileChangeCount);
+
     const parts: string[] = [];
     for (const category of CATEGORY_ORDER) {
-      let label: string;
+      let label: string | undefined;
       if (category === "integration") {
-        if (!integrationNames.size) continue;
-        const names = [...integrationNames];
-        const sources = locale === "en"
-          ? new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(names)
-          : names.join("、");
-        label = translate(locale, integrationsOnly ? names.length === 1 ? "chat.toolGroupIntegrationOne" : "chat.toolGroupIntegrationMany" : "chat.toolGroupSource", { sources });
-      } else {
-        if (category === "tool") {
-          const hasConcreteAction = (counts.get("file-change") ?? 0) > 0 ||
-                                    (counts.get("command") ?? 0) > 0 ||
-                                    (counts.get("exploration") ?? 0) > 0 ||
-                                    (counts.get("web-search") ?? 0) > 0 ||
-                                    integrationNames.size > 0;
-          if (hasConcreteAction) continue;
+        if (!integrationNames.length) continue;
+        if (webSourceOnly && integrationNames.length === 1) {
+          label = translate(locale, "chat.toolReadWeb");
+        } else {
+          label = translate(locale, "chat.toolGroupSource", { sources: formatInlineList(integrationNames, locale) });
         }
-        const count = counts.get(category) ?? 0;
+      } else if (category === "file-change") {
+        const count = counts.get("file-change") ?? 0;
         if (!count) continue;
-        label = translate(locale, CATEGORY_LABELS[category][count === 1 ? 0 : 1]);
+        if (changedFiles.length > 0 && (fullTargets || changedFiles.length <= 2)) {
+          label = translate(locale, "chat.toolGroupFileChangeNamed", { files: formatInlineList(changedFiles, locale) });
+        } else {
+          label = translate(locale, count === 1 ? "chat.toolGroupFileChangeOne" : "chat.toolGroupFileChangeMany", { count });
+        }
+      } else if (category === "exploration") {
+        const count = counts.get("exploration") ?? 0;
+        if (!count) continue;
+        if (explorationTargets.length > 0 && (fullTargets || explorationTargets.length <= 2)) {
+          label = translate(
+            locale,
+            explorationReadOnly ? "chat.toolGroupReadNamed" : "chat.toolGroupExploreNamed",
+            { targets: formatInlineList(explorationTargets, locale) },
+          );
+        } else if (explorationReadOnly) {
+          label = explorationTargets.length > 0
+            ? translate(locale, "chat.toolGroupReadCount", { count: explorationTargets.length })
+            : translate(locale, count === 1 ? "chat.toolGroupExplorationOne" : "chat.toolGroupExplorationMany");
+        } else {
+          label = explorationTargets.length > 0
+            ? translate(locale, "chat.toolGroupExploreCount", { count: explorationTargets.length })
+            : translate(locale, "chat.toolGroupExplorationMany");
+        }
+      } else if (category === "command") {
+        const count = counts.get("command") ?? 0;
+        if (!count) continue;
+        label = translate(locale, count === 1 ? "chat.toolGroupCommandOne" : "chat.toolGroupCommandMany", { count });
+      } else if (category === "web-search") {
+        const count = counts.get("web-search") ?? 0;
+        if (!count) continue;
+        label = translate(locale, "chat.toolSearchedWeb");
+      } else if (category === "tool") {
+        const hasConcreteAction = (counts.get("file-change") ?? 0) > 0
+          || (counts.get("command") ?? 0) > 0
+          || (counts.get("exploration") ?? 0) > 0
+          || (counts.get("web-search") ?? 0) > 0
+          || integrationNames.length > 0;
+        if (hasConcreteAction) continue;
+        const count = counts.get("tool") ?? 0;
+        if (!count) continue;
+        label = translate(locale, count === 1 ? "chat.toolGroupToolOne" : "chat.toolGroupToolMany", { count });
       }
+      if (!label) continue;
       parts.push(locale === "en" && parts.length > 0 ? label[0]!.toLowerCase() + label.slice(1) : label);
     }
+
     if (failedCount > 0) {
       const label = translate(locale, failedCount === 1 ? "chat.toolGroupFailedOne" : "chat.toolGroupFailedMany", { count: failedCount });
       parts.push(locale === "en" && parts.length > 0 ? label[0]!.toLowerCase() + label.slice(1) : label);
@@ -128,7 +184,6 @@ export function toolGroupSummary(
       return baseCountLabel;
     }
 
-    // Width is a view concern: never discard targets before the fade/tooltip can show them.
     return `${baseCountLabel} (${targets.join(separator)})`;
   }).join(" · ");
 }

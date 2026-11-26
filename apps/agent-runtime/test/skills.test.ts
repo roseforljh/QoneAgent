@@ -39,17 +39,21 @@ test("loads only QoneAgent skills, excluding workspace and Pi skills", async () 
   addSkill(path.join(process.env.PI_AGENT_DIR, "skills"), "other-agent");
   writeFileSync(path.join(root, "AGENTS.md"), "Ancestor guidance must not be loaded.");
 
+  const claudeFile = path.join(cwd, "CLAUDE.md");
+  writeFileSync(claudeFile, "Project Claude guidance.");
   const { loader, skills } = await createResourceLoader(cwd);
   expect(skills.filter((skill) => !skill.builtin)).toEqual([{ id: "own", name: "own", description: "own skill", path: ownSkill }]);
   expect(skills.find((skill) => skill.id === "ponytail")).toMatchObject({ builtin: true, enabled: true });
   expect(loader.getSkills().skills.map((skill) => skill.name)).toEqual([...builtinSkillBundles.map((skill) => skill.id), "own"]);
   const projectFile = path.join(cwd, "AGENTS.md");
-  expect(loader.getAgentsFiles().agentsFiles).toHaveLength(1);
-  expect(loader.getAgentsFiles().agentsFiles[0]?.path).toBe(projectFile);
-  expect(loader.getAgentsFiles().agentsFiles[0]?.content).toContain("QoneAgent managed: ponytail:start");
+  // 加载工作区不得偷偷创建 AGENTS.md，且原有 CLAUDE.md 必须正常生效
+  expect(loader.getAgentsFiles().agentsFiles).toEqual([{ path: claudeFile, content: "Project Claude guidance." }]);
   writeFileSync(projectFile, "Workspace guidance.");
   await loader.reload();
-  expect(loader.getAgentsFiles().agentsFiles).toEqual([{ path: projectFile, content: "Workspace guidance." }]);
+  expect(loader.getAgentsFiles().agentsFiles).toEqual([
+    { path: projectFile, content: "Workspace guidance." },
+    { path: claudeFile, content: "Project Claude guidance." },
+  ]);
 });
 
 test("creates a skill in the QoneAgent skill directory", async () => {

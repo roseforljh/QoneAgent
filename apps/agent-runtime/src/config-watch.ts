@@ -9,8 +9,8 @@ import { handleRuntimeCommand } from "./runtime-commands";
 import { persistClaudeCredentials } from "./claude-code/credentials";
 import { normalizeSubagentConfig } from "./subagents";
 import { normalizePiCompactionPreferences } from "./pi-compaction";
-import { syncPonytailProject } from "./builtin-skills/manager";
 import { globalInstructionsDirectory, globalInstructionsPath, readGlobalInstructions } from "./global-instructions";
+import { isSensitiveEntry } from "./secrets";
 
 type Services = ReturnType<typeof runtimeCommandServices>;
 type Json = Record<string, unknown>;
@@ -24,6 +24,8 @@ export async function prepareMcpConfiguration(server: McpServerInfo, services: S
   const values: Record<string, string> = {};
   const reference = (map: Record<string, string> | undefined, prefix: string) => map && Object.fromEntries(Object.entries(map).map(([key, value]) => {
     if (value.startsWith("$mcp.env:") || /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value)) return [key, value];
+    // 仅将敏感凭据写入系统加密存储，普通配置（如 NODE_ENV、Content-Type）保持明文可读
+    if (!isSensitiveEntry(key, value)) return [key, value];
     const secret = `mcp.env:${server.id}/${prefix}${prefix ? key.toLowerCase().replace(/[^a-z0-9]+/g, "-") : key}`;
     values[secret] = value;
     return [key, `$${secret}`];
@@ -90,7 +92,7 @@ export async function applySettingsChange(previous: Json, next: Json, services: 
     const configs = services.modelConfigRepo.list();
     await services.adapter.configureModels(configs);
     services.send({ type: "model.list", configs });
-    void services.memory.refresh();
+    void services.memory?.refresh();
   }
   if (!same(previous.permissions, next.permissions)) {
     services.mcpConnectionApprovals.clear();
@@ -128,7 +130,6 @@ export async function applySettingsChange(previous: Json, next: Json, services: 
     await services.adapter.invalidateSessions();
   }
   if (changed.some(key => key.startsWith("skills."))) {
-    if (changed.includes("skills.builtin.ponytail")) await Promise.all(services.workspaceRepo.list().map(workspace => syncPonytailProject(workspace.path)));
     await services.adapter.refreshSkills();
     void run({ type: "skills.list", requestId: crypto.randomUUID() }, services);
   }

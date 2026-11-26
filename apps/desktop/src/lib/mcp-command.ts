@@ -109,8 +109,8 @@ export function parseMcpInput(input: string): ParsedMcp[] {
   return [{ ...config, name: defaultMcpName(config) }];
 }
 
-// ponytail: wording heuristic for README placeholders; an unrecognised placeholder still fails at connect time.
-const placeholderWord = /<[^>]*>|\$\{[^}]*\}|\byour[-_ ]?[a-z0-9_-]*|\bmy[-_][a-z0-9_-]+|\bx{4,}\b|\*{3,}|\.{3}|\b(?:change[-_ ]?me|replace[-_ ]?me|placeholder|todo)\b|^\s*(?:api[-_ ]?key|token|secret|key)\s*$/gi;
+// 仅识别明确的文档模板占位符，避免误伤 my-service、todo-app 等真实参数值。
+const placeholderWord = /<[^>]*>|\$\{[^}]*\}|\byour[-_ ]?[a-z0-9_-]*|\bx{4,}\b|\*{3,}|(?:^|[-_:\s])\.{3,}$|\b(?:change[-_ ]?me|replace[-_ ]?me|placeholder)\b|^\s*(?:api[-_ ]?key|token|secret|key)\s*$/gi;
 /** Values a README expects you to replace, e.g. `YOUR_API_KEY`, `<token>` or `${API_KEY}`. Empty values are optional, not placeholders. */
 export function isPlaceholder(value: string): boolean {
   if (!value.trim() || value.startsWith("$mcp.env:")) return false;

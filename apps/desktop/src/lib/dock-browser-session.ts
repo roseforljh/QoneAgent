@@ -16,38 +16,58 @@ function enqueue(operation: () => Promise<unknown>) {
   return result;
 }
 
-// 原生浏览器视图永远绘制在网页 DOM 之上，CSS z-index 对它无效。
-// 任一模态框出现时统一隐藏所有原生视图：自绘 aria-modal 对话框，以及 Radix Dialog/AlertDialog
-// （其内容不带 aria-modal，但带 data-state；Popover 同为 role=dialog，位于 popper 包裹层内，需排除）。
-const MODAL_SELECTOR = [
-  '[aria-modal="true"]',
-  '[role="dialog"][data-state="open"]:not([data-radix-popper-content-wrapper] *)',
-  '[role="alertdialog"][data-state="open"]',
-].join(", ");
+// 原生浏览器视图绘制在网页 DOM 之上。优先通过应用层模态框显式引用计数锁控制隐藏，
+// 同时仅对标准 aria-modal="true" 节点保留兜底观察，不再耦合 Radix 内部属性选择器。
+const FALLBACK_MODAL_SELECTOR = '[aria-modal="true"]';
 const modalListeners = new Set<() => void>();
-let modalOpen = false;
+let explicitOverlayLocks = 0;
+let domModalOpen = false;
 let modalObserver: MutationObserver | undefined;
 
-function checkModal() {
-  const open = document.querySelector(MODAL_SELECTOR) !== null;
-  if (open === modalOpen) return;
-  modalOpen = open;
+function isOverlayBlocking(): boolean {
+  return explicitOverlayLocks > 0 || domModalOpen;
+}
+
+function notifyOverlayListeners() {
   modalListeners.forEach((listener) => listener());
 }
 
+/** 对话框/弹窗打开时显式持有原生浏览器遮挡锁，关闭或卸载时调用返回函数释放。 */
+export function acquireNativeOverlayLock(): () => void {
+  const wasBlocking = isOverlayBlocking();
+  explicitOverlayLocks += 1;
+  let released = false;
+  if (!wasBlocking && isOverlayBlocking()) notifyOverlayListeners();
+  return () => {
+    if (released) return;
+    released = true;
+    const prev = isOverlayBlocking();
+    explicitOverlayLocks = Math.max(0, explicitOverlayLocks - 1);
+    if (prev !== isOverlayBlocking()) notifyOverlayListeners();
+  };
+}
+
+function checkModal() {
+  const open = document.querySelector(FALLBACK_MODAL_SELECTOR) !== null;
+  if (open === domModalOpen) return;
+  const prev = isOverlayBlocking();
+  domModalOpen = open;
+  if (prev !== isOverlayBlocking()) notifyOverlayListeners();
+}
+
 function watchModals(listener: () => void): () => void {
-  if (typeof document === "undefined" || typeof MutationObserver === "undefined") return () => {};
   modalListeners.add(listener);
-  if (!modalObserver) {
+  if (typeof document !== "undefined" && typeof MutationObserver !== "undefined" && !modalObserver) {
     modalObserver = new MutationObserver(checkModal);
     modalObserver.observe(document.body, { childList: true, subtree: true });
-    modalOpen = document.querySelector(MODAL_SELECTOR) !== null;
+    domModalOpen = document.querySelector(FALLBACK_MODAL_SELECTOR) !== null;
   }
   return () => {
     modalListeners.delete(listener);
     if (modalListeners.size > 0) return;
     modalObserver?.disconnect();
     modalObserver = undefined;
+    domModalOpen = false;
   };
 }
 
@@ -203,7 +223,7 @@ export function createDockBrowserSession(
     if (disposed || failed) return;
     const nextBounds = requested.bounds ?? desired?.bounds;
     if (!nextBounds) return;
-    const next = { bounds: nextBounds, visible: requested.visible && !!requested.bounds && !modalOpen };
+    const next = { bounds: nextBounds, visible: requested.visible && !!requested.bounds && !isOverlayBlocking() };
     if (JSON.stringify(desired) === JSON.stringify(next)) return;
     desired = next;
     // Inactive unopened tab: don't create native child yet

@@ -2,8 +2,9 @@ import type { McpLifecycleOptions } from "@qone/mcp";
 import type { AutomationCommand, McpElicitationField, McpElicitationInfo, RuntimeEvent } from "@qone/protocol";
 
 type Elicit = NonNullable<McpLifecycleOptions["onElicitation"]>;
-type ElicitResult = Awaited<ReturnType<Elicit>>;
+export type ElicitResult = Awaited<ReturnType<Elicit>>;
 type Respond = Extract<AutomationCommand, { type: "mcp.elicitation.respond" }>;
+export type ElicitationRequest = Omit<McpElicitationInfo, "id" | "createdAt">;
 
 /**
  * Questions MCP servers ask the person mid-tool (`elicitation/create`). Every
@@ -15,28 +16,35 @@ export class McpElicitations {
 
   constructor(private readonly send: (event: RuntimeEvent) => void, private readonly conversation: (sessionId: string) => string = (sessionId) => sessionId) {}
 
-  readonly ask: Elicit = (config, params, signal, caller) => new Promise<ElicitResult>((resolve) => {
-    if (signal.aborted) return resolve({ action: "cancel" });
-    const id = crypto.randomUUID();
+  readonly ask: Elicit = (config, params, signal, caller) => {
     const request = params as { mode?: string; message?: unknown; url?: unknown; requestedSchema?: { properties?: Record<string, McpElicitationField>; required?: string[] } };
-    const info: McpElicitationInfo = {
-      id, serverId: config.id, serverName: config.name, message: String(request.message ?? ""), createdAt: Date.now(),
-      ...(caller ? { sessionId: this.conversation(caller) } : {}),
+    return this.request({
+      serverId: config.id, serverName: config.name, message: String(request.message ?? ""),
+      ...(caller ? { sessionId: caller } : {}),
       ...(request.mode === "url"
         ? { mode: "url" as const, url: String(request.url ?? "") }
         : { mode: "form" as const, fields: request.requestedSchema?.properties ?? {}, required: request.requestedSchema?.required ?? [] }),
-    };
-    const abort = () => settle({ action: "cancel" });
-    const settle = (result: ElicitResult) => {
-      if (!this.pending.delete(id)) return;
-      signal.removeEventListener("abort", abort);
+    }, signal);
+  };
+
+  /** Shows one request above the asking conversation's composer until it is answered or aborted. */
+  request(request: ElicitationRequest, signal: AbortSignal): Promise<ElicitResult> {
+    return new Promise<ElicitResult>((resolve) => {
+      if (signal.aborted) return resolve({ action: "cancel" });
+      const id = crypto.randomUUID();
+      const info: McpElicitationInfo = { ...request, id, createdAt: Date.now(), ...(request.sessionId ? { sessionId: this.conversation(request.sessionId) } : {}) };
+      const abort = () => settle({ action: "cancel" });
+      const settle = (result: ElicitResult) => {
+        if (!this.pending.delete(id)) return;
+        signal.removeEventListener("abort", abort);
+        this.publish();
+        resolve(result);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      this.pending.set(id, { info, settle });
       this.publish();
-      resolve(result);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    this.pending.set(id, { info, settle });
-    this.publish();
-  });
+    });
+  }
 
   respond(cmd: Respond): boolean {
     const entry = this.pending.get(cmd.elicitationId);

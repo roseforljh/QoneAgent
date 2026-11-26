@@ -89,7 +89,7 @@ test("a purpose is visible immediately and the next declaration creates the next
   expect(history.indexOf('title="排查生命周期状态"')).toBeLessThan(history.indexOf('title="验证清理后的状态"'));
   const final = renderToStaticMarkup(<Fixture content={[...historyContent, { type: "text", text: "Final answer" }]}/>);
   expect(final).toContain("Final answer");
-  expect(final).toMatch(/(?:运行了 2 个工具|Ran 2 tools)/);
+  expect(final).toMatch(/(?:完成了 2 步|Completed 2 steps)/);
 });
 
 test("failures remain visible in collapsed stages during and after work", () => {
@@ -97,10 +97,10 @@ test("failures remain visible in collapsed stages during and after work", () => 
     { type: "tool-call", toolName: "powershell", toolCallId: "failed", args: { command: "bun test" }, result: "failed", isError: true }];
   const collapsed = renderToStaticMarkup(<Fixture content={content} />);
   expect(collapsed).toContain('data-status="failed"');
-  expect(collapsed).toMatch(/aria-label="(?:1 个操作失败|1 actions failed)"/);
+  expect(collapsed).toMatch(/aria-label="(?:1 步出错|1 step failed)"/);
   expect(collapsed).toContain('title="验证生命周期清理"');
   const active = renderToStaticMarkup(<Fixture running content={content} />);
-  expect(active).toMatch(/aria-label="(?:1 个操作失败|1 actions failed)"/);
+  expect(active).toMatch(/aria-label="(?:1 步出错|1 step failed)"/);
   expect(active.match(/data-slot="tool-timeline"/g)).toHaveLength(1);
 });
 
@@ -117,7 +117,7 @@ test("the real message renderer shows one phase header across reasoning and mult
   ];
   const html = renderToStaticMarkup(<Fixture content={content} />);
   expect(html.match(/data-slot="tool-timeline"/g)).toHaveLength(1);
-  expect(html).toMatch(/title="(?:已读取文件|Read files)"/);
+  expect(html).toMatch(/title="(?:读取了 src\/first\.ts、src\/second\.ts|Read src\/first\.ts and src\/second\.ts)"/);
   const active = renderToStaticMarkup(<Fixture running content={[
     ...content, { type: "reasoning", text: "Evaluate", status: { type: "running" } },
   ]} />);
@@ -160,7 +160,7 @@ test("mixed tools have one semantic summary and final content remains outside ex
     read("followup-a"), read("followup-b"),
   ]} />);
   expect(html.match(/data-slot="tool-timeline"/g)).toHaveLength(2);
-  expect(html).toMatch(/title="(?:已读取文件，运行了一个命令|Read files and ran a command)"/);
+  expect(html).toMatch(/title="(?:读取了 src\/source\.ts，运行了命令|Read src\/source\.ts and ran a command)"/);
   expect(html).toContain("Phase result");
   const final = renderToStaticMarkup(<Fixture content={[read("a"), read("b"), { type: "text", text: "Final answer" }]} />);
   expect(final).toContain("Final answer");

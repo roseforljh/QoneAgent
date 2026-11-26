@@ -6,7 +6,7 @@ import { clipboardWrites, installElectronMock } from "./helpers/electron-mock";
 
 installElectronMock();
 const { contextMenuItems, nativeCopy, updateNativeCopy } = await import("../electron/native-menus");
-const { authorizeAttachmentPreview, authorizeFilePreview, isAuthorizedAsset } = await import("../electron/file-dialogs");
+const { authorizeAttachmentPreview, authorizeFilePreview, isAuthorizedAsset, readAuthorizedFile } = await import("../electron/file-dialogs");
 
 const flags = { canUndo: true, canRedo: false, canCut: true, canCopy: true, canPaste: true, canDelete: true, canSelectAll: true, canEditRichly: false };
 const base = { isEditable: false, selectionText: "", linkURL: "", mediaType: "none", srcURL: "", x: 3, y: 4, editFlags: flags } as const;
@@ -35,7 +35,7 @@ test("native labels follow the renderer language and ignore invalid values", () 
   updateNativeCopy({ copy: "Copy" });
 });
 
-test("asset:// only serves authorized previews, and the project root check compares path components", () => {
+test("asset:// only serves authorized previews, and the project root check compares path components", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "qone-asset-"));
   try {
     mkdirSync(path.join(root, "app"));
@@ -53,6 +53,18 @@ test("asset:// only serves authorized previews, and the project root check compa
     authorizeAttachmentPreview(image);
     expect(isAuthorizedAsset(image.toUpperCase())).toBe(process.platform === "win32");
     expect(() => authorizeAttachmentPreview(path.join(root, "secret.txt"))).toThrow("native.previewPath");
+    // An HTML preview may load files beside and below it, never outside its folder.
+    const page = path.join(root, "app", "site", "index.html");
+    mkdirSync(path.join(root, "app", "site"), { recursive: true });
+    writeFileSync(page, "<p>x</p>");
+    expect(isAuthorizedAsset(path.join(root, "app", "site", "js", "chart.js"))).toBe(false);
+    authorizeFilePreview(page, path.join(root, "app"));
+    expect(isAuthorizedAsset(path.join(root, "app", "site", "js", "chart.js"))).toBe(true);
+    expect(isAuthorizedAsset(path.join(root, "app", "site", "..", "inside.txt"))).toBe(false);
+    expect(isAuthorizedAsset(path.join(root, "app", "site2", "x.js"))).toBe(false);
+    // Office previews read bytes through IPC with the same scope as asset://.
+    expect((await readAuthorizedFile(page)).toString()).toBe("<p>x</p>");
+    expect(() => readAuthorizedFile(sibling)).toThrow("native.filePreviewScope");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

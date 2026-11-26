@@ -9,7 +9,7 @@ import { thinkingLevelsForApi, parseMcpCommand, supportsMemorySummary } from "@q
 import path from "node:path";
 import { createLocalSkill, createResourceLoader, deleteLocalSkill, installLocalSkill } from "./skills.js";
 import { installCloudSkill, listCloudSkills } from "./skill-catalog.js";
-import { setBuiltinSkillEnabled, syncPonytailProject, updateBuiltinSkill } from "./builtin-skills/manager.js";
+import { setBuiltinSkillEnabled, updateBuiltinSkill } from "./builtin-skills/manager.js";
 import { containsSecretConfig } from "./secrets.js";
 import { configurePodcast } from "./reach-podcast.js";
 import { normalizeSubagentConfig } from "./subagents.js";
@@ -154,9 +154,6 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     }
     case "skills.builtin.set-enabled": {
       const skill = await setBuiltinSkillEnabled(cmd.skillId, cmd.enabled);
-      if (cmd.skillId === "ponytail") {
-        await Promise.all(services.workspaceRepo.list().map((workspace) => syncPonytailProject(workspace.path, cmd.enabled)));
-      }
       await services.adapter.refreshSkills();
       services.skillRepo.upsert(skill);
       services.send({ type: "skills.builtin.changed", requestId: cmd.requestId, skill });
@@ -164,9 +161,6 @@ export async function handleRuntimeCommand(cmd: RuntimeCommand, services: Return
     }
     case "skills.builtin.update": {
       const result = await updateBuiltinSkill(cmd.skillId);
-      if (cmd.skillId === "ponytail") {
-        await Promise.all(services.workspaceRepo.list().map((workspace) => syncPonytailProject(workspace.path, result.skill.enabled !== false)));
-      }
       await services.adapter.refreshSkills();
       services.skillRepo.upsert(result.skill);
       services.send({ type: "skills.builtin.changed", requestId: cmd.requestId, ...result });

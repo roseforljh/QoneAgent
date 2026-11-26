@@ -38,26 +38,31 @@ import { configuredCapabilities } from "./media-capabilities.js";
 import { createPiSessionEntries, imageContent, materializeModelInputs, promptWithAttachments, videoAttachmentNotice, type PersistedPiMessage } from "./pi-attachments.js";
 import type { DouyinBridge } from "./douyin-bridge.js";
 import { assertModelToolNames, extractTextContent, fetchProviderModels, splitModelName } from "./pi-message-utils.js";
+import { prepareTitlePrompt } from "./session-title.js";
 import { applyToolExposure, usedToolNames } from "./tool-exposure.js";
 import { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences, type PiCompactionPreferences } from "./pi-compaction.js";
 import type { AppMediaService } from "./app-media-service.js";
 import type { EmbeddedOpenCliRunner } from "./browser-sync.js";
 import { promptPiRun } from "./pi-run-prompt.js";
-import { executionContextExtension, type ServerExecutionTarget } from "./execution-context.js";
+import { executionContextExtension, stabilizeServerTargets, type ServerExecutionTarget } from "./execution-context.js";
 import { captureCompactedContext } from "./session-compaction.js";
 import { cacheReportedIn, observeRequestUsage, observeStreamResult, usageFromResponse, type ProviderUsageReport } from "./usage-capture.js";
 import { executionAdviceExtension } from "./execution-advice.js";
 import { memoryDeliveryExtension, type MemoryAddition, type MemoryDelivery } from "./memory/memory-context.js";
 import type { CacheObservation } from "@qone/protocol";
 import type { BackgroundShellJobs } from "./background-shell.js";
+import type { SecretInputs } from "./secret-input.js";
 
 const log = createLogger("pi-adapter");
 export const PI_REQUEST_OVERRIDES = { httpIdleTimeoutMs: 0 } as const;
 export { compactionReserveTokens, DEFAULT_PI_COMPACTION_PREFERENCES, normalizePiCompactionPreferences } from "./pi-compaction.js";
 export type { PiCompactionPreferences } from "./pi-compaction.js";
 
-const isOfficialAnthropic = (model: { api: string; baseUrl: string }) =>
-  model.api === "anthropic-messages" && model.baseUrl.includes("api.anthropic.com");
+const isOfficialAnthropic = (model: { api: string; baseUrl: string }) => {
+  if (model.api !== "anthropic-messages") return false;
+  try { return new URL(model.baseUrl).hostname.toLowerCase() === "api.anthropic.com"; }
+  catch { return false; }
+};
 
 type EmitFn = (event: AgentEvent) => void;
 type RunEmitFn = (type: string, payload: unknown) => void;
@@ -90,8 +95,10 @@ interface PiAdapterHooks {
   /** The chat a side conversation was opened from, so its usage is not lost or misattributed. */
   sideConversationOwner?: (sideSessionId: string) => string | undefined;
   deliveryTools?: (sessionId: string, workspacePath: string, activeRunId: () => string | undefined) => ToolDefinition[];
+  /** Secrets typed straight into Qone: the prompt tool, shell variables, and output masking. */
+  secrets?: Pick<SecretInputs, "tool" | "env" | "wrap">;
   /** The user's SSH servers; they go through the normal approval wrapper. */
-  serverTools?: (workspacePath: string, serverIds: readonly string[]) => ToolDefinition[];
+  serverTools?: (workspacePath: string, serverIds: readonly string[], sessionId: string) => ToolDefinition[];
   serverSummary?: (serverIds: readonly string[]) => string;
   serverTargets?: (serverIds: readonly string[]) => ServerExecutionTarget[];
   onCustomEntry?: (sessionId: string, entry: unknown) => void;
@@ -116,8 +123,11 @@ export class PiAdapter {
   /** On-demand tool catalog of each live session, and the copy its model has already seen. */
   private toolCatalogs = new WeakMap<AgentSession, string>();
   private serverScopes = new WeakMap<AgentSession, string>();
+  private sessionServerTargets = new Map<string, readonly ServerExecutionTarget[]>();
   private sentToolCatalogs = new WeakMap<AgentSession, string>();
   private staleSessions = new Set<string>();
+  /** 复用已学习的网关 Schema 降级映射，避免模型配置刷新后再次触发 400 并改变工具前缀。 */
+  private readonly streamConfiguredModel = createConfiguredModelStream();
   private approvals = new ApprovalQueue();
   private pendingApprovalIds = new Map<string, Set<string>>();
   private hooks: PiAdapterHooks;
@@ -342,12 +352,11 @@ export class PiAdapter {
         }
       }
       const firstResolved = resolved[0];
-      const streamConfiguredModel = createConfiguredModelStream();
       this.modelRuntime.registerProvider(provider, {
         name: provider,
         baseUrl: firstResolved.baseUrl,
         api: firstResolved.api as never,
-        streamSimple: (model, context, options) => streamConfiguredModel(model, context, options,
+        streamSimple: (model, context, options) => this.streamConfiguredModel(model, context, options,
           configuredCapabilities(this.configuredModelConfigs, `${model.provider}/${model.id}`).input),
         models: models.map((item, index) => {
           const model = resolved[index];
@@ -480,31 +489,42 @@ export class PiAdapter {
   }
 
   async generateTitle(prompt: string, modelName?: string, signal?: AbortSignal): Promise<string> {
+    await this.modelConfigurationQueue;
+    signal?.throwIfAborted();
     this.modelRuntime = await this.ensureModelRuntime();
-    const model = modelName
+    // 优先使用当前会话选中的文本模型；仅在未指定或选中图片/音视频直出模型时回退到已认证的文本模型。
+    let model = modelName && !this.isDirectGenerationModel(modelName)
       ? this.modelRuntime.getModel(...splitModelName(modelName))
-      : this.modelRuntime.getModels()[0];
+      : undefined;
+    if (!model) {
+      const fallback = this.configuredModelConfigs.find((config) =>
+        config.enabled && !this.isDirectGenerationModel(config.id) && this.modelRuntime!.hasConfiguredAuth(config.provider));
+      if (fallback) model = this.modelRuntime.getModel(fallback.provider, fallback.model);
+    }
     if (!model) throw new Error("no configured model available for title generation");
     // A title is a real model request, so it lands on the statistics page as `other`; otherwise
     // recorded tokens would not match what the provider actually billed.
+    // 标题生成关闭思考且不传 temperature（避免推理模型 400）；同时预留足够上限避免思考块或中文 JSON 被 32 token 截断。
+    const titleMaxTokens = model.maxTokens > 0 ? Math.min(1024, model.maxTokens) : 1024;
+    const timeoutSignal = AbortSignal.timeout(20_000);
+    const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     let cache: CacheObservation = "unknown";
     const response = await this.modelRuntime.completeSimple(model, {
-      systemPrompt: "Generate a concise conversation title from the user's first message. Return only valid JSON with one string field named title. The title must be a short topic, never an answer to the user. Keep it under 8 words in English or 20 Chinese characters.",
-      messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-    }, { maxTokens: 32, temperature: 0.2, signal, onProviderStreamEvent: (data) => {
+      systemPrompt: "Generate a concise conversation title from the user's first message in the same language as the message. Reply immediately with ONLY a raw JSON object: {\"title\":\"...\"}. No markdown fences, no explanation, never answer the user. Keep it under 8 words in English or 16 Chinese characters.",
+      messages: [{ role: "user", content: prepareTitlePrompt(prompt), timestamp: Date.now() }],
+    }, { maxTokens: titleMaxTokens, cacheRetention: "none", signal: requestSignal, onProviderStreamEvent: (data) => {
       if (cache === "unknown" && cacheReportedIn(String(model.api), data)) cache = "reported";
     } });
     try {
       const usage = usageFromResponse(model, response.usage, cache);
       if (usage) this.hooks.usageObserved?.(undefined, usage, "other");
     } catch { /* Telemetry must never break title generation. */ }
-    const title = extractTextContent(response)
-      .replace(/[\r\n]+/g, " ")
-      .replace(/^['"“”‘’`]+|['"“”‘’`]+$/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!title) throw new Error("model returned an empty title");
-    return title.slice(0, 80);
+    if (response.stopReason === "error" || response.stopReason === "aborted") {
+      throw new Error(response.errorMessage || "title generation request failed");
+    }
+    const raw = extractTextContent(response).trim();
+    if (!raw) throw new Error(`model returned an empty title (stopReason: ${response.stopReason})`);
+    return raw;
   }
 
   /** Tool-free memory completion; at startup, credentials may not be restored yet. */
@@ -524,7 +544,7 @@ export class PiAdapter {
     const response = await runtime.completeSimple(model, {
       systemPrompt,
       messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-    }, { maxTokens, signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]), onProviderStreamEvent: (data) => {
+    }, { maxTokens, cacheRetention: "none", signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]), onProviderStreamEvent: (data) => {
       if (cache === "unknown" && cacheReportedIn(String(model.api), data)) cache = "reported";
     } });
     try {
@@ -630,8 +650,9 @@ export class PiAdapter {
       // PowerShell 7 can emit ANSI color codes for formatted objects. The
       // tool output is sent to the chat as plain text, so those codes would
       // become visible as garbled characters instead of colors.
-      spawnHook: ({ command, ...context }) => ({
+      spawnHook: ({ command, env, ...context }) => ({
         ...context,
+        env: { ...env, ...this.hooks.secrets?.env(eventSessionId) },
         command: "try { $PSStyle.OutputRendering = 'PlainText' } catch {}\n" + command,
       }),
     });
@@ -644,7 +665,7 @@ export class PiAdapter {
     const backgroundShell = subagentDepth === 0 && !sideConversation && !mcpServerId ? this.backgroundShell : undefined;
     const builtinTools = [
       createReadTool(workspacePath),
-      backgroundShell ? backgroundShell.wrap(powershell as ToolDefinition, eventSessionId) : powershell,
+      backgroundShell ? backgroundShell.wrap(this.hooks.secrets?.wrap(powershell as ToolDefinition) ?? powershell as ToolDefinition, eventSessionId) : powershell,
       ...createFileChangeTools(workspacePath),
       createGrepTool(workspacePath),
       createFindTool(workspacePath),
@@ -676,11 +697,14 @@ export class PiAdapter {
       registerMediaDirectory: (runId, directory) => this.registerMediaDirectory(runId, directory),
     }, sessionId), workspacePath, modelName);
     const memoryTools = sideConversation || subagentDepth > 0 || mcpServerId ? [] : this.hooks.memoryTools?.(sessionId) ?? [];
-    const deliveryTools = subagentDepth > 0 || mcpServerId ? [] : this.hooks.deliveryTools?.(eventSessionId, workspacePath, () => this.activeRunIds.get(sessionId)) ?? [];
+    const deliveryTools = subagentDepth > 0 || mcpServerId ? [] : [
+      ...this.hooks.deliveryTools?.(eventSessionId, workspacePath, () => this.activeRunIds.get(sessionId)) ?? [],
+      ...this.hooks.secrets ? [this.hooks.secrets.tool(eventSessionId, workspacePath, scope)] : [],
+    ];
     const internalTools = [...createInternalTools(this.goalBridge, eventSessionId, goalId, goalEpoch, goalRunId), ...memoryTools, ...deliveryTools, ...(backgroundShell ? [backgroundShell.tool(eventSessionId)] : [])];
     const internalToolNames = new Set(internalTools.map((tool) => tool.name));
     internalToolNames.add("finalize_response");
-    const serverTools = mcpServerId ? [] : this.hooks.serverTools?.(workspacePath, scope) ?? [];
+    const serverTools = mcpServerId ? [] : this.hooks.serverTools?.(workspacePath, scope, eventSessionId) ?? [];
     // 确保内置浏览器与 OpenCLI 工具在 codemode 等异步调用路径中始终携带当前会话 ID。
     const withBrowserSession = (tool: ToolDefinition): ToolDefinition => {
       const owner = eventSessionId ?? sessionId;
@@ -689,7 +713,7 @@ export class PiAdapter {
         : { ...tool, execute: (...args) => withToolSession(owner, () => tool.execute(...args)) };
     };
     const wrapped = [...builtinTools, ...customTools, ...subagentTools, ...mediaTools, ...serverTools, ...internalTools].map((t) =>
-      withPermission(withBrowserSession(t), {
+      withPermission(withBrowserSession(this.hooks.secrets?.wrap(t) ?? t), {
         queue: this.approvals,
         workspacePath,
         rules: this.permissionRules,
@@ -756,7 +780,25 @@ export class PiAdapter {
       noTools: "builtin", tools: ["+codemode", "+tool_search"],
       customTools: loadout.tools,
       resourceLoader: await sessionResourceLoader(resourceLoader, workspacePath, true, [
-        executionContextExtension({ localTools: builtinTools.map(tool => tool.name), serverTools: serverTools.map(tool => tool.name), servers: () => mcpServerId ? [] : this.hooks.serverTargets?.(scope) ?? [] }),
+        executionContextExtension({
+          localTools: builtinTools.map(tool => tool.name),
+          serverTools: serverTools.map(tool => tool.name),
+          servers: () => mcpServerId ? [] : this.hooks.serverTargets?.(scope) ?? [],
+          stabilizeServers: (targets) => {
+            const next = stabilizeServerTargets(this.sessionServerTargets.get(sessionId), targets);
+            if (!next.length) {
+              this.sessionServerTargets.delete(sessionId);
+            } else {
+              this.sessionServerTargets.delete(sessionId);
+              this.sessionServerTargets.set(sessionId, next);
+              if (this.sessionServerTargets.size > 256) {
+                const oldest = this.sessionServerTargets.keys().next().value;
+                if (oldest !== undefined) this.sessionServerTargets.delete(oldest);
+              }
+            }
+            return next;
+          },
+        }),
         ...(this.hooks.executionAdvice ? [executionAdviceExtension(this.hooks.executionAdvice)] : []),
         ...(this.hooks.memoryAddition ? [memoryDeliveryExtension(() => {
           const runId = this.activeRunIds.get(sessionId);
@@ -1064,7 +1106,7 @@ export class PiAdapter {
     if (!session || !expectedRunId || this.activeRunIds.get(sessionId) !== expectedRunId
       || this.runs.get(expectedRunId) !== session || this.stoppedRuns.has(expectedRunId) || !session.isStreaming) return false;
     try {
-      session.agent.steer({ role: "user", content: [{ type: "text", text: message }], timestamp: Date.now() });
+      session.agent.steer({ role: "user", content: [{ type: "text", text: message }], timestamp: Date.now(), qoneInternal: true } as never);
       return true;
     } catch (error) {
       log.warn("failed to queue subagent update", { sessionId, runId: expectedRunId, error: String(error) });

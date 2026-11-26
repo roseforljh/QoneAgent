@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
-import { isDouyinUrl, isSecureServiceUrl, type BrowserSyncStatus } from "@qone/protocol";
+import { isEmbeddedOnlySite, isSecureServiceUrl, type BrowserSyncStatus } from "@qone/protocol";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { ffmpegExecutable, ytDlpExecutable } from "./reach-channels.js";
@@ -61,10 +61,10 @@ type OpenCliFormat = "json" | "yaml" | "table" | "plain" | "md" | "csv";
 const OPENCLI_CATALOG_TTL = 5 * 60_000;
 const MAX_TOOL_OUTPUT = 80_000;
 
-/** Enforce the selected site backend before any process or built-in browser session starts. */
+/** 按站点配置拦截仅支持内置页面桥接的站点，避免写死站点名。 */
 export function assertOpenCliRoute(args: readonly string[]): void {
-  if (args[0]?.trim().toLowerCase() === "douyin" || args.some((arg) =>
-    (arg.match(/https?:\/\/[^\s"'<>]+/gi) ?? []).some(isDouyinUrl))) {
+  if ((args[0] && isEmbeddedOnlySite(args[0])) || args.some((arg) =>
+    (arg.match(/https?:\/\/[^\s"'<>]+/gi) ?? []).some(isEmbeddedOnlySite))) {
     throw runtimeError("browser-sync.douyin_embedded_route_required", {});
   }
 }
@@ -316,7 +316,7 @@ export class BrowserSyncService {
         refresh: Type.Optional(Type.Boolean()),
       }),
       execute: async (_id: string, value: { site?: string; query?: string; limit?: number; refresh?: boolean }) => {
-        if (value.site?.trim().toLowerCase() === "douyin") assertOpenCliRoute([value.site]);
+        if (value.site && isEmbeddedOnlySite(value.site)) assertOpenCliRoute([value.site]);
         const commands = await this.loadOpenCliCatalog(Boolean(value.refresh));
         return result({ stdout: JSON.stringify(compactOpenCliCatalog(commands, value.site, value.query, value.limit), null, 2), stderr: "" }) as never;
       },
@@ -351,7 +351,7 @@ export class BrowserSyncService {
     if (!force && this.openCliCatalog && now - this.openCliCatalog.loadedAt < OPENCLI_CATALOG_TTL) return this.openCliCatalog.commands;
     if (!force && this.openCliCatalogPromise) return this.openCliCatalogPromise;
     const load = runOpenCliProcess(["list", "--format", "json"], COMMAND_TIMEOUT).then(({ stdout }) => {
-      const commands = parseOpenCliCatalog(stdout).filter((command) => command.site.toLowerCase() !== "douyin");
+      const commands = parseOpenCliCatalog(stdout).filter((command) => !isEmbeddedOnlySite(command.site));
       if (!commands.length) throw runtimeError("browser-sync.opencli_returned_no_available_adapter_commands", {});
       this.openCliCatalog = { loadedAt: Date.now(), commands };
       return commands;

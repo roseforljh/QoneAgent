@@ -22,10 +22,13 @@
     "build": "bun run --cwd apps/desktop build",
     "build:release": "bun run --cwd apps/desktop build:release",
     "typecheck": "bun run --cwd apps/agent-runtime typecheck && bun run --cwd apps/desktop build",
+    "lint": "biome lint",
+    "lint:fix": "biome lint --write",
     "test": "bun test apps/agent-runtime/test",
     "test:smoke": "bun run apps/agent-runtime/test/smoke.ts"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.9",
     "bun-types": "^1.4.4",
     "typescript": "^7.0.2"
   },

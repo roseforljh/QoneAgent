@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { clipBrowserBounds, createDockBrowserSession } from "../src/lib/dock-browser-session";
+import { acquireNativeOverlayLock, clipBrowserBounds, createDockBrowserSession } from "../src/lib/dock-browser-session";
 
 const bounds = { x: 700, y: 80, w: 400, h: 600 };
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -448,5 +448,30 @@ test("an open modal hides the native layer and closing it restores the requested
     await tick();
     globals.document = previous.document;
     globals.MutationObserver = previous.MutationObserver;
+  }
+});
+
+test("explicit overlay locks hide native browser without DOM probing and support nested dialogs", async () => {
+  const visibility: unknown[] = [];
+  const session = createDockBrowserSession(async (command, args) => {
+    if (command === "browser_visible") visibility.push(args?.visible);
+  }, "browser-explicit-lock", "https://example.com", () => {});
+  try {
+    session.update(bounds, true);
+    await tick();
+    const releaseOuter = acquireNativeOverlayLock();
+    await tick();
+    const releaseInner = acquireNativeOverlayLock();
+    await tick();
+    releaseInner();
+    await tick();
+    // 外层对话框尚未关闭，仍保持隐藏
+    expect(visibility).toEqual([true, false]);
+    releaseOuter();
+    await tick();
+    expect(visibility).toEqual([true, false, true]);
+  } finally {
+    session.dispose();
+    await tick();
   }
 });

@@ -60,7 +60,10 @@ describe("runtime persistence and permissions", () => {
     expect(decide({ toolName: "read", args: { path: "C:/Windows/System32/x" }, workspacePath: "C:/work/app" })).toBe("allow");
     expect(decide({ toolName: "read", args: { path: "D:/Program Files/app/config" }, workspacePath: "C:/work/app" })).toBe("allow");
     expect(decide({ toolName: "powershell", args: { command: "Get-Content C:/Windows/System32/hosts" }, workspacePath: "C:/work/app" })).toBe("ask");
-    expect(decide({ toolName: "powershell", args: { command: "Get-Content $HOME/.ssh/id_rsa" }, workspacePath: "C:/work/app" })).toBe("deny");
+    expect(decide({ toolName: "powershell", args: { command: "Get-Content $HOME/.ssh/id_rsa" }, workspacePath: "C:/work/app" })).toBe("ask");
+    expect(evaluatePermission({ toolName: "powershell", args: { command: "Get-Content $HOME/.ssh/id_rsa" }, workspacePath: "C:/work/app" }, "auto"))
+      .toMatchObject({ decision: "ask", reason: "protected-path" });
+    expect(evaluatePermission({ toolName: "powershell", args: { command: "rg '\\.ssh/' src/" }, workspacePath: "C:/work/app" }, "full").decision).toBe("allow");
   });
 
   test("maps the three run modes to Codex-style approval and permission profiles", () => {
@@ -187,11 +190,16 @@ describe("runtime persistence and permissions", () => {
     mode = "full";
     await write.execute("four", { path: "C:/other/file.ts" }, undefined, undefined, undefined);
     expect(prompts).toBe(2);
-    const protectedResult = await write.execute("five", { path: "C:/Users/test/.ssh/id_rsa" }, undefined, undefined, undefined) as { isError?: boolean };
-    expect(protectedResult.isError).toBe(true);
+    mode = "auto";
+    const protectedAuto = await write.execute("five-auto", { path: "C:/Users/test/.ssh/id_rsa" }, undefined, undefined, undefined) as { isError?: boolean };
+    expect(protectedAuto.isError).toBeUndefined();
+    expect(prompts).toBe(3);
+    mode = "full";
+    const protectedFull = await write.execute("five", { path: "C:/Users/test/.ssh/id_rsa" }, undefined, undefined, undefined) as { isError?: boolean };
+    expect(protectedFull.isError).toBeUndefined();
     const deniedResult = await makeTool("powershell").execute("six", { path: "C:/work/app" }, undefined, undefined, undefined) as { isError?: boolean };
     expect(deniedResult.isError).toBe(true);
-    expect(executions).toBe(4);
+    expect(executions).toBe(6);
   });
 
   test("changing to full mode releases an already pending workspace approval", async () => {

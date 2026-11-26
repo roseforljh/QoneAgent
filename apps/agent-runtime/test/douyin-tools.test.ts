@@ -105,5 +105,6 @@ test("persistent download permissions respect destination boundaries and explici
   expect(evaluatePermission(context, "auto", { get: () => "allow" }).decision).toBe("ask");
   expect(evaluatePermission(context, "full").permissions).toEqual(["filesystem.write", "network.access"]);
   expect(evaluatePermission(context, "full", { get: (_subject, permission) => permission === "filesystem.write" ? "deny" : undefined }).decision).toBe("deny");
-  expect(evaluatePermission({ ...context, args: { path: "C:/work/project/.ssh" } }, "full").decision).toBe("deny");
+  expect(evaluatePermission({ ...context, args: { path: "C:/work/project/.ssh" } }, "auto")).toMatchObject({ decision: "ask", reason: "protected-path" });
+  expect(evaluatePermission({ ...context, args: { path: "C:/work/project/.ssh" } }, "full").decision).toBe("allow");
 });

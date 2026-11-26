@@ -5,7 +5,12 @@ import { observeInlineOverflow } from "../../../lib/inline-overflow";
 import { cn } from "../../../lib/utils";
 
 /** Clip only the label, never the adjacent icon, diff counts or disclosure control. */
-export function OverflowFade({ children, className, ...props }: ComponentProps<"span">) {
+export function OverflowFade({
+  children,
+  className,
+  onOverflowChange,
+  ...props
+}: ComponentProps<"span"> & { onOverflowChange?: (overflow: boolean) => void }) {
   const viewportRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLSpanElement>(null);
   const [overflow, setOverflow] = useState(false);
@@ -14,8 +19,11 @@ export function OverflowFade({ children, className, ...props }: ComponentProps<"
     const viewport = viewportRef.current;
     const content = contentRef.current;
     if (!viewport || !content) return;
-    return observeInlineOverflow(viewport, content, setOverflow);
-  }, []);
+    return observeInlineOverflow(viewport, content, (next) => {
+      setOverflow(next);
+      onOverflowChange?.(next);
+    });
+  }, [onOverflowChange]);
 
   // Flex, not inline-block: an inline formatting context keeps a line-box strut
   // whose baseline pushes the label down, so row icons looked vertically off.

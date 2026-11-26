@@ -33,11 +33,13 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.3.0",
+    "@xmldom/xmldom": "^0.9.8",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "beautiful-mermaid": "^1.1.3",
     "class-variance-authority": "^0.7.1",
     "diff": "9.0.0",
+    "docx-preview": "^0.4.1",
     "electron": "^45.3.2",
     "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
@@ -65,6 +67,7 @@
     "typescript-ast": "npm:typescript@6.0.3",
     "vite": "^8.3.8",
     "ws": "8.21.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^5.1.0"
   },
   "dependencies": {

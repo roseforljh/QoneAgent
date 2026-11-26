@@ -56,15 +56,18 @@ describe("external filesystem access policy", () => {
       }
     });
 
-    test(`${mode}: credential stores remain protected`, () => {
+    test(`${mode}: credential stores require approval in ask/auto and respect full mode`, () => {
       for (const directory of [".ssh", ".aws", ".gnupg"]) {
         const target = path.join(os.homedir(), directory, "credential");
+        const expected = mode === "full"
+          ? { decision: "allow", reason: "allowed" }
+          : { decision: "ask", reason: "protected-path" };
         for (const toolName of [...readTools, "write", "edit"]) {
           expect(evaluatePermission({ toolName, workspacePath, args: { path: target } }, mode))
-            .toMatchObject({ decision: "deny", reason: "protected-path" });
+            .toMatchObject(expected);
         }
         expect(evaluatePermission({ toolName: "powershell", args: { command: `Get-Content '${target}'` } }, mode))
-          .toMatchObject({ decision: "deny", reason: "protected-path" });
+          .toMatchObject(expected);
       }
     });
 

@@ -7,3 +7,7 @@ The SSRF address classification and manual redirect validation in `apps/agent-ru
 ## Runtime dependencies
 
 `defuddle`, `linkedom`, `turndown`, `undici`, and `proxy-from-env` are used under their respective MIT licenses. Defuddle is used with `useAsync: false`, so its optional third-party extraction fallback is disabled.
+
+## Office previews
+
+Word previews use [docx-preview](https://github.com/VolodymyrBaydalka/docxjs) (Apache License 2.0, Copyright Volodymyr Baydalka) and its dependency JSZip (MIT). Spreadsheet previews use the SheetJS Community Edition `xlsx` package from `cdn.sheetjs.com` (Apache License 2.0, Copyright SheetJS LLC); embedded Excel charts are read with [@xmldom/xmldom](https://github.com/xmldom/xmldom) (MIT).

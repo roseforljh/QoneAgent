@@ -63,6 +63,11 @@ const OPERATION_LABELS = new Map<string, readonly [MessageKey, MessageKey]>([
   ["qone_twitter_profile", ["chat.browserBrowsing", "chat.browserBrowsed"]],
   ["qone_twitter_timeline", ["chat.browserBrowsing", "chat.browserBrowsed"]],
   ["qone_twitter_trending", ["chat.browserBrowsing", "chat.browserBrowsed"]],
+  ["qone_video_use_file", ["chat.toolReading", "chat.toolRead"]],
+  ["qone_video_download", ["chat.toolDownloadingMedia", "chat.toolDownloadedMedia"]],
+  ["qone_media_extract_audio", ["chat.toolExtractingAudio", "chat.toolExtractedAudio"]],
+  ["qone_media_extract_frames", ["chat.toolExtractingFrames", "chat.toolExtractedFrames"]],
+  ["qone_video_staging_dir", ["chat.toolPreparingStaging", "chat.toolPreparedStaging"]],
 ]);
 const QUERY_TOOLS = new Set(["grep", "find", "glob", "search", "web_search"]);
 

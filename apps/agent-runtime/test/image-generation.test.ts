@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildImageGenerationRequest, generateImage, parseImageGenerationResponse } from "../src/image-generation.js";
-import { detectImageModel, imageApiFormatForModelName, isGeminiImageModelName, isQwenImageModelName, isSeedreamModelName, parseModelMetadata, type ModelConfigInfo } from "@qone/protocol";
+import { detectImageModel, imageApiFormatForModelName, isGeminiImageModelName, isQwenImageModelName, isSeedreamModelName, parseModelMetadata, supportsExtendedImageQuality, type ModelConfigInfo } from "@qone/protocol";
 
 function config(model: string, provider: string, baseUrl: string, extra: Record<string, unknown> = {}): ModelConfigInfo {
   return { id: `${provider}/${model}`, provider, model, config: { baseUrl, apiType: "openai-compatible", ...extra }, enabled: true, updatedAt: 0 };
@@ -12,6 +12,10 @@ describe("image model detection", () => {
     expect(isGeminiImageModelName("google/nano-banana-pro")).toBe(true);
     expect(isQwenImageModelName("qwen-image-3-pro")).toBe(true);
     expect(isSeedreamModelName("doubao-seedream-6")).toBe(true);
+    expect(supportsExtendedImageQuality("gpt-image-2.5")).toBe(true);
+    expect(supportsExtendedImageQuality("gpt-image-3")).toBe(true);
+    expect(supportsExtendedImageQuality("custom-image", { supportedParameters: ["quality_extended"] })).toBe(true);
+    expect(supportsExtendedImageQuality("gpt-image-1")).toBe(false);
   });
 
   test("manual format and image output take priority over name fallback", () => {

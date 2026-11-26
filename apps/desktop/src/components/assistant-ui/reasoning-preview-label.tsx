@@ -3,9 +3,10 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { OverflowFade } from "./elements/overflow-fade";
 import type { ReasoningPreview } from "./reasoning-preview";
 
-export const ReasoningPreviewLabel = memo(function ReasoningPreviewLabel({ preview, running }: {
+export const ReasoningPreviewLabel = memo(function ReasoningPreviewLabel({ preview, running, onOverflowChange }: {
   preview: ReasoningPreview;
   running: boolean;
+  onOverflowChange?: (overflow: boolean) => void;
 }) {
   const reduceMotion = useReducedMotion();
   return <span className="q-reasoning-preview relative block min-w-0 overflow-hidden" aria-hidden="true">
@@ -15,8 +16,8 @@ export const ReasoningPreviewLabel = memo(function ReasoningPreviewLabel({ previ
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: "-100%", opacity: 0 }}
         transition={{ duration: 0.18, ease: "easeOut" }}>
-        <OverflowFade>{preview.text}</OverflowFade>
+        <OverflowFade onOverflowChange={onOverflowChange}>{preview.text}</OverflowFade>
       </motion.span>
-    </AnimatePresence> : <OverflowFade>{preview.text}</OverflowFade>}
+    </AnimatePresence> : <OverflowFade onOverflowChange={onOverflowChange}>{preview.text}</OverflowFade>}
   </span>;
 });

@@ -14,7 +14,6 @@ import { createPortal } from "react-dom";
 import { invoke, isDesktop } from "../../../lib/desktop-bridge";
 import { cva, type VariantProps } from "class-variance-authority";
 import {
-  DownloadIcon,
   ImageIcon,
   ImageOffIcon,
   Loader2Icon,
@@ -124,6 +123,11 @@ const saveImagePart = async (
     a.click();
     document.body.removeChild(a);
     if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 40_000);
+    return;
+  }
+  if (native && !isDataUri) {
+    // The renderer cannot fetch asset:// files or remote images without CORS; the main process can.
+    await invoke("save_image_as", { filename, url: new URL(part.image, document.baseURI).href, title: translateCurrent("image.saveAs") });
     return;
   }
   const blob = isDataUri ? dataUriToBlob(part.image) : await fetch(part.image).then((response) => {
@@ -330,7 +334,6 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
   const closeRef = useRef<HTMLButtonElement>(null);
   const { t } = useLocale();
   const overlayRef = useRef<HTMLDivElement>(null);
-  const [saving, setSaving] = useState(false);
   const [failedSrc, setFailedSrc] = useState<string>();
 
   useEffect(() => {
@@ -380,22 +383,6 @@ export function ImageLightbox({ src, alt, filename, onClose, children }: {
     >
       <div className="flex h-10 w-full shrink-0 items-center justify-end gap-2" onClick={(event) => event.stopPropagation()}>
         {children && <div className="me-auto text-xs tabular-nums text-white/55">{children}</div>}
-        <button
-          type="button"
-          disabled={saving || failedSrc === src}
-          data-slot="image-save-as"
-          aria-label={t("image.saveAs")}
-          title={t("image.saveAs")}
-          className="inline-flex size-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50"
-          onClick={async () => {
-            setSaving(true);
-            try { await saveImagePart({ image: src, filename }); }
-            catch (error) { reportSaveError(error); }
-            finally { setSaving(false); }
-          }}
-        >
-          <DownloadIcon className="size-5" />
-        </button>
         <button
           ref={closeRef}
           type="button"

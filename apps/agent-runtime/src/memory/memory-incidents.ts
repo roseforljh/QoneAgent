@@ -1,9 +1,11 @@
 import type { ExecutionStats } from "../execution-stats.js";
 import type { MemoryComplete } from "./memory-consolidator.js";
+import { chars, validateMemory } from "./memory-store.js";
 
 const INTERVAL_MS = 4 * 60 * 60_000;
+const MAX_CUSTOM_ADVICE_LENGTH = 240;
 
-// The summary model chooses from known, scoped suggestions; its free-form text never enters a tool result.
+// 内置精确匹配规则用于针对特定参数形态按需触发；其余重复错误也允许模型生成精简通用教训。
 const corrections = {
   "rg-path": { tool: "powershell", reason: "missing-path", text: "For rg on PowerShell, pass a real directory as the search path; pass filename patterns with -g.",
     matches: ({ command }) => typeof command === "string" && /^\s*rg(?:\.exe)?\s+[^\r\n|;]+/i.test(command) && /[\\/][^\s|;]*[*?]/.test(command) },
@@ -16,6 +18,10 @@ const corrections = {
 } satisfies Record<string, { tool: string; reason: string; text: string; matches(args: Record<string, unknown>): boolean }>;
 
 const isCorrection = (value: unknown): value is keyof typeof corrections => typeof value === "string" && Object.hasOwn(corrections, value);
+
+function stripFence(text: string): string {
+  return text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+}
 
 export class MemoryIncidents {
   private timer?: ReturnType<typeof setInterval>;
@@ -53,23 +59,44 @@ export class MemoryIncidents {
     try {
       for (const batch of stats.pendingAnalysis()) {
         if (!allowed()) break;
-        const candidates = Object.entries(corrections).flatMap(([id, rule]) => {
-          const record = batch.rows.find(({ tool, reason }) => tool === rule.tool && reason === rule.reason);
-          return record && record.count >= 2 ? [{ id, ...record }] : [];
+        const repeated = batch.rows.filter((record) => record.count >= 2);
+        if (!repeated.length) continue;
+        const knownRules = Object.entries(corrections).flatMap(([id, rule]) => {
+          const record = repeated.find(({ tool, reason }) => tool === rule.tool && reason === rule.reason);
+          return record ? [{ id, ...record }] : [];
         });
-        if (!candidates.length) continue;
+        const offeredKnown = new Set(knownRules.map(({ id }) => id));
+        const repeatedKeys = new Set(repeated.map(({ tool, reason }) => `${tool}\0${reason}`));
         const reply = await complete(active.signal)(
-          "Review repeated execution symptoms. Counts do not prove model fault. Return a JSON array of the suggested IDs worth reminding the model about. Return [] if unsure. Do not add other text or keys.",
-          JSON.stringify({ model: batch.model, provider: batch.provider, candidates }),
-          128,
+          "Review repeated execution symptoms. Counts do not prove model fault. Return a JSON array where each element is either a suggested known rule ID string from `candidates`, or an object {\"tool\":\"<exact tool>\",\"reason\":\"<exact reason>\",\"advice\":\"<one short actionable tip under 240 chars>\"} for any repeated symptom in `symptoms`. Return [] if unsure. Do not add other text.",
+          JSON.stringify({ model: batch.model, provider: batch.provider, candidates: knownRules, symptoms: repeated }),
+          512,
         );
         if (!allowed()) break;
-        const selected: unknown = JSON.parse(reply.text.trim());
-        const offered = new Set(candidates.map(({ id }) => id));
-        if (!Array.isArray(selected) || !selected.every((id) => isCorrection(id) && offered.has(id))) throw new Error("Invalid execution analysis response");
-        stats.saveAnalysis(batch, [...new Set(selected as (keyof typeof corrections)[])].map((advice) => ({
-          advice, tool: corrections[advice].tool, reason: corrections[advice].reason,
-        })));
+        const selected: unknown = JSON.parse(stripFence(reply.text));
+        if (!Array.isArray(selected)) throw new Error("Invalid execution analysis response");
+        const parsed: { advice: string; tool: string; reason: string }[] = [];
+        const dedup = new Set<string>();
+        for (const item of selected) {
+          if (typeof item === "string") {
+            if (!isCorrection(item) || !offeredKnown.has(item)) throw new Error("Invalid execution analysis response");
+            const rule = corrections[item];
+            const k = `${rule.tool}\0${rule.reason}\0${item}`;
+            if (!dedup.has(k)) { dedup.add(k); parsed.push({ advice: item, tool: rule.tool, reason: rule.reason }); }
+            continue;
+          }
+          if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Invalid execution analysis response");
+          const entry = item as Record<string, unknown>;
+          if (typeof entry.tool !== "string" || typeof entry.reason !== "string" || typeof entry.advice !== "string"
+            || !repeatedKeys.has(`${entry.tool}\0${entry.reason}`)) {
+            throw new Error("Invalid execution analysis response");
+          }
+          const cleanAdvice = validateMemory(entry.advice.replace(/\s+/gu, " "));
+          if (chars(cleanAdvice) > MAX_CUSTOM_ADVICE_LENGTH) throw new Error("Invalid execution analysis response");
+          const k = `${entry.tool}\0${entry.reason}\0${cleanAdvice}`;
+          if (!dedup.has(k)) { dedup.add(k); parsed.push({ advice: cleanAdvice, tool: entry.tool, reason: entry.reason }); }
+        }
+        stats.saveAnalysis(batch, parsed);
       }
     } catch (error) {
       if (allowed()) onError(error);
@@ -79,9 +106,13 @@ export class MemoryIncidents {
   advice(provider: string, model: string, tool: string, args: unknown): string | undefined {
     if (this.input.permission() === undefined || !args || typeof args !== "object") return;
     for (const { tool: target, advice } of this.input.stats.lessons(provider, model)) {
-      if (target !== tool || !isCorrection(advice)) continue;
-      const rule = corrections[advice];
-      if (rule.tool === tool && rule.matches(args as Record<string, unknown>)) return rule.text;
+      if (target !== tool) continue;
+      if (isCorrection(advice)) {
+        const rule = corrections[advice];
+        if (rule.tool === tool && rule.matches(args as Record<string, unknown>)) return rule.text;
+      } else if (advice.trim()) {
+        return advice.trim();
+      }
     }
   }
 }

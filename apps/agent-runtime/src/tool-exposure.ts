@@ -19,6 +19,16 @@ const DIRECT_WEB_MCP_TOOLS = new Set([
   "fetch",
 ]);
 
+function isDirectWebMcpTool(rawToolName: string, tool: ToolDefinition, externalBrowser?: boolean): boolean {
+  if (externalBrowser) return false;
+  if (DIRECT_WEB_MCP_TOOLS.has(rawToolName)) return true;
+  // 按工具命名语义与参数字段自动识别任意网页搜索/抓取 MCP，不再局限于固定工具名表
+  const isWebAction = /(?:^|[_-])(?:web[_-]?search|search[_-]?web|web[_-]?fetch|fetch[_-]?url|read[_-]?url|scrape|crawl)(?:$|[_-])/i.test(rawToolName);
+  if (!isWebAction) return false;
+  const props = (tool.parameters as { properties?: Record<string, unknown> } | undefined)?.properties;
+  return Boolean(props && ("url" in props || "urls" in props || "query" in props || "q" in props));
+}
+
 function isBuiltInBrowserToolName(name: string): boolean {
   return name.startsWith("qone_browser_") || name.startsWith("qone_opencli_") || name.startsWith("qone_twitter_");
 }
@@ -37,7 +47,7 @@ export function namespaceFor(tool: ToolDefinition, servers?: Namespace): Namespa
     const parts = qoneName.split(":");
     const server = parts[1]!;
     const rawToolName = parts.slice(2).join(":");
-    if (DIRECT_WEB_MCP_TOOLS.has(rawToolName)) return undefined;
+    if (isDirectWebMcpTool(rawToolName, tool, meta.qoneExternalBrowserMcp)) return undefined;
     const displayName = meta.qoneMcpServerName?.trim();
     const label = displayName && displayName !== server ? `${displayName} (${server})` : server;
     const prefix = meta.qoneExternalBrowserMcp
@@ -82,7 +92,10 @@ export function applyToolExposure(tools: ToolDefinition[], servers?: Namespace):
   const groups = new Map([...resolved].map(([name, namespace]) => [name, namespace.description]));
   const result = tools.map((tool) => {
     const namespace = resolved.get(namespaceFor(tool, servers)?.name ?? "");
-    return namespace ? { ...tool, exposure: "deferred", namespace } as ToolDefinition : tool;
+    if (!namespace) return tool;
+    // 延迟加载工具在 tool_search 后才进入活跃列表；移除其 promptSnippet/promptGuidelines，避免次轮重建时改动 systemPrompt 击穿前缀缓存。
+    const { promptSnippet: _snippet, promptGuidelines: _guidelines, ...rest } = tool as ToolDefinition & { promptSnippet?: unknown; promptGuidelines?: unknown };
+    return { ...rest, exposure: "deferred", namespace } as ToolDefinition;
   });
   const catalog = [...groups].map(([name, description]) => `- ${name}: ${description}`).join("\n");
   return {

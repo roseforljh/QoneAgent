@@ -100,4 +100,15 @@ describe("WebAccessMemory", () => {
     expect(context).toContain("preferred-route=\"direct_web\"");
     expect(context).toContain("route=\"Direct web fetch\" status=\"ok\"");
   });
+
+  test("supports generic fetch_url/read_url tools and prefers structured error details over body keywords", () => {
+    const memory = new WebAccessMemory(store());
+    memory.recordToolResult("session-web", "mcp:jina:read_url", {
+      url: "https://guide.example.com/cookies",
+    }, { isError: true, details: { status: 502 }, content: [{ type: "text", text: "How login cookies work on websites" }] });
+    const context = memory.context("session-web", "查 https://guide.example.com/cookies");
+    expect(context).toContain("guide.example.com");
+    expect(context).toContain('reason="HTTP 502"');
+    expect(context).not.toContain('reason="login required"');
+  });
 });

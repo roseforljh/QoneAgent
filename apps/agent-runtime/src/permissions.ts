@@ -85,19 +85,55 @@ const TOOL_PERMISSIONS: Record<string, PermissionDecision> = {
   server_download: "ask",
 };
 
-// Protect credential stores, not OS/application directories. Installation
-// paths are ordinary filesystem targets; Windows ACLs remain authoritative.
-const DENY_PREFIXES = [
-  /(?:^|[/\\])\.ssh(?:[/\\]|$)/i,
-  /(?:^|[/\\])\.aws(?:[/\\]|$)/i,
-  /(?:^|[/\\])\.gnupg(?:[/\\]|$)/i,
-];
+// 保护常见凭据目录：非完全访问模式下强制弹窗确认，完全访问模式下尊重用户授权，显式 deny 始终生效。
+const PROTECTED_DIR = /(?:^|[/\\])(?:\.ssh|\.aws|\.gnupg)(?:[/\\]|$)/i;
 
-const DENY_PATH_TEXT = [
-  /(?:^|[\s"'`])[^\s"'`]*[/\\]\.ssh[/\\][^\s"'`]*/i,
-  /(?:^|[\s"'`])[^\s"'`]*[/\\]\.aws[/\\][^\s"'`]*/i,
-  /(?:^|[\s"'`])[^\s"'`]*[/\\]\.gnupg[/\\][^\s"'`]*/i,
-];
+function splitShellTokens(command: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: string | undefined;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      else current += ch;
+    } else if (ch === "'" || ch === '"' || ch === "`") {
+      quote = ch;
+    } else if (/\s/.test(ch)) {
+      if (current) { tokens.push(current); current = ""; }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+/** 仅检测命令行里真实路径形式的凭据目录参数，不误伤正则搜索字面量（如 `\.ssh`）或纯提示文本。 */
+function commandTouchesProtectedPath(command: string): boolean {
+  for (const raw of splitShellTokens(command)) {
+    const token = raw.replace(/^--?[a-z0-9_-]+=/i, "").trim();
+    // 跳过以 `\.` 开头的正则转义搜索模式（如 `rg '\.ssh/'`），但不跳过 Windows 路径（如 `C:\Users\u\.ssh\id`）
+    if (!token || /^\\\.[^/\\]/.test(token)) continue;
+    if (/(?:^|[/\\])(?:\.ssh|\.aws|\.gnupg)[/\\]/i.test(token)
+      || /^(?:~|\$HOME|\$env:USERPROFILE|[A-Za-z]:[/\\]|\.{0,2}[/\\])[^\s]*[/\\](?:\.ssh|\.aws|\.gnupg)(?:[/\\]|$)/i.test(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function touchesProtectedPath(ctx: ToolContext): boolean {
+  const pathArg = pathArgument(ctx);
+  const args = ctx.args as Record<string, unknown> | undefined;
+  const command = typeof args?.command === "string" ? args.command : undefined;
+  if (command && commandTouchesProtectedPath(command)) return true;
+  if (pathArg) {
+    const resolvedPath = canonicalPath(path.resolve(ctx.workspacePath ?? process.cwd(), pathArg));
+    if (PROTECTED_DIR.test(resolvedPath.replaceAll("\\", "/"))) return true;
+  }
+  return false;
+}
 
 function canonicalPath(target: string): string {
   try {
@@ -146,18 +182,10 @@ function autoApprovesCapability(ctx: ToolContext, capability: string): boolean {
 }
 
 export function decide(ctx: ToolContext): PermissionDecision {
-  const pathArg = pathArgument(ctx);
   const args = ctx.args as Record<string, unknown> | undefined;
   const command = typeof args?.command === "string" ? args.command : undefined;
 
-  if (command && DENY_PATH_TEXT.some((re) => re.test(command))) return "deny";
-
-  const resolvedPath = pathArg
-    ? canonicalPath(path.resolve(ctx.workspacePath ?? process.cwd(), pathArg))
-    : undefined;
-  if (resolvedPath && DENY_PREFIXES.some((re) => re.test(resolvedPath.replaceAll("\\", "/")))) {
-    return "deny";
-  }
+  if (touchesProtectedPath(ctx)) return "ask";
 
   const base = ctx.toolName === "server_exec" && command && isReadOnlyServerCommand(command) ? "allow"
     : ctx.toolName === "server_terminal" && args?.action !== "write" && args?.action !== "open" ? "allow"
@@ -176,7 +204,7 @@ export interface PermissionEvaluation {
   reason: "protected-path" | "rule" | "workspace" | "approval" | "allowed";
 }
 
-/** Explicit denials and protected paths are checked before mode-based approval. */
+/** 显式拒绝规则始终优先；受保护凭据路径在非完全访问模式下要求审批，完全访问模式下尊重用户授权。 */
 export function evaluatePermission(
   ctx: ToolContext,
   mode: RunPermissionMode = "ask",
@@ -193,12 +221,15 @@ export function evaluatePermission(
       ? declared
       : [...basePermissions, ...declared],
   )];
-  const base = decide(ctx);
-  if (base === "deny") return { decision: "deny", permissions, reason: "protected-path" };
   const subject = permissionSubject(ctx.toolName);
   if (permissions.some((permission) => rules?.get(subject, permission) === "deny")) {
     return { decision: "deny", permissions, reason: "rule" };
   }
+  const protectedPath = touchesProtectedPath(ctx);
+  if (protectedPath && profile.approval !== "never") {
+    return { decision: "ask", permissions, reason: "protected-path" };
+  }
+  const base = decide(ctx);
   // An explicit allow cannot silently widen workspace-scoped write access.
   // Read/search/list tools may use any path accessible to the runtime user.
   if (writesOutsideWorkspace(ctx) && profile.filesystem !== "full") return { decision: "ask", permissions, reason: "workspace" };

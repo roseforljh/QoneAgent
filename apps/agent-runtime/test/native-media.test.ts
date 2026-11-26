@@ -50,3 +50,24 @@ test("Claude transport uses the configured native video input instead of a frame
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("media marker key persists under QONE_DATA_DIR so historical media references survive restart", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "qone-media-key-"));
+  const file = path.join(directory, "voice.mp3");
+  await writeFile(file, Buffer.from([9, 8, 7]));
+  const previousDir = process.env.QONE_DATA_DIR;
+  try {
+    process.env.QONE_DATA_DIR = directory;
+    const marker = localMediaMarker(file, "audio/mpeg", false);
+    const child = Bun.spawn([Bun.which("bun")!, "-e",
+      `import { MEDIA_MARKER, verifiedLocalMedia } from "./src/google-media"; const m = [...${JSON.stringify(marker)}.matchAll(MEDIA_MARKER)][0]!; console.log(JSON.stringify(verifiedLocalMedia(m[1]!, m[2]!)));`],
+      { cwd: path.resolve(import.meta.dir, ".."), env: { ...Bun.env, QONE_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
+    const stdout = await new Response(child.stdout).text();
+    expect(await child.exited).toBe(0);
+    expect(JSON.parse(stdout.trim())).toEqual({ path: file, mimeType: "audio/mpeg", temporary: false });
+  } finally {
+    if (previousDir === undefined) delete process.env.QONE_DATA_DIR;
+    else process.env.QONE_DATA_DIR = previousDir;
+    await rm(directory, { recursive: true, force: true });
+  }
+});

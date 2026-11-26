@@ -108,3 +108,37 @@ test("global recording attributes all models; memory only gets new authorized me
     expect(usageStats.sources.map(({ source, total }) => [source, total.cacheHitRate])).toEqual([["chat", undefined], ["memory", 20]]);
   } finally { analysis.close(); stats.close(); closeDb(db); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("memory incidents supports dynamic lessons beyond the built-in 4 rules", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "qone-execution-dynamic-"));
+  const db = openDb(":memory:");
+  const incidents = new ExecutionIncidentRepo(db);
+  const lessons = new ExecutionLessonRepo(db);
+  const usage = new ExecutionUsageRepo(db);
+  const runs = new RunRepo(db);
+  const session = new SessionRepo(db).create("Fixture");
+  let now = 200;
+  const time = () => ++now;
+  const prefs = new PreferencesRepo(new ConfigFile(join(dir, "settings.json")));
+  const recorder = new ExecutionRecorder(incidents, runs, () => stats.recordEnabled());
+  const stats = new ExecutionStats({ usage, incidents, lessons, recorder, models: () => [{ provider: "test", model: "m" }],
+    prefs, onChange: () => analysis.invalidate(), onError: (err) => { throw err; } }, time);
+  const analysis = new MemoryIncidents({
+    stats,
+    permission: () => stats.memoryAccess() ? "on" : undefined,
+    complete: () => async () => ({
+      text: JSON.stringify([{ tool: "powershell", reason: "missing-command", advice: "Check installed CLI names with Get-Command before invoking them." }]),
+      tokens: 12,
+    }),
+    onError: (err) => { throw err; },
+  });
+  try {
+    stats.setMemoryAccess(true);
+    const run = runs.create(session.id);
+    runs.setModel(run.id, "test/m");
+    recorder.toolFailed(run.id, crypto.randomUUID(), "powershell", { content: [{ type: "text", text: "CommandNotFoundException: foo" }] }, time());
+    recorder.toolFailed(run.id, crypto.randomUUID(), "powershell", { content: [{ type: "text", text: "CommandNotFoundException: bar" }] }, time());
+    await analysis.check();
+    expect(analysis.advice("test", "m", "powershell", { command: "foo" })).toContain("Get-Command");
+  } finally { analysis.close(); stats.close(); closeDb(db); rmSync(dir, { recursive: true, force: true }); }
+});

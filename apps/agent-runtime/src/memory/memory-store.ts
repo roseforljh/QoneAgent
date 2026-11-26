@@ -84,7 +84,6 @@ export class MemoryStore {
     const notes = this.notes();
     const old = options.id ? notes.find((note) => note.id === options.id) : undefined;
     if (options.id && !old) throw runtimeError("memory.deleted");
-    if (options.version !== undefined && (old?.preference || options.preference)) throw runtimeError("memory.preference_settings");
     const preference = options.preference === undefined ? old?.preference : options.preference ?? undefined;
     const sameScope = (note: MemoryNoteInfo) => Boolean(note.preference) === Boolean(preference) && note.preference?.workspaceId === preference?.workspaceId;
     const duplicate = notes.find((note) => note.id !== options.id && sameScope(note) && note.content === value);
@@ -108,7 +107,6 @@ export class MemoryStore {
     const notes = this.notes();
     const note = notes.find((item) => item.id === id);
     if (!note) throw runtimeError("memory.deleted");
-    if (version !== undefined && note.preference) throw runtimeError("memory.preference_settings");
     this.repo.set(KEY.notes, notes.filter((note) => note.id !== id));
     this.advance();
   }

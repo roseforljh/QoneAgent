@@ -7,7 +7,7 @@ import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { CodexChevronRightIcon } from "./execution-icons";
 import { MeasuredCollapse } from "./elements/measured-collapse";
 import { FadeScroll } from "./elements/surfaces";
-import { useReasoningPreview } from "./reasoning-preview";
+import { hasExpandableReasoning, useReasoningPreview } from "./reasoning-preview";
 import { ReasoningPreviewLabel } from "./reasoning-preview-label";
 import { useLocale } from "../../localization";
 import "./reasoning.css";
@@ -35,14 +35,26 @@ export const Reasoning: ReasoningMessagePartComponent = () => {
   const hasText = Boolean(part?.text.trim());
   const running = hasText && messageRunning && part?.status.type === "running";
   const [open, setOpen] = useState(false);
+  const [overflow, setOverflow] = useState(false);
   const preview = useReasoningPreview(part?.text ?? "", running);
 
   if (!part || !hasText) return null;
   const label = preview.text || t("chat.reasoningActive");
+  const canExpand = running || overflow || hasExpandableReasoning(part.text, preview.text);
 
-  return <Collapsible open={open} onOpenChange={setOpen} className="q-reasoning" data-slot="reasoning" data-running={running}>
+  if (!canExpand) {
+    return <div className="q-reasoning" data-slot="reasoning" data-running={false} data-expandable="false">
+      <div className="q-disclosure-sticky">
+        <div title={label} className="q-reasoning-static">
+          {preview.text ? <ReasoningPreviewLabel preview={preview} running={false} onOverflowChange={setOverflow} /> : label}
+        </div>
+      </div>
+    </div>;
+  }
+
+  return <Collapsible open={open} onOpenChange={setOpen} className="q-reasoning" data-slot="reasoning" data-running={running} data-expandable="true">
     <div className="q-disclosure-sticky"><CollapsibleTrigger title={label} aria-label={label} className="q-reasoning-trigger group/reasoning">
-      {preview.text ? <ReasoningPreviewLabel preview={preview} running={running} /> : label}
+      {preview.text ? <ReasoningPreviewLabel preview={preview} running={running} onOverflowChange={setOverflow} /> : label}
       <CodexChevronRightIcon className="q-reasoning-chevron size-3.5 shrink-0" />
     </CollapsibleTrigger></div>
     <MeasuredCollapse open={open}>

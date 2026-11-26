@@ -6,6 +6,8 @@ describe("persistent event journal", () => {
   test("current markers skip history parsing while legacy automatic markers recover their position", () => {
     const db = openDb(":memory:");
     const history = spyOn(MessageRepo.prototype, "listBySession");
+    const select = spyOn(db, "select");
+    const messagePartQueries = () => select.mock.calls.filter(([fields]) => Boolean(fields && typeof fields === "object" && "parts" in fields)).length;
     try {
       const session = new SessionRepo(db).create("markers");
       const run = new RunRepo(db).create(session.id);
@@ -20,11 +22,13 @@ describe("persistent event journal", () => {
       repo.add({ eventId: "current", sequence: 2, sessionId: session.id, runId: run.id, type: "context.compacted", timestamp: 2, payload });
       expect(repo.listCompactions(session.id)[0]?.partIndex).toBe(1);
       expect(history).not.toHaveBeenCalled();
+      expect(messagePartQueries()).toBe(0);
       repo.add({ eventId: "legacy", sequence: 3, sessionId: session.id, runId: run.id, type: "context.compacted", timestamp: 3, payload: { ...payload, id: "legacy", partIndex: undefined } });
       repo.add({ eventId: "legacy-2", sequence: 4, sessionId: session.id, runId: run.id, type: "context.compacted", timestamp: 4, payload: { ...payload, id: "legacy-2", partIndex: undefined } });
       expect(repo.listCompactions(session.id).map((marker) => marker.partIndex)).toEqual([1, 1, 1]);
-      expect(history).toHaveBeenCalledTimes(1);
-    } finally { history.mockRestore(); db.$client.close(); }
+      expect(history).not.toHaveBeenCalled();
+      expect(messagePartQueries()).toBe(1);
+    } finally { select.mockRestore(); history.mockRestore(); db.$client.close(); }
   });
   test("loads completed and interrupted context markers for the requested session", () => {
     const db = openDb(":memory:");

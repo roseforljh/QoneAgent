@@ -65,8 +65,12 @@ describe("disk I/O hygiene", () => {
       toolCalls.finish(t1.id, "success", { output: "huge" });
       const t2 = toolCalls.start(run.id, "qone_browser_open", { url: "https://example.com" }, "c2");
       toolCalls.finish(t2.id, "success", { ok: true });
+      const t3 = toolCalls.start(run.id, "mcp:exa:web_fetch_exa", { urls: ["https://docs.example.com"] }, "c3");
+      toolCalls.finish(t3.id, "success", { ok: true });
+      const t4 = toolCalls.start(run.id, "mcp:db:query_rows", { table: "users" }, "c4");
+      toolCalls.finish(t4.id, "success", { rows: [] });
       const web = toolCalls.listWebAccessBySession(session.id);
-      expect(web.map((t) => t.toolName)).toEqual(["qone_browser_open"]);
+      expect(web.map((t) => t.toolName)).toEqual(["qone_browser_open", "mcp:exa:web_fetch_exa"]);
     } finally {
       closeDb(db);
     }

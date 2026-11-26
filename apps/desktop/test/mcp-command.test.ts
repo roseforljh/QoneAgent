@@ -25,7 +25,7 @@ test("pasted MCP install commands, URLs and JSON become server configurations", 
 
 test("README placeholders are asked for while real values pass through", () => {
   for (const value of ["YOUR_API_KEY", "your-api-key", "<token>", "${EXA_API_KEY}", "xxxxxxxx", "Bearer YOUR_TOKEN", "sk-...", "api_key"]) expect(isPlaceholder(value)).toBe(true);
-  for (const value of ["", "sk-live-123abc", "Asia/Shanghai", "mcp-server-mysql", "-y", "$mcp.env:a/b", "Bearer abc.def"]) expect(isPlaceholder(value)).toBe(false);
+  for (const value of ["", "sk-live-123abc", "Asia/Shanghai", "mcp-server-mysql", "-y", "$mcp.env:a/b", "Bearer abc.def", "my-service", "my_org", "todo-app", "https://api.example.com/.../v1"]) expect(isPlaceholder(value)).toBe(false);
   const items = parseMcpInput('{"mcpServers":{"exa":{"command":"npx","args":["-y","exa-mcp-server","--root","<path>"],"env":{"EXA_API_KEY":"your-api-key","MODE":"fast","OPTIONAL":""}},"web":{"url":"https://w.dev/mcp","headers":{"Authorization":"Bearer YOUR_TOKEN"}}}}');
   const fields = configFields(items);
   // Every key is shown for review; only example values are required, empty optional ones may stay empty.

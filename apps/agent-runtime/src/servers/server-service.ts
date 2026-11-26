@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import type { PreferenceStore } from "@qone/database";
-import type { RuntimeCommand, RuntimeEvent, ServerCommand } from "@qone/protocol";
+import type { RuntimeCommand, RuntimeEvent, ServerCommand, ServerInfo } from "@qone/protocol";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { agentPath, SshPool } from "./ssh.js";
 import { ServerRegistry } from "./server-registry.js";
-import { ServerSessions, createServerTools } from "./server-tools.js";
+import { ServerSessions, createServerTools, replaceRemoteText } from "./server-tools.js";
 import { discoverServers } from "./server-discovery.js";
 import { runtimeError } from "../runtime-localization.js";
 import type { ServerExecutionTarget } from "../execution-context.js";
@@ -44,9 +44,22 @@ export class ServerService {
     return list.length ? `The user's SSH servers: ${list.map((server) => `${server.name} (${server.username}@${server.host}${server.system ? `, ${server.system}` : ""})`).join("; ")}` : "SSH servers";
   }
 
-  tools(workspacePath: string, serverIds: readonly string[] = []): ToolDefinition[] {
+  /** One server of a conversation's scope, by ID or unique name. */
+  find(serverIds: readonly string[], name: string): ServerInfo {
+    const scoped = this.registry.list().filter(server => serverIds.includes(server.id));
+    const byName = scoped.filter(server => server.name.toLowerCase() === name.toLowerCase());
+    const server = scoped.find(server => server.id === name) ?? (byName.length === 1 ? byName[0] : undefined);
+    if (!server) throw runtimeError("servers.choose", { p0: scoped.map(item => `${item.name} [${item.id}]`).join(", ") });
+    return server;
+  }
+
+  async replaceText(server: ServerInfo, file: string, placeholder: string, value?: string, signal?: AbortSignal) {
+    return replaceRemoteText(await this.pool.get(server), file, placeholder, value, signal);
+  }
+
+  tools(workspacePath: string, serverIds: readonly string[] = [], env?: (serverId: string) => Record<string, string>): ToolDefinition[] {
     return createServerTools({
-      servers: () => this.registry.list().filter(server => serverIds.includes(server.id)), pool: this.pool, sessions: this.sessions, workspacePath,
+      servers: () => this.registry.list().filter(server => serverIds.includes(server.id)), pool: this.pool, sessions: this.sessions, workspacePath, env,
       onActivity: (serverId) => {
         // Reflect a recovered connection once, not on every tool call.
         const server = this.registry.get(serverId);

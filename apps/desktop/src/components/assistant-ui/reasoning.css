@@ -1,11 +1,15 @@
 .q-reasoning { min-width: 0; padding-block: .125rem; color: var(--muted-foreground); }
-.q-reasoning-trigger {
+.q-reasoning-trigger,
+.q-reasoning-static {
   max-inline-size: min(100%, 42rem);
   display: inline-flex; align-items: center; gap: .375rem; padding: .125rem 0;
   font-size: 13px; font-weight: 500; background: transparent; text-align: start;
+}
+.q-reasoning-trigger {
   transition: color 150ms ease; cursor: pointer;
   user-select: none; -webkit-user-select: none;
 }
+.q-reasoning-static { cursor: default; }
 /* Text and decorative glyphs belong to the trigger's single click target. */
 .q-reasoning-trigger * { pointer-events: none; }
 .q-reasoning-trigger:hover { color: var(--foreground); }

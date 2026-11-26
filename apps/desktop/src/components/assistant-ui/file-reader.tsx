@@ -11,7 +11,7 @@ import { FilePreviewContent } from "./file-preview-content";
 import { WorkspacePathContextMenu } from "./dock-context-menu";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import { CodexIcon } from "../ui/CodexIcon";
-import { attachmentFileIcon } from "../../lib/attachment-file-kind";
+import { fileTypeIconInfo } from "../../lib/markdown-file-icon";
 import codeIcon from "../../assets/codex-icons/code-light-20.svg";
 import documentIcon from "../../assets/codex-icons/document-text-light-24.svg";
 import externalIcon from "../../assets/codex-icons/arrow-up-right-md-light-20.svg";
@@ -51,7 +51,10 @@ export default function FileReader({ tabId, workspaceId, sessionId, target, acti
   return <FileReferenceContext.Provider value={referenceContext}>
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={name}>
       <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-border/50 px-3 py-2">
-        <CodexIcon src={attachmentFileIcon(name, file?.mimeType ?? "")} className="size-4 shrink-0 text-foreground/60" />
+        {(() => {
+          const iconInfo = fileTypeIconInfo(name, file?.mimeType ?? "");
+          return <CodexIcon src={iconInfo.icon} className={`size-4 shrink-0 ${iconInfo.colorClass}`} />;
+        })()}
         <WorkspacePathContextMenu path={file?.absolutePath ?? target.path} onOpenExternal={file ? () => void openExternal() : undefined}>
           <span tabIndex={0} title={file?.absolutePath ?? target.path} className="min-w-0 flex-1 truncate text-xs text-foreground/70 focus-visible:outline-2 focus-visible:outline-ring">{file?.absolutePath ?? target.path}</span>
         </WorkspacePathContextMenu>

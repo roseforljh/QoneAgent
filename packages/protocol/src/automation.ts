@@ -74,6 +74,8 @@ export interface McpElicitationInfo {
   url?: string;
   fields?: Record<string, McpElicitationField>;
   required?: string[];
+  /** Set for Qone's own secret prompt: where the typed value goes; the model never sees it. */
+  secretTarget?: { env?: string; file?: string; server?: string };
   createdAt: number;
 }
 

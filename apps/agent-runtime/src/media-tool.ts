@@ -163,11 +163,11 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
       if (isDouyinUrl(url)) {
         if (!options.douyinDownload) throw runtimeError("media-tool.douyin_page_bridge_not_connected", {});
         downloaded = await options.douyinDownload(url, signal);
-        source = "抖音页面桥接";
+        source = "douyin-page-bridge";
       } else try {
         if (isBilibiliUrl(url) && options.bilibiliDownload) {
           downloaded = await options.bilibiliDownload(url, mode, signal);
-          source = "哔哩哔哩 yt-dlp";
+          source = "bilibili-yt-dlp";
         } else {
           if (mode === "audio") {
             try {
@@ -186,7 +186,7 @@ export function createVideoDownloadTool(options: MediaToolOptions): ToolDefiniti
           if (!options.openCli) throw new Error("Built-in OpenCLI browser is unavailable");
           const fallbackVideo = await downloadBilibiliOpenCli(url, signal, options.openCli);
           downloaded = fallbackVideo.files[0]!;
-          source = "哔哩哔哩 OpenCLI 兜底";
+          source = "bilibili-opencli-fallback";
         } catch (downloadFallbackError) {
           if (!options.openCli) throw new Error("Built-in OpenCLI browser is unavailable");
           const fallback = await readBilibiliFallback(url, signal, options.openCli).catch((fallbackError) => {

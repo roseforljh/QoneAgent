@@ -35,10 +35,11 @@ import { backgroundJobLink, backgroundJobLinks } from "../../lib/background-job-
 import { BackgroundJobRow } from "./background-job-view";
 import { isBuiltInBrowserTool, nestedBrowserActivitiesByParent } from "../../lib/browser-navigation";
 import { BrowserToolCall, NestedBrowserRow } from "./browser-tool-call";
+import { extractFileReadTarget, FileReadActivityRow, isFileReadTool } from "./file-read-activity";
 
 type ToolMeta = { verb: { zh: string; en: string }; icon: ExecutionIcon };
 type ToolPartState = Extract<PartState, { type: "tool-call" }>;
-type SessionTimelineStep = TimelineStep & { target: string; fullTarget?: string; filePaths?: string[]; failed?: boolean; integration?: ToolIntegration };
+type SessionTimelineStep = TimelineStep & { toolName?: string; target: string; fullTarget?: string; filePaths?: string[]; failed?: boolean; integration?: ToolIntegration };
 const GenerativeUISurface = lazy(async () => ({ default: (await import("./generative-ui-block")).GenerativeUISurface }));
 
 function mediaDetails(value: unknown): Record<string, unknown> | undefined {
@@ -102,6 +103,11 @@ const TOOL_META: Record<string, ToolMeta> = {
   qone_twitter_profile: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
   qone_twitter_timeline: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
   qone_twitter_trending: { verb: { zh: "浏览页面", en: "Browse page" }, icon: BrowserIcon },
+  qone_video_use_file: { verb: { zh: "读取", en: "Read" }, icon: FileSearchIcon },
+  qone_video_download: { verb: { zh: "拉取视频", en: "Download video" }, icon: WrenchIcon },
+  qone_media_extract_audio: { verb: { zh: "提取音频", en: "Extract audio" }, icon: FileSearchIcon },
+  qone_media_extract_frames: { verb: { zh: "截取视频帧", en: "Extract frames" }, icon: FileSearchIcon },
+  qone_video_staging_dir: { verb: { zh: "准备暂存目录", en: "Prepare staging dir" }, icon: WrenchIcon },
 };
 
 function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undefined, servers: readonly McpServerInfo[]): SessionTimelineStep {
@@ -117,7 +123,7 @@ function toStep(part: ToolPartState, locale: Locale, call: StoreToolCall | undef
   const filePaths = category === "file-change" && result !== undefined
     ? toolFileChanges(result).map((change) => change.path)
     : [];
-  return { id: part.toolCallId, verb, target, chip: target, fullTarget, icon: integration ? integrationIcon(integration) : part.toolName === "codemode" ? BoltIcon : category === "file-change" ? PenLineIcon : meta?.icon ?? WrenchIcon, done, category, integration, filePaths, failed: toolCallStatus(part, call) === "failed" };
+  return { id: part.toolCallId, toolName: part.toolName, verb, target, chip: target, fullTarget, icon: integration ? integrationIcon(integration) : part.toolName === "codemode" ? BoltIcon : category === "file-change" ? PenLineIcon : meta?.icon ?? WrenchIcon, done, category, integration, filePaths, failed: toolCallStatus(part, call) === "failed" };
 }
 
 type ToolCallEntryProps = { part: ToolPartState; step: SessionTimelineStep; prepared?: boolean; showIcon?: boolean; messageRunning: boolean };
@@ -131,6 +137,9 @@ const ToolCallEntry: FC<ToolCallEntryProps> = (props) => {
   if (isSubagentTool(part.toolName)) return <SubagentToolCall {...props} />;
   if (isBuiltInBrowserTool(part.toolName)) return <BrowserToolCall {...props} />;
   if (job) return <BackgroundJobRow jobId={job.id} command={job.command} showIcon={showIcon} />;
+  if (isFileReadTool(part.toolName) || (part.toolName === "qone_media_extract_audio" && extractFileReadTarget(part.toolName, call?.args ?? part.args, call?.result ?? part.result))) {
+    return <FileReadActivityRow {...props} call={call} />;
+  }
   if (!nestedJobs?.length && !nestedBrowser) return <GenericToolCallEntry {...props} call={call} />;
   return <div className="flex min-w-0 flex-1 flex-col gap-0.5">
     <GenericToolCallEntry {...props} call={call} />
@@ -184,7 +193,7 @@ const GenericToolCallEntry: FC<ToolCallEntryProps & { call?: StoreToolCall }> = 
     <ToolCall
       icon={showIcon ? step.icon : undefined}
       label={status === "cancelled" ? t("servers.view.cancelled") : status === "queued" || status === "waiting" ? activeLabel : failed ? t("chat.toolActionFailed", { operation: step.integration?.name ?? step.verb })
-        : step.integration ? t(step.integration.kind === "source" ? "chat.toolGroupSource" : "chat.toolGroupIntegrationOne", { sources: step.integration.name }) : operationLabels.completed}
+        : step.integration ? (step.integration.id === "web" ? t("chat.toolReadWeb") : t("chat.toolGroupSource", { sources: step.integration.name })) : operationLabels.completed}
       activeLabel={activeLabel}
       query={step.chip}
       fullTarget={step.fullTarget}
@@ -345,7 +354,7 @@ export const SessionTimeline: FC<{ startIndex: number; endIndex: number; activit
       fullActiveLabel={fullActiveLabel || title || fullSummary}
       activeLabel={activeLabel || title || restingLabel}
       reasoningPreview={thinking && reasoningPreview.text ? reasoningPreview : undefined}
-      failureLabel={title && failedCount ? t("chat.toolGroupFailedMany", { count: failedCount }) : undefined}
+      failureLabel={title && failedCount ? t(failedCount === 1 ? "chat.toolGroupFailedOne" : "chat.toolGroupFailedMany", { count: failedCount }) : undefined}
     />
   );
 };

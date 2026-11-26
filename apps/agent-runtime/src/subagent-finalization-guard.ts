@@ -30,6 +30,8 @@ export function installSubagentFinalizationGuard(
     steer(message: unknown): void;
   };
   const previousFinishTurn = agent.finishTurn;
+  const remindersByRun = new Map<string, number>();
+  const MAX_FINALIZATION_REMINDERS = 3;
   agent.finishTurn = (async (turn, signal) => {
     const previous = await previousFinishTurn?.(turn, signal);
     const runId = ctx.runId();
@@ -44,7 +46,10 @@ export function installSubagentFinalizationGuard(
     // do now; let it proceed instead of holding the turn open.
     if (agent.hasQueuedMessages()) return previous;
     let dependencies = controller.dependencyStatus?.(runId);
-    if (!dependencies || (!dependencies.blocking.length && !dependencies.unacknowledged.length && dependencies.authorized !== false)) return previous;
+    if (!dependencies || (!dependencies.blocking.length && !dependencies.unacknowledged.length && dependencies.authorized !== false)) {
+      remindersByRun.delete(runId);
+      return previous;
+    }
     const active = () => dependencies!.blocking.filter((child) => ["created", "running", "waiting_approval", "paused"].includes(child.status));
     const running = active();
     if (running.length) {
@@ -63,12 +68,20 @@ export function installSubagentFinalizationGuard(
       }
       dependencies = controller.dependencyStatus(runId);
     }
+    // 所有子代理都已停止运行但模型连续多次未调用 finalize_response 时停止循环打回，避免无限消耗
+    const stillRunning = dependencies.blocking.some((child) => ["created", "running", "waiting_approval", "paused"].includes(child.status));
+    const reminders = (remindersByRun.get(runId) ?? 0) + 1;
+    remindersByRun.set(runId, reminders);
+    if (!stillRunning && reminders > MAX_FINALIZATION_REMINDERS) {
+      remindersByRun.delete(runId);
+      return previous;
+    }
     const ids = dependencies.blocking.map((child) => child.id);
     const instruction = ids.length
       ? `Required subagent results remain unresolved: ${ids.join(", ")}. Inspect each compact result, continue retryable failures with the same runId using follow_up, then call finalize_response before the final answer.`
       : "All required subagent results have been processed, but finalization has not been authorized. Call finalize_response with the handled run IDs before the final answer.";
     if (!agent.hasQueuedMessages()) {
-      agent.steer({ role: "user", content: [{ type: "text", text: `[QONE_SUBAGENT_LEDGER]\n${instruction}` }], timestamp: Date.now() });
+      agent.steer({ role: "user", content: [{ type: "text", text: `[QONE_SUBAGENT_LEDGER]\n${instruction}` }], timestamp: Date.now(), qoneInternal: true });
     }
     return { action: "continue" };
   }) as typeof agent.finishTurn;

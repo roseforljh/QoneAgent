@@ -178,7 +178,7 @@ describe("memory", () => {
     expect(reopened.notes().some(({ content }) => content === manual.content)).toBe(true);
   });
 
-  test("tool saves only explicit, quoted requests", async () => {
+  test("tool saves, updates, and forgets natural requests with quoted evidence from this turn", async () => {
     const store = new MemoryStore(repo());
     store.setEnabled(true);
     const service = new MemoryService({
@@ -190,37 +190,73 @@ describe("memory", () => {
       const result = await tool!.execute("t", args as never, undefined, undefined, undefined as never);
       return JSON.parse((result.content[0] as { text: string }).text);
     };
-    service.context("s", "我喜欢深色主题");
-    expect((await run({ action: "save", content: "喜欢深色主题", evidence: "深色主题" })).ok).toBe(false);
-    service.context("s", "请记住：我喜欢深色主题");
-    expect((await run({ action: "save", content: "喜欢深色主题", evidence: "编造" })).ok).toBe(false);
-    expect((await run({ action: "save", content: "喜欢深色主题", evidence: "我喜欢深色主题" })).ok).toBe(true);
-    expect(store.notes().map((note) => note.content)).toEqual(["喜欢深色主题"]);
-    expect(service.context("s", "hi")).not.toContain("喜欢深色主题");
-    expect((await run({ action: "search", query: "深色主题" })).memories[0].content).toBe("喜欢深色主题");
+    // 无用户原文时（例如系统通知或续跑）禁止写入
+    service.context("s", "");
+    expect((await run({ action: "save", content: "不应写入", evidence: "任意" })).ok).toBe(false);
+    // 任意自然语言表达均可写入，无需固定前缀，但依据必须来自本轮用户原文
+    service.context("s", "我现在内核换成自己定制的 raybox 了\n把 D:\\RayBox-rx 写进记忆里！");
+    expect((await run({ action: "save", content: "RayBox 源码在 D:\\RayBox-rx", evidence: "编造" })).ok).toBe(false);
+    const saved = await run({ action: "save", content: "RayBox 源码在 D:\\RayBox-rx", evidence: "raybox 了 把 D:\\RayBox-rx 写进记忆里！" });
+    expect(saved.ok).toBe(true);
+    expect(store.notes().map((note) => note.content)).toEqual(["RayBox 源码在 D:\\RayBox-rx"]);
+    expect(service.context("s", "hi")).not.toContain("RayBox");
+    expect((await run({ action: "search", query: "RayBox" })).memories[0].content).toBe("RayBox 源码在 D:\\RayBox-rx");
+    // 更新与遗忘同样不要求固定前缀
+    service.context("s", "顺便把刚才那条内核记忆改成 KunBox 使用定制 RayBox 内核");
+    expect((await run({ action: "update", id: saved.id, content: "KunBox 使用定制 RayBox 内核", evidence: "改成 KunBox 使用定制 RayBox 内核" })).ok).toBe(true);
+    expect(store.notes().map((note) => note.content)).toEqual(["KunBox 使用定制 RayBox 内核"]);
+    service.context("s", "这条内核记忆没用了，帮我删掉吧");
+    expect((await run({ action: "forget", id: saved.id, evidence: "帮我删掉吧" })).ok).toBe(true);
+    expect(store.notes()).toEqual([]);
     store.setEnabled(false);
     expect(service.tools("s").map((tool) => tool.name)).not.toContain(MEMORY_TOOL);
     expect(service.context("s", "hi")).toBe("");
   });
 
-  test("manual preferences can exceed the automatic quota without allowing chat to promote or change notes", () => {
+  test("manual and chat preferences can exceed automatic quota and stay editable with authorization", async () => {
     const store = new MemoryStore(repo());
     store.setEnabled(true);
     for (let i = 0; i < MEMORY_AUTOMATIC_PREFERENCES_PER_SCOPE; i++) store.saveNote(`global preference ${i}`, { preference: {} });
-    const version = store.settings().version;
-    const ordinary = store.saveNote("a previously saved note", { version, origin: "chat" });
-    expect(ordinary.preference).toBeUndefined();
-    expect(() => store.saveNote("chat cannot promote it", { id: ordinary.id, version, preference: {} })).toThrow();
-    const pref = store.saveNote(ordinary.content, { id: ordinary.id, preference: {} });
-    expect(pref).toMatchObject({ id: ordinary.id, preference: {} });
-    const edited = store.saveNote("edited after reaching the old cap", { id: pref.id });
-    expect(edited.preference).toEqual({});
-    expect(memoryAddition({ retained: [], rules: [] }, store.notes(), "A")?.preferences?.[pref.id]).toEqual({ scope: "global", text: edited.content });
-    expect(() => store.saveNote("chat cannot change it", { id: pref.id, version: store.settings().version })).toThrow();
-    expect(() => store.deleteNote(pref.id, store.settings().version)).toThrow();
+    const service = new MemoryService({
+      store, source: { candidates: () => [], transcript: () => [] }, searchConversations: () => [],
+      workspaceOf: () => "ws-1",
+      complete: () => async () => ({ text: "", tokens: 0 }), onChange: () => {}, onError: () => {},
+    });
+    const run = async (args: Record<string, string>) => {
+      const [tool] = service.tools("s");
+      const result = await tool!.execute("t", args as never, undefined, undefined, undefined as never);
+      return JSON.parse((result.content[0] as { text: string }).text);
+    };
+    service.context("s", "以后在这个项目都优先跑单元测试，写进工作区偏好");
+    const saved = await run({ action: "save", scope: "workspace", content: "优先跑单元测试", evidence: "写进工作区偏好" });
+    expect(saved).toMatchObject({ ok: true, scope: "workspace" });
+    expect(memoryAddition({ retained: [], rules: [] }, store.notes(), "ws-1")?.preferences?.[saved.id]).toEqual({ scope: "workspace", text: "优先跑单元测试" });
+    expect((await run({ action: "search", query: "单元测试" })).memories[0]).toMatchObject({ id: saved.id, scope: "workspace" });
+    service.context("s", "把那条单元测试偏好改成全局生效");
+    expect((await run({ action: "update", id: saved.id, scope: "global", content: "优先跑最小测试", evidence: "改成全局生效" })).ok).toBe(true);
+    expect(memoryAddition({ retained: [], rules: [] }, store.notes(), "ws-2")?.preferences?.[saved.id]).toEqual({ scope: "global", text: "优先跑最小测试" });
+    service.context("s", "删掉这条测试偏好");
+    expect((await run({ action: "forget", id: saved.id, evidence: "删掉这条测试偏好" })).ok).toBe(true);
+    expect(store.notes().some((n) => n.id === saved.id)).toBe(false);
     expect(() => store.saveNote("📝".repeat(MEMORY_PREFERENCE_MAX_LENGTH + 1), { preference: {} }))
       .toThrow(`一条长期偏好最多 ${MEMORY_PREFERENCE_MAX_LENGTH} 字`);
-    expect(store.saveNote(edited.content, { id: pref.id, preference: null }).preference).toBeUndefined();
+  });
+
+  test("consolidator accepts localized markdown headings without hardcoding English titles", async () => {
+    const store = new MemoryStore(repo());
+    store.setEnabled(true);
+    const consolidator = new MemoryConsolidator(store, {
+      candidates: () => [{ id: "a", title: "A", updatedAt: NOW - 1 }],
+      transcript: () => [{ role: "user", content: "帮我检查内核" }, { role: "assistant", content: "已检查" }],
+    }, () => NOW);
+    const complete = async (system: string) => ({
+      text: system.includes("Consolidate")
+        ? JSON.stringify({ overview: "## 用户画像\n无\n## 记忆内容\n- [conv:a] 2026-01-01 — 内核排查", preferences: [] })
+        : JSON.stringify({ title: "内核", summary: "检查自定义内核" }),
+      tokens: 10,
+    });
+    await consolidator.runOnce(complete, store.settings().version);
+    expect(store.overview()?.content).toContain("## 记忆内容");
   });
 
   test("quoted or forged memory blocks cannot mark preferences as sent", () => {

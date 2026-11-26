@@ -105,3 +105,31 @@ test("before the runtime model list arrives the picker neither guesses parameter
   await act(async () => useStore.setState({ modelConfigsLoaded: true }));
   expect(container.querySelector(".q-model-picker-trigger")).not.toBeNull();
 });
+
+test("each conversation keeps its own provider, and the logo switches it for that conversation only", async () => {
+  view.localStorage.setItem(PROVIDERS_STORAGE_KEY, JSON.stringify([
+    { id: "alpha", name: "Alpha", models: [{ id: "shared", label: "Shared" }, { id: "a2", label: "A2" }] },
+    { id: "beta", name: "Beta", models: [{ id: "b1", label: "B1" }, { id: "shared", label: "Shared" }] },
+  ]));
+  view.localStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, "alpha");
+  const config = (provider: string, model: string) => ({ id: `${provider}/${model}`, provider, model, config: {}, enabled: true, updatedAt: 1 });
+  useStore.setState({
+    modelConfigs: [config("alpha", "shared"), config("alpha", "a2"), config("beta", "b1"), config("beta", "shared")],
+    modelConfigsLoaded: true, currentSessionId: "s1", selectedModelId: "beta/shared",
+    runOptionsBySession: { s1: { modelId: "beta/shared" }, s2: { modelId: "beta/b1" } },
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => root!.render(<ModelPicker />));
+  // A model from a provider other than the global default is kept, not reset.
+  expect(useStore.getState().selectedModelId).toBe("beta/shared");
+
+  await act(async () => container.querySelector<HTMLButtonElement>(".q-model-picker-trigger")!.click());
+  await act(async () => document.querySelector<HTMLButtonElement>(".q-model-picker-provider-button")!.click());
+  const alpha = [...document.querySelectorAll<HTMLButtonElement>(".q-model-picker-advanced [role=option]")].find((option) => option.textContent?.includes("Alpha"))!;
+  await act(async () => alpha.click());
+  // Same model name exists in Alpha, so it is kept; the other conversation is untouched.
+  expect(useStore.getState().runOptionsBySession.s1?.modelId).toBe("alpha/shared");
+  expect(useStore.getState().runOptionsBySession.s2?.modelId).toBe("beta/b1");
+});

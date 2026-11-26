@@ -38,3 +38,25 @@ test("server context projects only selected metadata and refreshes without expos
     for (const secret of ["SECRET_KEY_PATH", "SECRET_HOST_KEY", "foreign.example", "auth", "createdAt"]) expect(text).not.toContain(secret);
   } finally { service.dispose(); }
 });
+
+test("execution context keeps lastKnownStatus pinned when only transient server status changes, and updates on config change", () => {
+  let before!: (event: { systemPromptOptions: { cwd: string; sections: Record<string, string> } }) => void;
+  let current = [{ id: "alpha", name: "Build host", host: "alpha.example", port: 22, username: "root", system: "Debian", lastKnownStatus: "offline" as const }];
+  const extension = executionContextExtension({ localTools: ["read"], serverTools: ["server_exec"], servers: () => current });
+  extension({ on: (_name: string, callback: typeof before) => { before = callback; } } as unknown as Parameters<ExtensionFactory>[0]);
+  const capture = () => {
+    const options = { cwd: "ws", sections: {} as Record<string, string> };
+    before({ systemPromptOptions: options });
+    return options.sections.execution_environment!;
+  };
+  const first = capture();
+  // 仅连接状态从 offline 变为 ready，静态信息未变时必须保持字节一致，避免击穿系统提示词缓存。
+  current = [{ ...current[0]!, lastKnownStatus: "ready" as const }];
+  expect(capture()).toBe(first);
+  // 用户显式修改主机名称时应同步更新环境清单及最新状态。
+  current = [{ ...current[0]!, name: "Renamed host", lastKnownStatus: "ready" as const }];
+  const updated = capture();
+  expect(updated).not.toBe(first);
+  expect(updated).toContain('"name":"Renamed host"');
+  expect(updated).toContain('"lastKnownStatus":"ready"');
+});

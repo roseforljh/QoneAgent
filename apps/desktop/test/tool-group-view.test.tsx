@@ -29,9 +29,9 @@ test("completed timeline uses a category summary even when timing data is presen
     })) });
     const html = renderToStaticMarkup(<Fixture />);
     expect(html).toContain('data-slot="tool-timeline"');
-    expect(html).toMatch(/已读取文件|Read files/);
+    expect(html).toMatch(/查看了 source\.ts|Checked source\.ts/);
     expect(html).not.toMatch(/读取 1 项|Read ×1|搜索 1 项|Search ×1/);
-    expect(html).not.toMatch(/耗时|Worked for/);
+    expect(html).not.toMatch(/耗时|Done in/);
     expect(html).not.toMatch(/data-slot="tool-call"[\s\S]*?data-slot="codex-icon"/);
   } finally {
     useStore.setState({ toolCalls: previous });
@@ -54,8 +54,8 @@ function PartlyFailedFixture() {
 
 test("failed command changes the group title without erasing successful edits", () => {
   const html = renderToStaticMarkup(<PartlyFailedFixture />);
-  expect(html).toMatch(/编辑了一个文件，一个操作失败|Edited a file and an action failed/);
-  expect(html).not.toMatch(/编辑了一个文件，运行了一个命令|Edited a file and ran a command/);
+  expect(html).toMatch(/修改了 App\.tsx，1 步出错|Edited App\.tsx and 1 step failed/);
+  expect(html).not.toMatch(/修改了 App\.tsx，运行了命令|Edited App\.tsx and ran a command/);
 });
 
 function RunningGroupFixture() {
@@ -110,7 +110,7 @@ test("MCP execution rows use the configured integration title and logo", () => {
     expect(useStore.getState().mcpServers[0]?.name).toBe("Context7");
     expect(toolIntegration("mcp:mcp-context7:resolve-library-id", useStore.getState().mcpServers)?.name).toBe("Context7");
     const html = renderToStaticMarkup(<IntegrationFixture />);
-    expect(html).toMatch(/已使用 Context7 集成|Used Context7 integration/);
+    expect(html).toMatch(/用了 Context7|Used Context7/);
     expect(html).toContain("context7-logo");
   } finally {
     useStore.setState({ mcpServers: previousServers, toolCalls: previousCalls });
@@ -167,13 +167,15 @@ function ToolRowsFixture({ content, running = false }: { content: ThreadMessageL
   return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Messages components={{ AssistantMessage: ToolRows }} /></AssistantRuntimeProvider>;
 }
 
-test("single reads use an action and real filename instead of the group summary", () => {
+test("single reads use an action and real filename button instead of the group summary", () => {
   const html = renderToStaticMarkup(<ToolRowsFixture content={[
     { type: "tool-call", toolName: "read", toolCallId: "single-read", args: { path: "src/tool-group-summary.ts" }, result: "done" },
   ]} />);
-  expect(html).toMatch(/title="(?:已读取|Read) src\/tool-group-summary.ts"/);
+  expect(html).toContain('data-slot="file-read-activity"');
+  expect(html).toMatch(/title="(?:读取了|Read) src\/tool-group-summary.ts"/);
   expect(html).not.toMatch(/读取了文件|已读取文件|Read files/);
   expect(html).toContain("tool-group-summary.ts");
+  expect(html).toContain("file-typescript-26-928.svg");
 });
 
 test("reasoning and a failed command keep separate reads ordered with specific titles", () => {
@@ -188,18 +190,18 @@ test("reasoning and a failed command keep separate reads ordered with specific t
   ]} />);
   const titles = [...html.matchAll(/<button[^>]+title="([^"]+)"/g)].map((match) => match[1]);
   expect(titles).toHaveLength(4);
-  expect(titles[0]).toMatch(/^(?:已读取|Read) src\/tool-group-summary.ts$/);
-  expect(titles[1]).toMatch(/^(?:已读取|Read) src\/tool-action-summary.ts$/);
+  expect(titles[0]).toBe("src/tool-group-summary.ts");
+  expect(titles[1]).toBe("src/tool-action-summary.ts");
   expect(titles[2]).toMatch(/^(?:运行失败|Run failed) bun test$/);
-  expect(titles[3]).toMatch(/^(?:已读取|Read) src\/session-timeline.tsx$/);
+  expect(titles[3]).toBe("src/session-timeline.tsx");
   expect(html).toContain('data-status="failed"');
   expect(html).not.toMatch(/读取了文件|已读取文件|Read files/);
 });
 
 test("single search and directory listing use their own action labels", () => {
   for (const [toolName, args, title] of [
-    ["grep", { pattern: "toolGroupSummary", path: "src" }, /title="(?:已搜索|Searched) toolGroupSummary in src"/],
-    ["ls", { path: "src" }, /title="(?:已列出|Listed) src"/],
+    ["grep", { pattern: "toolGroupSummary", path: "src" }, /title="(?:搜索了|Searched) toolGroupSummary in src"/],
+    ["ls", { path: "src" }, /title="(?:查看了|Checked) src"/],
   ] as const) {
     const html = renderToStaticMarkup(<ToolRowsFixture content={[
       { type: "tool-call", toolName, toolCallId: `single-${toolName}`, args, result: "done" },
@@ -213,8 +215,8 @@ test("argument generation shows the action without a fabricated read target", ()
   const html = renderToStaticMarkup(<ToolRowsFixture running content={[
     { type: "tool-call", toolName: "read", toolCallId: "generating-read", args: {} },
   ]} />);
-  expect(html).toMatch(/title="(?:正在准备读取|Preparing to read)"/);
-  expect(html).not.toContain('font-mono text-xs tracking-tight text-current');
+  expect(html).toMatch(/title="(?:准备读取|About to read)"/);
+  expect(html).not.toContain('data-file-read-button="true"');
 });
 
 test("running reads use present tense and historical reads stay completed", () => {
@@ -228,7 +230,7 @@ test("running reads use present tense and historical reads stay completed", () =
       { type: "reasoning", text: "Continue" },
       { type: "tool-call", toolName: "read", toolCallId: "active-read", args: {} },
     ]} />);
-    expect(html).toMatch(/title="(?:已读取|Read) src\/finished.ts"/);
+    expect(html).toMatch(/title="(?:读取了|Read) src\/finished.ts"/);
     expect(html).toMatch(/title="(?:正在读取|Reading) src\/summary.ts"/);
     expect(html).toContain('data-status="running"');
   } finally {
@@ -240,7 +242,7 @@ test("web tool rows use a source title and the built-in globe icon", () => {
   const html = renderToStaticMarkup(<ToolRowsFixture content={[
     { type: "tool-call", toolName: "qone_web_read", toolCallId: "web-source", args: { url: "https://example.com" }, result: "page content" },
   ]} />);
-  expect(html).toMatch(/title="(?:已使用 网页|Used Web) https:\/\/example.com"/);
+  expect(html).toMatch(/title="(?:看了网页|Read web page) https:\/\/example.com"/);
   expect(html).toContain("globe-light-16.svg");
   expect(html).not.toMatch(/网页 集成|Web integration/);
 });
@@ -249,7 +251,7 @@ test("preparing an MCP call uses the integration name instead of its protocol id
   const html = renderToStaticMarkup(<ToolRowsFixture running content={[
     { type: "tool-call", toolName: "mcp:mcp-context7:resolve-library-id", toolCallId: "preparing-context7", args: {} },
   ]} />);
-  expect(html).toMatch(/title="(?:正在准备使用 Context7|Preparing to use Context7)"/);
+  expect(html).toMatch(/title="(?:连接 Context7|Connecting to Context7)"/);
   expect(html).toContain("context7-logo");
   expect(html).not.toMatch(/title="[^"]*mcp:/);
 });
@@ -258,7 +260,7 @@ test("registered web search rows describe their actual actions", () => {
   const search = renderToStaticMarkup(<ToolRowsFixture content={[
     { type: "tool-call", toolName: "web_search", toolCallId: "web-search", args: { query: "assistant-ui" }, result: "found" },
   ]} />);
-  expect(search).toMatch(/title="(?:已搜索网页|Searched the web) assistant-ui"/);
+  expect(search).toMatch(/title="(?:搜了网页|Searched the web) assistant-ui"/);
 });
 
 function HeaderFixture() {

@@ -10,6 +10,7 @@ import { attachmentFileIcon } from "../../lib/attachment-file-kind";
 import { FadeScroll } from "./elements/surfaces";
 import { WorkspaceFileContent } from "./workspace-file-content";
 import { MarkdownDocument } from "./markdown-document";
+import { OfficePreview } from "./office-preview";
 
 export function FilePreviewContent({ file, source, target, active, revision, relativePath, resourceUrl }: {
   file: FilePreviewInfo; source: boolean; target: DockFileTarget; active: boolean; revision: string; relativePath?: string; resourceUrl?: string;
@@ -17,7 +18,7 @@ export function FilePreviewContent({ file, source, target, active, revision, rel
   const { t } = useLocale();
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const resource = ["image", "pdf", "audio", "video"].includes(file.kind) && !source;
+  const resource = ["image", "pdf", "audio", "video", "html", "word", "spreadsheet"].includes(file.kind) && !source;
   const localPreview = useLocalFilePreview(resource && !resourceUrl ? file.absolutePath : undefined, revision, fileReferenceDirectory(file.absolutePath));
   const preview = resourceUrl ? { url: resourceUrl } : localPreview;
   const [failedRevision, setFailedRevision] = useState<string>();
@@ -26,13 +27,18 @@ export function FilePreviewContent({ file, source, target, active, revision, rel
     <WorkspaceFileContent path={file.absolutePath} relativePath={relativePath} code={file.content ?? ""} language={languageForFile(file.absolutePath)} target={target} active={active} />
   </FadeScroll>;
   if (file.kind === "markdown") return <FadeScroll data-file-viewport className="min-h-0 flex-1"><MarkdownDocument text={file.content ?? ""} /></FadeScroll>;
-  if (file.kind === "html") return <iframe title={file.absolutePath} sandbox="" referrerPolicy="no-referrer" srcDoc={file.content} className="min-h-0 w-full flex-1 border-0 bg-white" />;
+  // 脚本和表单可运行（图表、交互页）；不给 allow-same-origin，页面碰不到 Qone 主窗口。
+  const htmlFrame = (props: { src?: string; srcDoc?: string }) => <iframe key={revision} title={file.absolutePath} sandbox="allow-scripts allow-forms allow-modals" referrerPolicy="no-referrer" {...props} className="min-h-0 w-full flex-1 border-0 bg-white" />;
+  // 消息附件没有磁盘目录，直接渲染内容；本地文件走 asset:// 以加载相对路径资源。
+  if (file.kind === "html" && resourceUrl) return htmlFrame({ srcDoc: file.content });
   if (file.kind === "binary") return <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground">
     <CodexIcon src={attachmentFileIcon(file.absolutePath, file.mimeType)} className="size-10" /><p className="text-sm">{t("dock.fileUnsupported")}</p>
   </div>;
   if (preview.error || failedRevision === revision) return <p role="alert" className="px-6 py-8 text-sm text-destructive">{t("dock.filePreviewFailed")}{preview.error ? `: ${preview.error}` : ""}</p>;
   if (!preview.url) return <p role="status" className="px-6 py-8 text-sm text-muted-foreground">{t("dock.fileLoading")}</p>;
   const fail = () => setFailedRevision(revision);
+  if (file.kind === "html") return htmlFrame({ src: preview.url });
+  if (file.kind === "word" || file.kind === "spreadsheet") return <OfficePreview file={file} url={preview.url} local={!resourceUrl} revision={revision} />;
   if (file.kind === "pdf") return <iframe title={file.absolutePath} src={preview.url} className="min-h-0 w-full flex-1 border-0" onError={fail} />;
   return <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
     {file.kind === "image" && <img src={preview.url} alt={file.absolutePath.split(/[\\/]/).at(-1)} className="max-h-full max-w-full object-contain" onError={fail} />}

@@ -99,10 +99,10 @@ test("notification prompt remains compact and does not include a full child tran
   const prompt = buildSubagentNotificationPrompt([notification]);
   expect(prompt).toContain("结论摘要");
   expect(prompt).not.toContain("message");
-  expect(prompt).toContain("下一条助手回复");
-  expect(prompt).toContain("不要把确认留到最终结论末尾");
-  expect(prompt).toContain("尚未读取结果时只确认收到状态");
-  expect(prompt).toContain("不要原样复述这段内部通知");
+  expect(prompt).toContain("在下一条回复中简短说明实际状态");
+  expect(prompt).toContain("inspect_subagent(runId)");
+  expect(prompt).toContain("未读取结果前不要声称已验证");
+  expect(prompt).toContain("不要原样复述本内部通知");
 });
 
 test("empty ledgers and disposed sessions retain no retry timer or ledger request", () => {

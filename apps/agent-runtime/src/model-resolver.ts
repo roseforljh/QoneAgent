@@ -326,6 +326,7 @@ function builtinCompatForModel(
 function inferredCompat(
   api: PiApi,
   baseUrl: string,
+  modelId: string,
   metadata: ModelMetadata,
   builtinCompat: Record<string, unknown> | undefined,
   config: ConfigRecord,
@@ -344,6 +345,12 @@ function inferredCompat(
     if (budgetParameter) compat.thinkingTokenBudgetField = budgetParameter;
     if (parameters.has("enable_thinking")) infer("thinkingFormat", "qwen");
     else if (parameters.has("chat_template_kwargs")) infer("thinkingFormat", "qwen-chat-template");
+    // 供应商显式声明支持 prompt_cache_key 时启用路由缓存键，减少多机副本抖动。
+    if (parameters.has("prompt_cache_key")) infer("promptCacheKeyMode", "enabled");
+    // OpenRouter 或显式声明 cache_control 的兼容网关在自定义 provider 名称下调用 Claude 时，补齐 Anthropic 缓存断点格式。
+    if ((urlHost(baseUrl) === "openrouter.ai" || parameters.has("cache_control")) && /(?:^|\/)claude[-_]/i.test(modelId)) {
+      infer("cacheControlFormat", "anthropic");
+    }
     // A provider that lists its parameters without reasoning_effort has said it
     // does not accept it; otherwise Pi's endpoint default would still send it.
     const declaresEffort = parameters.has("reasoning_effort") || metadata.reasoningOptions?.some((option) => normalizeOptionType(option.type) === "effort");
@@ -547,7 +554,7 @@ export class ModelMetadataResolver {
         ? cloneMap(builtin.model.thinkingLevelMap)
         : thinkingMapFromMetadata(devInfo ?? metadata, api);
     if (!reasoning) thinkingLevelMap = { off: "none", minimal: null, low: null, medium: null, high: null, xhigh: null, max: null };
-    const compat = inferredCompat(api, baseUrl, metadata, builtinCompat, config);
+    const compat = inferredCompat(api, baseUrl, modelId, metadata, builtinCompat, config);
     const cost = metadata.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     return {
       api,

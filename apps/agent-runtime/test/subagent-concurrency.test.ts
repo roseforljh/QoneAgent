@@ -4,7 +4,8 @@ import type { SubagentConfigInfo } from "@qone/protocol";
 import type { PiAdapter } from "../src/pi-adapter";
 import { registerSubagentDispatcher, type SubagentController } from "../src/subagent-runner";
 import { installSubagentFinalizationGuard } from "../src/subagent-finalization-guard";
-import { isSubagentUpdatePrompt, SUBAGENT_AGENT_MESSAGE_MARKER } from "../src/subagent-notifications";
+import { buildSubagentNotificationPrompt, isSubagentUpdatePrompt, SUBAGENT_AGENT_MESSAGE_MARKER } from "../src/subagent-notifications";
+import { withRuntimeLocale } from "../src/runtime-localization";
 
 const config: SubagentConfigInfo = {
   profiles: [], routing: {},
@@ -384,5 +385,54 @@ describe("terminal resource reclamation", () => {
     } finally {
       await h.cleanup();
     }
+  });
+
+  test("finalization guard stops steering after repeated reminders when no child is active and marks internal messages", async () => {
+    const steered: unknown[] = [];
+    const session = {
+      agent: {
+        hasQueuedMessages: () => false,
+        steer: (message: unknown) => { steered.push(message); },
+      },
+    };
+    const controller = {
+      dependencyStatus: () => ({
+        blocking: [{ id: "child-1", status: "completed" }],
+        unacknowledged: [],
+        retryRequired: [],
+        requiresFinalization: true,
+        authorized: false,
+      }),
+      waitForDependencyChange: async () => {},
+    } as unknown as SubagentController;
+    installSubagentFinalizationGuard(session, {
+      runId: () => "run-1",
+      controller: () => controller,
+      push: () => {},
+      eventSessionId: "session-1",
+    });
+    const finishTurn = (session.agent as unknown as { finishTurn: (turn: unknown, signal: AbortSignal) => Promise<unknown> }).finishTurn;
+    const turn = { message: { stopReason: "stop", content: [{ type: "text", text: "done" }] } };
+    const signal = new AbortController().signal;
+    expect(await finishTurn(turn, signal)).toEqual({ action: "continue" });
+    expect(await finishTurn(turn, signal)).toEqual({ action: "continue" });
+    expect(await finishTurn(turn, signal)).toEqual({ action: "continue" });
+    // 超过重试上限后放行，防止弱模型无限循环
+    expect(await finishTurn(turn, signal)).toBeUndefined();
+    expect(steered).toHaveLength(3);
+    expect(isSubagentUpdatePrompt(steered[0])).toBe(true);
+    expect(isSubagentUpdatePrompt({ role: "user", content: [{ type: "text", text: "plain" }], qoneInternal: true })).toBe(true);
+  });
+
+  test("subagent notification prompts follow runtime locale instead of hardcoding Chinese", () => {
+    const notice = {
+      id: "n1", sessionId: "s1", subagentRunId: "r1", version: 1, kind: "completed" as const, title: "Audit", status: "pending" as const, createdAt: 1,
+    };
+    const enText = withRuntimeLocale("en", () => buildSubagentNotificationPrompt([notice]));
+    expect(enText).toContain("Background subagent status update:");
+    expect(enText).toContain("completed");
+    const zhText = withRuntimeLocale("zh-CN", () => buildSubagentNotificationPrompt([notice]));
+    expect(zhText).toContain("后台子代理状态更新：");
+    expect(zhText).toContain("已完成");
   });
 });

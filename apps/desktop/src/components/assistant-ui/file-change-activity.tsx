@@ -38,14 +38,14 @@ export function FileChangeActivityRow({ activity, status = "success", operation,
   const stat = useMemo(() => visiblePresentation && status === "success" ? toolDiffStats(visiblePresentation) : undefined, [visiblePresentation, status]);
   const completedLabel = locale === "en"
     ? { created: "Created", edited: "Edited", deleted: "Deleted" }[changeKind ?? "edited"]
-    : { created: "已创建", edited: "已编辑", deleted: "已删除" }[changeKind ?? "edited"];
+    : { created: "新建了", edited: "修改了", deleted: "删除了" }[changeKind ?? "edited"];
   const applyingLabel = locale === "en"
     ? { created: "Creating", edited: "Editing", deleted: "Deleting" }[changeKind ?? "edited"]
-    : { created: "正在创建", edited: "正在编辑", deleted: "正在删除" }[changeKind ?? "edited"];
+    : { created: "正在新建", edited: "正在修改", deleted: "正在删除" }[changeKind ?? "edited"];
   const running = status === "running" || status === "generating";
   const label = status === "failed" ? t("chat.toolActionFailed", { operation: operation ?? completedLabel })
     : status === "queued" || status === "waiting" ? activeLabel ?? applyingLabel
-      : !changeKind && operation === "write" ? locale === "en" ? "Written" : "已写入" : completedLabel;
+      : !changeKind && operation === "write" ? locale === "en" ? "Written" : "写入了" : completedLabel;
   const liveLabel = status === "generating" || status === "queued" || status === "waiting" ? activeLabel ?? applyingLabel
     : !changeKind && operation === "write" ? locale === "en" ? "Writing" : "正在写入" : applyingLabel;
   const emptyText = fallbackText ?? t(status === "failed" ? "chat.toolFailed" : status === "success" ? "chat.toolNoResult" : "chat.toolResultPending");

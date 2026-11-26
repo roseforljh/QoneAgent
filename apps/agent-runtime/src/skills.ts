@@ -18,7 +18,6 @@ import { toolPromptContextExtension } from "./tool-prompt-context.js";
 import { assertUserSkillName, isBuiltinSkillName } from "./builtin-skills/identity.js";
 import { SKILL_PUBLISHER_FILE } from "./skill-catalog.js";
 import { listBuiltinSkills } from "./builtin-skills/manager.js";
-import { syncPonytailProjectInstructions } from "./project-instructions.js";
 import eccResources from "./builtin-subagents/ecc-resources.json";
 import { syncedSkills, saveSyncedSkills } from "./claude-code/skills";
 import type { SkillInfo } from "@qone/protocol";
@@ -122,8 +121,6 @@ export async function createResourceLoader(cwd: string, additionalInstructions?:
   const agentDir = qoneAgentDir();
   const ownSkills = qoneSkillsDir();
   const builtinSkills = await listBuiltinSkills();
-  const ponytail = builtinSkills.find((skill) => skill.id === "ponytail");
-  if (ponytail) await syncPonytailProjectInstructions(cwd, ponytail.enabled !== false, ponytail.path);
   const eccReferencePaths = includeEccReferences ? await ensureEccReferenceSkills() : [];
   const importedSkills = syncedSkills().filter(skill => existsSync(skill.path));
   const loader = new DefaultResourceLoader({

@@ -71,9 +71,12 @@ export function registerIpcHandlers(
       case "authorize_file_preview": {
         return fileDialogs.authorizeFilePreview(args.path, args.allowedRoot);
       }
+      case "read_file_preview": {
+        return fileDialogs.readAuthorizedFile(args.path);
+      }
       case "save_image_as": {
         if (!mainWindow) return false;
-        return fileDialogs.saveImageAs(mainWindow, args.filename, args.data, args.title);
+        return fileDialogs.saveImageAs(mainWindow, args.filename, { data: args.data, url: args.url }, args.title);
       }
       case "set_native_copy": {
         updateNativeCopy(args.copy);

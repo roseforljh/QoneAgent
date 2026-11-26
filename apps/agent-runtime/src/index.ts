@@ -59,6 +59,7 @@ import { RunCheckpoints } from "./run-checkpoints.js";
 import { recoverInterruptedRuns, restoreModelKeys, resumeInterruptedRuns } from "./run-recovery.js";
 import { ScheduleService } from "./schedules/schedule-service.js";
 import { McpElicitations } from "./mcp-elicitation.js";
+import { SecretInputs } from "./secret-input.js";
 import { currentToolSession } from "./tool-session.js";
 
 installDesktopSystemProxy();
@@ -317,6 +318,7 @@ const schedules: ScheduleService = new ScheduleService({
 });
 // A subagent's question belongs to the conversation that started it.
 const elicitations = new McpElicitations((event) => send(event), (sessionId) => subagentRunRepo.getByExecutionSession(sessionId)?.parentSessionId ?? sessionId);
+const secretInputs = new SecretInputs(elicitations, servers);
 const assistantMessageSequenceByRun = new Map<string, number>();
 const pendingSteers = new Map<string, Array<{ runId: string; queueItemId: string; message: string; attachments?: MessageAttachmentInfo[]; quote?: MessageQuoteInfo }>>();
 const initialUserMessageSeen = new Set<string>();
@@ -429,8 +431,9 @@ const adapter = new PiAdapter((event) => eventBus.emit({
   executionAdvice: (provider, model, tool, args) => executionAnalysis.advice(provider, model, tool, args),
   executionModel: (runId, model) => runRepo.setModel(runId, model),
   sideConversationOwner: (sideSessionId) => sideConversations.parent(sideSessionId),
-  serverTools: (workspacePath, serverIds) => servers.tools(workspacePath, serverIds),
+  serverTools: (workspacePath, serverIds, sessionId) => servers.tools(workspacePath, serverIds, (serverId) => secretInputs.env(sessionId, serverId)),
   deliveryTools: (sessionId, workspacePath, activeRunId) => [fileDelivery.tool(sessionId, workspacePath, activeRunId)],
+  secrets: secretInputs,
   serverSummary: (serverIds) => servers.summary(serverIds),
   serverTargets: (serverIds) => servers.executionTargets(serverIds),
   onAssistantFinal: (_sessionId, runId, content) => {
@@ -729,8 +732,7 @@ async function initializeOptionalIntegrations() {
   });
 
   await Promise.all([...mcpServersFrom(settingsFile.read("mcpServers")), ...loadMcpConfigs()].map(async (entry: McpServerInfo) => {
-    // OpenCLI owns the browser; Playwright is an explicitly enabled fallback.
-    if (entry.id === "mcp-playwright" || entry.disabled) return;
+    if (entry.disabled) return;
     const stored = mcpServerRepo.list().some(server => server.id === entry.id);
     const subjectId = `mcp:${entry.id}`;
     permissionRepo.ensure(subjectId, "mcp.connect", "allow");

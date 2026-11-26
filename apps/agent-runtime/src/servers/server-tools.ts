@@ -145,6 +145,19 @@ async function mkdirs(client: Client, directory: string, signal?: AbortSignal) {
 
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: {} });
 
+/** Counts `placeholder` in a remote file and, given `value`, replaces every occurrence in place. */
+export async function replaceRemoteText(client: Client, file: string, placeholder: string, value?: string, signal?: AbortSignal): Promise<{ path: string; replaced: number }> {
+  const channel = await sftp(client, signal);
+  try {
+    const target = await remotePath(channel, file);
+    const { data, size } = await readRemote(channel, target, 0, MAX_EDIT, signal);
+    if (size > MAX_EDIT) throw runtimeError("servers.file_too_large");
+    const parts = data.toString("utf8").split(placeholder);
+    if (value !== undefined && parts.length > 1) await writeRemote(channel, target, Buffer.from(parts.join(value), "utf8"), false);
+    return { path: target, replaced: parts.length - 1 };
+  } finally { channel.end(); }
+}
+
 /** Like Pi's shell tools: a non-zero exit is an error for the model, but codemode scripts still resolve to this value.
  * Timeouts, signals and cancellation carry no structured result, so scripts reject on them. */
 const execOutputSchema = Type.Object({
@@ -161,6 +174,8 @@ export interface ServerToolContext {
   sessions: ServerSessions;
   workspacePath: string;
   onActivity: (serverId: string) => void;
+  /** Secrets the person typed for this conversation's commands on one server. */
+  env?: (serverId: string) => Record<string, string>;
 }
 
 export function createServerTools(context: ServerToolContext): ToolDefinition[] {
@@ -195,7 +210,8 @@ export function createServerTools(context: ServerToolContext): ToolDefinition[] 
       }),
       outputSchema: execOutputSchema,
       execute: async (_id, args: { server?: string; command: string; cwd?: string; timeout_ms?: number }, signal, onUpdate) => {
-        const result = await exec(await client(pick(args.server), signal), args.command, { cwd: args.cwd, timeoutMs: args.timeout_ms, signal,
+        const target = pick(args.server);
+        const result = await exec(await client(target, signal), args.command, { cwd: args.cwd, timeoutMs: args.timeout_ms, signal, env: context.env?.(target.id),
           onUpdate: value => onUpdate?.(json(value)) });
         const exited = result.exit_code !== null && !result.timed_out && !result.signal && !result.cancelled;
         return { ...json(result), ...(exited ? { structuredContent: { ...result } } : {}), isError: !exited || result.exit_code !== 0, details: { cancelled: result.cancelled === true } };

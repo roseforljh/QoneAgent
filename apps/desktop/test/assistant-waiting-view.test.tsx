@@ -76,7 +76,7 @@ test("provider media processing exposes the phase and the real invocation", () =
     toolCalls: [{ toolCallId: "media", runId: "current", toolName: "qone_video_use_file", status: "success" }],
   }, () => {
     const html = render([{ type: "tool-call", toolCallId: "media", toolName: "qone_video_use_file", args: {}, result: "done" }]);
-    expect(html).toMatch(/(?:供应商正在处理媒体|Provider is processing media)/);
+    expect(html).toMatch(/(?:正在解析媒体内容|Analyzing media)/);
   });
 });
 

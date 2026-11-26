@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import path from "node:path";
-import type { McpServerInfo, PermissionDecision } from "@qone/protocol";
+import { isSensitiveMcpField, type McpServerInfo, type PermissionDecision } from "@qone/protocol";
 
 type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -161,12 +161,14 @@ export class McpServerRepo {
   private entries() { return this.file.read<Record<string, Json>>("mcpServers") ?? {}; }
 
   upsert(config: McpServerInfo) {
-    // Configuration keeps only `$` references; secret values live in the encrypted store.
+    // 仅屏蔽敏感凭据的明文落盘（强制走 `$` 引用），非敏感普通配置项保留明文可读。
+    const keepEnv = (key: string, value: string) => value.startsWith("$") || !isSensitiveMcpField(key, value);
+    const keepHeader = (key: string, value: string) => value.startsWith("$mcp.env:") || /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value) || !isSensitiveMcpField(key, value);
     const { id, connected: _connected, available: _available, connecting: _connecting, toolCount: _toolCount, transport, ...rest } = config;
     const entry: Json = { ...rest,
       ...(transport ? { type: transport } : {}),
-      ...(config.env ? { env: Object.fromEntries(Object.entries(config.env).filter(([, value]) => value.startsWith("$"))) } : {}),
-      ...(config.headers ? { headers: Object.fromEntries(Object.entries(config.headers).filter(([, value]) => value.startsWith("$mcp.env:") || /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value))) } : {}),
+      ...(config.env ? { env: Object.fromEntries(Object.entries(config.env).filter(([key, value]) => keepEnv(key, value))) } : {}),
+      ...(config.headers ? { headers: Object.fromEntries(Object.entries(config.headers).filter(([key, value]) => keepHeader(key, value))) } : {}),
     };
     for (const key of Object.keys(entry)) if (entry[key] === undefined) delete entry[key];
     this.file.update<Json>("mcpServers", entries => ({ ...entries, [id]: entry }));
@@ -174,9 +176,11 @@ export class McpServerRepo {
   }
 
   list(): McpServerInfo[] {
+    const keepEnv = (key: string, value: string) => value.startsWith("$") || !isSensitiveMcpField(key, value);
+    const keepHeader = (key: string, value: string) => value.startsWith("$mcp.env:") || /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value) || !isSensitiveMcpField(key, value);
     return mcpServersFrom(this.entries()).map(server => ({ ...server,
-      ...(server.env ? { env: Object.fromEntries(Object.entries(server.env).filter(([, value]) => value.startsWith("$"))) } : {}),
-      ...(server.headers ? { headers: Object.fromEntries(Object.entries(server.headers).filter(([, value]) => value.startsWith("$mcp.env:") || /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value))) } : {}),
+      ...(server.env ? { env: Object.fromEntries(Object.entries(server.env).filter(([key, value]) => keepEnv(key, value))) } : {}),
+      ...(server.headers ? { headers: Object.fromEntries(Object.entries(server.headers).filter(([key, value]) => keepHeader(key, value))) } : {}),
     }));
   }
 

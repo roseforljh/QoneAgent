@@ -20,7 +20,7 @@ function Fixture() {
 
 test("a completed pre-steer segment places its execution summary above its tools even without final prose", () => {
   const html = renderToStaticMarkup(<Fixture />);
-  const summary = html.search(/共执行了|Ran/);
+  const summary = html.search(/完成了 \d+ 步|Completed \d+ steps/);
   const tool = html.indexOf('data-tool-list="true"');
   expect(summary).toBeGreaterThan(-1);
   expect(tool).toBeGreaterThan(summary);

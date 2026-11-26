@@ -410,6 +410,47 @@ test("a failed title request clears its spinner", () => {
   }
 });
 
+test("title generation uses the session model, includes full first-bubble content, and retriggers when retrying an untitled first turn", () => {
+  const previous = useStore.getState();
+  try {
+    useStore.setState({
+      currentSessionId: "session-title-full",
+      selectedModelId: "oc/claude-opus-5-5",
+      runOptionsBySession: { "session-title-full": { modelId: "oc/claude-opus-5-5", permissionMode: "auto" } },
+      sessions: [{ id: "session-title-full", title: "New session", workspaceId: "workspace-1", createdAt: 0, updatedAt: 0 }],
+      workspaces: [{ id: "workspace-1", name: "Test", path: "C:/test", createdAt: 0, updatedAt: 0 }],
+      messages: [],
+      running: false,
+      titleGeneratingSessionIds: [],
+    });
+    useStore.getState().runAgent(
+      "帮我分析报错",
+      undefined,
+      [{ type: "file", name: "error.log", mimeType: "text/plain", data: "" }],
+      undefined,
+      false,
+      "session-title-full",
+      { text: "ECONNRESET 127.0.0.1", messageId: "prev-1" },
+    );
+    const firstReq = commands.filter((command) => command.type === "session.generate-title").at(-1);
+    expect(firstReq?.type).toBe("session.generate-title");
+    if (firstReq?.type !== "session.generate-title") return;
+    expect(firstReq.model).toBe("oc/claude-opus-5-5");
+    expect(firstReq.prompt).toBe("帮我分析报错\nECONNRESET 127.0.0.1\nerror.log");
+
+    // 首次请求失败且会话仍为默认标题时，重试首条消息应重新触发自动取名。
+    const firstMsgId = useStore.getState().messages[0]!.id;
+    useStore.setState({ running: false, titleGeneratingSessionIds: [] });
+    const beforeRetry = commands.filter((command) => command.type === "session.generate-title").length;
+    useStore.getState().runAgent("帮我分析报错并修复", firstMsgId, undefined, undefined, false, "session-title-full");
+    const titleRequests = commands.filter((command) => command.type === "session.generate-title");
+    expect(titleRequests.length).toBe(beforeRetry + 1);
+    expect(titleRequests.at(-1)?.type === "session.generate-title" ? titleRequests.at(-1)!.prompt : "").toBe("帮我分析报错并修复");
+  } finally {
+    useStore.setState(previous, true);
+  }
+});
+
 test("an active run snapshot fills in the run id while the optimistic UI is already running", () => {
   const previous = useStore.getState();
   try {

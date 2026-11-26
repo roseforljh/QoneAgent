@@ -33,7 +33,7 @@ test("Bilibili recognition uses the embedded app route before fallback adapters"
   options.bilibiliDownload = async () => ({ path: filePath, mimeType: "video/mp4", directory });
   try {
     const result = await createVideoDownloadTool(options).execute("call", { url: "https://www.bilibili.com/video/BV1xx411c7mD" }, new AbortController().signal);
-    expect((result.details as { source: string }).source).toBe("哔哩哔哩 yt-dlp");
+    expect((result.details as { source: string }).source).toBe("bilibili-yt-dlp");
     expect(JSON.stringify(result.content)).toContain("完整视频并选择原生视频输入");
   } finally {
     await rm(directory, { recursive: true, force: true });

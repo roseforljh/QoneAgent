@@ -1,9 +1,11 @@
 import { runtimeText, runtimeError } from "./runtime-localization";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { openAsBlob } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import path, { isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { qoneAuthDir, qoneCacheDir } from "@qone/shared";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type {
   AssistantMessageEvent,
@@ -25,7 +27,7 @@ const VERTEX_MAX_INLINE_BYTES = 256_000_000;
 const FILE_PROCESSING_TIMEOUT_MS = 30 * 60_000;
 const FILE_PROCESSING_POLL_MS = 1_000;
 const UPLOAD_CACHE_AGE_MS = 47 * 60 * 60_000;
-const markerSecret = randomBytes(32);
+const markerSecretByPath = new Map<string, Buffer>();
 export const MEDIA_MARKER = /\[\[QONE_MEDIA:([A-Za-z0-9_-]+):([a-f0-9]{64})\]\]/g;
 
 type GooglePart = {
@@ -48,15 +50,88 @@ type GoogleFile = {
 };
 
 const uploadedFiles = new Map<string, { file: Promise<GoogleFile>; expiresAt: number }>();
+const persistedUploadsLoaded = new Set<string>();
+
+/** 持久化媒体标记签名密钥，避免进程重启后历史音视频标记验签失效并破坏四个接口的提示词前缀缓存。 */
+function mediaMarkerSecret(): Buffer {
+  const keyFile = path.join(qoneAuthDir(), "media-marker.key");
+  const cached = markerSecretByPath.get(keyFile);
+  if (cached) return cached;
+  try {
+    const existing = readFileSync(keyFile, "utf8").trim();
+    if (/^[a-f0-9]{64}$/i.test(existing)) {
+      const secret = Buffer.from(existing, "hex");
+      markerSecretByPath.set(keyFile, secret);
+      return secret;
+    }
+  } catch { /* 首次运行或读取失败时重新生成并落盘。 */ }
+  const secret = randomBytes(32);
+  try {
+    mkdirSync(path.dirname(keyFile), { recursive: true });
+    writeFileSync(keyFile, secret.toString("hex"), { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      try {
+        const existing = readFileSync(keyFile, "utf8").trim();
+        if (/^[a-f0-9]{64}$/i.test(existing)) {
+          const raced = Buffer.from(existing, "hex");
+          markerSecretByPath.set(keyFile, raced);
+          return raced;
+        }
+      } catch { /* 回退到内存密钥 */ }
+    }
+  }
+  markerSecretByPath.set(keyFile, secret);
+  return secret;
+}
+
+function uploadCacheFilePath(): string {
+  return path.join(qoneCacheDir(), "google-file-uploads.json");
+}
+
+function hydratePersistedUploads(): void {
+  const cacheFile = uploadCacheFilePath();
+  if (persistedUploadsLoaded.has(cacheFile)) return;
+  persistedUploadsLoaded.add(cacheFile);
+  try {
+    const raw = JSON.parse(readFileSync(cacheFile, "utf8")) as Record<string, { file?: GoogleFile; expiresAt?: number }>;
+    const now = Date.now();
+    for (const [key, entry] of Object.entries(raw ?? {})) {
+      if (!entry?.file?.uri || !entry.file.name || typeof entry.expiresAt !== "number" || entry.expiresAt <= now) continue;
+      if (!uploadedFiles.has(key)) uploadedFiles.set(key, { file: Promise.resolve(entry.file), expiresAt: entry.expiresAt });
+    }
+  } catch { /* 缓存文件不存在或损坏时忽略，按需重新上传。 */ }
+}
+
+function persistUploadedFile(key: string, file: GoogleFile, expiresAt: number): void {
+  if (!file.uri || !file.name) return;
+  const cacheFile = uploadCacheFilePath();
+  try {
+    let current: Record<string, { file: GoogleFile; expiresAt: number }> = {};
+    try {
+      current = JSON.parse(readFileSync(cacheFile, "utf8")) as Record<string, { file: GoogleFile; expiresAt: number }>;
+    } catch { /* 首次写入 */ }
+    const now = Date.now();
+    const next: Record<string, { file: GoogleFile; expiresAt: number }> = {};
+    for (const [entryKey, entry] of Object.entries(current ?? {})) {
+      if (entry?.file?.uri && entry.file.name && typeof entry.expiresAt === "number" && entry.expiresAt > now) {
+        next[entryKey] = entry;
+      }
+    }
+    next[key] = { file: { name: file.name, uri: file.uri, mimeType: file.mimeType, state: file.state }, expiresAt };
+    mkdirSync(path.dirname(cacheFile), { recursive: true });
+    writeFileSync(cacheFile, JSON.stringify(next), "utf8");
+  } catch { /* 持久化失败不得阻断正常媒体请求。 */ }
+}
 
 export function localMediaMarker(path: string, mimeType: string, temporary = false): string {
   const encoded = Buffer.from(JSON.stringify({ path, mimeType, temporary })).toString("base64url");
-  const signature = createHmac("sha256", markerSecret).update(encoded).digest("hex");
+  const signature = createHmac("sha256", mediaMarkerSecret()).update(encoded).digest("hex");
   return `[[QONE_MEDIA:${encoded}:${signature}]]`;
 }
 
 function decodeLocalMedia(encoded: string, signature: string): { path: string; mimeType: string; temporary: boolean } {
-  const expected = createHmac("sha256", markerSecret).update(encoded).digest("hex");
+  const expected = createHmac("sha256", mediaMarkerSecret()).update(encoded).digest("hex");
   if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"))) throw runtimeError("google-media.invalid_local_media_attachment_reference", {});
   const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as { path?: unknown; mimeType?: unknown; temporary?: unknown };
   if (typeof value.path !== "string" || !isAbsolute(value.path) || typeof value.mimeType !== "string" || !/^(?:audio|video)\//i.test(value.mimeType)) {
@@ -186,15 +261,20 @@ async function uploadGoogleFile(baseUrl: string, apiKey: string, mimeType: strin
 }
 
 function cachedUpload(baseUrl: string, apiKey: string, part: { mimeType: string; data: string | { path: string; size: number; modified: number }; name: string }, signal?: AbortSignal): Promise<GoogleFile> {
+  hydratePersistedUploads();
   const identity = typeof part.data === "string" ? part.data : `${part.data.path}\0${part.data.size}\0${part.data.modified}`;
   const key = createHash("sha256").update(`${baseUrl}\0${apiKey}\0${part.mimeType}\0${identity}`).digest("hex");
   const existing = uploadedFiles.get(key);
   if (existing && existing.expiresAt > Date.now()) return existing.file;
-  const pending = uploadGoogleFile(baseUrl, apiKey, part.mimeType, part.data, part.name, signal).catch((error) => {
+  const expiresAt = Date.now() + UPLOAD_CACHE_AGE_MS;
+  const pending = uploadGoogleFile(baseUrl, apiKey, part.mimeType, part.data, part.name, signal).then((file) => {
+    persistUploadedFile(key, file, expiresAt);
+    return file;
+  }, (error) => {
     uploadedFiles.delete(key);
     throw error;
   });
-  uploadedFiles.set(key, { file: pending, expiresAt: Date.now() + UPLOAD_CACHE_AGE_MS });
+  uploadedFiles.set(key, { file: pending, expiresAt });
   return pending;
 }
 

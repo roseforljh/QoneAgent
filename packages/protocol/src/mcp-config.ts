@@ -37,6 +37,20 @@ const EXTERNAL_BROWSER_MCP_PACKAGES = new Set([
 ]);
 const EXTERNAL_BROWSER_MCP_PATTERN = /(?:^|[\\/\s:@])(?:playwright(?:[-_]mcp)?|chrome[-_]devtools[-_]mcp|server[-_]puppeteer|puppeteer[-_]mcp)(?:$|[@\s\\/:])/i;
 
+const SENSITIVE_MCP_KEY_EXACT = new Set([
+  "apikey", "xapikey", "token", "authtoken", "bearertoken", "accesstoken", "refreshtoken",
+  "secret", "clientsecret", "password", "passwd", "authorization", "credential", "credentials", "privatekey", "cookie",
+]);
+const SENSITIVE_MCP_KEY_PATTERN = /(?:^|[_.-])(?:api[_-]?key|token|secret|password|passwd|auth|authorization|cookie|credential|private[_-]?key|access[_-]?key)(?:$|[_.-])|[_-](?:key)$/i;
+const SENSITIVE_MCP_VALUE_PATTERN = /^(?:bearer|basic)\s+\S+|^(?:sk|ghp|github_pat)[-_][A-Za-z0-9_-]{8,}|^AKIA[A-Z0-9]{16}$|^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
+
+/** 判断 MCP 的单个 env/header 键值对是否属于敏感凭据，普通配置项（如 NODE_ENV、PORT）保持明文。 */
+export function isSensitiveMcpField(key: string, value: string): boolean {
+  const normalizedKey = key.toLowerCase().replaceAll("_", "").replaceAll("-", "").replaceAll(".", "");
+  if (SENSITIVE_MCP_KEY_EXACT.has(normalizedKey) || SENSITIVE_MCP_KEY_PATTERN.test(key)) return true;
+  return SENSITIVE_MCP_VALUE_PATTERN.test(value.trim());
+}
+
 /** 识别会启动外置浏览器进程的 MCP（如 Playwright、Chrome DevTools、Puppeteer），避免与内置浏览器冲突。 */
 export function isExternalBrowserMcp(config: Pick<McpServerInfo, "id" | "name" | "command" | "args" | "url">): boolean {
   if (config.id === "mcp-playwright") return true;

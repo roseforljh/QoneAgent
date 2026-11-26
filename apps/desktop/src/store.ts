@@ -691,6 +691,7 @@ export const useStore = create<AgentState>((set, get, api) => {
     const persistedReplaceId = replaceIndex >= 0 && history[replaceIndex]?.persisted !== false ? replaceFromMessageId : undefined;
     if (persistedReplaceId) pendingMessageReplacements.set(sid, persistedReplaceId);
     const keptMessages = replaceIndex >= 0 ? history.slice(0, replaceIndex) : history;
+    const shouldGenerateTitle = !continuation && (history.length === 0 || (keptMessages.length === 0 && session.title === "New session"));
     const keptRunIds = new Set(keptMessages.flatMap((item) => item.runId ? [item.runId] : []));
     const messageId = rid();
     const createdAt = Date.now();
@@ -720,9 +721,7 @@ export const useStore = create<AgentState>((set, get, api) => {
       chatRunError: undefined,
       toolCalls: replaceIndex >= 0 ? s.toolCalls.filter((call) => keptRunIds.has(call.runId)) : s.toolCalls,
       runs: replaceIndex >= 0 ? s.runs.filter((run) => keptRunIds.has(run.id)) : s.runs,
-      titleGeneratingSessionIds: s.messages.length === 0 && !s.titleGeneratingSessionIds.includes(sid)
-        ? [...s.titleGeneratingSessionIds, sid]
-        : s.titleGeneratingSessionIds,
+      titleGeneratingSessionIds: shouldGenerateTitle && !s.titleGeneratingSessionIds.includes(sid) ? [...s.titleGeneratingSessionIds, sid] : s.titleGeneratingSessionIds,
     }));
     const options = get().runOptionsBySession[sid];
     const model = options?.modelId ?? get().selectedModelId;
@@ -737,10 +736,11 @@ export const useStore = create<AgentState>((set, get, api) => {
     get().send(goal
       ? { type: "goal.start", requestId, sessionId: sid, objective: message, queueItemId, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, model, permissionMode, thinking, serverIds }
       : { type: "agent.run", requestId, sessionId: sid, message, attachments, quote, messageId, replaceFromMessageId: persistedReplaceId, queueItemId, model, permissionMode, thinking, serverIds, mcpServerId: mcpCommand?.serverId, continuation });
-    if (history.length === 0) {
+    if (shouldGenerateTitle) {
       const titleRequestId = rid();
       pendingTitleRequests.set(titleRequestId, sid);
-      get().send({ type: "session.generate-title", requestId: titleRequestId, sessionId: sid, prompt: plainInlineQuotes(mcpCommand ? mcpCommand.text : message) || attachments?.map((attachment) => attachment.name).join(", ") || t("attachment.image"), model });
+      const promptParts = [plainInlineQuotes(mcpCommand ? mcpCommand.text : message).trim(), quote?.text.trim(), attachments?.map((attachment) => attachment.name.trim()).filter(Boolean).join(", ")].filter(Boolean);
+      get().send({ type: "session.generate-title", requestId: titleRequestId, sessionId: sid, prompt: promptParts.join("\n") || t("attachment.image"), model });
     }
     return true;
   },

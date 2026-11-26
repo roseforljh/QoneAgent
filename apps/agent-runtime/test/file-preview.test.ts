@@ -29,6 +29,15 @@ describe("file preview", () => {
     expect(preview).not.toHaveProperty("content");
   });
 
+  test("routes Word and spreadsheet files to the Office viewers without reading their bytes", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "qone-preview-"));
+    roots.push(root);
+    for (const name of ["a.docx", "a.xlsx", "a.xls", "a.ods", "a.doc"]) writeFileSync(path.join(root, name), Buffer.from([0x50, 0x4b, 3, 4]));
+    const kinds = await Promise.all(["a.docx", "a.xlsx", "a.xls", "a.ods", "a.doc"].map(async (name) => (await readFilePreview(name, root)).kind));
+    expect(kinds).toEqual(["word", "spreadsheet", "spreadsheet", "spreadsheet", "binary"]);
+    expect(await readFilePreview("a.docx", root)).not.toHaveProperty("content");
+  });
+
   test.skipIf(process.platform !== "win32")("resolves a root relative link from a real Windows workspace", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "qone-preview-"));
     roots.push(root);

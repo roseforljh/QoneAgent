@@ -1,15 +1,17 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { AlertTriangle, Download } from "lucide-react";
 import { AlertDialog } from "radix-ui";
 import { Button } from "./Button";
 import { useLocale } from "../../localization";
 import { getConfirmationRequest, resolveConfirmation, subscribeConfirmation } from "../../lib/confirm-action";
+import { acquireNativeOverlayLock } from "../../lib/dock-browser-session";
 import "./confirmation-dialog.css";
 
 export function ConfirmationDialogHost() {
   const request = useSyncExternalStore(subscribeConfirmation, getConfirmationRequest, getConfirmationRequest);
   const { t } = useLocale();
   const destructive = request?.destructive !== false;
+  useEffect(() => (request ? acquireNativeOverlayLock() : undefined), [request]);
 
   return (
     <AlertDialog.Root open={Boolean(request)}>

@@ -6,7 +6,7 @@ import { AssistantParts } from "../src/components/assistant-ui/assistant-parts";
 import { assistantMessageContent } from "../src/lib/assistant-message-parts";
 import type { AssistantMessagePart } from "@qone/protocol";
 
-function Fixture({ running, complete, text = "**分析**视频", grouped = false }: { running: boolean; complete: boolean; text?: string; grouped?: boolean }) {
+function Fixture({ running, complete, text = "先梳理思路\n\n**分析**视频", grouped = false }: { running: boolean; complete: boolean; text?: string; grouped?: boolean }) {
   const messages: ThreadMessageLike[] = [{
     id: "reasoning-test", role: "assistant",
     content: [
@@ -63,6 +63,16 @@ test("reasoning disclosure chevron stays inside the interactive trigger", () => 
   expect(html).toContain("q-reasoning-trigger");
   expect(html).toContain("q-reasoning-chevron");
   expect(html.indexOf("q-reasoning-trigger")).toBeLessThan(html.indexOf("q-reasoning-chevron"));
+});
+
+test("single-line completed reasoning with no extra content renders statically without disclosure", () => {
+  const html = renderToStaticMarkup(<Fixture running={false} complete text="**Locating exact v1.14.0**" />);
+  expect(html).toContain('data-slot="reasoning"');
+  expect(html).toContain('data-expandable="false"');
+  expect(html).toContain("Locating exact v1.14.0");
+  expect(html).not.toContain("q-reasoning-trigger");
+  expect(html).not.toContain("q-reasoning-chevron");
+  expect(html).not.toContain("aria-expanded");
 });
 
 test("empty reasoning does not create a disclosure", () => {
